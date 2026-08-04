@@ -43,6 +43,7 @@ pub struct ElBindingsT {
 /// unconditionally true in the C because `current` is only ever `key` or
 /// `alt`; leaving `Emacs` out of this enum preserves that outcome rather
 /// than inviting a translation that could make the test meaningful.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ElMapCurrent {
     /// `current == el_map.key`.
     Key,

@@ -17,6 +17,11 @@ use crate::map::ElMapCurrent;
 /// already there, so it becomes an enum. The `type` field stays where the C
 /// put it — nothing is collapsed — and `XK_NOD` is the C's "the union holds
 /// a NULL `str`" state, which is `Str` with an empty buffer.
+/// `Clone` is not the C's — the C copies the union by assignment. It is here
+/// because the C's own call sites borrow this out of the `EditLine` while also
+/// passing the `EditLine` mutably (`terminal_reset_arrow` does exactly that),
+/// which Rust cannot express; cloning into a local first is the translation.
+#[derive(Clone)]
 pub enum KeymacroValueT {
     /// C: `el_action_t cmd` — read when `type == XK_CMD`.
     Cmd(ElActionT),

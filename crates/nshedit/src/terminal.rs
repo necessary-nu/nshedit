@@ -85,7 +85,12 @@ pub struct ElTerminalT {
     /// C: `char **t_str` — the string capabilities, 39 slots. `None` is the
     /// C's NULL slot, meaning "capability absent". Owned per slot rather
     /// than pointing into `t_buf`, per the `terminal_alloc` rule above.
-    pub t_str: Vec<Option<String>>,
+    ///
+    /// Bytes, not a string: a capability may legitimately carry a byte above
+    /// 0x7f — 8-bit CSI is the obvious case — and `term` hands them back as
+    /// bytes for that reason. Decoding here would mangle those entries, and
+    /// nothing in this layer needs them to be text.
+    pub t_str: Vec<Option<Vec<u8>>>,
     /// C: `int *t_val` — the flag and numeric capabilities, 8 slots.
     pub t_val: Vec<i32>,
     /// C: `char *t_cap` — the TC_BUFSIZE scratch area the C's `tgetent`
@@ -93,6 +98,11 @@ pub struct ElTerminalT {
     /// `sem:terminal.tgetent-fn` says the terminfo
     /// replacement takes no such buffer and the field can go with it.
     pub t_cap: Vec<u8>,
+    /// The loaded terminfo entry. No C counterpart: the C leaves the entry in
+    /// the termcap library's global state, so nothing had to hold it. We do,
+    /// because `terminal_echotc` looks capabilities up with no preceding
+    /// load and has nowhere else to find them.
+    pub t_entry: Option<TermInfo>,
     /// C: `funckey_t *t_fkey` — the function-key table, `A_K_NKEYS` (7)
     /// entries.
     pub t_fkey: Vec<FunckeyT>,
@@ -157,8 +167,11 @@ pub(crate) fn tgetnum(entry: Option<&TermInfo>, name: &str) -> i32 {
 ///
 /// C: `extern char* tgetstr(char*, char**)`. The second argument is an in/out
 /// cursor into a caller-supplied scratch arena; the port returns an owned
-/// string and the parameter disappears with the arena.
-pub(crate) fn tgetstr(entry: Option<&TermInfo>, name: &str) -> Option<String> {
+/// value and the parameter disappears with the arena.
+///
+/// Bytes, not text: a capability may carry a byte above 0x7f, and `term`
+/// returns them as bytes for that reason.
+pub(crate) fn tgetstr(entry: Option<&TermInfo>, name: &str) -> Option<Vec<u8>> {
     todo!()
 }
 
@@ -171,7 +184,7 @@ pub(crate) fn tgetstr(entry: Option<&TermInfo>, name: &str) -> Option<String> {
 /// static buffer that the next call overwrites; every call site consumes it
 /// immediately, so the port returns an owned string. The expansion must
 /// preserve any `$<...>` padding runs, which `term`'s expander discards.
-pub(crate) fn tgoto(cap: &str, col: i32, row: i32) -> String {
+pub(crate) fn tgoto(cap: &[u8], col: i32, row: i32) -> Vec<u8> {
     todo!()
 }
 
@@ -195,7 +208,7 @@ pub(crate) fn tgoto(cap: &str, col: i32, row: i32) -> String {
 /// The C returns OK/0 and libedit discards it; the i32 stays for now.
 pub(crate) fn tputs(
     out: &mut dyn Write,
-    cap: &str,
+    cap: &[u8],
     affcnt: i32,
     entry: Option<&TermInfo>,
     baud: SpeedT,
