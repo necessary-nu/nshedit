@@ -55,6 +55,16 @@
 //!   that owns it.** `plan/decisions/no-c-ffi.md` bars linking libc, so the
 //!   concrete carrier is a decision for that module's function translation.
 //!
+//! - **A C `(int argc, const wchar_t **argv)` pair → `&[&[u32]]`.** The slice
+//!   carries the count, so the separate `argc` goes away. Used by
+//!   `el_editmode`, `map_bind`, `terminal_settc`, `terminal_telltc`,
+//!   `terminal_echotc`, `tty_stty` and `hist_command` — all of which the C
+//!   reaches through the same `el_set` list-op path, so they share one shape.
+//!   Note the C's own `map_bind` ignores its `argc` and relies on a NULL
+//!   terminator, which is why `sem:map.map-bind-fn` records a read past the
+//!   end when a caller passes a full argument list; the slice form cannot
+//!   express that defect, and the body translation says so where it bites.
+//!
 //! Anything that departs from the C's own shape says so at the field.
 
 // Types have no constructors yet, so almost every one of them is unused.
