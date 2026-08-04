@@ -23,5 +23,18 @@
 //! `docs/errata.md`. A function here that looks wrong is reproducing
 //! something; check its `sem` rule before changing it.
 
+// Exported C symbols keep their C names, which are not Rust's casing.
+#![allow(non_upper_case_globals)]
+// Every function in this crate is a C entry point and its safety contract is
+// its `sem` rule, quoted per function in `docs/spec/port/`. Repeating a
+// boilerplate `# Safety` section on all ~160 of them would say less than the
+// rule already does.
+#![allow(clippy::missing_safety_doc)]
+// Both of these go away as the bodies land: until then every function is
+// `todo!()`, so its parameters are unread, and the private helpers translated
+// from `readline.c`'s `static` functions have no callers yet.
+#![allow(dead_code, unused_variables)]
+
+pub mod eln;
 pub mod histedit;
 pub mod readline;
