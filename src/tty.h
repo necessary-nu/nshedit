@@ -448,12 +448,14 @@
 #define	MD_CHAR	4
 #define	MD_NN	5
 
+// [spec:libedit:def:tty.ttyperm-t-nn-io-md-nn]
 typedef struct {
 	const char	*t_name;
 	unsigned int	 t_setmask;
 	unsigned int	 t_clrmask;
 } ttyperm_t[NN_IO][MD_NN];
 
+// [spec:libedit:def:tty.ttychar-t-nn-io-c-ncc]
 typedef unsigned char ttychar_t[NN_IO][C_NCC];
 
 libedit_private int	tty_init(EditLine *);
@@ -466,6 +468,7 @@ libedit_private int	tty_noquotemode(EditLine *);
 libedit_private void	tty_bind_char(EditLine *, int);
 libedit_private int	tty_get_signal_character(EditLine *, int);
 
+// [spec:libedit:def:tty.el-tty-t]
 typedef struct {
     ttyperm_t t_t;
     ttychar_t t_c;

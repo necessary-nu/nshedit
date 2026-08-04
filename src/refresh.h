@@ -40,6 +40,7 @@
 #ifndef _h_el_refresh
 #define	_h_el_refresh
 
+// [spec:libedit:def:refresh.el-refresh-t]
 typedef struct {
 	coord_t	r_cursor;	/* Refresh cursor position	*/
 	int	r_oldcv;	/* Vertical locations		*/

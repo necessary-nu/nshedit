@@ -95,9 +95,13 @@ static const char hist_cookie[] = "_HiStOrY_V2_\n";
 #endif
 
 
+// [spec:libedit:def:history.history-gfun-t-void-type-hist-event]
 typedef int (*history_gfun_t)(void *, TYPE(HistEvent) *);
+// [spec:libedit:def:history.history-efun-t-void-type-hist-event-const-char]
 typedef int (*history_efun_t)(void *, TYPE(HistEvent) *, const Char *);
+// [spec:libedit:def:history.history-vfun-t-void-type-hist-event]
 typedef void (*history_vfun_t)(void *, TYPE(HistEvent) *);
+// [spec:libedit:def:history.history-sfun-t-void-type-hist-event-const-int]
 typedef int (*history_sfun_t)(void *, TYPE(HistEvent) *, const int);
 
 struct TYPE(history) {
@@ -131,6 +135,7 @@ struct TYPE(history) {
 #define	h_realloc(a, b)	realloc((a), (b))
 #define	h_free(a)	free(a)
 
+// [spec:libedit:def:history.hist-event-private]
 typedef struct {
     int		num;
     Char	*str;
@@ -158,6 +163,7 @@ static int history_prev_string(TYPE(History) *, TYPE(HistEvent) *,
 /*
  * Builtin- history implementation
  */
+// [spec:libedit:def:history.hentry-t]
 typedef struct hentry_t {
 	TYPE(HistEvent) ev;		/* What we return		 */
 	void *data;		/* data				 */
@@ -165,6 +171,7 @@ typedef struct hentry_t {
 	struct hentry_t *prev;	/* Previous entry		 */
 } hentry_t;
 
+// [spec:libedit:def:history.history-t]
 typedef struct history_t {
 	hentry_t list;		/* Fake list header element	*/
 	hentry_t *cursor;	/* Current element in the list	*/
@@ -248,6 +255,8 @@ static const Char *const he_errlist[] = {
 /* history_def_first():
  *	Default function to return the first event in the history.
  */
+// [spec:libedit:def:history.history-def-first-fn]
+// [spec:libedit:sem:history.history-def-first-fn]
 static int
 history_def_first(void *p, TYPE(HistEvent) *ev)
 {
@@ -268,6 +277,8 @@ history_def_first(void *p, TYPE(HistEvent) *ev)
 /* history_def_last():
  *	Default function to return the last event in the history.
  */
+// [spec:libedit:def:history.history-def-last-fn]
+// [spec:libedit:sem:history.history-def-last-fn]
 static int
 history_def_last(void *p, TYPE(HistEvent) *ev)
 {
@@ -288,6 +299,8 @@ history_def_last(void *p, TYPE(HistEvent) *ev)
 /* history_def_next():
  *	Default function to return the next event in the history.
  */
+// [spec:libedit:def:history.history-def-next-fn]
+// [spec:libedit:sem:history.history-def-next-fn]
 static int
 history_def_next(void *p, TYPE(HistEvent) *ev)
 {
@@ -313,6 +326,8 @@ history_def_next(void *p, TYPE(HistEvent) *ev)
 /* history_def_prev():
  *	Default function to return the previous event in the history.
  */
+// [spec:libedit:def:history.history-def-prev-fn]
+// [spec:libedit:sem:history.history-def-prev-fn]
 static int
 history_def_prev(void *p, TYPE(HistEvent) *ev)
 {
@@ -339,6 +354,8 @@ history_def_prev(void *p, TYPE(HistEvent) *ev)
 /* history_def_curr():
  *	Default function to return the current event in the history.
  */
+// [spec:libedit:def:history.history-def-curr-fn]
+// [spec:libedit:sem:history.history-def-curr-fn]
 static int
 history_def_curr(void *p, TYPE(HistEvent) *ev)
 {
@@ -360,6 +377,8 @@ history_def_curr(void *p, TYPE(HistEvent) *ev)
  *	Default function to set the current event in the history to the
  *	given one.
  */
+// [spec:libedit:def:history.history-def-set-fn]
+// [spec:libedit:sem:history.history-def-set-fn]
 static int
 history_def_set(void *p, TYPE(HistEvent) *ev, const int n)
 {
@@ -387,6 +406,8 @@ history_def_set(void *p, TYPE(HistEvent) *ev, const int n)
  *	Default function to set the current event in the history to the
  *	n-th one.
  */
+// [spec:libedit:def:history.history-set-nth-fn]
+// [spec:libedit:sem:history.history-set-nth-fn]
 static int
 history_set_nth(void *p, TYPE(HistEvent) *ev, int n)
 {
@@ -411,6 +432,8 @@ history_set_nth(void *p, TYPE(HistEvent) *ev, int n)
 /* history_def_add():
  *	Append string to element
  */
+// [spec:libedit:def:history.history-def-add-fn]
+// [spec:libedit:sem:history.history-def-add-fn]
 static int
 history_def_add(void *p, TYPE(HistEvent) *ev, const Char *str)
 {
@@ -439,6 +462,8 @@ history_def_add(void *p, TYPE(HistEvent) *ev, const Char *str)
 }
 
 
+// [spec:libedit:def:history.history-deldata-nth-fn]
+// [spec:libedit:sem:history.history-deldata-nth-fn]
 static int
 history_deldata_nth(history_t *h, TYPE(HistEvent) *ev,
     int num, void **data)
@@ -461,6 +486,8 @@ history_deldata_nth(history_t *h, TYPE(HistEvent) *ev,
  *	Delete element hp of the h list
  */
 /* ARGSUSED */
+// [spec:libedit:def:history.history-def-del-fn]
+// [spec:libedit:sem:history.history-def-del-fn]
 static int
 history_def_del(void *p, TYPE(HistEvent) *ev __attribute__((__unused__)),
     const int num)
@@ -479,6 +506,8 @@ history_def_del(void *p, TYPE(HistEvent) *ev __attribute__((__unused__)),
  *	Delete element hp of the h list
  */
 /* ARGSUSED */
+// [spec:libedit:def:history.history-def-delete-fn]
+// [spec:libedit:sem:history.history-def-delete-fn]
 static void
 history_def_delete(history_t *h,
 		   TYPE(HistEvent) *ev __attribute__((__unused__)), hentry_t *hp)
@@ -502,6 +531,8 @@ history_def_delete(history_t *h,
 /* history_def_insert():
  *	Insert element with string str in the h list
  */
+// [spec:libedit:def:history.history-def-insert-fn]
+// [spec:libedit:sem:history.history-def-insert-fn]
 static int
 history_def_insert(history_t *h, TYPE(HistEvent) *ev, const Char *str)
 {
@@ -534,6 +565,8 @@ oomem:
 /* history_def_enter():
  *	Default function to enter an item in the history
  */
+// [spec:libedit:def:history.history-def-enter-fn]
+// [spec:libedit:sem:history.history-def-enter-fn]
 static int
 history_def_enter(void *p, TYPE(HistEvent) *ev, const Char *str)
 {
@@ -561,6 +594,8 @@ history_def_enter(void *p, TYPE(HistEvent) *ev, const Char *str)
  *	Default history initialization function
  */
 /* ARGSUSED */
+// [spec:libedit:def:history.history-def-init-fn]
+// [spec:libedit:sem:history.history-def-init-fn]
 static int
 history_def_init(void **p, TYPE(HistEvent) *ev __attribute__((__unused__)), int n)
 {
@@ -586,6 +621,8 @@ history_def_init(void **p, TYPE(HistEvent) *ev __attribute__((__unused__)), int 
 /* history_def_clear():
  *	Default history cleanup function
  */
+// [spec:libedit:def:history.history-def-clear-fn]
+// [spec:libedit:sem:history.history-def-clear-fn]
 static void
 history_def_clear(void *p, TYPE(HistEvent) *ev)
 {
@@ -606,6 +643,8 @@ history_def_clear(void *p, TYPE(HistEvent) *ev)
 /* history_init():
  *	Initialization function.
  */
+// [spec:libedit:def:history.fun-history-init-fn]
+// [spec:libedit:sem:history.fun-history-init-fn]
 TYPE(History) *
 FUN(history,init)(void)
 {
@@ -637,6 +676,8 @@ FUN(history,init)(void)
 /* history_end():
  *	clean up history;
  */
+// [spec:libedit:def:history.fun-history-end-fn]
+// [spec:libedit:sem:history.fun-history-end-fn]
 void
 FUN(history,end)(TYPE(History) *h)
 {
@@ -653,6 +694,8 @@ FUN(history,end)(TYPE(History) *h)
 /* history_setsize():
  *	Set history number of events
  */
+// [spec:libedit:def:history.history-setsize-fn]
+// [spec:libedit:sem:history.history-setsize-fn]
 static int
 history_setsize(TYPE(History) *h, TYPE(HistEvent) *ev, int num)
 {
@@ -673,6 +716,8 @@ history_setsize(TYPE(History) *h, TYPE(HistEvent) *ev, int num)
 /* history_getsize():
  *      Get number of events currently in history
  */
+// [spec:libedit:def:history.history-getsize-fn]
+// [spec:libedit:sem:history.history-getsize-fn]
 static int
 history_getsize(TYPE(History) *h, TYPE(HistEvent) *ev)
 {
@@ -692,6 +737,8 @@ history_getsize(TYPE(History) *h, TYPE(HistEvent) *ev)
 /* history_setunique():
  *	Set if adjacent equal events should not be entered in history.
  */
+// [spec:libedit:def:history.history-setunique-fn]
+// [spec:libedit:sem:history.history-setunique-fn]
 static int
 history_setunique(TYPE(History) *h, TYPE(HistEvent) *ev, int uni)
 {
@@ -708,6 +755,8 @@ history_setunique(TYPE(History) *h, TYPE(HistEvent) *ev, int uni)
 /* history_getunique():
  *	Get if adjacent equal events should not be entered in history.
  */
+// [spec:libedit:def:history.history-getunique-fn]
+// [spec:libedit:sem:history.history-getunique-fn]
 static int
 history_getunique(TYPE(History) *h, TYPE(HistEvent) *ev)
 {
@@ -723,6 +772,8 @@ history_getunique(TYPE(History) *h, TYPE(HistEvent) *ev)
 /* history_set_fun():
  *	Set history functions
  */
+// [spec:libedit:def:history.history-set-fun-fn]
+// [spec:libedit:sem:history.history-set-fun-fn]
 static int
 history_set_fun(TYPE(History) *h, TYPE(History) *nh)
 {
@@ -770,6 +821,8 @@ history_set_fun(TYPE(History) *h, TYPE(History) *nh)
 /* history_load():
  *	TYPE(History) load function
  */
+// [spec:libedit:def:history.history-load-fn]
+// [spec:libedit:sem:history.history-load-fn]
 static int
 history_load(TYPE(History) *h, const char *fname)
 {
@@ -834,6 +887,8 @@ done:
 /* history_save_fp():
  *	TYPE(History) save function
  */
+// [spec:libedit:def:history.history-save-fp-fn]
+// [spec:libedit:sem:history.history-save-fp-fn]
 static int
 history_save_fp(TYPE(History) *h, size_t nelem, FILE *fp)
 {
@@ -887,6 +942,8 @@ done:
 /* history_save():
  *    History save function
  */
+// [spec:libedit:def:history.history-save-fn]
+// [spec:libedit:sem:history.history-save-fn]
 static int
 history_save(TYPE(History) *h, const char *fname)
 {
@@ -910,6 +967,8 @@ history_save(TYPE(History) *h, const char *fname)
 /* history_prev_event():
  *	Find the previous event, with number given
  */
+// [spec:libedit:def:history.history-prev-event-fn]
+// [spec:libedit:sem:history.history-prev-event-fn]
 static int
 history_prev_event(TYPE(History) *h, TYPE(HistEvent) *ev, int num)
 {
@@ -924,6 +983,8 @@ history_prev_event(TYPE(History) *h, TYPE(HistEvent) *ev, int num)
 }
 
 
+// [spec:libedit:def:history.history-next-evdata-fn]
+// [spec:libedit:sem:history.history-next-evdata-fn]
 static int
 history_next_evdata(TYPE(History) *h, TYPE(HistEvent) *ev, int num, void **d)
 {
@@ -944,6 +1005,8 @@ history_next_evdata(TYPE(History) *h, TYPE(HistEvent) *ev, int num, void **d)
 /* history_next_event():
  *	Find the next event, with number given
  */
+// [spec:libedit:def:history.history-next-event-fn]
+// [spec:libedit:sem:history.history-next-event-fn]
 static int
 history_next_event(TYPE(History) *h, TYPE(HistEvent) *ev, int num)
 {
@@ -961,6 +1024,8 @@ history_next_event(TYPE(History) *h, TYPE(HistEvent) *ev, int num)
 /* history_prev_string():
  *	Find the previous event beginning with string
  */
+// [spec:libedit:def:history.history-prev-string-fn]
+// [spec:libedit:sem:history.history-prev-string-fn]
 static int
 history_prev_string(TYPE(History) *h, TYPE(HistEvent) *ev, const Char *str)
 {
@@ -979,6 +1044,8 @@ history_prev_string(TYPE(History) *h, TYPE(HistEvent) *ev, const Char *str)
 /* history_next_string():
  *	Find the next event beginning with string
  */
+// [spec:libedit:def:history.history-next-string-fn]
+// [spec:libedit:sem:history.history-next-string-fn]
 static int
 history_next_string(TYPE(History) *h, TYPE(HistEvent) *ev, const Char *str)
 {
@@ -997,6 +1064,8 @@ history_next_string(TYPE(History) *h, TYPE(HistEvent) *ev, const Char *str)
 /* history():
  *	User interface to history functions.
  */
+// [spec:libedit:def:history.funw-history-fn]
+// [spec:libedit:sem:history.funw-history-fn]
 int
 FUNW(history)(TYPE(History) *h, TYPE(HistEvent) *ev, int fun, ...)
 {

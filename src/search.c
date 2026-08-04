@@ -67,6 +67,8 @@ __RCSID("$NetBSD: search.c,v 1.53 2025/12/14 18:07:40 christos Exp $");
 /* search_init():
  *	Initialize the search stuff
  */
+// [spec:libedit:def:search.search-init-fn]
+// [spec:libedit:sem:search.search-init-fn]
 libedit_private int
 search_init(EditLine *el)
 {
@@ -88,6 +90,8 @@ search_init(EditLine *el)
 /* search_end():
  *	Initialize the search stuff
  */
+// [spec:libedit:def:search.search-end-fn]
+// [spec:libedit:sem:search.search-end-fn]
 libedit_private void
 search_end(EditLine *el)
 {
@@ -101,6 +105,8 @@ search_end(EditLine *el)
 /* regerror():
  *	Handle regular expression errors
  */
+// [spec:libedit:def:search.regerror-fn]
+// [spec:libedit:sem:search.regerror-fn]
 void
 /*ARGSUSED*/
 regerror(const char *msg)
@@ -112,6 +118,8 @@ regerror(const char *msg)
 /* el_match():
  *	Return if string matches pattern
  */
+// [spec:libedit:def:search.el-match-fn]
+// [spec:libedit:sem:search.el-match-fn]
 libedit_private int
 el_match(const wchar_t *str, const wchar_t *pat)
 {
@@ -159,6 +167,8 @@ el_match(const wchar_t *str, const wchar_t *pat)
 /* c_hmatch():
  *	 return True if the pattern matches the prefix
  */
+// [spec:libedit:def:search.c-hmatch-fn]
+// [spec:libedit:sem:search.c-hmatch-fn]
 libedit_private int
 c_hmatch(EditLine *el, const wchar_t *str)
 {
@@ -174,6 +184,8 @@ c_hmatch(EditLine *el, const wchar_t *str)
 /* c_setpat():
  *	Set the history seatch pattern
  */
+// [spec:libedit:def:search.c-setpat-fn]
+// [spec:libedit:sem:search.c-setpat-fn]
 libedit_private void
 c_setpat(EditLine *el)
 {
@@ -203,6 +215,8 @@ c_setpat(EditLine *el)
 /* ce_inc_search():
  *	Emacs incremental search
  */
+// [spec:libedit:def:search.ce-inc-search-fn]
+// [spec:libedit:sem:search.ce-inc-search-fn]
 libedit_private el_action_t
 ce_inc_search(EditLine *el, int dir)
 {
@@ -454,6 +468,8 @@ ce_inc_search(EditLine *el, int dir)
 /* cv_search():
  *	Vi search.
  */
+// [spec:libedit:def:search.cv-search-fn]
+// [spec:libedit:sem:search.cv-search-fn]
 libedit_private el_action_t
 cv_search(EditLine *el, int dir)
 {
@@ -528,6 +544,8 @@ cv_search(EditLine *el, int dir)
 /* ce_search_line():
  *	Look for a pattern inside a line
  */
+// [spec:libedit:def:search.ce-search-line-fn]
+// [spec:libedit:sem:search.ce-search-line-fn]
 libedit_private el_action_t
 ce_search_line(EditLine *el, int dir)
 {
@@ -570,6 +588,8 @@ ce_search_line(EditLine *el, int dir)
 /* cv_repeat_srch():
  *	Vi repeat search
  */
+// [spec:libedit:def:search.cv-repeat-srch-fn]
+// [spec:libedit:sem:search.cv-repeat-srch-fn]
 libedit_private el_action_t
 cv_repeat_srch(EditLine *el, wint_t c)
 {
@@ -597,6 +617,8 @@ cv_repeat_srch(EditLine *el, wint_t c)
 /* cv_csearch():
  *	Vi character search
  */
+// [spec:libedit:def:search.cv-csearch-fn]
+// [spec:libedit:sem:search.cv-csearch-fn]
 libedit_private el_action_t
 cv_csearch(EditLine *el, int direction, wint_t ch, int count, int tflag)
 {

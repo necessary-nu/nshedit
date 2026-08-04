@@ -40,14 +40,17 @@
 #ifndef _h_el_map
 #define	_h_el_map
 
+// [spec:libedit:def:map.el-func-t-edit-line-wint-t]
 typedef el_action_t (*el_func_t)(EditLine *, wint_t);
 
+// [spec:libedit:def:map.el-bindings-t]
 typedef struct el_bindings_t {	/* for the "bind" shell command */
 	int		 func;		/* function numeric value */
 	const wchar_t	*name;		/* function name for bind command */
 	const wchar_t	*description;	/* description of function */
 } el_bindings_t;
 
+// [spec:libedit:def:map.el-map-t]
 typedef struct el_map_t {
 	el_action_t	*alt;		/* The current alternate key map */
 	el_action_t	*key;		/* The current normal key map	*/

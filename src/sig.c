@@ -68,6 +68,8 @@ static void sig_handler(int);
  *	XXX: we cannot pass any data so we just store the old editline
  *	state in a private variable
  */
+// [spec:libedit:def:sig.sig-handler-fn]
+// [spec:libedit:sem:sig.sig-handler-fn]
 static void
 sig_handler(int signo)
 {
@@ -115,6 +117,8 @@ sig_handler(int signo)
 /* sig_init():
  *	Initialize all signal stuff
  */
+// [spec:libedit:def:sig.sig-init-fn]
+// [spec:libedit:sem:sig.sig-init-fn]
 libedit_private int
 sig_init(EditLine *el)
 {
@@ -147,6 +151,8 @@ sig_init(EditLine *el)
 /* sig_end():
  *	Clear all signal stuff
  */
+// [spec:libedit:def:sig.sig-end-fn]
+// [spec:libedit:sem:sig.sig-end-fn]
 libedit_private void
 sig_end(EditLine *el)
 {
@@ -159,6 +165,8 @@ sig_end(EditLine *el)
 /* sig_set():
  *	set all the signal handlers
  */
+// [spec:libedit:def:sig.sig-set-fn]
+// [spec:libedit:sem:sig.sig-set-fn]
 libedit_private void
 sig_set(EditLine *el)
 {
@@ -186,6 +194,8 @@ sig_set(EditLine *el)
 /* sig_clr():
  *	clear all the signal handlers
  */
+// [spec:libedit:def:sig.sig-clr-fn]
+// [spec:libedit:sem:sig.sig-clr-fn]
 libedit_private void
 sig_clr(EditLine *el)
 {

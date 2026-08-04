@@ -56,6 +56,7 @@
 	_DO(SIGWINCH)
 #define ALLSIGSNO	7
 
+// [spec:libedit:def:sig.el-signal-t]
 typedef struct {
 	struct sigaction sig_action[ALLSIGSNO];
 	sigset_t sig_set;

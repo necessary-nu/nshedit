@@ -73,6 +73,7 @@ __RCSID("$NetBSD: keymacro.c,v 1.25 2025/01/03 00:40:08 rillig Exp $");
  * The Nodes of the el->el_keymacro.map.  The el->el_keymacro.map is a
  * linked list of these node elements
  */
+// [spec:libedit:def:keymacro.keymacro-node-t]
 struct keymacro_node_t {
 	wchar_t		 ch;		/* single character of key	 */
 	int		 type;		/* node type			 */
@@ -101,6 +102,8 @@ static int		 node_enum(EditLine *, keymacro_node_t *, size_t);
 /* keymacro_init():
  *	Initialize the key maps
  */
+// [spec:libedit:def:keymacro.keymacro-init-fn]
+// [spec:libedit:sem:keymacro.keymacro-init-fn]
 libedit_private int
 keymacro_init(EditLine *el)
 {
@@ -117,6 +120,8 @@ keymacro_init(EditLine *el)
 /* keymacro_end():
  *	Free the key maps
  */
+// [spec:libedit:def:keymacro.keymacro-end-fn]
+// [spec:libedit:sem:keymacro.keymacro-end-fn]
 libedit_private void
 keymacro_end(EditLine *el)
 {
@@ -130,6 +135,8 @@ keymacro_end(EditLine *el)
 /* keymacro_map_cmd():
  *	Associate cmd with a key value
  */
+// [spec:libedit:def:keymacro.keymacro-map-cmd-fn]
+// [spec:libedit:sem:keymacro.keymacro-map-cmd-fn]
 libedit_private keymacro_value_t *
 keymacro_map_cmd(EditLine *el, int cmd)
 {
@@ -142,6 +149,8 @@ keymacro_map_cmd(EditLine *el, int cmd)
 /* keymacro_map_str():
  *	Associate str with a key value
  */
+// [spec:libedit:def:keymacro.keymacro-map-str-fn]
+// [spec:libedit:sem:keymacro.keymacro-map-str-fn]
 libedit_private keymacro_value_t *
 keymacro_map_str(EditLine *el, wchar_t *str)
 {
@@ -156,6 +165,8 @@ keymacro_map_str(EditLine *el, wchar_t *str)
  *	Then initializes el->el_keymacro.map with arrow keys
  *	[Always bind the ansi arrow keys?]
  */
+// [spec:libedit:def:keymacro.keymacro-reset-fn]
+// [spec:libedit:sem:keymacro.keymacro-reset-fn]
 libedit_private void
 keymacro_reset(EditLine *el)
 {
@@ -175,6 +186,8 @@ keymacro_reset(EditLine *el)
  *      Returns XK_NOD for end of file or read error.
  *      The last character read is returned in *ch.
  */
+// [spec:libedit:def:keymacro.keymacro-get-fn]
+// [spec:libedit:sem:keymacro.keymacro-get-fn]
 libedit_private int
 keymacro_get(EditLine *el, wchar_t *ch, keymacro_value_t *val)
 {
@@ -189,6 +202,8 @@ keymacro_get(EditLine *el, wchar_t *ch, keymacro_value_t *val)
  *	code is applied to the existing key. Ntype specifies if code is a
  *	command, an out str or a unix command.
  */
+// [spec:libedit:def:keymacro.keymacro-add-fn]
+// [spec:libedit:sem:keymacro.keymacro-add-fn]
 libedit_private void
 keymacro_add(EditLine *el, const wchar_t *key, keymacro_value_t *val,
     int ntype)
@@ -218,6 +233,8 @@ keymacro_add(EditLine *el, const wchar_t *key, keymacro_value_t *val,
 /* keymacro_clear():
  *
  */
+// [spec:libedit:def:keymacro.keymacro-clear-fn]
+// [spec:libedit:sem:keymacro.keymacro-clear-fn]
 libedit_private void
 keymacro_clear(EditLine *el, el_action_t *map, const wchar_t *in)
 {
@@ -236,6 +253,8 @@ keymacro_clear(EditLine *el, el_action_t *map, const wchar_t *in)
  *      Delete the key and all longer keys staring with key, if
  *      they exists.
  */
+// [spec:libedit:def:keymacro.keymacro-delete-fn]
+// [spec:libedit:sem:keymacro.keymacro-delete-fn]
 libedit_private int
 keymacro_delete(EditLine *el, const wchar_t *key)
 {
@@ -257,6 +276,8 @@ keymacro_delete(EditLine *el, const wchar_t *key)
  *	Print the binding associated with key key.
  *	Print entire el->el_keymacro.map if null
  */
+// [spec:libedit:def:keymacro.keymacro-print-fn]
+// [spec:libedit:sem:keymacro.keymacro-print-fn]
 libedit_private void
 keymacro_print(EditLine *el, const wchar_t *key)
 {
@@ -278,6 +299,8 @@ keymacro_print(EditLine *el, const wchar_t *key)
  *	recursively traverses node in tree until match or mismatch is
  *	found.  May read in more characters.
  */
+// [spec:libedit:def:keymacro.node-trav-fn]
+// [spec:libedit:sem:keymacro.node-trav-fn]
 static int
 node_trav(EditLine *el, keymacro_node_t *ptr, wchar_t *ch,
     keymacro_value_t *val)
@@ -313,6 +336,8 @@ node_trav(EditLine *el, keymacro_node_t *ptr, wchar_t *ch,
 /* node__try():
  *	Find a node that matches *str or allocate a new one
  */
+// [spec:libedit:def:keymacro.node-try-fn]
+// [spec:libedit:sem:keymacro.node-try-fn]
 static int
 node__try(EditLine *el, keymacro_node_t *ptr, const wchar_t *str,
     keymacro_value_t *val, int ntype)
@@ -372,6 +397,8 @@ node__try(EditLine *el, keymacro_node_t *ptr, const wchar_t *str,
 /* node__delete():
  *	Delete node that matches str
  */
+// [spec:libedit:def:keymacro.node-delete-fn]
+// [spec:libedit:sem:keymacro.node-delete-fn]
 static int
 node__delete(EditLine *el, keymacro_node_t **inptr, const wchar_t *str)
 {
@@ -420,6 +447,8 @@ node__delete(EditLine *el, keymacro_node_t **inptr, const wchar_t *str)
 /* node__put():
  *	Puts a tree of nodes onto free list using free(3).
  */
+// [spec:libedit:def:keymacro.node-put-fn]
+// [spec:libedit:sem:keymacro.node-put-fn]
 static void
 node__put(EditLine *el, keymacro_node_t *ptr)
 {
@@ -450,6 +479,8 @@ node__put(EditLine *el, keymacro_node_t *ptr)
 /* node__get():
  *	Returns pointer to a keymacro_node_t for ch.
  */
+// [spec:libedit:def:keymacro.node-get-fn]
+// [spec:libedit:sem:keymacro.node-get-fn]
 static keymacro_node_t *
 node__get(wint_t ch)
 {
@@ -466,6 +497,8 @@ node__get(wint_t ch)
 	return ptr;
 }
 
+// [spec:libedit:def:keymacro.node-free-fn]
+// [spec:libedit:sem:keymacro.node-free-fn]
 static void
 node__free(keymacro_node_t *k)
 {
@@ -480,6 +513,8 @@ node__free(keymacro_node_t *k)
  *	look for the str starting at node ptr.
  *	Print if last node
  */
+// [spec:libedit:def:keymacro.node-lookup-fn]
+// [spec:libedit:sem:keymacro.node-lookup-fn]
 static int
 node_lookup(EditLine *el, const wchar_t *str, keymacro_node_t *ptr,
     size_t cnt)
@@ -533,6 +568,8 @@ node_lookup(EditLine *el, const wchar_t *str, keymacro_node_t *ptr,
 /* node_enum():
  *	Traverse the node printing the characters it is bound in buffer
  */
+// [spec:libedit:def:keymacro.node-enum-fn]
+// [spec:libedit:sem:keymacro.node-enum-fn]
 static int
 node_enum(EditLine *el, keymacro_node_t *ptr, size_t cnt)
 {
@@ -576,6 +613,8 @@ node_enum(EditLine *el, keymacro_node_t *ptr, size_t cnt)
  *	Print the specified key and its associated
  *	function specified by val
  */
+// [spec:libedit:def:keymacro.keymacro-kprint-fn]
+// [spec:libedit:sem:keymacro.keymacro-kprint-fn]
 libedit_private void
 keymacro_kprint(EditLine *el, const wchar_t *key, keymacro_value_t *val,
     int ntype)
@@ -626,6 +665,8 @@ keymacro_kprint(EditLine *el, const wchar_t *key, keymacro_value_t *val,
 /* keymacro__decode_str():
  *	Make a printable version of the ey
  */
+// [spec:libedit:def:keymacro.keymacro-decode-str-fn]
+// [spec:libedit:sem:keymacro.keymacro-decode-str-fn]
 libedit_private size_t
 keymacro__decode_str(const wchar_t *str, char *buf, size_t len,
     const char *sep)

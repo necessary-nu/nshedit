@@ -47,6 +47,8 @@ __RCSID("$NetBSD: chartype.c,v 1.37 2023/08/10 20:38:00 mrg Exp $");
 static int ct_conv_cbuff_resize(ct_buffer_t *, size_t);
 static int ct_conv_wbuff_resize(ct_buffer_t *, size_t);
 
+// [spec:libedit:def:chartype.ct-conv-cbuff-resize-fn]
+// [spec:libedit:sem:chartype.ct-conv-cbuff-resize-fn]
 static int
 ct_conv_cbuff_resize(ct_buffer_t *conv, size_t csize)
 {
@@ -68,6 +70,8 @@ ct_conv_cbuff_resize(ct_buffer_t *conv, size_t csize)
 	return 0;
 }
 
+// [spec:libedit:def:chartype.ct-conv-wbuff-resize-fn]
+// [spec:libedit:sem:chartype.ct-conv-wbuff-resize-fn]
 static int
 ct_conv_wbuff_resize(ct_buffer_t *conv, size_t wsize)
 {
@@ -90,6 +94,8 @@ ct_conv_wbuff_resize(ct_buffer_t *conv, size_t wsize)
 }
 
 
+// [spec:libedit:def:chartype.ct-encode-string-fn]
+// [spec:libedit:sem:chartype.ct-encode-string-fn]
 char *
 ct_encode_string(const wchar_t *s, ct_buffer_t *conv)
 {
@@ -120,6 +126,8 @@ ct_encode_string(const wchar_t *s, ct_buffer_t *conv)
 	return conv->cbuff;
 }
 
+// [spec:libedit:def:chartype.ct-decode-string-fn]
+// [spec:libedit:sem:chartype.ct-decode-string-fn]
 wchar_t *
 ct_decode_string(const char *s, ct_buffer_t *conv)
 {
@@ -141,6 +149,8 @@ ct_decode_string(const char *s, ct_buffer_t *conv)
 }
 
 
+// [spec:libedit:def:chartype.ct-decode-argv-fn]
+// [spec:libedit:sem:chartype.ct-decode-argv-fn]
 libedit_private wchar_t **
 ct_decode_argv(int argc, const char *argv[], ct_buffer_t *conv)
 {
@@ -184,6 +194,8 @@ ct_decode_argv(int argc, const char *argv[], ct_buffer_t *conv)
 }
 
 
+// [spec:libedit:def:chartype.ct-enc-width-fn]
+// [spec:libedit:sem:chartype.ct-enc-width-fn]
 libedit_private size_t
 ct_enc_width(wchar_t c)
 {
@@ -197,6 +209,8 @@ ct_enc_width(wchar_t c)
 	return size;
 }
 
+// [spec:libedit:def:chartype.ct-encode-char-fn]
+// [spec:libedit:sem:chartype.ct-encode-char-fn]
 libedit_private ssize_t
 ct_encode_char(char *dst, size_t len, wchar_t c)
 {
@@ -212,6 +226,8 @@ ct_encode_char(char *dst, size_t len, wchar_t c)
 	return l;
 }
 
+// [spec:libedit:def:chartype.ct-visual-string-fn]
+// [spec:libedit:sem:chartype.ct-visual-string-fn]
 libedit_private const wchar_t *
 ct_visual_string(const wchar_t *s, ct_buffer_t *conv)
 {
@@ -255,6 +271,8 @@ ct_visual_string(const wchar_t *s, ct_buffer_t *conv)
 
 
 
+// [spec:libedit:def:chartype.ct-visual-width-fn]
+// [spec:libedit:sem:chartype.ct-visual-width-fn]
 libedit_private int
 ct_visual_width(wchar_t c)
 {
@@ -279,6 +297,8 @@ ct_visual_width(wchar_t c)
 }
 
 
+// [spec:libedit:def:chartype.ct-visual-char-fn]
+// [spec:libedit:sem:chartype.ct-visual-char-fn]
 libedit_private ssize_t
 ct_visual_char(wchar_t *dst, size_t len, wchar_t c)
 {
@@ -326,6 +346,8 @@ ct_visual_char(wchar_t *dst, size_t len, wchar_t c)
 
 
 
+// [spec:libedit:def:chartype.ct-chr-class-fn]
+// [spec:libedit:sem:chartype.ct-chr-class-fn]
 libedit_private int
 ct_chr_class(wchar_t c)
 {

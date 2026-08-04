@@ -54,6 +54,8 @@ __RCSID("$NetBSD: emacs.c,v 1.39 2025/12/14 18:07:40 christos Exp $");
  *	Delete character under cursor or list completions if at end of line
  *	[^D]
  */
+// [spec:libedit:def:emacs.em-delete-or-list-fn]
+// [spec:libedit:sem:emacs.em-delete-or-list-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_delete_or_list(EditLine *el, wint_t c)
@@ -90,6 +92,8 @@ em_delete_or_list(EditLine *el, wint_t c)
  *	Cut from cursor to end of current word
  *	[M-d]
  */
+// [spec:libedit:def:emacs.em-delete-next-word-fn]
+// [spec:libedit:sem:emacs.em-delete-next-word-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_delete_next_word(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -119,6 +123,8 @@ em_delete_next_word(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Paste cut buffer at cursor position
  *	[^Y]
  */
+// [spec:libedit:def:emacs.em-yank-fn]
+// [spec:libedit:sem:emacs.em-yank-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_yank(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -155,6 +161,8 @@ em_yank(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Cut the entire line and save in cut buffer
  *	[^U]
  */
+// [spec:libedit:def:emacs.em-kill-line-fn]
+// [spec:libedit:sem:emacs.em-kill-line-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_kill_line(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -177,6 +185,8 @@ em_kill_line(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Cut area between mark and cursor and save in cut buffer
  *	[^W]
  */
+// [spec:libedit:def:emacs.em-kill-region-fn]
+// [spec:libedit:sem:emacs.em-kill-region-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_kill_region(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -210,6 +220,8 @@ em_kill_region(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Copy area between mark and cursor to cut buffer
  *	[M-W]
  */
+// [spec:libedit:def:emacs.em-copy-region-fn]
+// [spec:libedit:sem:emacs.em-copy-region-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_copy_region(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -240,6 +252,8 @@ em_copy_region(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Exchange the two characters before the cursor
  *	Gosling emacs transpose chars [^T]
  */
+// [spec:libedit:def:emacs.em-gosmacs-transpose-fn]
+// [spec:libedit:sem:emacs.em-gosmacs-transpose-fn]
 libedit_private el_action_t
 em_gosmacs_transpose(EditLine *el, wint_t c)
 {
@@ -259,6 +273,8 @@ em_gosmacs_transpose(EditLine *el, wint_t c)
  *	Move next to end of current word
  *	[M-f]
  */
+// [spec:libedit:def:emacs.em-next-word-fn]
+// [spec:libedit:sem:emacs.em-next-word-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_next_word(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -284,6 +300,8 @@ em_next_word(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Uppercase the characters from cursor to end of current word
  *	[M-u]
  */
+// [spec:libedit:def:emacs.em-upper-case-fn]
+// [spec:libedit:sem:emacs.em-upper-case-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_upper_case(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -308,6 +326,8 @@ em_upper_case(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Capitalize the characters from cursor to end of current word
  *	[M-c]
  */
+// [spec:libedit:def:emacs.em-capitol-case-fn]
+// [spec:libedit:sem:emacs.em-capitol-case-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_capitol_case(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -340,6 +360,8 @@ em_capitol_case(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Lowercase the characters from cursor to end of current word
  *	[M-l]
  */
+// [spec:libedit:def:emacs.em-lower-case-fn]
+// [spec:libedit:sem:emacs.em-lower-case-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_lower_case(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -364,6 +386,8 @@ em_lower_case(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Set the mark at cursor
  *	[^@]
  */
+// [spec:libedit:def:emacs.em-set-mark-fn]
+// [spec:libedit:sem:emacs.em-set-mark-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_set_mark(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -378,6 +402,8 @@ em_set_mark(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Exchange the cursor and mark
  *	[^X^X]
  */
+// [spec:libedit:def:emacs.em-exchange-mark-fn]
+// [spec:libedit:sem:emacs.em-exchange-mark-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_exchange_mark(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -395,6 +421,8 @@ em_exchange_mark(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Universal argument (argument times 4)
  *	[^U]
  */
+// [spec:libedit:def:emacs.em-universal-argument-fn]
+// [spec:libedit:sem:emacs.em-universal-argument-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_universal_argument(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -412,6 +440,8 @@ em_universal_argument(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Add 8th bit to next character typed
  *	[<ESC>]
  */
+// [spec:libedit:def:emacs.em-meta-next-fn]
+// [spec:libedit:sem:emacs.em-meta-next-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_meta_next(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -425,6 +455,8 @@ em_meta_next(EditLine *el, wint_t c __attribute__((__unused__)))
 /* em_toggle_overwrite():
  *	Switch from insert to overwrite mode or vice versa
  */
+// [spec:libedit:def:emacs.em-toggle-overwrite-fn]
+// [spec:libedit:sem:emacs.em-toggle-overwrite-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_toggle_overwrite(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -439,6 +471,8 @@ em_toggle_overwrite(EditLine *el, wint_t c __attribute__((__unused__)))
 /* em_copy_prev_word():
  *	Copy current word to cursor
  */
+// [spec:libedit:def:emacs.em-copy-prev-word-fn]
+// [spec:libedit:sem:emacs.em-copy-prev-word-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_copy_prev_word(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -466,6 +500,8 @@ em_copy_prev_word(EditLine *el, wint_t c __attribute__((__unused__)))
 /* em_inc_search_next():
  *	Emacs incremental next search
  */
+// [spec:libedit:def:emacs.em-inc-search-next-fn]
+// [spec:libedit:sem:emacs.em-inc-search-next-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_inc_search_next(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -479,6 +515,8 @@ em_inc_search_next(EditLine *el, wint_t c __attribute__((__unused__)))
 /* em_inc_search_prev():
  *	Emacs incremental reverse search
  */
+// [spec:libedit:def:emacs.em-inc-search-prev-fn]
+// [spec:libedit:sem:emacs.em-inc-search-prev-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_inc_search_prev(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -493,6 +531,8 @@ em_inc_search_prev(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Delete the character to the left of the cursor
  *	[^?]
  */
+// [spec:libedit:def:emacs.em-delete-prev-char-fn]
+// [spec:libedit:sem:emacs.em-delete-prev-char-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 em_delete_prev_char(EditLine *el, wint_t c __attribute__((__unused__)))

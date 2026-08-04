@@ -69,11 +69,23 @@ __RCSID("$NetBSD: terminal.c,v 1.47 2025/12/16 02:40:48 kre Exp $");
 #endif
 
 #if defined(__sun)
+// [spec:libedit:def:terminal.tgetent-fn]
+// [spec:libedit:sem:terminal.tgetent-fn]
 extern int tgetent(char *, const char *);
+// [spec:libedit:def:terminal.tgetflag-fn]
+// [spec:libedit:sem:terminal.tgetflag-fn]
 extern int tgetflag(char *);
+// [spec:libedit:def:terminal.tgetnum-fn]
+// [spec:libedit:sem:terminal.tgetnum-fn]
 extern int tgetnum(char *);
+// [spec:libedit:def:terminal.tputs-fn]
+// [spec:libedit:sem:terminal.tputs-fn]
 extern int tputs(const char *, int, int (*)(int));
+// [spec:libedit:def:terminal.tgoto-fn]
+// [spec:libedit:sem:terminal.tgoto-fn]
 extern char* tgoto(const char*, int, int);
+// [spec:libedit:def:terminal.tgetstr-fn]
+// [spec:libedit:sem:terminal.tgetstr-fn]
 extern char* tgetstr(char*, char**);
 #endif
 
@@ -98,6 +110,7 @@ extern char* tgetstr(char*, char**);
 #define	Str(a)		el->el_terminal.t_str[a]
 #define	Val(a)		el->el_terminal.t_val[a]
 
+// [spec:libedit:def:terminal.termcapstr]
 static const struct termcapstr {
 	const char *name;
 	const char *long_name;
@@ -184,6 +197,7 @@ static const struct termcapstr {
 	{ NULL, NULL }
 };
 
+// [spec:libedit:def:terminal.termcapval]
 static const struct termcapval {
 	const char *name;
 	const char *long_name;
@@ -229,6 +243,8 @@ static FILE *terminal_outfile = NULL;
 /* terminal_setflags():
  *	Set the terminal capability flags
  */
+// [spec:libedit:def:terminal.terminal-setflags-fn]
+// [spec:libedit:sem:terminal.terminal-setflags-fn]
 static void
 terminal_setflags(EditLine *el)
 {
@@ -274,6 +290,8 @@ terminal_setflags(EditLine *el)
 /* terminal_init():
  *	Initialize the terminal stuff
  */
+// [spec:libedit:def:terminal.terminal-init-fn]
+// [spec:libedit:sem:terminal.terminal-init-fn]
 libedit_private int
 terminal_init(EditLine *el)
 {
@@ -310,6 +328,8 @@ out:
 /* terminal_end():
  *	Clean up the terminal stuff
  */
+// [spec:libedit:def:terminal.terminal-end-fn]
+// [spec:libedit:sem:terminal.terminal-end-fn]
 libedit_private void
 terminal_end(EditLine *el)
 {
@@ -332,6 +352,8 @@ terminal_end(EditLine *el)
 /* terminal_alloc():
  *	Maintain a string pool for termcap strings
  */
+// [spec:libedit:def:terminal.terminal-alloc-fn]
+// [spec:libedit:sem:terminal.terminal-alloc-fn]
 static void
 terminal_alloc(EditLine *el, const struct termcapstr *t, const char *cap)
 {
@@ -398,6 +420,8 @@ terminal_alloc(EditLine *el, const struct termcapstr *t, const char *cap)
 /* terminal_rebuffer_display():
  *	Rebuffer the display after the screen changed size
  */
+// [spec:libedit:def:terminal.terminal-rebuffer-display-fn]
+// [spec:libedit:sem:terminal.terminal-rebuffer-display-fn]
 static int
 terminal_rebuffer_display(EditLine *el)
 {
@@ -413,6 +437,8 @@ terminal_rebuffer_display(EditLine *el)
 	return 0;
 }
 
+// [spec:libedit:def:terminal.terminal-alloc-buffer-fn]
+// [spec:libedit:sem:terminal.terminal-alloc-buffer-fn]
 static wint_t **
 terminal_alloc_buffer(EditLine *el)
 {
@@ -436,6 +462,8 @@ terminal_alloc_buffer(EditLine *el)
 	return b;
 }
 
+// [spec:libedit:def:terminal.terminal-free-buffer-fn]
+// [spec:libedit:sem:terminal.terminal-free-buffer-fn]
 static void
 terminal_free_buffer(wint_t ***bp)
 {
@@ -456,6 +484,8 @@ terminal_free_buffer(wint_t ***bp)
 /* terminal_alloc_display():
  *	Allocate a new display.
  */
+// [spec:libedit:def:terminal.terminal-alloc-display-fn]
+// [spec:libedit:sem:terminal.terminal-alloc-display-fn]
 static int
 terminal_alloc_display(EditLine *el)
 {
@@ -475,6 +505,8 @@ done:
 /* terminal_free_display():
  *	Free the display buffers
  */
+// [spec:libedit:def:terminal.terminal-free-display-fn]
+// [spec:libedit:sem:terminal.terminal-free-display-fn]
 static void
 terminal_free_display(EditLine *el)
 {
@@ -487,6 +519,8 @@ terminal_free_display(EditLine *el)
  *	move to line <where> (first line == 0)
  *	as efficiently as possible
  */
+// [spec:libedit:def:terminal.terminal-move-to-line-fn]
+// [spec:libedit:sem:terminal.terminal-move-to-line-fn]
 libedit_private void
 terminal_move_to_line(EditLine *el, int where)
 {
@@ -527,6 +561,8 @@ terminal_move_to_line(EditLine *el, int where)
 /* terminal_move_to_char():
  *	Move to the character position specified
  */
+// [spec:libedit:def:terminal.terminal-move-to-char-fn]
+// [spec:libedit:sem:terminal.terminal-move-to-char-fn]
 libedit_private void
 terminal_move_to_char(EditLine *el, int where)
 {
@@ -623,6 +659,8 @@ mc_again:
  *	Overstrike num characters
  *	Assumes MB_FILL_CHARs are present to keep the column count correct
  */
+// [spec:libedit:def:terminal.terminal-overwrite-fn]
+// [spec:libedit:sem:terminal.terminal-overwrite-fn]
 libedit_private void
 terminal_overwrite(EditLine *el, const wchar_t *cp, size_t n)
 {
@@ -672,6 +710,8 @@ terminal_overwrite(EditLine *el, const wchar_t *cp, size_t n)
 /* terminal_deletechars():
  *	Delete num characters
  */
+// [spec:libedit:def:terminal.terminal-deletechars-fn]
+// [spec:libedit:sem:terminal.terminal-deletechars-fn]
 libedit_private void
 terminal_deletechars(EditLine *el, int num)
 {
@@ -714,6 +754,8 @@ terminal_deletechars(EditLine *el, int num)
  *	characters in the line
  *      Assumes MB_FILL_CHARs are present to keep column count correct
  */
+// [spec:libedit:def:terminal.terminal-insertwrite-fn]
+// [spec:libedit:sem:terminal.terminal-insertwrite-fn]
 libedit_private void
 terminal_insertwrite(EditLine *el, wchar_t *cp, int num)
 {
@@ -773,6 +815,8 @@ terminal_insertwrite(EditLine *el, wchar_t *cp, int num)
 /* terminal_clear_EOL():
  *	clear to end of line.  There are num characters to clear
  */
+// [spec:libedit:def:terminal.terminal-clear-eol-fn]
+// [spec:libedit:sem:terminal.terminal-clear-eol-fn]
 libedit_private void
 terminal_clear_EOL(EditLine *el, int num)
 {
@@ -791,6 +835,8 @@ terminal_clear_EOL(EditLine *el, int num)
 /* terminal_clear_screen():
  *	Clear the screen
  */
+// [spec:libedit:def:terminal.terminal-clear-screen-fn]
+// [spec:libedit:sem:terminal.terminal-clear-screen-fn]
 libedit_private void
 terminal_clear_screen(EditLine *el)
 {				/* clear the whole screen and home */
@@ -812,6 +858,8 @@ terminal_clear_screen(EditLine *el)
 /* terminal_beep():
  *	Beep the way the terminal wants us
  */
+// [spec:libedit:def:terminal.terminal-beep-fn]
+// [spec:libedit:sem:terminal.terminal-beep-fn]
 libedit_private void
 terminal_beep(EditLine *el)
 {
@@ -823,6 +871,8 @@ terminal_beep(EditLine *el)
 }
 
 
+// [spec:libedit:def:terminal.terminal-get-fn]
+// [spec:libedit:sem:terminal.terminal-get-fn]
 libedit_private void
 terminal_get(EditLine *el, const char **term)
 {
@@ -833,6 +883,8 @@ terminal_get(EditLine *el, const char **term)
 /* terminal_set():
  *	Read in the terminal capabilities from the requested terminal
  */
+// [spec:libedit:def:terminal.terminal-set-fn]
+// [spec:libedit:sem:terminal.terminal-set-fn]
 libedit_private int
 terminal_set(EditLine *el, const char *term)
 {
@@ -922,6 +974,8 @@ terminal_set(EditLine *el, const char *term)
  *	Return the new window size in lines and cols, and
  *	true if the size was changed.
  */
+// [spec:libedit:def:terminal.terminal-get-size-fn]
+// [spec:libedit:sem:terminal.terminal-get-size-fn]
 libedit_private int
 terminal_get_size(EditLine *el, int *lins, int *cols)
 {
@@ -958,6 +1012,8 @@ terminal_get_size(EditLine *el, int *lins, int *cols)
 /* terminal_change_size():
  *	Change the size of the terminal
  */
+// [spec:libedit:def:terminal.terminal-change-size-fn]
+// [spec:libedit:sem:terminal.terminal-change-size-fn]
 libedit_private int
 terminal_change_size(EditLine *el, int lins, int cols)
 {
@@ -980,6 +1036,8 @@ terminal_change_size(EditLine *el, int lins, int cols)
 /* terminal_init_arrow():
  *	Initialize the arrow key bindings from termcap
  */
+// [spec:libedit:def:terminal.terminal-init-arrow-fn]
+// [spec:libedit:sem:terminal.terminal-init-arrow-fn]
 static void
 terminal_init_arrow(EditLine *el)
 {
@@ -1025,6 +1083,8 @@ terminal_init_arrow(EditLine *el)
 /* terminal_reset_arrow():
  *	Reset arrow key bindings
  */
+// [spec:libedit:def:terminal.terminal-reset-arrow-fn]
+// [spec:libedit:sem:terminal.terminal-reset-arrow-fn]
 static void
 terminal_reset_arrow(EditLine *el)
 {
@@ -1075,6 +1135,8 @@ terminal_reset_arrow(EditLine *el)
 /* terminal_set_arrow():
  *	Set an arrow key binding
  */
+// [spec:libedit:def:terminal.terminal-set-arrow-fn]
+// [spec:libedit:sem:terminal.terminal-set-arrow-fn]
 libedit_private int
 terminal_set_arrow(EditLine *el, const wchar_t *name, keymacro_value_t *fun,
     int type)
@@ -1095,6 +1157,8 @@ terminal_set_arrow(EditLine *el, const wchar_t *name, keymacro_value_t *fun,
 /* terminal_clear_arrow():
  *	Clear an arrow key binding
  */
+// [spec:libedit:def:terminal.terminal-clear-arrow-fn]
+// [spec:libedit:sem:terminal.terminal-clear-arrow-fn]
 libedit_private int
 terminal_clear_arrow(EditLine *el, const wchar_t *name)
 {
@@ -1113,6 +1177,8 @@ terminal_clear_arrow(EditLine *el, const wchar_t *name)
 /* terminal_print_arrow():
  *	Print the arrow key bindings
  */
+// [spec:libedit:def:terminal.terminal-print-arrow-fn]
+// [spec:libedit:sem:terminal.terminal-print-arrow-fn]
 libedit_private void
 terminal_print_arrow(EditLine *el, const wchar_t *name)
 {
@@ -1130,6 +1196,8 @@ terminal_print_arrow(EditLine *el, const wchar_t *name)
 /* terminal_bind_arrow():
  *	Bind the arrow keys
  */
+// [spec:libedit:def:terminal.terminal-bind-arrow-fn]
+// [spec:libedit:sem:terminal.terminal-bind-arrow-fn]
 libedit_private void
 terminal_bind_arrow(EditLine *el)
 {
@@ -1203,6 +1271,8 @@ terminal_putc(int c)
 	return fputc(c, terminal_outfile);
 }
 
+// [spec:libedit:def:terminal.terminal-tputs-fn]
+// [spec:libedit:sem:terminal.terminal-tputs-fn]
 static void
 terminal_tputs(EditLine *el, const char *cap, int affcnt)
 {
@@ -1219,6 +1289,8 @@ terminal_tputs(EditLine *el, const char *cap, int affcnt)
 /* terminal__putc():
  *	Add a character
  */
+// [spec:libedit:def:terminal.terminal-putc-fn]
+// [spec:libedit:sem:terminal.terminal-putc-fn]
 libedit_private int
 terminal__putc(EditLine *el, wint_t c)
 {
@@ -1238,6 +1310,8 @@ terminal__putc(EditLine *el, wint_t c)
 /* terminal__flush():
  *	Flush output
  */
+// [spec:libedit:def:terminal.terminal-flush-fn]
+// [spec:libedit:sem:terminal.terminal-flush-fn]
 libedit_private void
 terminal__flush(EditLine *el)
 {
@@ -1248,6 +1322,8 @@ terminal__flush(EditLine *el)
 /* terminal_writec():
  *	Write the given character out, in a human readable form
  */
+// [spec:libedit:def:terminal.terminal-writec-fn]
+// [spec:libedit:sem:terminal.terminal-writec-fn]
 libedit_private void
 terminal_writec(EditLine *el, wint_t c)
 {
@@ -1264,6 +1340,8 @@ terminal_writec(EditLine *el, wint_t c)
 /* terminal_telltc():
  *	Print the current termcap characteristics
  */
+// [spec:libedit:def:terminal.terminal-telltc-fn]
+// [spec:libedit:sem:terminal.terminal-telltc-fn]
 libedit_private int
 /*ARGSUSED*/
 terminal_telltc(EditLine *el, int argc __attribute__((__unused__)),
@@ -1306,6 +1384,8 @@ terminal_telltc(EditLine *el, int argc __attribute__((__unused__)),
 /* terminal_settc():
  *	Change the current terminal characteristics
  */
+// [spec:libedit:def:terminal.terminal-settc-fn]
+// [spec:libedit:sem:terminal.terminal-settc-fn]
 libedit_private int
 /*ARGSUSED*/
 terminal_settc(EditLine *el, int argc __attribute__((__unused__)),
@@ -1393,6 +1473,8 @@ terminal_settc(EditLine *el, int argc __attribute__((__unused__)),
 /* terminal_gettc():
  *	Get the current terminal characteristics
  */
+// [spec:libedit:def:terminal.terminal-gettc-fn]
+// [spec:libedit:sem:terminal.terminal-gettc-fn]
 libedit_private int
 /*ARGSUSED*/
 terminal_gettc(EditLine *el, int argc __attribute__((__unused__)), char **argv)
@@ -1447,6 +1529,8 @@ terminal_gettc(EditLine *el, int argc __attribute__((__unused__)), char **argv)
 /* terminal_echotc():
  *	Print the termcap string out with variable substitution
  */
+// [spec:libedit:def:terminal.terminal-echotc-fn]
+// [spec:libedit:sem:terminal.terminal-echotc-fn]
 libedit_private int
 /*ARGSUSED*/
 terminal_echotc(EditLine *el, int argc __attribute__((__unused__)),

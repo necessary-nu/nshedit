@@ -63,6 +63,8 @@ static el_action_t	cv_paste(EditLine *, wint_t);
 /* cv_action():
  *	Handle vi actions.
  */
+// [spec:libedit:def:vi.cv-action-fn]
+// [spec:libedit:sem:vi.cv-action-fn]
 static el_action_t
 cv_action(EditLine *el, wint_t c)
 {
@@ -95,6 +97,8 @@ cv_action(EditLine *el, wint_t c)
 /* cv_paste():
  *	Paste previous deletion before or after the cursor
  */
+// [spec:libedit:def:vi.cv-paste-fn]
+// [spec:libedit:sem:vi.cv-paste-fn]
 static el_action_t
 cv_paste(EditLine *el, wint_t c)
 {
@@ -127,6 +131,8 @@ cv_paste(EditLine *el, wint_t c)
  *	Vi paste previous deletion to the right of the cursor
  *	[p]
  */
+// [spec:libedit:def:vi.vi-paste-next-fn]
+// [spec:libedit:sem:vi.vi-paste-next-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_paste_next(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -140,6 +146,8 @@ vi_paste_next(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi paste previous deletion to the left of the cursor
  *	[P]
  */
+// [spec:libedit:def:vi.vi-paste-prev-fn]
+// [spec:libedit:sem:vi.vi-paste-prev-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_paste_prev(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -153,6 +161,8 @@ vi_paste_prev(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi move to the previous space delimited word
  *	[B]
  */
+// [spec:libedit:def:vi.vi-prev-big-word-fn]
+// [spec:libedit:sem:vi.vi-prev-big-word-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_prev_big_word(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -178,6 +188,8 @@ vi_prev_big_word(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi move to the previous word
  *	[b]
  */
+// [spec:libedit:def:vi.vi-prev-word-fn]
+// [spec:libedit:sem:vi.vi-prev-word-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_prev_word(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -203,6 +215,8 @@ vi_prev_word(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi move to the next space delimited word
  *	[W]
  */
+// [spec:libedit:def:vi.vi-next-big-word-fn]
+// [spec:libedit:sem:vi.vi-next-big-word-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_next_big_word(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -227,6 +241,8 @@ vi_next_big_word(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi move to the next word
  *	[w]
  */
+// [spec:libedit:def:vi.vi-next-word-fn]
+// [spec:libedit:sem:vi.vi-next-word-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_next_word(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -251,6 +267,8 @@ vi_next_word(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi change case of character under the cursor and advance one character
  *	[~]
  */
+// [spec:libedit:def:vi.vi-change-case-fn]
+// [spec:libedit:sem:vi.vi-change-case-fn]
 libedit_private el_action_t
 vi_change_case(EditLine *el, wint_t c)
 {
@@ -282,6 +300,8 @@ vi_change_case(EditLine *el, wint_t c)
  *	Vi change prefix command
  *	[c]
  */
+// [spec:libedit:def:vi.vi-change-meta-fn]
+// [spec:libedit:sem:vi.vi-change-meta-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_change_meta(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -299,6 +319,8 @@ vi_change_meta(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi enter insert mode at the beginning of line
  *	[I]
  */
+// [spec:libedit:def:vi.vi-insert-at-bol-fn]
+// [spec:libedit:sem:vi.vi-insert-at-bol-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_insert_at_bol(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -315,6 +337,8 @@ vi_insert_at_bol(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi replace character under the cursor with the next character typed
  *	[r]
  */
+// [spec:libedit:def:vi.vi-replace-char-fn]
+// [spec:libedit:sem:vi.vi-replace-char-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_replace_char(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -334,6 +358,8 @@ vi_replace_char(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi enter replace mode
  *	[R]
  */
+// [spec:libedit:def:vi.vi-replace-mode-fn]
+// [spec:libedit:sem:vi.vi-replace-mode-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_replace_mode(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -350,6 +376,8 @@ vi_replace_mode(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi replace character under the cursor and enter insert mode
  *	[s]
  */
+// [spec:libedit:def:vi.vi-substitute-char-fn]
+// [spec:libedit:sem:vi.vi-substitute-char-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_substitute_char(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -365,6 +393,8 @@ vi_substitute_char(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi substitute entire line
  *	[S]
  */
+// [spec:libedit:def:vi.vi-substitute-line-fn]
+// [spec:libedit:sem:vi.vi-substitute-line-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_substitute_line(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -383,6 +413,8 @@ vi_substitute_line(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi change to end of line
  *	[C]
  */
+// [spec:libedit:def:vi.vi-change-to-eol-fn]
+// [spec:libedit:sem:vi.vi-change-to-eol-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_change_to_eol(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -401,6 +433,8 @@ vi_change_to_eol(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi enter insert mode
  *	[i]
  */
+// [spec:libedit:def:vi.vi-insert-fn]
+// [spec:libedit:sem:vi.vi-insert-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_insert(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -416,6 +450,8 @@ vi_insert(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi enter insert mode after the cursor
  *	[a]
  */
+// [spec:libedit:def:vi.vi-add-fn]
+// [spec:libedit:sem:vi.vi-add-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_add(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -441,6 +477,8 @@ vi_add(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi enter insert mode at end of line
  *	[A]
  */
+// [spec:libedit:def:vi.vi-add-at-eol-fn]
+// [spec:libedit:sem:vi.vi-add-at-eol-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_add_at_eol(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -457,6 +495,8 @@ vi_add_at_eol(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi delete prefix command
  *	[d]
  */
+// [spec:libedit:def:vi.vi-delete-meta-fn]
+// [spec:libedit:sem:vi.vi-delete-meta-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_delete_meta(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -470,6 +510,8 @@ vi_delete_meta(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi move to the end of the current space delimited word
  *	[E]
  */
+// [spec:libedit:def:vi.vi-end-big-word-fn]
+// [spec:libedit:sem:vi.vi-end-big-word-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_end_big_word(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -494,6 +536,8 @@ vi_end_big_word(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi move to the end of the current word
  *	[e]
  */
+// [spec:libedit:def:vi.vi-end-word-fn]
+// [spec:libedit:sem:vi.vi-end-word-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_end_word(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -518,6 +562,8 @@ vi_end_word(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi undo last change
  *	[u]
  */
+// [spec:libedit:def:vi.vi-undo-fn]
+// [spec:libedit:sem:vi.vi-undo-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_undo(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -545,6 +591,8 @@ vi_undo(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi enter command mode (use alternative key bindings)
  *	[<ESC>]
  */
+// [spec:libedit:def:vi.vi-command-mode-fn]
+// [spec:libedit:sem:vi.vi-command-mode-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_command_mode(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -570,6 +618,8 @@ vi_command_mode(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi move to the beginning of line
  *	[0]
  */
+// [spec:libedit:def:vi.vi-zero-fn]
+// [spec:libedit:sem:vi.vi-zero-fn]
 libedit_private el_action_t
 vi_zero(EditLine *el, wint_t c)
 {
@@ -590,6 +640,8 @@ vi_zero(EditLine *el, wint_t c)
  *	Vi move to previous character (backspace)
  *	[^H] in insert mode only
  */
+// [spec:libedit:def:vi.vi-delete-prev-char-fn]
+// [spec:libedit:sem:vi.vi-delete-prev-char-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_delete_prev_char(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -608,6 +660,8 @@ vi_delete_prev_char(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi list choices for completion or indicate end of file if empty line
  *	[^D]
  */
+// [spec:libedit:def:vi.vi-list-or-eof-fn]
+// [spec:libedit:sem:vi.vi-list-or-eof-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_list_or_eof(EditLine *el, wint_t c)
@@ -645,6 +699,8 @@ vi_list_or_eof(EditLine *el, wint_t c)
  *	Vi cut from beginning of line to cursor
  *	[^U]
  */
+// [spec:libedit:def:vi.vi-kill-line-prev-fn]
+// [spec:libedit:sem:vi.vi-kill-line-prev-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_kill_line_prev(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -666,6 +722,8 @@ vi_kill_line_prev(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi search history previous
  *	[?]
  */
+// [spec:libedit:def:vi.vi-search-prev-fn]
+// [spec:libedit:sem:vi.vi-search-prev-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_search_prev(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -679,6 +737,8 @@ vi_search_prev(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi search history next
  *	[/]
  */
+// [spec:libedit:def:vi.vi-search-next-fn]
+// [spec:libedit:sem:vi.vi-search-next-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_search_next(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -692,6 +752,8 @@ vi_search_next(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi repeat current search in the same search direction
  *	[n]
  */
+// [spec:libedit:def:vi.vi-repeat-search-next-fn]
+// [spec:libedit:sem:vi.vi-repeat-search-next-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_repeat_search_next(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -709,6 +771,8 @@ vi_repeat_search_next(EditLine *el, wint_t c __attribute__((__unused__)))
  *	[N]
  */
 /*ARGSUSED*/
+// [spec:libedit:def:vi.vi-repeat-search-prev-fn]
+// [spec:libedit:sem:vi.vi-repeat-search-prev-fn]
 libedit_private el_action_t
 vi_repeat_search_prev(EditLine *el, wint_t c __attribute__((__unused__)))
 {
@@ -726,6 +790,8 @@ vi_repeat_search_prev(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi move to the character specified next
  *	[f]
  */
+// [spec:libedit:def:vi.vi-next-char-fn]
+// [spec:libedit:sem:vi.vi-next-char-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_next_char(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -738,6 +804,8 @@ vi_next_char(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi move to the character specified previous
  *	[F]
  */
+// [spec:libedit:def:vi.vi-prev-char-fn]
+// [spec:libedit:sem:vi.vi-prev-char-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_prev_char(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -750,6 +818,8 @@ vi_prev_char(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi move up to the character specified next
  *	[t]
  */
+// [spec:libedit:def:vi.vi-to-next-char-fn]
+// [spec:libedit:sem:vi.vi-to-next-char-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_to_next_char(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -762,6 +832,8 @@ vi_to_next_char(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi move up to the character specified previous
  *	[T]
  */
+// [spec:libedit:def:vi.vi-to-prev-char-fn]
+// [spec:libedit:sem:vi.vi-to-prev-char-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_to_prev_char(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -774,6 +846,8 @@ vi_to_prev_char(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi repeat current character search in the same search direction
  *	[;]
  */
+// [spec:libedit:def:vi.vi-repeat-next-char-fn]
+// [spec:libedit:sem:vi.vi-repeat-next-char-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_repeat_next_char(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -788,6 +862,8 @@ vi_repeat_next_char(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi repeat current character search in the opposite search direction
  *	[,]
  */
+// [spec:libedit:def:vi.vi-repeat-prev-char-fn]
+// [spec:libedit:sem:vi.vi-repeat-prev-char-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_repeat_prev_char(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -806,6 +882,8 @@ vi_repeat_prev_char(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi go to matching () {} or []
  *	[%]
  */
+// [spec:libedit:def:vi.vi-match-fn]
+// [spec:libedit:sem:vi.vi-match-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_match(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -853,6 +931,8 @@ vi_match(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi undo all changes to line
  *	[U]
  */
+// [spec:libedit:def:vi.vi-undo-line-fn]
+// [spec:libedit:sem:vi.vi-undo-line-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_undo_line(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -867,6 +947,8 @@ vi_undo_line(EditLine *el, wint_t c __attribute__((__unused__)))
  *	[|]
  * NB netbsd vi goes to screen column 'n', posix says nth character
  */
+// [spec:libedit:def:vi.vi-to-column-fn]
+// [spec:libedit:sem:vi.vi-to-column-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_to_column(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -881,6 +963,8 @@ vi_to_column(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi yank to end of line
  *	[Y]
  */
+// [spec:libedit:def:vi.vi-yank-end-fn]
+// [spec:libedit:sem:vi.vi-yank-end-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_yank_end(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -895,6 +979,8 @@ vi_yank_end(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi yank
  *	[y]
  */
+// [spec:libedit:def:vi.vi-yank-fn]
+// [spec:libedit:sem:vi.vi-yank-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_yank(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -907,6 +993,8 @@ vi_yank(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi comment out current command
  *	[#]
  */
+// [spec:libedit:def:vi.vi-comment-out-fn]
+// [spec:libedit:sem:vi.vi-comment-out-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_comment_out(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -925,6 +1013,8 @@ vi_comment_out(EditLine *el, wint_t c __attribute__((__unused__)))
  * NB: posix implies that we should enter insert mode, however
  * this is against historical precedent...
  */
+// [spec:libedit:def:vi.vi-alias-fn]
+// [spec:libedit:sem:vi.vi-alias-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_alias(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -951,6 +1041,8 @@ vi_alias(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi go to specified history file line.
  *	[G]
  */
+// [spec:libedit:def:vi.vi-to-history-line-fn]
+// [spec:libedit:sem:vi.vi-to-history-line-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_to_history_line(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -996,6 +1088,8 @@ vi_to_history_line(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi edit history line with vi
  *	[v]
  */
+// [spec:libedit:def:vi.vi-histedit-fn]
+// [spec:libedit:sem:vi.vi-histedit-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_histedit(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -1083,6 +1177,8 @@ error:
  * Who knows where this one came from!
  * '_' in vi means 'entire current line', so 'cc' is a synonym for 'c_'
  */
+// [spec:libedit:def:vi.vi-history-word-fn]
+// [spec:libedit:sem:vi.vi-history-word-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_history_word(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -1133,6 +1229,8 @@ vi_history_word(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Vi redo last non-motion command
  *	[.]
  */
+// [spec:libedit:def:vi.vi-redo-fn]
+// [spec:libedit:sem:vi.vi-redo-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 vi_redo(EditLine *el, wint_t c __attribute__((__unused__)))

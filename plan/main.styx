@@ -1,0 +1,110 @@
+name libedit
+description "Re-implementation of libedit in Rust, kept drop-in compatible
+with the C library through an exported C ABI. Concerns follow libedit's own
+subsystem boundaries; each decomposes into the four porting waves."
+source {
+    url "git@github.com:necessary-nu/libedit.git"
+    ref main
+}
+
+children (
+    {
+        id encoding
+        title "Character encoding and escaping: chartype, literal, vis, unvis"
+        sealed true
+        children (
+            {id encoding-markup, title "Author sem rules for the encoding primitives", sealed true, playbooks (porting-agent-allocation subagent-effort)}
+            {id encoding-translate, title "Translate the encoding primitives to Rust", sealed true, deps (encoding-markup), playbooks (port-wave-2-translate subagent-effort)}
+            {id encoding-tests, title "Port and extend tests for the encoding primitives", sealed true, deps (encoding-translate), playbooks (port-wave-3-tests subagent-effort)}
+            {id encoding-idiomatize, title "Idiomatize the encoding primitives", sealed true, deps (encoding-tests), playbooks (port-wave-4-idiomatize subagent-effort)}
+        )
+    }
+    {
+        id terminal
+        title "Terminal capability and tty control: terminal, tty"
+        sealed true
+        children (
+            {id terminal-markup, title "Author sem rules for the terminal layer", sealed true, playbooks (porting-agent-allocation subagent-effort)}
+            {id terminal-translate, title "Translate the terminal layer to Rust over terminfo", sealed true, deps (terminal-markup), playbooks (port-wave-2-translate subagent-effort)}
+            {id terminal-tests, title "Port and extend tests for the terminal layer", sealed true, deps (terminal-translate), playbooks (port-wave-3-tests subagent-effort)}
+            {id terminal-idiomatize, title "Idiomatize the terminal layer", sealed true, deps (terminal-tests), playbooks (port-wave-4-idiomatize subagent-effort)}
+        )
+    }
+    {
+        id buffer
+        title "Line buffer and screen refresh: chared, refresh, prompt"
+        sealed true
+        children (
+            {id buffer-markup, title "Author sem rules for the line buffer and refresh", sealed true, playbooks (porting-agent-allocation subagent-effort)}
+            {id buffer-translate, title "Translate the line buffer and refresh to Rust", sealed true, deps (buffer-markup), playbooks (port-wave-2-translate subagent-effort)}
+            {id buffer-tests, title "Port and extend tests for the line buffer and refresh", sealed true, deps (buffer-translate), playbooks (port-wave-3-tests subagent-effort)}
+            {id buffer-idiomatize, title "Idiomatize the line buffer and refresh", sealed true, deps (buffer-tests), playbooks (port-wave-4-idiomatize subagent-effort)}
+        )
+    }
+    {
+        id input
+        title "Input dispatch and key binding: read, keymacro, map, parse, sig"
+        sealed true
+        children (
+            {id input-markup, title "Author sem rules for input dispatch and binding", sealed true, playbooks (porting-agent-allocation subagent-effort)}
+            {id input-translate, title "Translate input dispatch and binding to Rust", sealed true, deps (input-markup), playbooks (port-wave-2-translate subagent-effort)}
+            {id input-tests, title "Port and extend tests for input dispatch and binding", sealed true, deps (input-translate), playbooks (port-wave-3-tests subagent-effort)}
+            {id input-idiomatize, title "Idiomatize input dispatch and binding", sealed true, deps (input-tests), playbooks (port-wave-4-idiomatize subagent-effort)}
+        )
+    }
+    {
+        id history
+        title "History storage and search: history, hist, search"
+        sealed true
+        children (
+            {id history-markup, title "Author sem rules for history and search", sealed true, playbooks (porting-agent-allocation subagent-effort)}
+            {id history-translate, title "Translate history and search to Rust", sealed true, deps (history-markup), playbooks (port-wave-2-translate subagent-effort)}
+            {id history-tests, title "Port and extend tests for history and search", sealed true, deps (history-translate), playbooks (port-wave-3-tests subagent-effort)}
+            {id history-idiomatize, title "Idiomatize history and search", sealed true, deps (history-tests), playbooks (port-wave-4-idiomatize subagent-effort)}
+        )
+    }
+    {
+        id modes
+        title "Editor command sets: vi, emacs, common"
+        sealed true
+        children (
+            {id modes-markup, title "Author sem rules for the editor command sets", sealed true, playbooks (porting-agent-allocation subagent-effort)}
+            {id modes-translate, title "Translate the editor command sets to Rust", sealed true, deps (modes-markup), playbooks (port-wave-2-translate subagent-effort)}
+            {id modes-tests, title "Port and extend tests for the editor command sets", sealed true, deps (modes-translate), playbooks (port-wave-3-tests subagent-effort)}
+            {id modes-idiomatize, title "Idiomatize the editor command sets", sealed true, deps (modes-tests), playbooks (port-wave-4-idiomatize subagent-effort)}
+        )
+    }
+    {
+        id completion
+        title "Completion and tokenization: filecomplete, tokenizer"
+        sealed true
+        children (
+            {id completion-markup, title "Author sem rules for completion and tokenization", sealed true, playbooks (porting-agent-allocation subagent-effort)}
+            {id completion-translate, title "Translate completion and tokenization to Rust", sealed true, deps (completion-markup), playbooks (port-wave-2-translate subagent-effort)}
+            {id completion-tests, title "Port and extend tests for completion and tokenization", sealed true, deps (completion-translate), playbooks (port-wave-3-tests subagent-effort)}
+            {id completion-idiomatize, title "Idiomatize completion and tokenization", sealed true, deps (completion-tests), playbooks (port-wave-4-idiomatize subagent-effort)}
+        )
+    }
+    {
+        id core-api
+        title "EditLine lifecycle and the histedit public API: el, eln, histedit"
+        sealed true
+        children (
+            {id core-api-markup, title "Author sem rules for the EditLine lifecycle and public API", sealed true, playbooks (porting-agent-allocation subagent-effort)}
+            {id core-api-translate, title "Translate the EditLine lifecycle and public API to Rust", sealed true, deps (core-api-markup), playbooks (port-wave-2-translate subagent-effort)}
+            {id core-api-tests, title "Port and extend tests for the EditLine lifecycle and public API", sealed true, deps (core-api-translate), playbooks (port-wave-3-tests subagent-effort)}
+            {id core-api-idiomatize, title "Idiomatize the EditLine lifecycle and public API", sealed true, deps (core-api-tests), playbooks (port-wave-4-idiomatize subagent-effort)}
+        )
+    }
+    {
+        id readline-compat
+        title "GNU readline compatibility surface: readline, editline/readline"
+        sealed true
+        children (
+            {id readline-compat-markup, title "Author sem rules for the readline compatibility surface", sealed true, playbooks (porting-agent-allocation subagent-effort)}
+            {id readline-compat-translate, title "Translate the readline compatibility surface to Rust", sealed true, deps (readline-compat-markup), playbooks (port-wave-2-translate subagent-effort)}
+            {id readline-compat-tests, title "Port and extend tests for the readline compatibility surface", sealed true, deps (readline-compat-translate), playbooks (port-wave-3-tests subagent-effort)}
+            {id readline-compat-idiomatize, title "Idiomatize the readline compatibility surface", sealed true, deps (readline-compat-tests), playbooks (port-wave-4-idiomatize subagent-effort)}
+        )
+    }
+)

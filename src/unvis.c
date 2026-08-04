@@ -82,6 +82,7 @@ __weak_alias(strnunvisx,_strnunvisx)
 /*
  * RFC 1866
  */
+// [spec:libedit:def:unvis.nv]
 static const struct nv {
 	char name[7];
 	uint8_t value;
@@ -191,6 +192,8 @@ static const struct nv {
 /*
  * unvis - decode characters previously encoded by vis
  */
+// [spec:libedit:def:unvis.unvis-fn]
+// [spec:libedit:sem:unvis.unvis-fn]
 int
 unvis(char *cp, int c, int *astate, int flag)
 {
@@ -502,6 +505,8 @@ unvis(char *cp, int c, int *astate, int flag)
  *	Dst is null terminated.
  */
 
+// [spec:libedit:def:unvis.strnunvisx-fn]
+// [spec:libedit:sem:unvis.strnunvisx-fn]
 int
 strnunvisx(char *dst, size_t dlen, const char *src, int flag)
 {
@@ -551,18 +556,24 @@ strnunvisx(char *dst, size_t dlen, const char *src, int flag)
 	return (int)(dst - start);
 }
 
+// [spec:libedit:def:unvis.strunvisx-fn]
+// [spec:libedit:sem:unvis.strunvisx-fn]
 int
 strunvisx(char *dst, const char *src, int flag)
 {
 	return strnunvisx(dst, (size_t)~0, src, flag);
 }
 
+// [spec:libedit:def:unvis.strunvis-fn]
+// [spec:libedit:sem:unvis.strunvis-fn]
 int
 strunvis(char *dst, const char *src)
 {
 	return strnunvisx(dst, (size_t)~0, src, 0);
 }
 
+// [spec:libedit:def:unvis.strnunvis-fn]
+// [spec:libedit:sem:unvis.strnunvis-fn]
 int
 strnunvis(char *dst, size_t dlen, const char *src)
 {

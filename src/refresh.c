@@ -75,6 +75,8 @@ static void	re_printstr(EditLine *, const char *, wchar_t *, wchar_t *);
 /* re_printstr():
  *	Print a string on the debugging pty
  */
+// [spec:libedit:def:refresh.re-printstr-fn]
+// [spec:libedit:sem:refresh.re-printstr-fn]
 static void
 re_printstr(EditLine *el, const char *str, wchar_t *f, wchar_t *t)
 {
@@ -92,6 +94,8 @@ re_printstr(EditLine *el, const char *str, wchar_t *f, wchar_t *t)
 /* re_nextline():
  *	Move to the next line or scroll
  */
+// [spec:libedit:def:refresh.re-nextline-fn]
+// [spec:libedit:sem:refresh.re-nextline-fn]
 static void
 re_nextline(EditLine *el)
 {
@@ -124,6 +128,8 @@ re_nextline(EditLine *el)
 /* re_addc():
  *	Draw c, expanding tabs, control chars etc.
  */
+// [spec:libedit:def:refresh.re-addc-fn]
+// [spec:libedit:sem:refresh.re-addc-fn]
 static void
 re_addc(EditLine *el, wint_t c)
 {
@@ -159,6 +165,8 @@ re_addc(EditLine *el, wint_t c)
 /* re_putliteral():
  *	Place the literal string given
  */
+// [spec:libedit:def:refresh.re-putliteral-fn]
+// [spec:libedit:sem:refresh.re-putliteral-fn]
 libedit_private void
 re_putliteral(EditLine *el, const wchar_t *begin, const wchar_t *end)
 {
@@ -189,6 +197,8 @@ re_putliteral(EditLine *el, const wchar_t *begin, const wchar_t *end)
 /* re_putc():
  *	Draw the character given
  */
+// [spec:libedit:def:refresh.re-putc-fn]
+// [spec:libedit:sem:refresh.re-putc-fn]
 libedit_private void
 re_putc(EditLine *el, wint_t c, int shift)
 {
@@ -227,6 +237,8 @@ re_putc(EditLine *el, wint_t c, int shift)
  *	virtual image. The routine to re-draw a line can be replaced
  *	easily in hopes of a smarter one being placed there.
  */
+// [spec:libedit:def:refresh.re-refresh-fn]
+// [spec:libedit:sem:refresh.re-refresh-fn]
 libedit_private void
 re_refresh(EditLine *el)
 {
@@ -378,6 +390,8 @@ re_refresh(EditLine *el)
 /* re_goto_bottom():
  *	 used to go to last used screen line
  */
+// [spec:libedit:def:refresh.re-goto-bottom-fn]
+// [spec:libedit:sem:refresh.re-goto-bottom-fn]
 libedit_private void
 re_goto_bottom(EditLine *el)
 {
@@ -393,6 +407,8 @@ re_goto_bottom(EditLine *el)
  *	insert num characters of s into d (in front of the character)
  *	at dat, maximum length of d is dlen
  */
+// [spec:libedit:def:refresh.re-insert-fn]
+// [spec:libedit:sem:refresh.re-insert-fn]
 static void
 /*ARGSUSED*/
 re_insert(EditLine *el __attribute__((__unused__)),
@@ -444,6 +460,8 @@ re_insert(EditLine *el __attribute__((__unused__)),
 /* re_delete():
  *	delete num characters d at dat, maximum length of d is dlen
  */
+// [spec:libedit:def:refresh.re-delete-fn]
+// [spec:libedit:sem:refresh.re-delete-fn]
 static void
 /*ARGSUSED*/
 re_delete(EditLine *el __attribute__((__unused__)),
@@ -478,6 +496,8 @@ re_delete(EditLine *el __attribute__((__unused__)),
 /* re__strncopy():
  *	Like strncpy without padding.
  */
+// [spec:libedit:def:refresh.re-strncopy-fn]
+// [spec:libedit:sem:refresh.re-strncopy-fn]
 static void
 re__strncopy(wchar_t *a, wchar_t *b, size_t n)
 {
@@ -493,6 +513,8 @@ re__strncopy(wchar_t *a, wchar_t *b, size_t n)
  *	in the first or second diff, diff is the difference between the
  *	number of characters between the new and old line.
  */
+// [spec:libedit:def:refresh.re-clear-eol-fn]
+// [spec:libedit:sem:refresh.re-clear-eol-fn]
 static void
 re_clear_eol(EditLine *el, int fx, int sx, int diff)
 {
@@ -537,6 +559,8 @@ new:	eddie> Oh, my little buggy says to me, as lurgid as
  */
 #define	MIN_END_KEEP	4
 
+// [spec:libedit:def:refresh.re-update-line-fn]
+// [spec:libedit:sem:refresh.re-update-line-fn]
 static void
 re_update_line(EditLine *el, wchar_t *old, wchar_t *new, int i)
 {
@@ -1007,6 +1031,8 @@ re_update_line(EditLine *el, wchar_t *old, wchar_t *new, int i)
 /* re__copy_and_pad():
  *	Copy string and pad with spaces
  */
+// [spec:libedit:def:refresh.re-copy-and-pad-fn]
+// [spec:libedit:sem:refresh.re-copy-and-pad-fn]
 static void
 re__copy_and_pad(wchar_t *dst, const wchar_t *src, size_t width)
 {
@@ -1028,6 +1054,8 @@ re__copy_and_pad(wchar_t *dst, const wchar_t *src, size_t width)
 /* re_refresh_cursor():
  *	Move to the new cursor position
  */
+// [spec:libedit:def:refresh.re-refresh-cursor-fn]
+// [spec:libedit:sem:refresh.re-refresh-cursor-fn]
 libedit_private void
 re_refresh_cursor(EditLine *el)
 {
@@ -1091,6 +1119,8 @@ re_refresh_cursor(EditLine *el)
 /* re_fastputc():
  *	Add a character fast.
  */
+// [spec:libedit:def:refresh.re-fastputc-fn]
+// [spec:libedit:sem:refresh.re-fastputc-fn]
 static void
 re_fastputc(EditLine *el, wint_t c)
 {
@@ -1149,6 +1179,8 @@ re_fastputc(EditLine *el, wint_t c)
  *	we added just one char, handle it fast.
  *	Assumes that screen cursor == real cursor
  */
+// [spec:libedit:def:refresh.re-fastaddc-fn]
+// [spec:libedit:sem:refresh.re-fastaddc-fn]
 libedit_private void
 re_fastaddc(EditLine *el)
 {
@@ -1195,6 +1227,8 @@ re_fastaddc(EditLine *el)
 /* re_clear_display():
  *	clear the screen buffers so that new new prompt starts fresh.
  */
+// [spec:libedit:def:refresh.re-clear-display-fn]
+// [spec:libedit:sem:refresh.re-clear-display-fn]
 libedit_private void
 re_clear_display(EditLine *el)
 {
@@ -1211,6 +1245,8 @@ re_clear_display(EditLine *el)
 /* re_clear_lines():
  *	Make sure all lines are *really* blank
  */
+// [spec:libedit:def:refresh.re-clear-lines-fn]
+// [spec:libedit:sem:refresh.re-clear-lines-fn]
 libedit_private void
 re_clear_lines(EditLine *el)
 {

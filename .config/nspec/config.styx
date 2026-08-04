@@ -1,0 +1,17 @@
+// Porting config — two impl blocks. source-impl is the C original and
+// carries impl annotations only; target-impl is the Rust port and
+// carries both impl annotations and /test facets. Every rule is
+// therefore claimed twice, once on each side, which is what makes the
+// spec the conformance contract between them.
+specs ({
+    name libedit,
+    include (docs/spec/**/*.md),
+    impls (
+        // sys.h is pure portability shim (typedefs, __arraycount, _DIAGASSERT,
+        // libc prototypes, Solaris termcap externs) — nothing survives in Rust.
+        // strlcpy/strlcat/getline/wcsdup/reallocarr are libc gap-fillers with no
+        // observable surface. vis/unvis stay: they are the history file format.
+        {name source-impl, languages (@c), include (src/**/*.c src/**/*.h), exclude (src/sys.h src/strlcpy.c src/strlcat.c src/getline.c src/wcsdup.c src/reallocarr.c), mode @impl-only}
+        {name target-impl, languages (@rust), include (src/**/*.rs crates/**/*.rs), exclude (target/**), mode @both}
+    )
+})

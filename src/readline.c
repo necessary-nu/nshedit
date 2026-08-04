@@ -199,6 +199,8 @@ static void		 _rl_update_pos(void);
 static HIST_ENTRY rl_he;
 
 /* ARGSUSED */
+// [spec:libedit:def:readline.get-prompt-fn]
+// [spec:libedit:sem:readline.get-prompt-fn]
 static char *
 _get_prompt(EditLine *el __attribute__((__unused__)))
 {
@@ -210,6 +212,8 @@ _get_prompt(EditLine *el __attribute__((__unused__)))
 /*
  * read one key from user defined input function
  */
+// [spec:libedit:def:readline.getc-function-fn]
+// [spec:libedit:sem:readline.getc-function-fn]
 static int
 /*ARGSUSED*/
 _getc_function(EditLine *el __attribute__((__unused__)), wchar_t *c)
@@ -223,6 +227,8 @@ _getc_function(EditLine *el __attribute__((__unused__)), wchar_t *c)
 	return 1;
 }
 
+// [spec:libedit:def:readline.resize-fun-fn]
+// [spec:libedit:sem:readline.resize-fun-fn]
 static void
 _resize_fun(EditLine *el, void *a)
 {
@@ -233,6 +239,8 @@ _resize_fun(EditLine *el, void *a)
 	*ap = li->buffer;
 }
 
+// [spec:libedit:def:readline.default-history-file-fn]
+// [spec:libedit:sem:readline.default-history-file-fn]
 static const char *
 _default_history_file(void)
 {
@@ -261,6 +269,8 @@ _default_history_file(void)
 /*
  * Set the prompt
  */
+// [spec:libedit:def:readline.rl-set-prompt-fn]
+// [spec:libedit:sem:readline.rl-set-prompt-fn]
 int
 rl_set_prompt(const char *prompt)
 {
@@ -288,12 +298,16 @@ rl_set_prompt(const char *prompt)
 	return 0;
 }
 
+// [spec:libedit:def:readline.rl-save-prompt-fn]
+// [spec:libedit:sem:readline.rl-save-prompt-fn]
 void
 rl_save_prompt(void)
 {
 	rl_prompt_saved = strdup(rl_prompt);
 }
 
+// [spec:libedit:def:readline.rl-restore-prompt-fn]
+// [spec:libedit:sem:readline.rl-restore-prompt-fn]
 void
 rl_restore_prompt(void)
 {
@@ -306,6 +320,8 @@ rl_restore_prompt(void)
 /*
  * initialize rl compat stuff
  */
+// [spec:libedit:def:readline.rl-initialize-fn]
+// [spec:libedit:sem:readline.rl-initialize-fn]
 int
 rl_initialize(void)
 {
@@ -439,6 +455,8 @@ rl_initialize(void)
  * read one line from input stream and return it, chomping
  * trailing newline (if there is any)
  */
+// [spec:libedit:def:readline.readline-fn]
+// [spec:libedit:sem:readline.readline-fn]
 char *
 readline(const char *p)
 {
@@ -512,6 +530,8 @@ out:
  * is normally called before application starts to use
  * history expansion functions
  */
+// [spec:libedit:def:readline.using-history-fn]
+// [spec:libedit:sem:readline.using-history-fn]
 void
 using_history(void)
 {
@@ -526,6 +546,8 @@ using_history(void)
  * globally == 1, substitutes all occurrences of what, otherwise only the
  * first one
  */
+// [spec:libedit:def:readline.rl-compat-sub-fn]
+// [spec:libedit:sem:readline.rl-compat-sub-fn]
 static char *
 _rl_compat_sub(const char *str, const char *what, const char *with,
     int globally)
@@ -572,6 +594,8 @@ _rl_compat_sub(const char *str, const char *what, const char *with,
 static	char	*last_search_pat;	/* last !?pat[?] search pattern */
 static	char	*last_search_match;	/* last !?pat[?] that matched */
 
+// [spec:libedit:def:readline.get-history-event-fn]
+// [spec:libedit:sem:readline.get-history-event-fn]
 const char *
 get_history_event(const char *cmd, int *cindex, int qchar)
 {
@@ -688,6 +712,8 @@ get_history_event(const char *cmd, int *cindex, int qchar)
 	return rptr;
 }
 
+// [spec:libedit:def:readline.getfrom-fn]
+// [spec:libedit:sem:readline.getfrom-fn]
 static int
 getfrom(const char **cmdp, char **fromp, const char *search, int delim)
 {
@@ -749,6 +775,8 @@ getfrom(const char **cmdp, char **fromp, const char *search, int delim)
 	return 1;
 }
 
+// [spec:libedit:def:readline.getto-fn]
+// [spec:libedit:sem:readline.getto-fn]
 static int
 getto(const char **cmdp, char **top, const char *from, int delim)
 {
@@ -794,6 +822,8 @@ out:
 	return -1;
 }
 
+// [spec:libedit:def:readline.replace-fn]
+// [spec:libedit:sem:readline.replace-fn]
 static void
 replace(char **tmp, int c)
 {
@@ -815,6 +845,8 @@ replace(char **tmp, int c)
  * returns -1 and *result points to NULL
  * it's the caller's responsibility to free() the string returned in *result
  */
+// [spec:libedit:def:readline.history-expand-command-fn]
+// [spec:libedit:sem:readline.history-expand-command-fn]
 static int
 _history_expand_command(const char *command, size_t offs, size_t cmdlen,
     char **result)
@@ -989,6 +1021,8 @@ out:
 /*
  * csh-style history expansion
  */
+// [spec:libedit:def:readline.history-expand-fn]
+// [spec:libedit:sem:readline.history-expand-fn]
 int
 history_expand(char *str, char **output)
 {
@@ -1121,6 +1155,8 @@ loop:
 /*
 * Return a string consisting of arguments of "str" from "start" to "end".
 */
+// [spec:libedit:def:readline.history-arg-extract-fn]
+// [spec:libedit:sem:readline.history-arg-extract-fn]
 char *
 history_arg_extract(int start, int end, const char *str)
 {
@@ -1177,6 +1213,8 @@ out:
  * Parse the string into individual tokens,
  * similar to how shell would do it.
  */
+// [spec:libedit:def:readline.history-tokenize-fn]
+// [spec:libedit:sem:readline.history-tokenize-fn]
 char **
 history_tokenize(const char *str)
 {
@@ -1235,6 +1273,8 @@ history_tokenize(const char *str)
 /*
  * limit size of history record to ``max'' events
  */
+// [spec:libedit:def:readline.stifle-history-fn]
+// [spec:libedit:sem:readline.stifle-history-fn]
 void
 stifle_history(int max)
 {
@@ -1261,6 +1301,8 @@ stifle_history(int max)
 /*
  * "unlimit" size of history - set the limit to maximum allowed int value
  */
+// [spec:libedit:def:readline.unstifle-history-fn]
+// [spec:libedit:sem:readline.unstifle-history-fn]
 int
 unstifle_history(void)
 {
@@ -1274,6 +1316,8 @@ unstifle_history(void)
 }
 
 
+// [spec:libedit:def:readline.history-is-stifled-fn]
+// [spec:libedit:sem:readline.history-is-stifled-fn]
 int
 history_is_stifled(void)
 {
@@ -1284,6 +1328,8 @@ history_is_stifled(void)
 
 static const char _history_tmp_template[] = "/tmp/.historyXXXXXX";
 
+// [spec:libedit:def:readline.history-truncate-file-fn]
+// [spec:libedit:sem:readline.history-truncate-file-fn]
 int
 history_truncate_file (const char *filename, int nlines)
 {
@@ -1423,6 +1469,8 @@ out1:
 /*
  * read history from a file given
  */
+// [spec:libedit:def:readline.read-history-fn]
+// [spec:libedit:sem:readline.read-history-fn]
 int
 read_history(const char *filename)
 {
@@ -1446,6 +1494,8 @@ read_history(const char *filename)
 /*
  * write history to a file given
  */
+// [spec:libedit:def:readline.write-history-fn]
+// [spec:libedit:sem:readline.write-history-fn]
 int
 write_history(const char *filename)
 {
@@ -1459,6 +1509,8 @@ write_history(const char *filename)
 	    (errno ? errno : EINVAL) : 0;
 }
 
+// [spec:libedit:def:readline.append-history-fn]
+// [spec:libedit:sem:readline.append-history-fn]
 int
 append_history(int n, const char *filename)
 {
@@ -1487,6 +1539,8 @@ append_history(int n, const char *filename)
  *
  * returned pointer points to static variable
  */
+// [spec:libedit:def:readline.history-get-fn]
+// [spec:libedit:sem:readline.history-get-fn]
 HIST_ENTRY *
 history_get(int num)
 {
@@ -1534,6 +1588,8 @@ out:
 /*
  * add the line to history table
  */
+// [spec:libedit:def:readline.add-history-fn]
+// [spec:libedit:sem:readline.add-history-fn]
 int
 add_history(const char *line)
 {
@@ -1559,6 +1615,8 @@ add_history(const char *line)
 /*
  * remove the specified entry from the history list and return it.
  */
+// [spec:libedit:def:readline.remove-history-fn]
+// [spec:libedit:sem:readline.remove-history-fn]
 HIST_ENTRY *
 remove_history(int num)
 {
@@ -1587,6 +1645,8 @@ remove_history(int num)
 /*
  * replace the line and data of the num-th entry
  */
+// [spec:libedit:def:readline.replace-history-entry-fn]
+// [spec:libedit:sem:readline.replace-history-entry-fn]
 HIST_ENTRY *
 replace_history_entry(int num, const char *line, histdata_t data)
 {
@@ -1633,6 +1693,8 @@ out:
 /*
  * clear the history list - delete all entries
  */
+// [spec:libedit:def:readline.clear-history-fn]
+// [spec:libedit:sem:readline.clear-history-fn]
 void
 clear_history(void)
 {
@@ -1649,6 +1711,8 @@ clear_history(void)
 /*
  * returns offset of the current history event
  */
+// [spec:libedit:def:readline.where-history-fn]
+// [spec:libedit:sem:readline.where-history-fn]
 int
 where_history(void)
 {
@@ -1658,6 +1722,8 @@ where_history(void)
 static HIST_ENTRY **_history_listp;
 static HIST_ENTRY *_history_list;
 
+// [spec:libedit:def:readline.history-list-fn]
+// [spec:libedit:sem:readline.history-list-fn]
 HIST_ENTRY **
 history_list(void)
 {
@@ -1693,6 +1759,8 @@ history_list(void)
 /*
  * returns current history event or NULL if there is no such event
  */
+// [spec:libedit:def:readline.current-history-fn]
+// [spec:libedit:sem:readline.current-history-fn]
 HIST_ENTRY *
 current_history(void)
 {
@@ -1710,6 +1778,8 @@ current_history(void)
 /*
  * returns total number of bytes history events' data are using
  */
+// [spec:libedit:def:readline.history-total-bytes-fn]
+// [spec:libedit:sem:readline.history-total-bytes-fn]
 int
 history_total_bytes(void)
 {
@@ -1737,6 +1807,8 @@ history_total_bytes(void)
 /*
  * sets the position in the history list to ``pos''
  */
+// [spec:libedit:def:readline.history-set-pos-fn]
+// [spec:libedit:sem:readline.history-set-pos-fn]
 int
 history_set_pos(int pos)
 {
@@ -1752,6 +1824,8 @@ history_set_pos(int pos)
  * returns previous event in history and shifts pointer accordingly
  * Note that readline and editline define directions in opposite ways.
  */
+// [spec:libedit:def:readline.previous-history-fn]
+// [spec:libedit:sem:readline.previous-history-fn]
 HIST_ENTRY *
 previous_history(void)
 {
@@ -1771,6 +1845,8 @@ previous_history(void)
 /*
  * returns next event in history and shifts pointer accordingly
  */
+// [spec:libedit:def:readline.next-history-fn]
+// [spec:libedit:sem:readline.next-history-fn]
 HIST_ENTRY *
 next_history(void)
 {
@@ -1790,6 +1866,8 @@ next_history(void)
 /*
  * searches for first history event containing the str
  */
+// [spec:libedit:def:readline.history-search-fn]
+// [spec:libedit:sem:readline.history-search-fn]
 int
 history_search(const char *str, int direction)
 {
@@ -1815,6 +1893,8 @@ history_search(const char *str, int direction)
 /*
  * searches for first history event beginning with str
  */
+// [spec:libedit:def:readline.history-search-prefix-fn]
+// [spec:libedit:sem:readline.history-search-prefix-fn]
 int
 history_search_prefix(const char *str, int direction)
 {
@@ -1830,6 +1910,8 @@ history_search_prefix(const char *str, int direction)
  * abs(pos); continue backward, if pos<0, forward otherwise
  */
 /* ARGSUSED */
+// [spec:libedit:def:readline.history-search-pos-fn]
+// [spec:libedit:sem:readline.history-search-pos-fn]
 int
 history_search_pos(const char *str,
 		   int direction __attribute__((__unused__)), int pos)
@@ -1865,12 +1947,16 @@ history_search_pos(const char *str,
 /********************************/
 /* completion functions */
 
+// [spec:libedit:def:readline.tilde-expand-fn]
+// [spec:libedit:sem:readline.tilde-expand-fn]
 char *
 tilde_expand(char *name)
 {
 	return fn_tilde_expand(name);
 }
 
+// [spec:libedit:def:readline.filename-completion-function-fn]
+// [spec:libedit:sem:readline.filename-completion-function-fn]
 char *
 filename_completion_function(const char *name, int state)
 {
@@ -1884,6 +1970,8 @@ filename_completion_function(const char *name, int state)
  * (usually '~'); state resets search from start (??? should we do that anyway)
  * it's the caller's responsibility to free the returned value
  */
+// [spec:libedit:def:readline.username-completion-function-fn]
+// [spec:libedit:sem:readline.username-completion-function-fn]
 char *
 username_completion_function(const char *text, int state)
 {
@@ -1916,6 +2004,8 @@ username_completion_function(const char *text, int state)
  * el-compatible wrapper to send TSTP on ^Z
  */
 /* ARGSUSED */
+// [spec:libedit:def:readline.el-rl-tstp-fn]
+// [spec:libedit:sem:readline.el-rl-tstp-fn]
 static unsigned char
 _el_rl_tstp(EditLine *el __attribute__((__unused__)), int ch __attribute__((__unused__)))
 {
@@ -1923,6 +2013,8 @@ _el_rl_tstp(EditLine *el __attribute__((__unused__)), int ch __attribute__((__un
 	return CC_NORM;
 }
 
+// [spec:libedit:def:readline.rl-completion-append-character-function-fn]
+// [spec:libedit:sem:readline.rl-completion-append-character-function-fn]
 static const char *
 /*ARGSUSED*/
 _rl_completion_append_character_function(const char *dummy
@@ -1940,6 +2032,8 @@ _rl_completion_append_character_function(const char *dummy
  * 'matches' is list of strings, 'len' is number of strings in 'matches',
  * 'max' is maximum length of string in 'matches'.
  */
+// [spec:libedit:def:readline.rl-display-match-list-fn]
+// [spec:libedit:sem:readline.rl-display-match-list-fn]
 void
 rl_display_match_list(char **matches, int len, int max)
 {
@@ -1952,6 +2046,8 @@ rl_display_match_list(char **matches, int len, int max)
  * complete word at current point
  */
 /* ARGSUSED */
+// [spec:libedit:def:readline.rl-complete-fn]
+// [spec:libedit:sem:readline.rl-complete-fn]
 int
 rl_complete(int ignore __attribute__((__unused__)), int invoking_key)
 {
@@ -1992,6 +2088,8 @@ rl_complete(int ignore __attribute__((__unused__)), int invoking_key)
 
 
 /* ARGSUSED */
+// [spec:libedit:def:readline.el-rl-complete-fn]
+// [spec:libedit:sem:readline.el-rl-complete-fn]
 static unsigned char
 _el_rl_complete(EditLine *el __attribute__((__unused__)), int ch)
 {
@@ -2005,6 +2103,8 @@ _el_rl_complete(EditLine *el __attribute__((__unused__)), int ch)
 /*
  * bind key c to readline-type function func
  */
+// [spec:libedit:def:readline.rl-bind-key-fn]
+// [spec:libedit:sem:readline.rl-bind-key-fn]
 int
 rl_bind_key(int c, rl_command_func_t *func)
 {
@@ -2026,6 +2126,8 @@ rl_bind_key(int c, rl_command_func_t *func)
  * read one key from input - handles chars pushed back
  * to input stream also
  */
+// [spec:libedit:def:readline.rl-read-key-fn]
+// [spec:libedit:sem:readline.rl-read-key-fn]
 int
 rl_read_key(void)
 {
@@ -2042,6 +2144,8 @@ rl_read_key(void)
  * reset the terminal
  */
 /* ARGSUSED */
+// [spec:libedit:def:readline.rl-reset-terminal-fn]
+// [spec:libedit:sem:readline.rl-reset-terminal-fn]
 int
 rl_reset_terminal(const char *p __attribute__((__unused__)))
 {
@@ -2056,6 +2160,8 @@ rl_reset_terminal(const char *p __attribute__((__unused__)))
 /*
  * insert character ``c'' back into input stream, ``count'' times
  */
+// [spec:libedit:def:readline.rl-insert-fn]
+// [spec:libedit:sem:readline.rl-insert-fn]
 int
 rl_insert(int count, int c)
 {
@@ -2074,6 +2180,8 @@ rl_insert(int count, int c)
 	return 0;
 }
 
+// [spec:libedit:def:readline.rl-insert-text-fn]
+// [spec:libedit:sem:readline.rl-insert-text-fn]
 int
 rl_insert_text(const char *text)
 {
@@ -2089,6 +2197,8 @@ rl_insert_text(const char *text)
 }
 
 /*ARGSUSED*/
+// [spec:libedit:def:readline.rl-newline-fn]
+// [spec:libedit:sem:readline.rl-newline-fn]
 int
 rl_newline(int count __attribute__((__unused__)),
     int c __attribute__((__unused__)))
@@ -2100,6 +2210,8 @@ rl_newline(int count __attribute__((__unused__)),
 }
 
 /*ARGSUSED*/
+// [spec:libedit:def:readline.rl-bind-wrapper-fn]
+// [spec:libedit:sem:readline.rl-bind-wrapper-fn]
 static unsigned char
 rl_bind_wrapper(EditLine *el __attribute__((__unused__)), unsigned char c)
 {
@@ -2117,6 +2229,8 @@ rl_bind_wrapper(EditLine *el __attribute__((__unused__)), unsigned char c)
 	return CC_NORM;
 }
 
+// [spec:libedit:def:readline.rl-add-defun-fn]
+// [spec:libedit:sem:readline.rl-add-defun-fn]
 int
 rl_add_defun(const char *name, rl_command_func_t *fun, int c)
 {
@@ -2130,6 +2244,8 @@ rl_add_defun(const char *name, rl_command_func_t *fun, int c)
 	return 0;
 }
 
+// [spec:libedit:def:readline.rl-callback-read-char-fn]
+// [spec:libedit:sem:readline.rl-callback-read-char-fn]
 void
 rl_callback_read_char(void)
 {
@@ -2158,6 +2274,8 @@ rl_callback_read_char(void)
 	_rl_update_pos();
 }
 
+// [spec:libedit:def:readline.rl-callback-handler-install-fn]
+// [spec:libedit:sem:readline.rl-callback-handler-install-fn]
 void
 rl_callback_handler_install(const char *prompt, rl_vcpfunc_t *linefunc)
 {
@@ -2169,6 +2287,8 @@ rl_callback_handler_install(const char *prompt, rl_vcpfunc_t *linefunc)
 	el_set(e, EL_UNBUFFERED, 1);
 }
 
+// [spec:libedit:def:readline.rl-callback-handler-remove-fn]
+// [spec:libedit:sem:readline.rl-callback-handler-remove-fn]
 void
 rl_callback_handler_remove(void)
 {
@@ -2176,6 +2296,8 @@ rl_callback_handler_remove(void)
 	rl_linefunc = NULL;
 }
 
+// [spec:libedit:def:readline.rl-redisplay-fn]
+// [spec:libedit:sem:readline.rl-redisplay-fn]
 void
 rl_redisplay(void)
 {
@@ -2186,6 +2308,8 @@ rl_redisplay(void)
 	rl_forced_update_display();
 }
 
+// [spec:libedit:def:readline.rl-get-previous-history-fn]
+// [spec:libedit:sem:readline.rl-get-previous-history-fn]
 int
 rl_get_previous_history(int count, int key)
 {
@@ -2197,6 +2321,8 @@ rl_get_previous_history(int count, int key)
 	return 0;
 }
 
+// [spec:libedit:def:readline.rl-prep-terminal-fn]
+// [spec:libedit:sem:readline.rl-prep-terminal-fn]
 void
 /*ARGSUSED*/
 rl_prep_terminal(int meta_flag __attribute__((__unused__)))
@@ -2204,18 +2330,24 @@ rl_prep_terminal(int meta_flag __attribute__((__unused__)))
 	el_set(e, EL_PREP_TERM, 1);
 }
 
+// [spec:libedit:def:readline.rl-deprep-terminal-fn]
+// [spec:libedit:sem:readline.rl-deprep-terminal-fn]
 void
 rl_deprep_terminal(void)
 {
 	el_set(e, EL_PREP_TERM, 0);
 }
 
+// [spec:libedit:def:readline.rl-read-init-file-fn]
+// [spec:libedit:sem:readline.rl-read-init-file-fn]
 int
 rl_read_init_file(const char *s)
 {
 	return el_source(e, s);
 }
 
+// [spec:libedit:def:readline.rl-parse-and-bind-fn]
+// [spec:libedit:sem:readline.rl-parse-and-bind-fn]
 int
 rl_parse_and_bind(const char *line)
 {
@@ -2230,6 +2362,8 @@ rl_parse_and_bind(const char *line)
 	return argc ? 1 : 0;
 }
 
+// [spec:libedit:def:readline.rl-variable-bind-fn]
+// [spec:libedit:sem:readline.rl-variable-bind-fn]
 int
 rl_variable_bind(const char *var, const char *value)
 {
@@ -2240,6 +2374,8 @@ rl_variable_bind(const char *var, const char *value)
 	return el_set(e, EL_BIND, "", var, value, NULL) == -1 ? 1 : 0;
 }
 
+// [spec:libedit:def:readline.rl-stuff-char-fn]
+// [spec:libedit:sem:readline.rl-stuff-char-fn]
 int
 rl_stuff_char(int c)
 {
@@ -2251,6 +2387,8 @@ rl_stuff_char(int c)
 	return 1;
 }
 
+// [spec:libedit:def:readline.rl-event-read-char-fn]
+// [spec:libedit:sem:readline.rl-event-read-char-fn]
 static int
 _rl_event_read_char(EditLine *el, wchar_t *wc)
 {
@@ -2297,6 +2435,8 @@ _rl_event_read_char(EditLine *el, wchar_t *wc)
 	return (int)num_read;
 }
 
+// [spec:libedit:def:readline.rl-update-pos-fn]
+// [spec:libedit:sem:readline.rl-update-pos-fn]
 static void
 _rl_update_pos(void)
 {
@@ -2307,6 +2447,8 @@ _rl_update_pos(void)
 	rl_line_buffer[rl_end] = '\0';
 }
 
+// [spec:libedit:def:readline.rl-copy-text-fn]
+// [spec:libedit:sem:readline.rl-copy-text-fn]
 char *
 rl_copy_text(int from, int to)
 {
@@ -2337,6 +2479,8 @@ rl_copy_text(int from, int to)
 	return out;
 }
 
+// [spec:libedit:def:readline.rl-replace-line-fn]
+// [spec:libedit:sem:readline.rl-replace-line-fn]
 void
 rl_replace_line(const char * text, int clear_undo __attribute__((__unused__)))
 {
@@ -2349,6 +2493,8 @@ rl_replace_line(const char * text, int clear_undo __attribute__((__unused__)))
 	el_replacestr(e, text);
 }
 
+// [spec:libedit:def:readline.rl-delete-text-fn]
+// [spec:libedit:sem:readline.rl-delete-text-fn]
 int
 rl_delete_text(int start, int end)
 {
@@ -2359,6 +2505,8 @@ rl_delete_text(int start, int end)
 	return el_deletestr1(e, start, end);
 }
 
+// [spec:libedit:def:readline.rl-get-screen-size-fn]
+// [spec:libedit:sem:readline.rl-get-screen-size-fn]
 void
 rl_get_screen_size(int *rows, int *cols)
 {
@@ -2369,6 +2517,8 @@ rl_get_screen_size(int *rows, int *cols)
 }
 
 #define MAX_MESSAGE 160
+// [spec:libedit:def:readline.rl-message-fn]
+// [spec:libedit:sem:readline.rl-message-fn]
 void
 rl_message(const char *format, ...)
 {
@@ -2383,6 +2533,8 @@ rl_message(const char *format, ...)
 	rl_forced_update_display();
 }
 
+// [spec:libedit:def:readline.rl-set-screen-size-fn]
+// [spec:libedit:sem:readline.rl-set-screen-size-fn]
 void
 rl_set_screen_size(int rows, int cols)
 {
@@ -2393,6 +2545,8 @@ rl_set_screen_size(int rows, int cols)
 	el_set(e, EL_SETTC, "co", buf, NULL);
 }
 
+// [spec:libedit:def:readline.rl-completion-matches-fn]
+// [spec:libedit:sem:readline.rl-completion-matches-fn]
 char **
 rl_completion_matches(const char *str, rl_compentry_func_t *fun)
 {
@@ -2448,18 +2602,24 @@ out:
 	return NULL;
 }
 
+// [spec:libedit:def:readline.rl-filename-completion-function-fn]
+// [spec:libedit:sem:readline.rl-filename-completion-function-fn]
 char *
 rl_filename_completion_function (const char *text, int state)
 {
 	return fn_filename_completion_function(text, state);
 }
 
+// [spec:libedit:def:readline.rl-forced-update-display-fn]
+// [spec:libedit:sem:readline.rl-forced-update-display-fn]
 void
 rl_forced_update_display(void)
 {
 	el_set(e, EL_REFRESH);
 }
 
+// [spec:libedit:def:readline.rl-abort-internal-fn]
+// [spec:libedit:sem:readline.rl-abort-internal-fn]
 int
 _rl_abort_internal(void)
 {
@@ -2468,12 +2628,16 @@ _rl_abort_internal(void)
 	/*NOTREACHED*/
 }
 
+// [spec:libedit:def:readline.rl-qsort-string-compare-fn]
+// [spec:libedit:sem:readline.rl-qsort-string-compare-fn]
 int
 _rl_qsort_string_compare(char **s1, char **s2)
 {
 	return strcoll(*s1, *s2);
 }
 
+// [spec:libedit:def:readline.history-get-history-state-fn]
+// [spec:libedit:sem:readline.history-get-history-state-fn]
 HISTORY_STATE *
 history_get_history_state(void)
 {
@@ -2485,6 +2649,8 @@ history_get_history_state(void)
 	return hs;
 }
 
+// [spec:libedit:def:readline.rl-kill-full-line-fn]
+// [spec:libedit:sem:readline.rl-kill-full-line-fn]
 int
 /*ARGSUSED*/
 rl_kill_full_line(int count __attribute__((__unused__)),
@@ -2494,6 +2660,8 @@ rl_kill_full_line(int count __attribute__((__unused__)),
 	return 0;
 }
 
+// [spec:libedit:def:readline.rl-kill-text-fn]
+// [spec:libedit:sem:readline.rl-kill-text-fn]
 int
 /*ARGSUSED*/
 rl_kill_text(int from __attribute__((__unused__)),
@@ -2502,24 +2670,32 @@ rl_kill_text(int from __attribute__((__unused__)),
 	return 0;
 }
 
+// [spec:libedit:def:readline.rl-make-bare-keymap-fn]
+// [spec:libedit:sem:readline.rl-make-bare-keymap-fn]
 Keymap
 rl_make_bare_keymap(void)
 {
 	return NULL;
 }
 
+// [spec:libedit:def:readline.rl-get-keymap-fn]
+// [spec:libedit:sem:readline.rl-get-keymap-fn]
 Keymap
 rl_get_keymap(void)
 {
 	return NULL;
 }
 
+// [spec:libedit:def:readline.rl-set-keymap-fn]
+// [spec:libedit:sem:readline.rl-set-keymap-fn]
 void
 /*ARGSUSED*/
 rl_set_keymap(Keymap k __attribute__((__unused__)))
 {
 }
 
+// [spec:libedit:def:readline.rl-generic-bind-fn]
+// [spec:libedit:sem:readline.rl-generic-bind-fn]
 int
 /*ARGSUSED*/
 rl_generic_bind(int type __attribute__((__unused__)),
@@ -2530,6 +2706,8 @@ rl_generic_bind(int type __attribute__((__unused__)),
 	return 0;
 }
 
+// [spec:libedit:def:readline.rl-bind-key-in-map-fn]
+// [spec:libedit:sem:readline.rl-bind-key-in-map-fn]
 int
 /*ARGSUSED*/
 rl_bind_key_in_map(int key __attribute__((__unused__)),
@@ -2539,6 +2717,8 @@ rl_bind_key_in_map(int key __attribute__((__unused__)),
 	return 0;
 }
 
+// [spec:libedit:def:readline.rl-set-key-fn]
+// [spec:libedit:sem:readline.rl-set-key-fn]
 int
 rl_set_key(const char *keyseq  __attribute__((__unused__)),
 	rl_command_func_t *function __attribute__((__unused__)),
@@ -2548,22 +2728,30 @@ rl_set_key(const char *keyseq  __attribute__((__unused__)),
 }
 
 /* unsupported, but needed by python */
+// [spec:libedit:def:readline.rl-cleanup-after-signal-fn]
+// [spec:libedit:sem:readline.rl-cleanup-after-signal-fn]
 void
 rl_cleanup_after_signal(void)
 {
 }
 
+// [spec:libedit:def:readline.rl-on-new-line-fn]
+// [spec:libedit:sem:readline.rl-on-new-line-fn]
 int
 rl_on_new_line(void)
 {
 	return 0;
 }
 
+// [spec:libedit:def:readline.rl-free-line-state-fn]
+// [spec:libedit:sem:readline.rl-free-line-state-fn]
 void
 rl_free_line_state(void)
 {
 }
 
+// [spec:libedit:def:readline.rl-set-keyboard-input-timeout-fn]
+// [spec:libedit:sem:readline.rl-set-keyboard-input-timeout-fn]
 int
 /*ARGSUSED*/
 rl_set_keyboard_input_timeout(int u __attribute__((__unused__)))
@@ -2571,12 +2759,16 @@ rl_set_keyboard_input_timeout(int u __attribute__((__unused__)))
 	return 0;
 }
 
+// [spec:libedit:def:readline.rl-resize-terminal-fn]
+// [spec:libedit:sem:readline.rl-resize-terminal-fn]
 void
 rl_resize_terminal(void)
 {
 	el_resize(e);
 }
 
+// [spec:libedit:def:readline.rl-reset-after-signal-fn]
+// [spec:libedit:sem:readline.rl-reset-after-signal-fn]
 void
 rl_reset_after_signal(void)
 {
@@ -2584,6 +2776,8 @@ rl_reset_after_signal(void)
 		(*rl_prep_term_function)(1);
 }
 
+// [spec:libedit:def:readline.rl-echo-signal-char-fn]
+// [spec:libedit:sem:readline.rl-echo-signal-char-fn]
 void
 rl_echo_signal_char(int sig)
 {
@@ -2593,6 +2787,8 @@ rl_echo_signal_char(int sig)
 	re_putc(e, c, 0);
 }
 
+// [spec:libedit:def:readline.rl-crlf-fn]
+// [spec:libedit:sem:readline.rl-crlf-fn]
 int
 rl_crlf(void)
 {
@@ -2600,6 +2796,8 @@ rl_crlf(void)
 	return 0;
 }
 
+// [spec:libedit:def:readline.rl-ding-fn]
+// [spec:libedit:sem:readline.rl-ding-fn]
 int
 rl_ding(void)
 {
@@ -2607,24 +2805,32 @@ rl_ding(void)
 	return 0;
 }
 
+// [spec:libedit:def:readline.rl-abort-fn]
+// [spec:libedit:sem:readline.rl-abort-fn]
 int
 rl_abort(int count, int key)
 {
 	return count && key ? 0 : 0;
 }
 
+// [spec:libedit:def:readline.rl-set-keymap-name-fn]
+// [spec:libedit:sem:readline.rl-set-keymap-name-fn]
 int
 rl_set_keymap_name(const char *name, Keymap k)
 {
 	return name && k ? 0 : 0;
 }
 
+// [spec:libedit:def:readline.free-history-entry-fn]
+// [spec:libedit:sem:readline.free-history-entry-fn]
 histdata_t
 free_history_entry(HIST_ENTRY *he)
 {
 	return he ? NULL : NULL;
 }
 
+// [spec:libedit:def:readline.rl-erase-entire-line-fn]
+// [spec:libedit:sem:readline.rl-erase-entire-line-fn]
 void
 _rl_erase_entire_line(void)
 {

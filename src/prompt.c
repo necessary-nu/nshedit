@@ -53,6 +53,8 @@ static wchar_t	*prompt_default_r(EditLine *);
 /* prompt_default():
  *	Just a default prompt, in case the user did not provide one
  */
+// [spec:libedit:def:prompt.prompt-default-fn]
+// [spec:libedit:sem:prompt.prompt-default-fn]
 static wchar_t *
 /*ARGSUSED*/
 prompt_default(EditLine *el __attribute__((__unused__)))
@@ -66,6 +68,8 @@ prompt_default(EditLine *el __attribute__((__unused__)))
 /* prompt_default_r():
  *	Just a default rprompt, in case the user did not provide one
  */
+// [spec:libedit:def:prompt.prompt-default-r-fn]
+// [spec:libedit:sem:prompt.prompt-default-r-fn]
 static wchar_t *
 /*ARGSUSED*/
 prompt_default_r(EditLine *el __attribute__((__unused__)))
@@ -79,6 +83,8 @@ prompt_default_r(EditLine *el __attribute__((__unused__)))
 /* prompt_print():
  *	Print the prompt and update the prompt position.
  */
+// [spec:libedit:def:prompt.prompt-print-fn]
+// [spec:libedit:sem:prompt.prompt-print-fn]
 libedit_private void
 prompt_print(EditLine *el, int op)
 {
@@ -119,6 +125,8 @@ prompt_print(EditLine *el, int op)
 /* prompt_init():
  *	Initialize the prompt stuff
  */
+// [spec:libedit:def:prompt.prompt-init-fn]
+// [spec:libedit:sem:prompt.prompt-init-fn]
 libedit_private int
 prompt_init(EditLine *el)
 {
@@ -138,6 +146,8 @@ prompt_init(EditLine *el)
 /* prompt_end():
  *	Clean up the prompt stuff
  */
+// [spec:libedit:def:prompt.prompt-end-fn]
+// [spec:libedit:sem:prompt.prompt-end-fn]
 libedit_private void
 /*ARGSUSED*/
 prompt_end(EditLine *el __attribute__((__unused__)))
@@ -148,6 +158,8 @@ prompt_end(EditLine *el __attribute__((__unused__)))
 /* prompt_set():
  *	Install a prompt printing function
  */
+// [spec:libedit:def:prompt.prompt-set-fn]
+// [spec:libedit:sem:prompt.prompt-set-fn]
 libedit_private int
 prompt_set(EditLine *el, el_pfunc_t prf, wchar_t c, int op, int wide)
 {
@@ -180,6 +192,8 @@ prompt_set(EditLine *el, el_pfunc_t prf, wchar_t c, int op, int wide)
 /* prompt_get():
  *	Retrieve the prompt printing function
  */
+// [spec:libedit:def:prompt.prompt-get-fn]
+// [spec:libedit:sem:prompt.prompt-get-fn]
 libedit_private int
 prompt_get(EditLine *el, el_pfunc_t *prf, wchar_t *c, int op)
 {

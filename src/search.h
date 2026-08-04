@@ -40,6 +40,7 @@
 #ifndef _h_el_search
 #define	_h_el_search
 
+// [spec:libedit:def:search.el-search-t]
 typedef struct el_search_t {
 	wchar_t	*patbuf;		/* The pattern buffer		*/
 	size_t	 patlen;		/* Length of the pattern buffer	*/

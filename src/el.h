@@ -60,13 +60,16 @@
 #define	FIXIO		0x100
 #define	FROM_ELLINE	0x200
 
+// [spec:libedit:def:el.el-action-t]
 typedef unsigned char el_action_t;	/* Index to command array	*/
 
+// [spec:libedit:def:el.coord-t]
 typedef struct coord_t {		/* Position on the screen	*/
 	int	h;
 	int	v;
 } coord_t;
 
+// [spec:libedit:def:el.el-line-t]
 typedef struct el_line_t {
 	wchar_t		*buffer;	/* Input line			*/
 	wchar_t	        *cursor;	/* Cursor position		*/
@@ -77,6 +80,7 @@ typedef struct el_line_t {
 /*
  * Editor state
  */
+// [spec:libedit:def:el.el-state-t]
 typedef struct el_state_t {
 	int		inputmode;	/* What mode are we in?		*/
 	int		doingarg;	/* Are we getting an argument?	*/
@@ -109,6 +113,7 @@ typedef struct el_state_t {
 
 struct el_read_t;
 
+// [spec:libedit:def:el.editline]
 struct editline {
 	wchar_t		 *el_prog;	/* the program name		*/
 	FILE		 *el_infile;	/* Stdio stuff			*/
@@ -141,6 +146,8 @@ struct editline {
 	ct_buffer_t       el_scratch;   /* Scratch conversion buffer    */
 	ct_buffer_t       el_lgcyconv;  /* Buffer for legacy wrappers   */
 	LineInfo          el_lgcylinfo; /* Legacy LineInfo buffer       */
+	// [spec:libedit:def:el.editline.el-getenv-fn]
+	// [spec:libedit:sem:el.editline.el-getenv-fn]
 	char *		(*el_getenv)(const char *); /* getenv(3) or ... */
 };
 

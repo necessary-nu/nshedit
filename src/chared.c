@@ -58,6 +58,8 @@ __RCSID("$NetBSD: chared.c,v 1.66 2026/03/03 15:05:17 christos Exp $");
 /* cv_undo():
  *	Handle state for the vi undo command
  */
+// [spec:libedit:def:chared.cv-undo-fn]
+// [spec:libedit:sem:chared.cv-undo-fn]
 libedit_private void
 cv_undo(EditLine *el)
 {
@@ -82,6 +84,8 @@ cv_undo(EditLine *el)
 /* cv_yank():
  *	Save yank/delete data for paste
  */
+// [spec:libedit:def:chared.cv-yank-fn]
+// [spec:libedit:sem:chared.cv-yank-fn]
 libedit_private void
 cv_yank(EditLine *el, const wchar_t *ptr, int size)
 {
@@ -95,6 +99,8 @@ cv_yank(EditLine *el, const wchar_t *ptr, int size)
 /* c_insert():
  *	Insert num characters
  */
+// [spec:libedit:def:chared.c-insert-fn]
+// [spec:libedit:sem:chared.c-insert-fn]
 libedit_private void
 c_insert(EditLine *el, int num)
 {
@@ -117,6 +123,8 @@ c_insert(EditLine *el, int num)
 /* c_delafter():
  *	Delete num characters after the cursor
  */
+// [spec:libedit:def:chared.c-delafter-fn]
+// [spec:libedit:sem:chared.c-delafter-fn]
 libedit_private void
 c_delafter(EditLine *el, int num)
 {
@@ -143,6 +151,8 @@ c_delafter(EditLine *el, int num)
 /* c_delafter1():
  *	Delete the character after the cursor, do not yank
  */
+// [spec:libedit:def:chared.c-delafter1-fn]
+// [spec:libedit:sem:chared.c-delafter1-fn]
 libedit_private void
 c_delafter1(EditLine *el)
 {
@@ -158,6 +168,8 @@ c_delafter1(EditLine *el)
 /* c_delbefore():
  *	Delete num characters before the cursor
  */
+// [spec:libedit:def:chared.c-delbefore-fn]
+// [spec:libedit:sem:chared.c-delbefore-fn]
 libedit_private void
 c_delbefore(EditLine *el, int num)
 {
@@ -186,6 +198,8 @@ c_delbefore(EditLine *el, int num)
 /* c_delbefore1():
  *	Delete the character before the cursor, do not yank
  */
+// [spec:libedit:def:chared.c-delbefore1-fn]
+// [spec:libedit:sem:chared.c-delbefore1-fn]
 libedit_private void
 c_delbefore1(EditLine *el)
 {
@@ -201,6 +215,8 @@ c_delbefore1(EditLine *el)
 /* ce__isword():
  *	Return if p is part of a word according to emacs
  */
+// [spec:libedit:def:chared.ce-isword-fn]
+// [spec:libedit:sem:chared.ce-isword-fn]
 libedit_private int
 ce__isword(EditLine *el, wint_t p)
 {
@@ -211,6 +227,8 @@ ce__isword(EditLine *el, wint_t p)
 /* cv__isword():
  *	Return if p is part of a word according to vi
  */
+// [spec:libedit:def:chared.cv-isword-fn]
+// [spec:libedit:sem:chared.cv-isword-fn]
 libedit_private int
 cv__isword(EditLine *el, wint_t p)
 {
@@ -225,6 +243,8 @@ cv__isword(EditLine *el, wint_t p)
 /* cv__isWord():
  *	Return if p is part of a big word according to vi
  */
+// [spec:libedit:def:chared.cv-is-word-fn]
+// [spec:libedit:sem:chared.cv-is-word-fn]
 libedit_private int
 cv__isWord(EditLine *el __attribute__((__unused__)), wint_t p)
 {
@@ -235,6 +255,8 @@ cv__isWord(EditLine *el __attribute__((__unused__)), wint_t p)
 /* c__prev_word():
  *	Find the previous word
  */
+// [spec:libedit:def:chared.c-prev-word-fn]
+// [spec:libedit:sem:chared.c-prev-word-fn]
 libedit_private wchar_t *
 c__prev_word(EditLine *el, wchar_t *p, wchar_t *low, int n,
     int (*wtest)(EditLine *, wint_t))
@@ -260,6 +282,8 @@ c__prev_word(EditLine *el, wchar_t *p, wchar_t *low, int n,
 /* c__next_word():
  *	Find the next word
  */
+// [spec:libedit:def:chared.c-next-word-fn]
+// [spec:libedit:sem:chared.c-next-word-fn]
 libedit_private wchar_t *
 c__next_word(EditLine *el, wchar_t *p, wchar_t *high, int n,
     int (*wtest)(EditLine *, wint_t))
@@ -279,6 +303,8 @@ c__next_word(EditLine *el, wchar_t *p, wchar_t *high, int n,
 /* cv_next_word():
  *	Find the next word vi style
  */
+// [spec:libedit:def:chared.cv-next-word-fn]
+// [spec:libedit:sem:chared.cv-next-word-fn]
 libedit_private wchar_t *
 cv_next_word(EditLine *el, wchar_t *p, wchar_t *high, int n,
     int (*wtest)(EditLine *el, wint_t))
@@ -309,6 +335,8 @@ cv_next_word(EditLine *el, wchar_t *p, wchar_t *high, int n,
 /* cv_prev_word():
  *	Find the previous word vi style
  */
+// [spec:libedit:def:chared.cv-prev-word-fn]
+// [spec:libedit:sem:chared.cv-prev-word-fn]
 libedit_private wchar_t *
 cv_prev_word(EditLine *el, wchar_t *p, wchar_t *low, int n,
     int (*wtest)(EditLine *el, wint_t))
@@ -338,6 +366,8 @@ cv_prev_word(EditLine *el, wchar_t *p, wchar_t *low, int n,
 /* cv_delfini():
  *	Finish vi delete action
  */
+// [spec:libedit:def:chared.cv-delfini-fn]
+// [spec:libedit:sem:chared.cv-delfini-fn]
 libedit_private void
 cv_delfini(EditLine *el)
 {
@@ -376,6 +406,8 @@ cv_delfini(EditLine *el)
 /* cv__endword():
  *	Go to the end of this word according to vi
  */
+// [spec:libedit:def:chared.cv-endword-fn]
+// [spec:libedit:sem:chared.cv-endword-fn]
 libedit_private wchar_t *
 cv__endword(EditLine *el, wchar_t *p, wchar_t *high, int n,
     int (*wtest)(EditLine *, wint_t))
@@ -399,6 +431,8 @@ cv__endword(EditLine *el, wchar_t *p, wchar_t *high, int n,
 /* ch_init():
  *	Initialize the character editor
  */
+// [spec:libedit:def:chared.ch-init-fn]
+// [spec:libedit:sem:chared.ch-init-fn]
 libedit_private int
 ch_init(EditLine *el)
 {
@@ -456,6 +490,8 @@ out:
 /* ch_reset():
  *	Reset the character editor
  */
+// [spec:libedit:def:chared.ch-reset-fn]
+// [spec:libedit:sem:chared.ch-reset-fn]
 libedit_private void
 ch_reset(EditLine *el)
 {
@@ -485,6 +521,8 @@ ch_reset(EditLine *el)
  *	Enlarge line buffer to be able to hold twice as much characters.
  *	Returns 1 if successful, 0 if not.
  */
+// [spec:libedit:def:chared.ch-enlargebufs-fn]
+// [spec:libedit:sem:chared.ch-enlargebufs-fn]
 libedit_private int
 ch_enlargebufs(EditLine *el, size_t addlen)
 {
@@ -574,6 +612,8 @@ ch_enlargebufs(EditLine *el, size_t addlen)
 /* ch_end():
  *	Free the data structures used by the editor
  */
+// [spec:libedit:def:chared.ch-end-fn]
+// [spec:libedit:sem:chared.ch-end-fn]
 libedit_private void
 ch_end(EditLine *el)
 {
@@ -596,6 +636,8 @@ ch_end(EditLine *el)
 /* el_insertstr():
  *	Insert string at cursor
  */
+// [spec:libedit:def:chared.el-winsertstr-fn]
+// [spec:libedit:sem:chared.el-winsertstr-fn]
 int
 el_winsertstr(EditLine *el, const wchar_t *s)
 {
@@ -618,6 +660,8 @@ el_winsertstr(EditLine *el, const wchar_t *s)
 /* el_deletestr():
  *	Delete num characters before the cursor
  */
+// [spec:libedit:def:chared.el-deletestr-fn]
+// [spec:libedit:sem:chared.el-deletestr-fn]
 void
 el_deletestr(EditLine *el, int n)
 {
@@ -636,6 +680,8 @@ el_deletestr(EditLine *el, int n)
 /* el_deletestr1():
  *	Delete characters between start and end
  */
+// [spec:libedit:def:chared.el-deletestr1-fn]
+// [spec:libedit:sem:chared.el-deletestr1-fn]
 int
 el_deletestr1(EditLine *el, int start, int end)
 {
@@ -670,6 +716,8 @@ el_deletestr1(EditLine *el, int start, int end)
 /* el_wreplacestr():
  *	Replace the contents of the line with the provided string
  */
+// [spec:libedit:def:chared.el-wreplacestr-fn]
+// [spec:libedit:sem:chared.el-wreplacestr-fn]
 int
 el_wreplacestr(EditLine *el, const wchar_t *s)
 {
@@ -699,6 +747,8 @@ el_wreplacestr(EditLine *el, const wchar_t *s)
 /* el_cursor():
  *	Move the cursor to the left or the right of the current position
  */
+// [spec:libedit:def:chared.el-cursor-fn]
+// [spec:libedit:sem:chared.el-cursor-fn]
 int
 el_cursor(EditLine *el, int n)
 {
@@ -718,6 +768,8 @@ out:
 /* c_gets():
  *	Get a string
  */
+// [spec:libedit:def:chared.c-gets-fn]
+// [spec:libedit:sem:chared.c-gets-fn]
 libedit_private int
 c_gets(EditLine *el, wchar_t *buf, const wchar_t *prompt)
 {
@@ -783,6 +835,8 @@ c_gets(EditLine *el, wchar_t *buf, const wchar_t *prompt)
 /* c_hpos():
  *	Return the current horizontal position of the cursor
  */
+// [spec:libedit:def:chared.c-hpos-fn]
+// [spec:libedit:sem:chared.c-hpos-fn]
 libedit_private int
 c_hpos(EditLine *el)
 {
@@ -802,6 +856,8 @@ c_hpos(EditLine *el)
 	}
 }
 
+// [spec:libedit:def:chared.ch-resizefun-fn]
+// [spec:libedit:sem:chared.ch-resizefun-fn]
 libedit_private int
 ch_resizefun(EditLine *el, el_zfunc_t f, void *a)
 {
@@ -810,6 +866,8 @@ ch_resizefun(EditLine *el, el_zfunc_t f, void *a)
 	return 0;
 }
 
+// [spec:libedit:def:chared.ch-aliasfun-fn]
+// [spec:libedit:sem:chared.ch-aliasfun-fn]
 libedit_private int
 ch_aliasfun(EditLine *el, el_afunc_t f, void *a)
 {

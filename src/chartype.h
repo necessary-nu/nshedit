@@ -58,6 +58,7 @@
 /*
  * Conversion buffer
  */
+// [spec:libedit:def:chartype.ct-buffer-t]
 typedef struct ct_buffer_t {
         char    *cbuff;
         size_t  csize;

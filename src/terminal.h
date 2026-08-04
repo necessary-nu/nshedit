@@ -40,6 +40,7 @@
 #ifndef _h_el_terminal
 #define	_h_el_terminal
 
+// [spec:libedit:def:terminal.funckey-t]
 typedef struct {		/* Symbolic function key bindings	*/
 	const wchar_t	*name;	/* name of the key			*/
 	int		 key;	/* Index in termcap table		*/
@@ -47,6 +48,7 @@ typedef struct {		/* Symbolic function key bindings	*/
 	int		 type;	/* Type of function			*/
 } funckey_t;
 
+// [spec:libedit:def:terminal.el-terminal-t]
 typedef struct {
 	const char *t_name;		/* the terminal name	*/
 	coord_t	  t_size;		/* # lines and cols	*/

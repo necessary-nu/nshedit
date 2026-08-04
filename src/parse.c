@@ -62,6 +62,8 @@ __RCSID("$NetBSD: parse.c,v 1.42 2019/07/23 10:18:52 christos Exp $");
 
 static const struct {
 	const wchar_t *name;
+	// [spec:libedit:def:parse.func-fn]
+	// [spec:libedit:sem:parse.func-fn]
 	int (*func)(EditLine *, int, const wchar_t **);
 } cmds[] = {
 	{ L"bind",		map_bind	},
@@ -78,6 +80,8 @@ static const struct {
 /* parse_line():
  *	Parse a line and dispatch it
  */
+// [spec:libedit:def:parse.parse-line-fn]
+// [spec:libedit:sem:parse.parse-line-fn]
 libedit_private int
 parse_line(EditLine *el, const wchar_t *line)
 {
@@ -96,6 +100,8 @@ parse_line(EditLine *el, const wchar_t *line)
 /* el_parse():
  *	Command dispatcher
  */
+// [spec:libedit:def:parse.el-wparse-fn]
+// [spec:libedit:sem:parse.el-wparse-fn]
 int
 el_wparse(EditLine *el, int argc, const wchar_t *argv[])
 {
@@ -138,6 +144,8 @@ el_wparse(EditLine *el, int argc, const wchar_t *argv[])
  *	Parse a string of the form ^<char> \<odigit> \<char> \U+xxxx and return
  *	the appropriate character or -1 if the escape is not valid
  */
+// [spec:libedit:def:parse.parse-escape-fn]
+// [spec:libedit:sem:parse.parse-escape-fn]
 libedit_private int
 parse__escape(const wchar_t **ptr)
 {
@@ -238,6 +246,8 @@ parse__escape(const wchar_t **ptr)
 /* parse__string():
  *	Parse the escapes from in and put the raw string out
  */
+// [spec:libedit:def:parse.parse-string-fn]
+// [spec:libedit:sem:parse.parse-string-fn]
 libedit_private wchar_t *
 parse__string(wchar_t *out, const wchar_t *in)
 {
@@ -276,6 +286,8 @@ parse__string(wchar_t *out, const wchar_t *in)
  *	Return the command number for the command string given
  *	or -1 if one is not found
  */
+// [spec:libedit:def:parse.parse-cmd-fn]
+// [spec:libedit:sem:parse.parse-cmd-fn]
 libedit_private int
 parse_cmd(EditLine *el, const wchar_t *cmd)
 {

@@ -37,29 +37,43 @@
 /* list of readline stuff supported by editline library's readline wrapper */
 
 /* typedefs */
+// [spec:libedit:def:readline.rl-linebuf-func-t-const-char-int]
 typedef int	  rl_linebuf_func_t(const char *, int);
+// [spec:libedit:def:readline.rl-voidfunc-t-void]
 typedef void	  rl_voidfunc_t(void);
+// [spec:libedit:def:readline.rl-vintfunc-t-int]
 typedef void	  rl_vintfunc_t(int);
+// [spec:libedit:def:readline.rl-vcpfunc-t-char]
 typedef void	  rl_vcpfunc_t(char *);
+// [spec:libedit:def:readline.rl-completion-func-t-const-char-int-int]
 typedef char	**rl_completion_func_t(const char *, int, int);
+// [spec:libedit:def:readline.rl-compentry-func-t-const-char-int]
 typedef char     *rl_compentry_func_t(const char *, int);
+// [spec:libedit:def:readline.rl-compdisp-func-t-char-int-int]
 typedef void	  rl_compdisp_func_t(char **, int, int);
+// [spec:libedit:def:readline.rl-command-func-t-int-int]
 typedef int	  rl_command_func_t(int, int);
+// [spec:libedit:def:readline.rl-hook-func-t-void]
 typedef int	  rl_hook_func_t(void);
+// [spec:libedit:def:readline.rl-icppfunc-t-char]
 typedef int       rl_icppfunc_t(char **);
 
 /* only supports length */
+// [spec:libedit:def:readline.history-state]
 typedef struct {
 	int length;
 } HISTORY_STATE;
 
+// [spec:libedit:def:readline.histdata-t]
 typedef void *histdata_t;
 
+// [spec:libedit:def:readline.hist-entry]
 typedef struct _hist_entry {
 	const char	*line;
 	histdata_t	 data;
 } HIST_ENTRY;
 
+// [spec:libedit:def:readline.keymap-entry]
 typedef struct _keymap_entry {
 	char type;
 #define ISFUNC	0
@@ -70,7 +84,9 @@ typedef struct _keymap_entry {
 
 #define KEYMAP_SIZE	256
 
+// [spec:libedit:def:readline.keymap-entry-array-keymap-size]
 typedef KEYMAP_ENTRY KEYMAP_ENTRY_ARRAY[KEYMAP_SIZE];
+// [spec:libedit:def:readline.keymap]
 typedef KEYMAP_ENTRY *Keymap;
 
 #define control_character_threshold	0x20
@@ -118,6 +134,8 @@ extern const char	*rl_basic_word_break_characters;
 extern char		*rl_completer_word_break_characters;
 extern const char	*rl_completer_quote_characters;
 extern rl_compentry_func_t *rl_completion_entry_function;
+// [spec:libedit:def:readline.rl-completion-word-break-hook-fn]
+// [spec:libedit:sem:readline.rl-completion-word-break-hook-fn]
 extern char		*(*rl_completion_word_break_hook)(void);
 extern rl_completion_func_t *rl_attempted_completion_function;
 extern int		 rl_attempted_completion_over;
@@ -154,6 +172,8 @@ extern KEYMAP_ENTRY_ARRAY emacs_standard_keymap,
 			emacs_ctlx_keymap;
 extern int		rl_filename_completion_desired;
 extern int		rl_ignore_completion_duplicates;
+// [spec:libedit:def:readline.rl-getc-function-fn]
+// [spec:libedit:sem:readline.rl-getc-function-fn]
 extern int		(*rl_getc_function)(FILE *);
 extern rl_voidfunc_t	*rl_redisplay_function;
 extern rl_compdisp_func_t *rl_completion_display_matches_hook;
@@ -209,6 +229,8 @@ char		*filename_completion_function(const char *, int);
 char		*username_completion_function(const char *, int);
 int		 rl_complete(int, int);
 int		 rl_read_key(void);
+// [spec:libedit:def:readline.completion-matches-fn]
+// [spec:libedit:sem:readline.completion-matches-fn]
 char	       **completion_matches(/* const */ char *, rl_compentry_func_t *);
 void		 rl_display_match_list(char **, int, int);
 

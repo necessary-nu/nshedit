@@ -40,6 +40,7 @@
 #ifndef _h_el_keymacro
 #define	_h_el_keymacro
 
+// [spec:libedit:def:keymacro.keymacro-value-t]
 typedef union keymacro_value_t {
 	el_action_t	 cmd;	/* If it is a command the #	*/
 	wchar_t		*str;	/* If it is a string...		*/
@@ -47,6 +48,7 @@ typedef union keymacro_value_t {
 
 typedef struct keymacro_node_t keymacro_node_t;
 
+// [spec:libedit:def:keymacro.el-keymacro-t]
 typedef struct el_keymacro_t {
 	wchar_t		*buf;	/* Key print buffer		*/
 	keymacro_node_t	*map;	/* Key map			*/

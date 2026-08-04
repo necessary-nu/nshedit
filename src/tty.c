@@ -55,12 +55,14 @@ __RCSID("$NetBSD: tty.c,v 1.70 2021/07/14 07:47:23 christos Exp $");
 #include "fcns.h"
 #include "parse.h"
 
+// [spec:libedit:def:tty.ttymodes-t]
 typedef struct ttymodes_t {
 	const char *m_name;
 	unsigned int m_value;
 	int m_type;
 }          ttymodes_t;
 
+// [spec:libedit:def:tty.ttymap-t]
 typedef struct ttymap_t {
 	wint_t nch, och;	/* Internal and termio rep of chars */
 	el_action_t bind[3];	/* emacs, vi, and vi-cmd */
@@ -470,6 +472,8 @@ static void	tty_setup_flags(EditLine *, struct termios *, int);
 /* tty_getty():
  *	Wrapper for tcgetattr to handle EINTR
  */
+// [spec:libedit:def:tty.tty-getty-fn]
+// [spec:libedit:sem:tty.tty-getty-fn]
 static int
 tty_getty(EditLine *el, struct termios *t)
 {
@@ -482,6 +486,8 @@ tty_getty(EditLine *el, struct termios *t)
 /* tty_setty():
  *	Wrapper for tcsetattr to handle EINTR
  */
+// [spec:libedit:def:tty.tty-setty-fn]
+// [spec:libedit:sem:tty.tty-setty-fn]
 static int
 tty_setty(EditLine *el, int action, const struct termios *t)
 {
@@ -494,6 +500,8 @@ tty_setty(EditLine *el, int action, const struct termios *t)
 /* tty_setup():
  *	Get the tty parameters and initialize the editing state
  */
+// [spec:libedit:def:tty.tty-setup-fn]
+// [spec:libedit:sem:tty.tty-setup-fn]
 static int
 tty_setup(EditLine *el)
 {
@@ -568,6 +576,8 @@ tty_setup(EditLine *el)
 	return 0;
 }
 
+// [spec:libedit:def:tty.tty-init-fn]
+// [spec:libedit:sem:tty.tty-init-fn]
 libedit_private int
 tty_init(EditLine *el)
 {
@@ -584,6 +594,8 @@ tty_init(EditLine *el)
 /* tty_end():
  *	Restore the tty to its original settings
  */
+// [spec:libedit:def:tty.tty-end-fn]
+// [spec:libedit:sem:tty.tty-end-fn]
 libedit_private void
 /*ARGSUSED*/
 tty_end(EditLine *el, int how)
@@ -607,6 +619,8 @@ tty_end(EditLine *el, int how)
 /* tty__getspeed():
  *	Get the tty speed
  */
+// [spec:libedit:def:tty.tty-getspeed-fn]
+// [spec:libedit:sem:tty.tty-getspeed-fn]
 static speed_t
 tty__getspeed(struct termios *td)
 {
@@ -620,6 +634,8 @@ tty__getspeed(struct termios *td)
 /* tty__getspeed():
  *	Return the index of the asked char in the c_cc array
  */
+// [spec:libedit:def:tty.tty-getcharindex-fn]
+// [spec:libedit:sem:tty.tty-getcharindex-fn]
 static int
 tty__getcharindex(int i)
 {
@@ -728,6 +744,8 @@ tty__getcharindex(int i)
 /* tty__getchar():
  *	Get the tty characters
  */
+// [spec:libedit:def:tty.tty-getchar-fn]
+// [spec:libedit:sem:tty.tty-getchar-fn]
 static void
 tty__getchar(struct termios *td, unsigned char *s)
 {
@@ -810,6 +828,8 @@ tty__getchar(struct termios *td, unsigned char *s)
 /* tty__setchar():
  *	Set the tty characters
  */
+// [spec:libedit:def:tty.tty-setchar-fn]
+// [spec:libedit:sem:tty.tty-setchar-fn]
 static void
 tty__setchar(struct termios *td, unsigned char *s)
 {
@@ -892,6 +912,8 @@ tty__setchar(struct termios *td, unsigned char *s)
 /* tty_bind_char():
  *	Rebind the editline functions
  */
+// [spec:libedit:def:tty.tty-bind-char-fn]
+// [spec:libedit:sem:tty.tty-bind-char-fn]
 libedit_private void
 tty_bind_char(EditLine *el, int force)
 {
@@ -937,6 +959,8 @@ tty_bind_char(EditLine *el, int force)
 }
 
 
+// [spec:libedit:def:tty.tty-get-flag-fn]
+// [spec:libedit:sem:tty.tty-get-flag-fn]
 static tcflag_t *
 tty__get_flag(struct termios *t, int kind) {
 	switch (kind) {
@@ -955,6 +979,8 @@ tty__get_flag(struct termios *t, int kind) {
 }
 
 
+// [spec:libedit:def:tty.tty-update-flag-fn]
+// [spec:libedit:sem:tty.tty-update-flag-fn]
 static tcflag_t
 tty_update_flag(EditLine *el, tcflag_t f, int mode, int kind)
 {
@@ -964,6 +990,8 @@ tty_update_flag(EditLine *el, tcflag_t f, int mode, int kind)
 }
 
 
+// [spec:libedit:def:tty.tty-update-flags-fn]
+// [spec:libedit:sem:tty.tty-update-flags-fn]
 static void
 tty_update_flags(EditLine *el, int kind)
 {
@@ -979,6 +1007,8 @@ tty_update_flags(EditLine *el, int kind)
 }
 
 
+// [spec:libedit:def:tty.tty-update-char-fn]
+// [spec:libedit:sem:tty.tty-update-char-fn]
 static void
 tty_update_char(EditLine *el, int mode, int c) {
 	if (!((el->el_tty.t_t[mode][MD_CHAR].t_setmask & C_SH(c)))
@@ -992,6 +1022,8 @@ tty_update_char(EditLine *el, int mode, int c) {
 /* tty_rawmode():
  *	Set terminal into 1 character at a time mode.
  */
+// [spec:libedit:def:tty.tty-rawmode-fn]
+// [spec:libedit:sem:tty.tty-rawmode-fn]
 libedit_private int
 tty_rawmode(EditLine *el)
 {
@@ -1077,6 +1109,8 @@ tty_rawmode(EditLine *el)
 /* tty_cookedmode():
  *	Set the tty back to normal mode
  */
+// [spec:libedit:def:tty.tty-cookedmode-fn]
+// [spec:libedit:sem:tty.tty-cookedmode-fn]
 libedit_private int
 tty_cookedmode(EditLine *el)
 {				/* set tty in normal setup */
@@ -1102,6 +1136,8 @@ tty_cookedmode(EditLine *el)
 /* tty_quotemode():
  *	Turn on quote mode
  */
+// [spec:libedit:def:tty.tty-quotemode-fn]
+// [spec:libedit:sem:tty.tty-quotemode-fn]
 libedit_private int
 tty_quotemode(EditLine *el)
 {
@@ -1127,6 +1163,8 @@ tty_quotemode(EditLine *el)
 /* tty_noquotemode():
  *	Turn off quote mode
  */
+// [spec:libedit:def:tty.tty-noquotemode-fn]
+// [spec:libedit:sem:tty.tty-noquotemode-fn]
 libedit_private int
 tty_noquotemode(EditLine *el)
 {
@@ -1148,6 +1186,8 @@ tty_noquotemode(EditLine *el)
 /* tty_stty():
  *	Stty builtin
  */
+// [spec:libedit:def:tty.tty-stty-fn]
+// [spec:libedit:sem:tty.tty-stty-fn]
 libedit_private int
 /*ARGSUSED*/
 tty_stty(EditLine *el, int argc __attribute__((__unused__)),
@@ -1310,6 +1350,8 @@ tty_stty(EditLine *el, int argc __attribute__((__unused__)),
 /* tty_printchar():
  *	DEbugging routine to print the tty characters
  */
+// [spec:libedit:def:tty.tty-printchar-fn]
+// [spec:libedit:sem:tty.tty-printchar-fn]
 static void
 tty_printchar(EditLine *el, unsigned char *s)
 {
@@ -1331,6 +1373,8 @@ tty_printchar(EditLine *el, unsigned char *s)
 #endif /* notyet */
 
 
+// [spec:libedit:def:tty.tty-setup-flags-fn]
+// [spec:libedit:sem:tty.tty-setup-flags-fn]
 static void
 tty_setup_flags(EditLine *el, struct termios *tios, int mode)
 {
@@ -1341,6 +1385,8 @@ tty_setup_flags(EditLine *el, struct termios *tios, int mode)
 	}
 }
 
+// [spec:libedit:def:tty.tty-get-signal-character-fn]
+// [spec:libedit:sem:tty.tty-get-signal-character-fn]
 libedit_private int
 tty_get_signal_character(EditLine *el, int sig)
 {

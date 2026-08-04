@@ -103,13 +103,23 @@ int	strsnvisx(char *, size_t, const char *, size_t, int, const char *);
 int	strsenvisx(char *, size_t, const char *, size_t , int, const char *,
     int *);
 
+// [spec:libedit:def:vis.strunvis-fn]
+// [spec:libedit:sem:vis.strunvis-fn]
 int	strunvis(char *, const char *);
+// [spec:libedit:def:vis.strnunvis-fn]
+// [spec:libedit:sem:vis.strnunvis-fn]
 int	strnunvis(char *, size_t, const char *);
 
+// [spec:libedit:def:vis.strunvisx-fn]
+// [spec:libedit:sem:vis.strunvisx-fn]
 int	strunvisx(char *, const char *, int);
+// [spec:libedit:def:vis.strnunvisx-fn]
+// [spec:libedit:sem:vis.strnunvisx-fn]
 int	strnunvisx(char *, size_t, const char *, int);
 
 #ifndef __LIBC12_SOURCE__
+// [spec:libedit:def:vis.unvis-fn]
+// [spec:libedit:sem:vis.unvis-fn]
 int	unvis(char *, int, int *, int);
 #endif
 __END_DECLS

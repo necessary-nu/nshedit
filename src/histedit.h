@@ -54,11 +54,14 @@ extern "C" {
  * ==== Editing ====
  */
 
+// [spec:libedit:def:histedit.edit-line]
 typedef struct editline EditLine;
 
 /*
  * For user-defined function interface
  */
+// [spec:libedit:def:histedit.lineinfo]
+// [spec:libedit:def:histedit.line-info]
 typedef struct lineinfo {
 	const char	*buffer;
 	const char	*cursor;
@@ -83,36 +86,62 @@ typedef struct lineinfo {
 /*
  * Initialization, cleanup, and resetting
  */
+// [spec:libedit:def:histedit.el-init-fn]
+// [spec:libedit:sem:histedit.el-init-fn]
 EditLine	*el_init(const char *, FILE *, FILE *, FILE *);
+// [spec:libedit:def:histedit.el-init-fd-fn]
+// [spec:libedit:sem:histedit.el-init-fd-fn]
 EditLine	*el_init_fd(const char *, FILE *, FILE *, FILE *,
     int, int, int);
+// [spec:libedit:def:histedit.el-end-fn]
+// [spec:libedit:sem:histedit.el-end-fn]
 void		 el_end(EditLine *);
+// [spec:libedit:def:histedit.el-reset-fn]
+// [spec:libedit:sem:histedit.el-reset-fn]
 void		 el_reset(EditLine *);
 
 /*
  * Get a line, a character or push a string back in the input queue
  */
+// [spec:libedit:def:histedit.el-gets-fn]
+// [spec:libedit:sem:histedit.el-gets-fn]
 const char	*el_gets(EditLine *, int *);
+// [spec:libedit:def:histedit.el-getc-fn]
+// [spec:libedit:sem:histedit.el-getc-fn]
 int		 el_getc(EditLine *, char *);
+// [spec:libedit:def:histedit.el-push-fn]
+// [spec:libedit:sem:histedit.el-push-fn]
 void		 el_push(EditLine *, const char *);
 
 /*
  * Beep!
  */
+// [spec:libedit:def:histedit.el-beep-fn]
+// [spec:libedit:sem:histedit.el-beep-fn]
 void		 el_beep(EditLine *);
 
 /*
  * High level function internals control
  * Parses argc, argv array and executes builtin editline commands
  */
+// [spec:libedit:def:histedit.el-parse-fn]
+// [spec:libedit:sem:histedit.el-parse-fn]
 int		 el_parse(EditLine *, int, const char **);
 
 /*
  * Low level editline access functions
  */
+// [spec:libedit:def:histedit.el-set-fn]
+// [spec:libedit:sem:histedit.el-set-fn]
 int		 el_set(EditLine *, int, ...);
+// [spec:libedit:def:histedit.el-get-fn]
+// [spec:libedit:sem:histedit.el-get-fn]
 int		 el_get(EditLine *, int, ...);
+// [spec:libedit:def:histedit.el-fn-complete-fn]
+// [spec:libedit:sem:histedit.el-fn-complete-fn]
 unsigned char	_el_fn_complete(EditLine *, int);
+// [spec:libedit:def:histedit.el-fn-sh-complete-fn]
+// [spec:libedit:sem:histedit.el-fn-sh-complete-fn]
 unsigned char	_el_fn_sh_complete(EditLine *, int);
 
 /*
@@ -167,6 +196,8 @@ unsigned char	_el_fn_sh_complete(EditLine *, int);
 /*
  * Source named file or $PWD/.editrc or $HOME/.editrc
  */
+// [spec:libedit:def:histedit.el-source-fn]
+// [spec:libedit:sem:histedit.el-source-fn]
 int		el_source(EditLine *, const char *);
 
 /*
@@ -174,23 +205,37 @@ int		el_source(EditLine *, const char *);
  * is set this is done automatically otherwise it is the responsibility
  * of the application
  */
+// [spec:libedit:def:histedit.el-resize-fn]
+// [spec:libedit:sem:histedit.el-resize-fn]
 void		 el_resize(EditLine *);
 
 /*
  * User-defined function interface.
  */
+// [spec:libedit:def:histedit.el-line-fn]
+// [spec:libedit:sem:histedit.el-line-fn]
 const LineInfo	*el_line(EditLine *);
+// [spec:libedit:def:histedit.el-insertstr-fn]
+// [spec:libedit:sem:histedit.el-insertstr-fn]
 int		 el_insertstr(EditLine *, const char *);
+// [spec:libedit:def:histedit.el-deletestr-fn]
+// [spec:libedit:sem:histedit.el-deletestr-fn]
 void		 el_deletestr(EditLine *, int);
+// [spec:libedit:def:histedit.el-replacestr-fn]
+// [spec:libedit:sem:histedit.el-replacestr-fn]
 int		 el_replacestr(EditLine *, const char *);
+// [spec:libedit:def:histedit.el-deletestr1-fn]
+// [spec:libedit:sem:histedit.el-deletestr1-fn]
 int		 el_deletestr1(EditLine *, int, int);
 
 /*
  * ==== History ====
  */
 
+// [spec:libedit:def:histedit.history]
 typedef struct history History;
 
+// [spec:libedit:def:histedit.hist-event]
 typedef struct HistEvent {
 	int		 num;
 	const char	*str;
@@ -199,9 +244,15 @@ typedef struct HistEvent {
 /*
  * History access functions.
  */
+// [spec:libedit:def:histedit.history-init-fn]
+// [spec:libedit:sem:histedit.history-init-fn]
 History *	history_init(void);
+// [spec:libedit:def:histedit.history-end-fn]
+// [spec:libedit:sem:histedit.history-end-fn]
 void		history_end(History *);
 
+// [spec:libedit:def:histedit.history-fn]
+// [spec:libedit:sem:histedit.history-fn]
 int		history(History *, HistEvent *, int, ...);
 
 #define	H_FUNC		 0	/* , UTSL		*/
@@ -239,16 +290,27 @@ int		history(History *, HistEvent *, int, ...);
  * ==== Tokenization ====
  */
 
+// [spec:libedit:def:histedit.tokenizer]
 typedef struct tokenizer Tokenizer;
 
 /*
  * String tokenization functions, using simplified sh(1) quoting rules
  */
+// [spec:libedit:def:histedit.tok-init-fn]
+// [spec:libedit:sem:histedit.tok-init-fn]
 Tokenizer	*tok_init(const char *);
+// [spec:libedit:def:histedit.tok-end-fn]
+// [spec:libedit:sem:histedit.tok-end-fn]
 void		 tok_end(Tokenizer *);
+// [spec:libedit:def:histedit.tok-reset-fn]
+// [spec:libedit:sem:histedit.tok-reset-fn]
 void		 tok_reset(Tokenizer *);
+// [spec:libedit:def:histedit.tok-line-fn]
+// [spec:libedit:sem:histedit.tok-line-fn]
 int		 tok_line(Tokenizer *, const LineInfo *,
 		    int *, const char ***, int *, int *);
+// [spec:libedit:def:histedit.tok-str-fn]
+// [spec:libedit:sem:histedit.tok-str-fn]
 int		 tok_str(Tokenizer *, const char *,
 		    int *, const char ***);
 
@@ -259,61 +321,106 @@ int		 tok_str(Tokenizer *, const char *,
 #include <wctype.h>
 
 #ifndef HAVE_WCSDUP
+// [spec:libedit:def:histedit.wcsdup-fn]
+// [spec:libedit:sem:histedit.wcsdup-fn]
 wchar_t * wcsdup(const wchar_t *str);
 #endif
 
 /*
  * ==== Editing ====
  */
+// [spec:libedit:def:histedit.lineinfow]
+// [spec:libedit:def:histedit.line-info-w]
 typedef struct lineinfow {
 	const wchar_t	*buffer;
 	const wchar_t	*cursor;
 	const wchar_t	*lastchar;
 } LineInfoW;
 
+// [spec:libedit:def:histedit.el-rfunc-t-edit-line-wchar-t]
 typedef int	(*el_rfunc_t)(EditLine *, wchar_t *);
 
+// [spec:libedit:def:histedit.el-wgets-fn]
+// [spec:libedit:sem:histedit.el-wgets-fn]
 const wchar_t	*el_wgets(EditLine *, int *);
+// [spec:libedit:def:histedit.el-wgetc-fn]
+// [spec:libedit:sem:histedit.el-wgetc-fn]
 int		 el_wgetc(EditLine *, wchar_t *);
+// [spec:libedit:def:histedit.el-wpush-fn]
+// [spec:libedit:sem:histedit.el-wpush-fn]
 void		 el_wpush(EditLine *, const wchar_t *);
 
+// [spec:libedit:def:histedit.el-wparse-fn]
+// [spec:libedit:sem:histedit.el-wparse-fn]
 int		 el_wparse(EditLine *, int, const wchar_t **);
 
+// [spec:libedit:def:histedit.el-wset-fn]
+// [spec:libedit:sem:histedit.el-wset-fn]
 int		 el_wset(EditLine *, int, ...);
+// [spec:libedit:def:histedit.el-wget-fn]
+// [spec:libedit:sem:histedit.el-wget-fn]
 int		 el_wget(EditLine *, int, ...);
 
+// [spec:libedit:def:histedit.el-cursor-fn]
+// [spec:libedit:sem:histedit.el-cursor-fn]
 int		 el_cursor(EditLine *, int);
+// [spec:libedit:def:histedit.el-wline-fn]
+// [spec:libedit:sem:histedit.el-wline-fn]
 const LineInfoW	*el_wline(EditLine *);
+// [spec:libedit:def:histedit.el-winsertstr-fn]
+// [spec:libedit:sem:histedit.el-winsertstr-fn]
 int		 el_winsertstr(EditLine *, const wchar_t *);
 #define          el_wdeletestr  el_deletestr
+// [spec:libedit:def:histedit.el-wreplacestr-fn]
+// [spec:libedit:sem:histedit.el-wreplacestr-fn]
 int		 el_wreplacestr(EditLine *, const wchar_t *);
 
 /*
  * ==== History ====
  */
+// [spec:libedit:def:histedit.histevent-w]
+// [spec:libedit:def:histedit.hist-event-w]
 typedef struct histeventW {
 	int		 num;
 	const wchar_t	*str;
 } HistEventW;
 
+// [spec:libedit:def:histedit.history-w]
 typedef struct historyW HistoryW;
 
+// [spec:libedit:def:histedit.history-winit-fn]
+// [spec:libedit:sem:histedit.history-winit-fn]
 HistoryW *	history_winit(void);
+// [spec:libedit:def:histedit.history-wend-fn]
+// [spec:libedit:sem:histedit.history-wend-fn]
 void		history_wend(HistoryW *);
 
+// [spec:libedit:def:histedit.history-w-fn]
+// [spec:libedit:sem:histedit.history-w-fn]
 int		history_w(HistoryW *, HistEventW *, int, ...);
 
 /*
  * ==== Tokenization ====
  */
+// [spec:libedit:def:histedit.tokenizer-w]
 typedef struct tokenizerW TokenizerW;
 
 /* Wide character tokenizer support */
+// [spec:libedit:def:histedit.tok-winit-fn]
+// [spec:libedit:sem:histedit.tok-winit-fn]
 TokenizerW	*tok_winit(const wchar_t *);
+// [spec:libedit:def:histedit.tok-wend-fn]
+// [spec:libedit:sem:histedit.tok-wend-fn]
 void		 tok_wend(TokenizerW *);
+// [spec:libedit:def:histedit.tok-wreset-fn]
+// [spec:libedit:sem:histedit.tok-wreset-fn]
 void		 tok_wreset(TokenizerW *);
+// [spec:libedit:def:histedit.tok-wline-fn]
+// [spec:libedit:sem:histedit.tok-wline-fn]
 int		 tok_wline(TokenizerW *, const LineInfoW *,
 		    int *, const wchar_t ***, int *, int *);
+// [spec:libedit:def:histedit.tok-wstr-fn]
+// [spec:libedit:sem:histedit.tok-wstr-fn]
 int		 tok_wstr(TokenizerW *, const wchar_t *,
 		    int *, const wchar_t ***);
 

@@ -76,6 +76,8 @@ __RCSID("$NetBSD: el.c,v 1.104 2025/12/16 02:40:48 kre Exp $");
 #endif
 
 #ifndef HAVE_SECURE_GETENV
+// [spec:libedit:def:el.secure-getenv-fn]
+// [spec:libedit:sem:el.secure-getenv-fn]
 char *secure_getenv(char const *name)
 {
 	if (issetugid())
@@ -84,11 +86,14 @@ char *secure_getenv(char const *name)
 }
 #endif
 
+// [spec:libedit:def:el.func-t-const-char]
 typedef char * (*func_t)(const char *);
 
 /* el_init():
  *	Initialize editline and set default parameters.
  */
+// [spec:libedit:def:el.el-init-fn]
+// [spec:libedit:sem:el.el-init-fn]
 EditLine *
 el_init(const char *prog, FILE *fin, FILE *fout, FILE *ferr)
 {
@@ -96,6 +101,8 @@ el_init(const char *prog, FILE *fin, FILE *fout, FILE *ferr)
 	fileno(ferr));
 }
 
+// [spec:libedit:def:el.el-init-internal-fn]
+// [spec:libedit:sem:el.el-init-internal-fn]
 libedit_private EditLine *
 el_init_internal(const char *prog, FILE *fin, FILE *fout, FILE *ferr,
     int fdin, int fdout, int fderr, int flags)
@@ -151,6 +158,8 @@ el_init_internal(const char *prog, FILE *fin, FILE *fout, FILE *ferr,
 	return el;
 }
 
+// [spec:libedit:def:el.el-init-fd-fn]
+// [spec:libedit:sem:el.el-init-fd-fn]
 EditLine *
 el_init_fd(const char *prog, FILE *fin, FILE *fout, FILE *ferr,
     int fdin, int fdout, int fderr)
@@ -161,6 +170,8 @@ el_init_fd(const char *prog, FILE *fin, FILE *fout, FILE *ferr,
 /* el_end():
  *	Clean up.
  */
+// [spec:libedit:def:el.el-end-fn]
+// [spec:libedit:sem:el.el-end-fn]
 void
 el_end(EditLine *el)
 {
@@ -197,6 +208,8 @@ el_end(EditLine *el)
 /* el_reset():
  *	Reset the tty and the parser
  */
+// [spec:libedit:def:el.el-reset-fn]
+// [spec:libedit:sem:el.el-reset-fn]
 void
 el_reset(EditLine *el)
 {
@@ -209,6 +222,8 @@ el_reset(EditLine *el)
 /* el_set():
  *	set the editline parameters
  */
+// [spec:libedit:def:el.el-wset-fn]
+// [spec:libedit:sem:el.el-wset-fn]
 int
 el_wset(EditLine *el, int op, ...)
 {
@@ -437,6 +452,8 @@ el_wset(EditLine *el, int op, ...)
 /* el_get():
  *	retrieve the editline parameters
  */
+// [spec:libedit:def:el.el-wget-fn]
+// [spec:libedit:sem:el.el-wget-fn]
 int
 el_wget(EditLine *el, int op, ...)
 {
@@ -561,6 +578,8 @@ el_wget(EditLine *el, int op, ...)
 /* el_line():
  *	Return editing info
  */
+// [spec:libedit:def:el.el-wline-fn]
+// [spec:libedit:sem:el.el-wline-fn]
 const LineInfoW *
 el_wline(EditLine *el)
 {
@@ -572,6 +591,8 @@ el_wline(EditLine *el)
 /* el_source():
  *	Source a file
  */
+// [spec:libedit:def:el.el-source-fn]
+// [spec:libedit:sem:el.el-source-fn]
 int
 el_source(EditLine *el, const char *fname)
 {
@@ -640,6 +661,8 @@ el_source(EditLine *el, const char *fname)
 /* el_resize():
  *	Called from program when terminal is resized
  */
+// [spec:libedit:def:el.el-resize-fn]
+// [spec:libedit:sem:el.el-resize-fn]
 void
 el_resize(EditLine *el)
 {
@@ -661,6 +684,8 @@ el_resize(EditLine *el)
 /* el_beep():
  *	Called from the program to beep
  */
+// [spec:libedit:def:el.el-beep-fn]
+// [spec:libedit:sem:el.el-beep-fn]
 void
 el_beep(EditLine *el)
 {
@@ -672,6 +697,8 @@ el_beep(EditLine *el)
 /* el_editmode()
  *	Set the state of EDIT_DISABLED from the `edit' command.
  */
+// [spec:libedit:def:el.el-editmode-fn]
+// [spec:libedit:sem:el.el-editmode-fn]
 libedit_private int
 /*ARGSUSED*/
 el_editmode(EditLine *el, int argc, const wchar_t **argv)

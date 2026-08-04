@@ -45,6 +45,8 @@ __RCSID("$NetBSD: literal.c,v 1.6 2024/12/05 22:21:53 christos Exp $");
 #include <string.h>
 #include "el.h"
 
+// [spec:libedit:def:literal.literal-init-fn]
+// [spec:libedit:sem:literal.literal-init-fn]
 libedit_private void
 literal_init(EditLine *el)
 {
@@ -53,12 +55,16 @@ literal_init(EditLine *el)
 	memset(l, 0, sizeof(*l));
 }
 
+// [spec:libedit:def:literal.literal-end-fn]
+// [spec:libedit:sem:literal.literal-end-fn]
 libedit_private void
 literal_end(EditLine *el)
 {
 	literal_clear(el);
 }
 
+// [spec:libedit:def:literal.literal-clear-fn]
+// [spec:libedit:sem:literal.literal-clear-fn]
 libedit_private void
 literal_clear(EditLine *el)
 {
@@ -76,6 +82,8 @@ literal_clear(EditLine *el)
 	l->l_idx = 0;
 }
 
+// [spec:libedit:def:literal.literal-add-fn]
+// [spec:libedit:sem:literal.literal-add-fn]
 libedit_private wint_t
 literal_add(EditLine *el, const wchar_t *buf, const wchar_t *end, int *wp)
 {
@@ -126,6 +134,8 @@ literal_add(EditLine *el, const wchar_t *buf, const wchar_t *end, int *wp)
 	return EL_LITERAL | (wint_t)(l->l_idx - 1);
 }
 
+// [spec:libedit:def:literal.literal-get-fn]
+// [spec:libedit:sem:literal.literal-get-fn]
 libedit_private const char *
 literal_get(EditLine *el, wint_t idx)
 {

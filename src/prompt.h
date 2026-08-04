@@ -40,8 +40,10 @@
 #ifndef _h_el_prompt
 #define	_h_el_prompt
 
+// [spec:libedit:def:prompt.el-pfunc-t-edit-line]
 typedef wchar_t    *(*el_pfunc_t)(EditLine *);
 
+// [spec:libedit:def:prompt.el-prompt-t]
 typedef struct el_prompt_t {
 	el_pfunc_t	p_func;		/* Function to return the prompt */
 	coord_t		p_pos;		/* position in the line after prompt */

@@ -1,0 +1,94 @@
+generated_at 2026-08-04T16:07:50.576341269Z
+
+seal 27fda020cbd5d06d
+
+files (
+    {path Makefile.am, code_loc 9, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path Makefile.in, code_loc 801, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path acinclude.m4, code_loc 46, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path aclocal.m4, code_loc 734, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path config.h.in, code_loc 119, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path doc/Makefile.am, code_loc 59, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path doc/Makefile.in, code_loc 581, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path doc/mdoc2man.awk, code_loc 427, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path examples/Makefile.am, code_loc 8, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path examples/Makefile.in, code_loc 541, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path examples/fileman.c, code_loc 323, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path examples/fuzz1.c, code_loc 43, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path examples/tc1.c, code_loc 211, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path examples/wtc1.c, code_loc 225, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path install-sh, code_loc 359, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path libedit.pc.in, code_loc 11, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path ltmain.sh, code_loc 8346, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path m4/libtool.m4, code_loc 6489, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path m4/ltoptions.m4, code_loc 290, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path m4/ltsugar.m4, code_loc 48, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path m4/ltversion.m4, code_loc 8, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path m4/lt~obsolete.m4, code_loc 62, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path plan/main.styx, code_loc 6, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/Makefile.am, code_loc 45, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/Makefile.in, code_loc 770, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/chared.c, code_loc 532, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/chared.h, code_loc 79, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/chartype.c, code_loc 256, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/chartype.h, code_loc 39, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/common.c, code_loc 501, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/editline/readline.h, code_loc 214, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/el.c, code_loc 515, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 2}
+    {path src/el.h, code_loc 100, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/eln.c, code_loc 306, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 2}
+    {path src/emacs.c, code_loc 282, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/filecomplete.c, code_loc 791, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 1}
+    {path src/filecomplete.h, code_loc 19, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/getline.c, code_loc 69, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/hist.c, code_loc 157, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/hist.h, code_loc 35, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/histedit.h, code_loc 161, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/history.c, code_loc 863, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/historyn.c, code_loc 3, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/keymacro.c, code_loc 511, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 1}
+    {path src/keymacro.h, code_loc 31, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/literal.c, code_loc 81, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 1}
+    {path src/literal.h, code_loc 15, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/makelist, code_loc 127, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/map.c, code_loc 483, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/map.h, code_loc 36, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/parse.c, code_loc 199, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/parse.h, code_loc 7, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/prompt.c, code_loc 109, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/prompt.h, code_loc 15, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/read.c, code_loc 443, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/read.h, code_loc 9, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/readline.c, code_loc 2794, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 4}
+    {path src/reallocarr.c, code_loc 48, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/refresh.c, code_loc 765, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/refresh.h, code_loc 17, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/search.c, code_loc 492, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/search.h, code_loc 21, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/sig.c, code_loc 113, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/sig.h, code_loc 22, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/strlcat.c, code_loc 46, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/strlcpy.c, code_loc 36, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/sys.h, code_loc 71, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/terminal.c, code_loc 1252, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 1}
+    {path src/terminal.h, code_loc 81, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/tokenizer.c, code_loc 330, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/tokenizern.c, code_loc 3, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/tty.c, code_loc 1162, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/tty.h, code_loc 380, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/unvis.c, code_loc 453, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/vi.c, code_loc 675, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 1}
+    {path src/vis.c, code_loc 742, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 1}
+    {path src/vis.h, code_loc 53, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path src/wcsdup.c, code_loc 23, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+)
+
+directories (
+    {path "", test_ratio_milli 0}
+    {path doc, test_ratio_milli 0}
+    {path examples, test_ratio_milli 0}
+    {path m4, test_ratio_milli 0}
+    {path plan, test_ratio_milli 0}
+    {path src, test_ratio_milli 0}
+    {path src/editline, test_ratio_milli 0}
+)

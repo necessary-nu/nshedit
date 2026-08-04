@@ -57,6 +57,8 @@ __RCSID("$NetBSD: common.c,v 1.52 2026/03/03 15:05:17 christos Exp $");
  *	Indicate end of file
  *	[^D]
  */
+// [spec:libedit:def:common.ed-end-of-file-fn]
+// [spec:libedit:sem:common.ed-end-of-file-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_end_of_file(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -72,6 +74,8 @@ ed_end_of_file(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Add character to the line
  *	Insert a character [bound to all insert keys]
  */
+// [spec:libedit:def:common.ed-insert-fn]
+// [spec:libedit:sem:common.ed-insert-fn]
 libedit_private el_action_t
 ed_insert(EditLine *el, wint_t c)
 {
@@ -114,6 +118,8 @@ ed_insert(EditLine *el, wint_t c)
  *	Delete from beginning of current word to cursor
  *	[M-^?] [^W]
  */
+// [spec:libedit:def:common.ed-delete-prev-word-fn]
+// [spec:libedit:sem:common.ed-delete-prev-word-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_delete_prev_word(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -142,6 +148,8 @@ ed_delete_prev_word(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Delete character under cursor
  *	[^D] [x]
  */
+// [spec:libedit:def:common.ed-delete-next-char-fn]
+// [spec:libedit:sem:common.ed-delete-next-char-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_delete_next_char(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -189,6 +197,8 @@ ed_delete_next_char(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Cut to the end of line
  *	[^K] [^K]
  */
+// [spec:libedit:def:common.ed-kill-line-fn]
+// [spec:libedit:sem:common.ed-kill-line-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_kill_line(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -210,6 +220,8 @@ ed_kill_line(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Move cursor to the end of line
  *	[^E] [^E]
  */
+// [spec:libedit:def:common.ed-move-to-end-fn]
+// [spec:libedit:sem:common.ed-move-to-end-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_move_to_end(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -234,6 +246,8 @@ ed_move_to_end(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Move cursor to the beginning of line
  *	[^A] [^A]
  */
+// [spec:libedit:def:common.ed-move-to-beg-fn]
+// [spec:libedit:sem:common.ed-move-to-beg-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_move_to_beg(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -258,6 +272,8 @@ ed_move_to_beg(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Exchange the character to the left of the cursor with the one under it
  *	[^T] [^T]
  */
+// [spec:libedit:def:common.ed-transpose-chars-fn]
+// [spec:libedit:sem:common.ed-transpose-chars-fn]
 libedit_private el_action_t
 ed_transpose_chars(EditLine *el, wint_t c)
 {
@@ -283,6 +299,8 @@ ed_transpose_chars(EditLine *el, wint_t c)
  *	Move to the right one character
  *	[^F] [^F]
  */
+// [spec:libedit:def:common.ed-next-char-fn]
+// [spec:libedit:sem:common.ed-next-char-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_next_char(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -312,6 +330,8 @@ ed_next_char(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Move to the beginning of the current word
  *	[M-b] [b]
  */
+// [spec:libedit:def:common.ed-prev-word-fn]
+// [spec:libedit:sem:common.ed-prev-word-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_prev_word(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -338,6 +358,8 @@ ed_prev_word(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Move to the left one character
  *	[^B] [^B]
  */
+// [spec:libedit:def:common.ed-prev-char-fn]
+// [spec:libedit:sem:common.ed-prev-char-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_prev_char(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -363,6 +385,8 @@ ed_prev_char(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Add the next character typed verbatim
  *	[^V] [^V]
  */
+// [spec:libedit:def:common.ed-quoted-insert-fn]
+// [spec:libedit:sem:common.ed-quoted-insert-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_quoted_insert(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -383,6 +407,8 @@ ed_quoted_insert(EditLine *el, wint_t c __attribute__((__unused__)))
 /* ed_digit():
  *	Adds to argument or enters a digit
  */
+// [spec:libedit:def:common.ed-digit-fn]
+// [spec:libedit:sem:common.ed-digit-fn]
 libedit_private el_action_t
 ed_digit(EditLine *el, wint_t c)
 {
@@ -411,6 +437,8 @@ ed_digit(EditLine *el, wint_t c)
  *	Digit that starts argument
  *	For ESC-n
  */
+// [spec:libedit:def:common.ed-argument-digit-fn]
+// [spec:libedit:sem:common.ed-argument-digit-fn]
 libedit_private el_action_t
 ed_argument_digit(EditLine *el, wint_t c)
 {
@@ -435,6 +463,8 @@ ed_argument_digit(EditLine *el, wint_t c)
  *	Indicates unbound character
  *	Bound to keys that are not assigned
  */
+// [spec:libedit:def:common.ed-unassigned-fn]
+// [spec:libedit:sem:common.ed-unassigned-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_unassigned(EditLine *el __attribute__((__unused__)),
@@ -449,6 +479,8 @@ ed_unassigned(EditLine *el __attribute__((__unused__)),
  *	Input characters that have no effect
  *	[^C ^O ^Q ^S ^Z ^\ ^]] [^C ^O ^Q ^S ^\]
  */
+// [spec:libedit:def:common.ed-ignore-fn]
+// [spec:libedit:sem:common.ed-ignore-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_ignore(EditLine *el __attribute__((__unused__)),
@@ -463,6 +495,8 @@ ed_ignore(EditLine *el __attribute__((__unused__)),
  *	Execute command
  *	[^J]
  */
+// [spec:libedit:def:common.ed-newline-fn]
+// [spec:libedit:sem:common.ed-newline-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_newline(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -479,6 +513,8 @@ ed_newline(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Delete the character to the left of the cursor
  *	[^?]
  */
+// [spec:libedit:def:common.ed-delete-prev-char-fn]
+// [spec:libedit:sem:common.ed-delete-prev-char-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_delete_prev_char(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -499,6 +535,8 @@ ed_delete_prev_char(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Clear screen leaving current line at the top
  *	[^L]
  */
+// [spec:libedit:def:common.ed-clear-screen-fn]
+// [spec:libedit:sem:common.ed-clear-screen-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_clear_screen(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -514,6 +552,8 @@ ed_clear_screen(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Redisplay everything
  *	^R
  */
+// [spec:libedit:def:common.ed-redisplay-fn]
+// [spec:libedit:sem:common.ed-redisplay-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_redisplay(EditLine *el __attribute__((__unused__)),
@@ -528,6 +568,8 @@ ed_redisplay(EditLine *el __attribute__((__unused__)),
  *	Erase current line and start from scratch
  *	[^G]
  */
+// [spec:libedit:def:common.ed-start-over-fn]
+// [spec:libedit:sem:common.ed-start-over-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_start_over(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -542,6 +584,8 @@ ed_start_over(EditLine *el, wint_t c __attribute__((__unused__)))
  *	First character in a bound sequence
  *	Placeholder for external keys
  */
+// [spec:libedit:def:common.ed-sequence-lead-in-fn]
+// [spec:libedit:sem:common.ed-sequence-lead-in-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_sequence_lead_in(EditLine *el __attribute__((__unused__)),
@@ -556,6 +600,8 @@ ed_sequence_lead_in(EditLine *el __attribute__((__unused__)),
  *	Move to the previous history line
  *	[^P] [k]
  */
+// [spec:libedit:def:common.ed-prev-history-fn]
+// [spec:libedit:sem:common.ed-prev-history-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_prev_history(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -593,6 +639,8 @@ ed_prev_history(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Move to the next history line
  *	[^N] [j]
  */
+// [spec:libedit:def:common.ed-next-history-fn]
+// [spec:libedit:sem:common.ed-next-history-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_next_history(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -620,6 +668,8 @@ ed_next_history(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Search previous in history for a line matching the current
  *	next search history [M-P] [K]
  */
+// [spec:libedit:def:common.ed-search-prev-history-fn]
+// [spec:libedit:sem:common.ed-search-prev-history-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_search_prev_history(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -688,6 +738,8 @@ ed_search_prev_history(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Search next in history for a line matching the current
  *	[M-N] [J]
  */
+// [spec:libedit:def:common.ed-search-next-history-fn]
+// [spec:libedit:sem:common.ed-search-next-history-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_search_next_history(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -742,6 +794,8 @@ ed_search_next_history(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Move up one line
  *	Could be [k] [^p]
  */
+// [spec:libedit:def:common.ed-prev-line-fn]
+// [spec:libedit:sem:common.ed-prev-line-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_prev_line(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -785,6 +839,8 @@ ed_prev_line(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Move down one line
  *	Could be [j] [^n]
  */
+// [spec:libedit:def:common.ed-next-line-fn]
+// [spec:libedit:sem:common.ed-next-line-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_next_line(EditLine *el, wint_t c __attribute__((__unused__)))
@@ -819,6 +875,8 @@ ed_next_line(EditLine *el, wint_t c __attribute__((__unused__)))
  *	Editline extended command
  *	[M-X] [:]
  */
+// [spec:libedit:def:common.ed-command-fn]
+// [spec:libedit:sem:common.ed-command-fn]
 libedit_private el_action_t
 /*ARGSUSED*/
 ed_command(EditLine *el, wint_t c __attribute__((__unused__)))

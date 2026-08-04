@@ -55,6 +55,7 @@
 /*
  * Undo information for vi - no undo in emacs (yet)
  */
+// [spec:libedit:def:chared.c-undo-t]
 typedef struct c_undo_t {
 	ssize_t	 len;			/* length of saved line */
 	int	 cursor;		/* position of saved cursor */
@@ -62,6 +63,7 @@ typedef struct c_undo_t {
 } c_undo_t;
 
 /* redo for vi */
+// [spec:libedit:def:chared.c-redo-t]
 typedef struct c_redo_t {
 	wchar_t	*buf;			/* redo insert key sequence */
 	wchar_t	*pos;
@@ -75,6 +77,7 @@ typedef struct c_redo_t {
 /*
  * Current action information for vi
  */
+// [spec:libedit:def:chared.c-vcmd-t]
 typedef struct c_vcmd_t {
 	int	 action;
 	wchar_t	*pos;
@@ -83,19 +86,23 @@ typedef struct c_vcmd_t {
 /*
  * Kill buffer for emacs
  */
+// [spec:libedit:def:chared.c-kill-t]
 typedef struct c_kill_t {
 	wchar_t	*buf;
 	wchar_t	*last;
 	wchar_t	*mark;
 } c_kill_t;
 
+// [spec:libedit:def:chared.el-zfunc-t-edit-line-void]
 typedef void (*el_zfunc_t)(EditLine *, void *);
+// [spec:libedit:def:chared.el-afunc-t-void-const-char]
 typedef const char *(*el_afunc_t)(void *, const char *);
 
 /*
  * Note that we use both data structures because the user can bind
  * commands from both editors!
  */
+// [spec:libedit:def:chared.el-chared-t]
 typedef struct el_chared_t {
 	c_undo_t	c_undo;
 	c_kill_t	c_kill;

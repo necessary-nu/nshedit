@@ -1,0 +1,53 @@
+// A timeless register: edit in place; status via lifecycle + log + decisions,
+// never a duplicate corrected record. A gone element stays at lifecycle @retired.
+elements (
+    {
+        id [arch:libedit:terminal-caps]
+        name "Terminal capability layer"
+        kind @boundary
+        lifecycle @provisional
+        owns (
+            [spec:libedit:def:terminal.tgetent-fn]
+            [spec:libedit:def:terminal.tgetstr-fn]
+            [spec:libedit:def:terminal.tgetflag-fn]
+            [spec:libedit:def:terminal.tgetnum-fn]
+            [spec:libedit:def:terminal.tgoto-fn]
+            [spec:libedit:def:terminal.tputs-fn]
+        )
+        exposes ()
+        depends_on ()
+        composed_of ()
+        decisions ([dec:libedit:terminal-caps-via-term-crate])
+        log (
+            {at "2026-08-04T16:27:13Z", kind @established, by "[dec:libedit:terminal-caps-via-term-crate]"}
+        )
+    }
+    {
+        id [arch:libedit:c-abi]
+        name "C ABI compatibility crate"
+        kind @boundary
+        lifecycle @provisional
+        owns ()
+        exposes ()
+        depends_on ()
+        composed_of ()
+        decisions ([dec:libedit:no-c-ffi])
+        log (
+            {at "2026-08-04T16:27:13Z", kind @established, by "[dec:libedit:no-c-ffi]"}
+        )
+    }
+    {
+        id [arch:libedit:compat-shims]
+        name "C portability shim layer"
+        kind @module
+        lifecycle @retired
+        owns ()
+        exposes ()
+        depends_on ()
+        composed_of ()
+        decisions ([dec:libedit:posix-only-scope])
+        log (
+            {at "2026-08-04T16:27:13Z", kind @retired, by "[dec:libedit:posix-only-scope]"}
+        )
+    }
+)

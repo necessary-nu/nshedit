@@ -40,8 +40,10 @@
 #ifndef _h_el_hist
 #define	_h_el_hist
 
+// [spec:libedit:def:hist.hist-fun-t-void-hist-event-w-int]
 typedef int (*hist_fun_t)(void *, HistEventW *, int, ...);
 
+// [spec:libedit:def:hist.el-history-t]
 typedef struct el_history_t {
 	wchar_t		*buf;		/* The history buffer		*/
 	size_t		 sz;		/* Size of history buffer	*/

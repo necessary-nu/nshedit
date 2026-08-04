@@ -105,6 +105,8 @@ static wchar_t *do_svis(wchar_t *, wint_t, int, wint_t, const wchar_t *);
 #define iscgraph(c)	isgraph(c)
 #ifdef notyet
 #include <locale.h>
+// [spec:libedit:def:vis.iscgraph-fn]
+// [spec:libedit:sem:vis.iscgraph-fn]
 static int
 iscgraph(int c) {
 	int rv;
@@ -162,6 +164,8 @@ CTASSERT(MB_LEN_MAX <= sizeof(uint64_t));
 /*
  * This is do_hvis, for HTTP style (RFC 1808)
  */
+// [spec:libedit:def:vis.do-hvis-fn]
+// [spec:libedit:sem:vis.do-hvis-fn]
 static wchar_t *
 do_hvis(wchar_t *dst, wint_t c, int flags, wint_t nextc, const wchar_t *extra)
 {
@@ -185,6 +189,8 @@ do_hvis(wchar_t *dst, wint_t c, int flags, wint_t nextc, const wchar_t *extra)
  * This is do_mvis, for Quoted-Printable MIME (RFC 2045)
  * NB: No handling of long lines or CRLF.
  */
+// [spec:libedit:def:vis.do-mvis-fn]
+// [spec:libedit:sem:vis.do-mvis-fn]
 static wchar_t *
 do_mvis(wchar_t *dst, wint_t c, int flags, wint_t nextc, const wchar_t *extra)
 {
@@ -206,6 +212,8 @@ do_mvis(wchar_t *dst, wint_t c, int flags, wint_t nextc, const wchar_t *extra)
 /*
  * Output single byte of multibyte character.
  */
+// [spec:libedit:def:vis.do-mbyte-fn]
+// [spec:libedit:sem:vis.do-mbyte-fn]
 static wchar_t *
 do_mbyte(wchar_t *dst, wint_t c, int flags, wint_t nextc, int iswextra)
 {
@@ -303,6 +311,8 @@ do_mbyte(wchar_t *dst, wint_t c, int flags, wint_t nextc, int iswextra)
  * extra:     Pointer to the list of extra characters to be
  *	      backslash-protected.
  */
+// [spec:libedit:def:vis.do-svis-fn]
+// [spec:libedit:sem:vis.do-svis-fn]
 static wchar_t *
 do_svis(wchar_t *dst, wint_t c, int flags, wint_t nextc, const wchar_t *extra)
 {
@@ -331,11 +341,14 @@ do_svis(wchar_t *dst, wint_t c, int flags, wint_t nextc, const wchar_t *extra)
 	return dst;
 }
 
+// [spec:libedit:def:vis.visfun-t-wchar-t-wint-t-int-wint-t-const-wchar-t]
 typedef wchar_t *(*visfun_t)(wchar_t *, wint_t, int, wint_t, const wchar_t *);
 
 /*
  * Return the appropriate encoding function depending on the flags given.
  */
+// [spec:libedit:def:vis.getvisfun-fn]
+// [spec:libedit:sem:vis.getvisfun-fn]
 static visfun_t
 getvisfun(int flags)
 {
@@ -349,6 +362,8 @@ getvisfun(int flags)
 /*
  * Expand list of extra characters to not visually encode.
  */
+// [spec:libedit:def:vis.makeextralist-fn]
+// [spec:libedit:sem:vis.makeextralist-fn]
 static wchar_t *
 makeextralist(int flags, const char *src)
 {
@@ -394,6 +409,8 @@ makeextralist(int flags, const char *src)
  * 	The main internal function.
  *	All user-visible functions call this one.
  */
+// [spec:libedit:def:vis.istrsenvisx-fn]
+// [spec:libedit:sem:vis.istrsenvisx-fn]
 static int
 istrsenvisx(char **mbdstp, size_t *dlen, const char *mbsrc, size_t mblength,
     int flags, const char *mbextra, int *cerr_ptr)
@@ -680,6 +697,8 @@ out:
 	return error;
 }
 
+// [spec:libedit:def:vis.istrsenvisxl-fn]
+// [spec:libedit:sem:vis.istrsenvisxl-fn]
 static int
 istrsenvisxl(char **mbdstp, size_t *dlen, const char *mbsrc,
     int flags, const char *mbextra, int *cerr_ptr)
@@ -698,6 +717,8 @@ istrsenvisxl(char **mbdstp, size_t *dlen, const char *mbsrc,
  *	way so that they are not interpreted by a shell.
  */
 
+// [spec:libedit:def:vis.svis-fn]
+// [spec:libedit:sem:vis.svis-fn]
 char *
 svis(char *mbdst, int c, int flags, int nextc, const char *mbextra)
 {
@@ -713,6 +734,8 @@ svis(char *mbdst, int c, int flags, int nextc, const char *mbextra)
 	return mbdst + ret;
 }
 
+// [spec:libedit:def:vis.snvis-fn]
+// [spec:libedit:sem:vis.snvis-fn]
 char *
 snvis(char *mbdst, size_t dlen, int c, int flags, int nextc, const char *mbextra)
 {
@@ -728,24 +751,32 @@ snvis(char *mbdst, size_t dlen, int c, int flags, int nextc, const char *mbextra
 	return mbdst + ret;
 }
 
+// [spec:libedit:def:vis.strsvis-fn]
+// [spec:libedit:sem:vis.strsvis-fn]
 int
 strsvis(char *mbdst, const char *mbsrc, int flags, const char *mbextra)
 {
 	return istrsenvisxl(&mbdst, NULL, mbsrc, flags, mbextra, NULL);
 }
 
+// [spec:libedit:def:vis.strsnvis-fn]
+// [spec:libedit:sem:vis.strsnvis-fn]
 int
 strsnvis(char *mbdst, size_t dlen, const char *mbsrc, int flags, const char *mbextra)
 {
 	return istrsenvisxl(&mbdst, &dlen, mbsrc, flags, mbextra, NULL);
 }
 
+// [spec:libedit:def:vis.strsvisx-fn]
+// [spec:libedit:sem:vis.strsvisx-fn]
 int
 strsvisx(char *mbdst, const char *mbsrc, size_t len, int flags, const char *mbextra)
 {
 	return istrsenvisx(&mbdst, NULL, mbsrc, len, flags, mbextra, NULL);
 }
 
+// [spec:libedit:def:vis.strsnvisx-fn]
+// [spec:libedit:sem:vis.strsnvisx-fn]
 int
 strsnvisx(char *mbdst, size_t dlen, const char *mbsrc, size_t len, int flags,
     const char *mbextra)
@@ -753,6 +784,8 @@ strsnvisx(char *mbdst, size_t dlen, const char *mbsrc, size_t len, int flags,
 	return istrsenvisx(&mbdst, &dlen, mbsrc, len, flags, mbextra, NULL);
 }
 
+// [spec:libedit:def:vis.strsenvisx-fn]
+// [spec:libedit:sem:vis.strsenvisx-fn]
 int
 strsenvisx(char *mbdst, size_t dlen, const char *mbsrc, size_t len, int flags,
     const char *mbextra, int *cerr_ptr)
@@ -765,6 +798,8 @@ strsenvisx(char *mbdst, size_t dlen, const char *mbsrc, size_t len, int flags,
 /*
  * vis - visually encode characters
  */
+// [spec:libedit:def:vis.vis-fn]
+// [spec:libedit:sem:vis.vis-fn]
 char *
 vis(char *mbdst, int c, int flags, int nextc)
 {
@@ -780,6 +815,8 @@ vis(char *mbdst, int c, int flags, int nextc)
 	return mbdst + ret;
 }
 
+// [spec:libedit:def:vis.nvis-fn]
+// [spec:libedit:sem:vis.nvis-fn]
 char *
 nvis(char *mbdst, size_t dlen, int c, int flags, int nextc)
 {
@@ -803,18 +840,24 @@ nvis(char *mbdst, size_t dlen, int c, int flags, int nextc)
  *	is returned.
  */
 
+// [spec:libedit:def:vis.strvis-fn]
+// [spec:libedit:sem:vis.strvis-fn]
 int
 strvis(char *mbdst, const char *mbsrc, int flags)
 {
 	return istrsenvisxl(&mbdst, NULL, mbsrc, flags, "", NULL);
 }
 
+// [spec:libedit:def:vis.strnvis-fn]
+// [spec:libedit:sem:vis.strnvis-fn]
 int
 strnvis(char *mbdst, size_t dlen, const char *mbsrc, int flags)
 {
 	return istrsenvisxl(&mbdst, &dlen, mbsrc, flags, "", NULL);
 }
 
+// [spec:libedit:def:vis.stravis-fn]
+// [spec:libedit:sem:vis.stravis-fn]
 int
 stravis(char **mbdstp, const char *mbsrc, int flags)
 {
@@ -833,18 +876,24 @@ stravis(char **mbdstp, const char *mbsrc, int flags)
  *	This is useful for encoding a block of data.
  */
 
+// [spec:libedit:def:vis.strvisx-fn]
+// [spec:libedit:sem:vis.strvisx-fn]
 int
 strvisx(char *mbdst, const char *mbsrc, size_t len, int flags)
 {
 	return istrsenvisx(&mbdst, NULL, mbsrc, len, flags, "", NULL);
 }
 
+// [spec:libedit:def:vis.strnvisx-fn]
+// [spec:libedit:sem:vis.strnvisx-fn]
 int
 strnvisx(char *mbdst, size_t dlen, const char *mbsrc, size_t len, int flags)
 {
 	return istrsenvisx(&mbdst, &dlen, mbsrc, len, flags, "", NULL);
 }
 
+// [spec:libedit:def:vis.strenvisx-fn]
+// [spec:libedit:sem:vis.strenvisx-fn]
 int
 strenvisx(char *mbdst, size_t dlen, const char *mbsrc, size_t len, int flags,
     int *cerr_ptr)

@@ -897,6 +897,8 @@ static const el_action_t el_map_vi_command[] = {
 /* map_init():
  *	Initialize and allocate the maps
  */
+// [spec:libedit:def:map.map-init-fn]
+// [spec:libedit:sem:map.map-init-fn]
 libedit_private int
 map_init(EditLine *el)
 {
@@ -950,6 +952,8 @@ out:
 /* map_end():
  *	Free the space taken by the editor maps
  */
+// [spec:libedit:def:map.map-end-fn]
+// [spec:libedit:sem:map.map-end-fn]
 libedit_private void
 map_end(EditLine *el)
 {
@@ -976,6 +980,8 @@ map_end(EditLine *el)
 /* map_init_nls():
  *	Find all the printable keys and bind them to self insert
  */
+// [spec:libedit:def:map.map-init-nls-fn]
+// [spec:libedit:sem:map.map-init-nls-fn]
 static void
 map_init_nls(EditLine *el)
 {
@@ -992,6 +998,8 @@ map_init_nls(EditLine *el)
 /* map_init_meta():
  *	Bind all the meta keys to the appropriate ESC-<key> sequence
  */
+// [spec:libedit:def:map.map-init-meta-fn]
+// [spec:libedit:sem:map.map-init-meta-fn]
 static void
 map_init_meta(EditLine *el)
 {
@@ -1033,6 +1041,8 @@ map_init_meta(EditLine *el)
 /* map_init_vi():
  *	Initialize the vi bindings
  */
+// [spec:libedit:def:map.map-init-vi-fn]
+// [spec:libedit:sem:map.map-init-vi-fn]
 libedit_private void
 map_init_vi(EditLine *el)
 {
@@ -1065,6 +1075,8 @@ map_init_vi(EditLine *el)
 /* map_init_emacs():
  *	Initialize the emacs bindings
  */
+// [spec:libedit:def:map.map-init-emacs-fn]
+// [spec:libedit:sem:map.map-init-emacs-fn]
 libedit_private void
 map_init_emacs(EditLine *el)
 {
@@ -1101,6 +1113,8 @@ map_init_emacs(EditLine *el)
 /* map_set_editor():
  *	Set the editor
  */
+// [spec:libedit:def:map.map-set-editor-fn]
+// [spec:libedit:sem:map.map-set-editor-fn]
 libedit_private int
 map_set_editor(EditLine *el, wchar_t *editor)
 {
@@ -1120,6 +1134,8 @@ map_set_editor(EditLine *el, wchar_t *editor)
 /* map_get_editor():
  *	Retrieve the editor
  */
+// [spec:libedit:def:map.map-get-editor-fn]
+// [spec:libedit:sem:map.map-get-editor-fn]
 libedit_private int
 map_get_editor(EditLine *el, const wchar_t **editor)
 {
@@ -1141,6 +1157,8 @@ map_get_editor(EditLine *el, const wchar_t **editor)
 /* map_set_wordchars():
  *	Set the wordchars
  */
+// [spec:libedit:def:map.map-set-wordchars-fn]
+// [spec:libedit:sem:map.map-set-wordchars-fn]
 libedit_private int
 map_set_wordchars(EditLine *el, wchar_t *wordchars)
 {
@@ -1154,6 +1172,8 @@ map_set_wordchars(EditLine *el, wchar_t *wordchars)
 /* map_get_wordchars():
  *	Retrieve the wordhars
  */
+// [spec:libedit:def:map.map-get-wordchars-fn]
+// [spec:libedit:sem:map.map-get-wordchars-fn]
 libedit_private int
 map_get_wordchars(EditLine *el, const wchar_t **wordchars)
 {
@@ -1168,6 +1188,8 @@ map_get_wordchars(EditLine *el, const wchar_t **wordchars)
 /* map_print_key():
  *	Print the function description for 1 key
  */
+// [spec:libedit:def:map.map-print-key-fn]
+// [spec:libedit:sem:map.map-print-key-fn]
 static void
 map_print_key(EditLine *el, el_action_t *map, const wchar_t *in)
 {
@@ -1191,6 +1213,8 @@ map_print_key(EditLine *el, el_action_t *map, const wchar_t *in)
 /* map_print_some_keys():
  *	Print keys from first to last
  */
+// [spec:libedit:def:map.map-print-some-keys-fn]
+// [spec:libedit:sem:map.map-print-some-keys-fn]
 static void
 map_print_some_keys(EditLine *el, el_action_t *map, wint_t first, wint_t last)
 {
@@ -1255,6 +1279,8 @@ map_print_some_keys(EditLine *el, el_action_t *map, wint_t first, wint_t last)
 /* map_print_all_keys():
  *	Print the function description for all keys.
  */
+// [spec:libedit:def:map.map-print-all-keys-fn]
+// [spec:libedit:sem:map.map-print-all-keys-fn]
 static void
 map_print_all_keys(EditLine *el)
 {
@@ -1290,6 +1316,8 @@ map_print_all_keys(EditLine *el)
 /* map_bind():
  *	Add/remove/change bindings
  */
+// [spec:libedit:def:map.map-bind-fn]
+// [spec:libedit:sem:map.map-bind-fn]
 libedit_private int
 map_bind(EditLine *el, int argc, const wchar_t **argv)
 {
@@ -1435,6 +1463,8 @@ map_bind(EditLine *el, int argc, const wchar_t **argv)
 /* map_addfunc():
  *	add a user defined function
  */
+// [spec:libedit:def:map.map-addfunc-fn]
+// [spec:libedit:sem:map.map-addfunc-fn]
 libedit_private int
 map_addfunc(EditLine *el, const wchar_t *name, const wchar_t *help,
     el_func_t func)

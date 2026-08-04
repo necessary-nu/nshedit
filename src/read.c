@@ -58,12 +58,14 @@ __RCSID("$NetBSD: read.c,v 1.109 2025/01/03 00:40:08 rillig Exp $");
 
 #define	EL_MAXMACRO	10
 
+// [spec:libedit:def:read.macros]
 struct macros {
 	wchar_t	**macro;
 	int	  level;
 	int	  offset;
 };
 
+// [spec:libedit:def:read.el-read-t]
 struct el_read_t {
 	struct macros	 macros;
 	el_rfunc_t	 read_char;	/* Function to read a character. */
@@ -80,6 +82,8 @@ static const wchar_t *noedit_wgets(EditLine *, int *);
 /* read_init():
  *	Initialize the read stuff
  */
+// [spec:libedit:def:read.read-init-fn]
+// [spec:libedit:sem:read.read-init-fn]
 libedit_private int
 read_init(EditLine *el)
 {
@@ -105,6 +109,8 @@ out:
 /* el_read_end():
  *	Free the data structures used by the read stuff.
  */
+// [spec:libedit:def:read.read-end-fn]
+// [spec:libedit:sem:read.read-end-fn]
 libedit_private void
 read_end(EditLine *el)
 {
@@ -120,6 +126,8 @@ read_end(EditLine *el)
  *	Set the read char function to the one provided.
  *	If it is set to EL_BUILTIN_GETCFN, then reset to the builtin one.
  */
+// [spec:libedit:def:read.el-read-setfn-fn]
+// [spec:libedit:sem:read.el-read-setfn-fn]
 libedit_private int
 el_read_setfn(struct el_read_t *el_read, el_rfunc_t rc)
 {
@@ -132,6 +140,8 @@ el_read_setfn(struct el_read_t *el_read, el_rfunc_t rc)
  *	return the current read char function, or EL_BUILTIN_GETCFN
  *	if it is the default one
  */
+// [spec:libedit:def:read.el-read-getfn-fn]
+// [spec:libedit:sem:read.el-read-getfn-fn]
 libedit_private el_rfunc_t
 el_read_getfn(struct el_read_t *el_read)
 {
@@ -144,6 +154,8 @@ el_read_getfn(struct el_read_t *el_read)
  *	Try to recover from a read error
  */
 /* ARGSUSED */
+// [spec:libedit:def:read.read-fixio-fn]
+// [spec:libedit:sem:read.read-fixio-fn]
 static int
 read__fixio(int fd __attribute__((__unused__)), int e)
 {
@@ -205,6 +217,8 @@ read__fixio(int fd __attribute__((__unused__)), int e)
 /* el_push():
  *	Push a macro
  */
+// [spec:libedit:def:read.el-wpush-fn]
+// [spec:libedit:sem:read.el-wpush-fn]
 void
 el_wpush(EditLine *el, const wchar_t *str)
 {
@@ -226,6 +240,8 @@ el_wpush(EditLine *el, const wchar_t *str)
  *	return 0 on success or -1 on EOF or error.
  *	Character values > 255 are not looked up in the map, but inserted.
  */
+// [spec:libedit:def:read.read-getcmd-fn]
+// [spec:libedit:sem:read.read-getcmd-fn]
 static int
 read_getcmd(EditLine *el, el_action_t *cmdnum, wchar_t *ch)
 {
@@ -275,6 +291,8 @@ read_getcmd(EditLine *el, el_action_t *cmdnum, wchar_t *ch)
 /* read_char():
  *	Read a character from the tty.
  */
+// [spec:libedit:def:read.read-char-fn]
+// [spec:libedit:sem:read.read-char-fn]
 static int
 read_char(EditLine *el, wchar_t *cp)
 {
@@ -353,6 +371,8 @@ read_char(EditLine *el, wchar_t *cp)
 /* read_pop():
  *	Pop a macro from the stack
  */
+// [spec:libedit:def:read.read-pop-fn]
+// [spec:libedit:sem:read.read-pop-fn]
 static void
 read_pop(struct macros *ma)
 {
@@ -365,6 +385,8 @@ read_pop(struct macros *ma)
 	ma->offset = 0;
 }
 
+// [spec:libedit:def:read.read-clearmacros-fn]
+// [spec:libedit:sem:read.read-clearmacros-fn]
 static void
 read_clearmacros(struct macros *ma)
 {
@@ -376,6 +398,8 @@ read_clearmacros(struct macros *ma)
 /* el_wgetc():
  *	Read a wide character
  */
+// [spec:libedit:def:read.el-wgetc-fn]
+// [spec:libedit:sem:read.el-wgetc-fn]
 int
 el_wgetc(EditLine *el, wchar_t *cp)
 {
@@ -418,6 +442,8 @@ el_wgetc(EditLine *el, wchar_t *cp)
 	return num_read;
 }
 
+// [spec:libedit:def:read.read-prepare-fn]
+// [spec:libedit:sem:read.read-prepare-fn]
 libedit_private void
 read_prepare(EditLine *el)
 {
@@ -439,6 +465,8 @@ read_prepare(EditLine *el)
 		terminal__flush(el);
 }
 
+// [spec:libedit:def:read.read-finish-fn]
+// [spec:libedit:sem:read.read-finish-fn]
 libedit_private void
 read_finish(EditLine *el)
 {
@@ -448,6 +476,8 @@ read_finish(EditLine *el)
 		sig_clr(el);
 }
 
+// [spec:libedit:def:read.noedit-wgets-fn]
+// [spec:libedit:sem:read.noedit-wgets-fn]
 static const wchar_t *
 noedit_wgets(EditLine *el, int *nread)
 {
@@ -472,6 +502,8 @@ noedit_wgets(EditLine *el, int *nread)
 	return *nread ? lp->buffer : NULL;
 }
 
+// [spec:libedit:def:read.el-wgets-fn]
+// [spec:libedit:sem:read.el-wgets-fn]
 const wchar_t *
 el_wgets(EditLine *el, int *nread)
 {

@@ -1,0 +1,16 @@
+// No format gate on the C tree. It is the porting reference, held
+// byte-faithful to upstream NetBSD apart from the spec annotations, so
+// that diffing against a new upstream release stays meaningful. A
+// clang-format pass would rewrite all of it in a style it was never
+// written in and destroy exactly that property.
+//
+// A rust platform with fmt/clippy/test belongs here once a crate exists.
+platforms ()
+
+commit {
+    type-prefix "required"
+}
+
+adoption {
+    scope "porting"
+}

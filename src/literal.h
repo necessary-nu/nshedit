@@ -37,6 +37,7 @@
 
 #define EL_LITERAL	((wint_t)0x80000000)
 
+// [spec:libedit:def:literal.el-literal-t]
 typedef struct el_literal_t {
 	char		**l_buf;	/* array of buffers */
 	size_t		l_idx;		/* max in use */

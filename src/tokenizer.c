@@ -53,6 +53,7 @@ __RCSID("$NetBSD: tokenizer.c,v 1.29 2023/05/30 11:53:40 christos Exp $");
 
 #include "histedit.h"
 
+// [spec:libedit:def:tokenizer.quote-t]
 typedef enum {
 	Q_none, Q_single, Q_double, Q_one, Q_doubleone
 } quote_t;
@@ -103,6 +104,8 @@ static void FUN(tok,finish)(TYPE(Tokenizer) *);
 /* FUN(tok,finish)():
  *	Finish a word in the tokenizer.
  */
+// [spec:libedit:def:tokenizer.fun-tok-finish-fn]
+// [spec:libedit:sem:tokenizer.fun-tok-finish-fn]
 static void
 FUN(tok,finish)(TYPE(Tokenizer) *tok)
 {
@@ -120,6 +123,8 @@ FUN(tok,finish)(TYPE(Tokenizer) *tok)
 /* FUN(tok,init)():
  *	Initialize the tokenizer
  */
+// [spec:libedit:def:tokenizer.fun-tok-init-fn]
+// [spec:libedit:sem:tokenizer.fun-tok-init-fn]
 TYPE(Tokenizer) *
 FUN(tok,init)(const Char *ifs)
 {
@@ -161,6 +166,8 @@ FUN(tok,init)(const Char *ifs)
 /* FUN(tok,reset)():
  *	Reset the tokenizer
  */
+// [spec:libedit:def:tokenizer.fun-tok-reset-fn]
+// [spec:libedit:sem:tokenizer.fun-tok-reset-fn]
 void
 FUN(tok,reset)(TYPE(Tokenizer) *tok)
 {
@@ -176,6 +183,8 @@ FUN(tok,reset)(TYPE(Tokenizer) *tok)
 /* FUN(tok,end)():
  *	Clean up
  */
+// [spec:libedit:def:tokenizer.fun-tok-end-fn]
+// [spec:libedit:sem:tokenizer.fun-tok-end-fn]
 void
 FUN(tok,end)(TYPE(Tokenizer) *tok)
 {
@@ -205,6 +214,8 @@ FUN(tok,end)(TYPE(Tokenizer) *tok)
  *		cursorc	if !NULL, argv element containing cursor
  *		cursorv	if !NULL, offset in argv[cursorc] of cursor
  */
+// [spec:libedit:def:tokenizer.fun-tok-line-fn]
+// [spec:libedit:sem:tokenizer.fun-tok-line-fn]
 int
 FUN(tok,line)(TYPE(Tokenizer) *tok, const TYPE(LineInfo) *line,
     int *argc, const Char ***argv, int *cursorc, int *cursoro)
@@ -456,6 +467,8 @@ FUN(tok,line)(TYPE(Tokenizer) *tok, const TYPE(LineInfo) *line,
  *	Simpler version of tok_line, taking a NUL terminated line
  *	and splitting into words, ignoring cursor state.
  */
+// [spec:libedit:def:tokenizer.fun-tok-str-fn]
+// [spec:libedit:sem:tokenizer.fun-tok-str-fn]
 int
 FUN(tok,str)(TYPE(Tokenizer) *tok, const Char *line, int *argc,
     const Char ***argv)
