@@ -27,3 +27,6 @@ src/help.h
 src/libedit.la
 src/vi.h
 stamp-h1
+
+# Rust build artifacts
+/target

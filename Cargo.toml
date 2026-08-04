@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = ["crates/histedit", "crates/histedit-abi"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+license = "BSD-3-Clause"
+repository = "https://github.com/necessary-nu/libedit"
+authors = ["Brendan Molloy <brendan@necessary.nu>"]
+
+[workspace.dependencies]
+histedit = { path = "crates/histedit", version = "0.0.0" }
+# Terminal capabilities come from terminfo, never from a linked C library.
+# See plan/decisions/terminal-caps-via-term-crate.md.
+term = "1.2"
+
+[profile.release]
+lto = true
