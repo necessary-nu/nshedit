@@ -1,5 +1,9 @@
 //! Ported from `src/map.c`; rules live in `docs/spec/port/src/map.md`.
 
+// The signatures land before the bodies, so every parameter is unused until
+// its `todo!()` is replaced. Remove this with the last one.
+#![allow(unused_variables)]
+
 use std::borrow::Cow;
 
 use crate::el::{EditLine, ElActionT};
@@ -82,4 +86,120 @@ pub struct ElMapT {
     /// `el_get(EL_WORDCHARS, &p)` hands out a pointer into this, so the
     /// port must copy rather than alias.
     pub wordchars: Option<Vec<u32>>,
+}
+
+// [spec:libedit:def:map.map-init-fn]
+// [spec:libedit:sem:map.map-init-fn]
+/// Initialize and allocate the maps. 0 on success, -1 if any allocation
+/// failed, after tearing the rest back down.
+pub(crate) fn map_init(el: &mut EditLine) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:map.map-end-fn]
+// [spec:libedit:sem:map.map-end-fn]
+/// Free the space taken by the editor maps.
+pub(crate) fn map_end(el: &mut EditLine) {
+    todo!()
+}
+
+// [spec:libedit:def:map.map-init-nls-fn]
+// [spec:libedit:sem:map.map-init-nls-fn]
+/// Bind every printable high key to self-insert.
+fn map_init_nls(el: &mut EditLine) {
+    todo!()
+}
+
+// [spec:libedit:def:map.map-init-meta-fn]
+// [spec:libedit:sem:map.map-init-meta-fn]
+/// Bind the meta keys to the matching `ESC`-prefixed sequences.
+fn map_init_meta(el: &mut EditLine) {
+    todo!()
+}
+
+// [spec:libedit:def:map.map-init-vi-fn]
+// [spec:libedit:sem:map.map-init-vi-fn]
+/// Install the vi bindings and make them current.
+pub(crate) fn map_init_vi(el: &mut EditLine) {
+    todo!()
+}
+
+// [spec:libedit:def:map.map-init-emacs-fn]
+// [spec:libedit:sem:map.map-init-emacs-fn]
+/// Install the emacs bindings and make them current.
+pub(crate) fn map_init_emacs(el: &mut EditLine) {
+    todo!()
+}
+
+// [spec:libedit:def:map.map-set-editor-fn]
+// [spec:libedit:sem:map.map-set-editor-fn]
+/// Switch to the named editor: 0 for `emacs` or `vi`, -1 for anything else.
+pub(crate) fn map_set_editor(el: &mut EditLine, editor: &[u32]) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:map.map-get-editor-fn]
+// [spec:libedit:sem:map.map-get-editor-fn]
+/// Report the current editor. The C's two answers are static wide literals,
+/// so the out-parameter is a `&'static` one; its NULL check has no Rust
+/// counterpart, a reference being non-null.
+pub(crate) fn map_get_editor(el: &mut EditLine, editor: &mut &'static [u32]) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:map.map-set-wordchars-fn]
+// [spec:libedit:sem:map.map-set-wordchars-fn]
+/// Replace the word-separator set with a copy of `wordchars`.
+pub(crate) fn map_set_wordchars(el: &mut EditLine, wordchars: &[u32]) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:map.map-get-wordchars-fn]
+// [spec:libedit:sem:map.map-get-wordchars-fn]
+/// Hand out the word-separator set. The C lends its own buffer out; the
+/// out-parameter mirrors the field's own type so the port can copy, and so
+/// that the C's legitimately-NULL set stays distinguishable from an empty
+/// one.
+pub(crate) fn map_get_wordchars(el: &mut EditLine, wordchars: &mut Option<Vec<u32>>) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:map.map-print-key-fn]
+// [spec:libedit:sem:map.map-print-key-fn]
+/// Print the function description for one key. `map` is the C's
+/// `el_action_t *map`, always `el_map.key` or `el_map.alt`, so it is the
+/// selector rather than a second alias of `el`.
+fn map_print_key(el: &mut EditLine, map: ElMapCurrent, r#in: &[u32]) {
+    todo!()
+}
+
+// [spec:libedit:def:map.map-print-some-keys-fn]
+// [spec:libedit:sem:map.map-print-some-keys-fn]
+/// Print the binding shared by the keys `first` through `last`.
+fn map_print_some_keys(el: &mut EditLine, map: ElMapCurrent, first: u32, last: u32) {
+    todo!()
+}
+
+// [spec:libedit:def:map.map-print-all-keys-fn]
+// [spec:libedit:sem:map.map-print-all-keys-fn]
+/// Print the function description for all keys, both maps, the trie and the
+/// arrow keys.
+fn map_print_all_keys(el: &mut EditLine) {
+    todo!()
+}
+
+// [spec:libedit:def:map.map-bind-fn]
+// [spec:libedit:sem:map.map-bind-fn]
+/// The `bind` builtin: add, remove, change or show bindings. `argc` is the
+/// C's — reassigned on entry and ignored — and the C's NULL terminator on
+/// `argv` is the slice length here.
+pub(crate) fn map_bind(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:map.map-addfunc-fn]
+// [spec:libedit:sem:map.map-addfunc-fn]
+/// Append a user-defined editor function and its help entry.
+pub(crate) fn map_addfunc(el: &mut EditLine, name: &[u32], help: &[u32], func: ElFuncT) -> i32 {
+    todo!()
 }

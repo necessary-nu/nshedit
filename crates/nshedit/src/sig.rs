@@ -1,6 +1,12 @@
 //! Ported from `src/sig.c`; rules live in `docs/spec/port/src/sig.md`.
 
+// The signatures land before the bodies, so every parameter is unused until
+// its `todo!()` is replaced. Remove this with the last one.
+#![allow(unused_variables)]
+
 use core::sync::atomic::AtomicI32;
+
+use crate::el::EditLine;
 
 /// C: `#define ALLSIGSNO 7` — `SIGINT`, `SIGTSTP`, `SIGQUIT`, `SIGHUP`,
 /// `SIGTERM`, `SIGCONT`, `SIGWINCH`, in that fixed table order.
@@ -53,3 +59,52 @@ pub struct ElSignal {
 /// dangling pointer there instead, which
 /// `sem:sig.sig-end-fn` requires the port not to reproduce.
 pub type ElSignalT = Option<Box<ElSignal>>;
+
+// [spec:libedit:def:sig.sig-handler-fn]
+// [spec:libedit:sem:sig.sig-handler-fn]
+/// The handler body for all seven trapped signals: record `signo`, put the
+/// terminal into a sane state, restore the previous disposition and re-raise.
+///
+/// The C's handler takes only `signo`, because a C signal handler carries no
+/// user data, and reaches its `EditLine` through the file-static `sel` that
+/// `sig_set` assigns. That global is a C-shaped compatibility artifact and
+/// belongs in the ABI crate, not here (`plan/decisions/idiomatic-core.md`),
+/// so the instance is a parameter: whatever registration mechanism the ABI
+/// crate uses to find it is what supplies this argument.
+fn sig_handler(el: &mut EditLine, signo: i32) {
+    todo!()
+}
+
+// [spec:libedit:def:sig.sig-init-fn]
+// [spec:libedit:sem:sig.sig-init-fn]
+/// Allocate the signal state and cache the mask of the seven trapped
+/// signals. 0 on success, -1 if the allocation failed.
+pub(crate) fn sig_init(el: &mut EditLine) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:sig.sig-end-fn]
+// [spec:libedit:sem:sig.sig-end-fn]
+/// Tear the signal state down. The rule requires the port to restore the
+/// dispositions and drop the handler's registration first, which the C does
+/// not do.
+pub(crate) fn sig_end(el: &mut EditLine) {
+    todo!()
+}
+
+// [spec:libedit:def:sig.sig-set-fn]
+// [spec:libedit:sem:sig.sig-set-fn]
+/// Install [`sig_handler`] for all seven signals, saving the dispositions it
+/// displaces. This is where the C assigns the file-static `sel`, so it is
+/// where the port registers `el` with whatever carries it to the handler.
+pub(crate) fn sig_set(el: &mut EditLine) {
+    todo!()
+}
+
+// [spec:libedit:def:sig.sig-clr-fn]
+// [spec:libedit:sem:sig.sig-clr-fn]
+/// Put back the dispositions [`sig_set`] saved, consuming each slot so it is
+/// not re-installed by a later unpaired call.
+pub(crate) fn sig_clr(el: &mut EditLine) {
+    todo!()
+}
