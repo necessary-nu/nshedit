@@ -576,8 +576,12 @@
 > `"/.editrc"` — except that when `HOME` is the empty string the leading
 > `/` is skipped, producing the relative path `.editrc`. Return -1 if that
 > allocation fails.
-> If the resulting name is the empty string, return -1 (the allocated path
-> buffer, if any, leaks on this path — it is not freed before the return).
+> If the resulting name is the empty string, return -1. Nothing leaks here:
+> the return does not free `path`, but it is only reachable with `path`
+> still NULL, because a constructed path is never empty — it is either
+> `$HOME/.editrc` or, when HOME is empty, the relative `.editrc`. An empty
+> name therefore came from the caller or from an empty `EDITRC`, neither of
+> which allocates.
 > Open the file for reading; if that fails, free the allocated path and
 > return -1.
 > Then loop with `getline`: skip a line consisting only of `'\n'`; strip a
@@ -873,9 +877,12 @@
 > *user* as a beep, never to the caller. libedit owns the duplicate and
 > frees it when the macro is fully consumed, when a `CC_FATAL` command
 > clears the stack, or at `el_end`; the caller keeps ownership of `str`.
-> Pushes nest: the most recently pushed string is consumed first, and
-> `el_wgetc` pops each entry as soon as its last character is taken.
-> `el` must be non-NULL.
+> Pushes queue, they do not nest: `el_wpush` appends at `macro[++level]`
+> while `el_wgetc` always reads `macro[0]` and `read_pop` frees the front
+> and shifts the rest down. So a string pushed while an earlier macro is
+> still draining is consumed *after* it, not before — first in, first out,
+> despite the field being named a level. `el_wgetc` pops each entry as
+> soon as its last character is taken. `el` must be non-NULL.
 
 > [spec:libedit:def:histedit.el-wreplacestr-fn]
 > int el_wreplacestr(EditLine *, const wchar_t *)
