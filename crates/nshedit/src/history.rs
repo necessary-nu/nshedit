@@ -15,8 +15,13 @@
 //! translation picks, `sem:history.history-def-insert-fn`'s
 //! four-pointer link order is the behaviour to preserve.
 
+// Every function below is a signature with a `todo!()` body, so no parameter
+// is read yet. Remove this once the translations land.
+#![allow(unused_variables)]
+
 use core::ffi::c_void;
 
+use crate::el::CFile;
 use crate::histedit::HistEventW;
 
 // [spec:libedit:def:history.history-gfun-t-void-type-hist-event]
@@ -131,4 +136,305 @@ pub struct HistoryT {
     /// C: `int flags` — `H_UNIQUE` (1) is the only bit. Left an integer
     /// because the C treats it as a flag word.
     pub flags: i32,
+}
+
+// [spec:libedit:def:history.history-def-first-fn]
+// [spec:libedit:sem:history.history-def-first-fn]
+/// C: `static int history_def_first(void *p, TYPE(HistEvent) *ev)`
+fn history_def_first(p: *mut c_void, ev: &mut HistEventW) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-def-last-fn]
+// [spec:libedit:sem:history.history-def-last-fn]
+/// C: `static int history_def_last(void *p, TYPE(HistEvent) *ev)`
+fn history_def_last(p: *mut c_void, ev: &mut HistEventW) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-def-next-fn]
+// [spec:libedit:sem:history.history-def-next-fn]
+/// C: `static int history_def_next(void *p, TYPE(HistEvent) *ev)`
+fn history_def_next(p: *mut c_void, ev: &mut HistEventW) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-def-prev-fn]
+// [spec:libedit:sem:history.history-def-prev-fn]
+/// C: `static int history_def_prev(void *p, TYPE(HistEvent) *ev)`
+fn history_def_prev(p: *mut c_void, ev: &mut HistEventW) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-def-curr-fn]
+// [spec:libedit:sem:history.history-def-curr-fn]
+/// C: `static int history_def_curr(void *p, TYPE(HistEvent) *ev)`
+fn history_def_curr(p: *mut c_void, ev: &mut HistEventW) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-def-set-fn]
+// [spec:libedit:sem:history.history-def-set-fn]
+/// C: `static int history_def_set(void *p, TYPE(HistEvent) *ev, const int n)`
+fn history_def_set(p: *mut c_void, ev: &mut HistEventW, n: i32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-set-nth-fn]
+// [spec:libedit:sem:history.history-set-nth-fn]
+/// C: `static int history_set_nth(void *p, TYPE(HistEvent) *ev, int n)`
+fn history_set_nth(p: *mut c_void, ev: &mut HistEventW, n: i32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-def-add-fn]
+// [spec:libedit:sem:history.history-def-add-fn]
+/// C: `static int history_def_add(void *p, TYPE(HistEvent) *ev, const Char *str)`
+fn history_def_add(p: *mut c_void, ev: &mut HistEventW, str: *const u32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-deldata-nth-fn]
+// [spec:libedit:sem:history.history-deldata-nth-fn]
+/// C: `static int history_deldata_nth(history_t *h, TYPE(HistEvent) *ev, int num,
+/// void **data)`
+///
+/// `data` is raw and not `&mut *mut c_void`: `(void **)-1` is a documented
+/// magic value meaning "position only, do not delete", so the pointer is not
+/// always dereferenceable.
+fn history_deldata_nth(
+    h: &mut HistoryT,
+    ev: &mut HistEventW,
+    num: i32,
+    data: *mut *mut c_void,
+) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-def-del-fn]
+// [spec:libedit:sem:history.history-def-del-fn]
+/// C: `static int history_def_del(void *p, TYPE(HistEvent) *ev, const int num)`
+fn history_def_del(p: *mut c_void, ev: &mut HistEventW, num: i32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-def-delete-fn]
+// [spec:libedit:sem:history.history-def-delete-fn]
+/// C: `static void history_def_delete(history_t *h, TYPE(HistEvent) *ev,
+/// hentry_t *hp)`
+fn history_def_delete(h: &mut HistoryT, ev: &mut HistEventW, hp: *mut HentryT) {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-def-insert-fn]
+// [spec:libedit:sem:history.history-def-insert-fn]
+/// C: `static int history_def_insert(history_t *h, TYPE(HistEvent) *ev,
+/// const Char *str)`
+///
+/// The four-pointer link order this performs is the reason `HentryT::next` and
+/// `HentryT::prev` are still raw.
+fn history_def_insert(h: &mut HistoryT, ev: &mut HistEventW, str: *const u32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-def-enter-fn]
+// [spec:libedit:sem:history.history-def-enter-fn]
+/// C: `static int history_def_enter(void *p, TYPE(HistEvent) *ev, const Char *str)`
+fn history_def_enter(p: *mut c_void, ev: &mut HistEventW, str: *const u32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-def-init-fn]
+// [spec:libedit:sem:history.history-def-init-fn]
+/// C: `static int history_def_init(void **p, TYPE(HistEvent) *ev, int n)`
+///
+/// `p` is an out parameter — the only place a `void **` here is written rather
+/// than read — and is never installed as a callback, so it can be a reference.
+fn history_def_init(p: &mut *mut c_void, ev: &mut HistEventW, n: i32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-def-clear-fn]
+// [spec:libedit:sem:history.history-def-clear-fn]
+/// C: `static void history_def_clear(void *p, TYPE(HistEvent) *ev)`
+fn history_def_clear(p: *mut c_void, ev: &mut HistEventW) {
+    todo!()
+}
+
+// [spec:libedit:def:history.fun-history-init-fn]
+// [spec:libedit:sem:history.fun-history-init-fn]
+/// C: `TYPE(History) *FUN(history,init)(void)` — `history_winit` in the wide
+/// build, declared in `histedit.h`.
+///
+/// The handle is returned raw rather than as `Option<Box<HistoryW>>` because
+/// its lifetime is the caller's: `history_wend` frees it, and `H_END` frees it
+/// from inside [`history_w`], which no borrow can express. Null is the C's
+/// allocation failure.
+pub fn history_winit() -> *mut HistoryW {
+    todo!()
+}
+
+// [spec:libedit:def:history.fun-history-end-fn]
+// [spec:libedit:sem:history.fun-history-end-fn]
+/// C: `void FUN(history,end)(TYPE(History) *h)` — `history_wend` in the wide
+/// build, declared in `histedit.h`. Frees `h`; the caller must not touch it
+/// again.
+pub fn history_wend(h: *mut HistoryW) {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-setsize-fn]
+// [spec:libedit:sem:history.history-setsize-fn]
+/// C: `static int history_setsize(TYPE(History) *h, TYPE(HistEvent) *ev, int num)`
+fn history_setsize(h: &mut HistoryW, ev: &mut HistEventW, num: i32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-getsize-fn]
+// [spec:libedit:sem:history.history-getsize-fn]
+/// C: `static int history_getsize(TYPE(History) *h, TYPE(HistEvent) *ev)`
+fn history_getsize(h: &mut HistoryW, ev: &mut HistEventW) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-setunique-fn]
+// [spec:libedit:sem:history.history-setunique-fn]
+/// C: `static int history_setunique(TYPE(History) *h, TYPE(HistEvent) *ev, int uni)`
+fn history_setunique(h: &mut HistoryW, ev: &mut HistEventW, uni: i32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-getunique-fn]
+// [spec:libedit:sem:history.history-getunique-fn]
+/// C: `static int history_getunique(TYPE(History) *h, TYPE(HistEvent) *ev)`
+fn history_getunique(h: &mut HistoryW, ev: &mut HistEventW) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-set-fun-fn]
+// [spec:libedit:sem:history.history-set-fun-fn]
+/// C: `static int history_set_fun(TYPE(History) *h, TYPE(History) *nh)`
+///
+/// `nh` is the caller's assembled vtable — the C's stack-local `hf` — and is
+/// only read, so it is a shared borrow even though the C declares it
+/// non-`const`.
+fn history_set_fun(h: &mut HistoryW, nh: &HistoryW) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-load-fn]
+// [spec:libedit:sem:history.history-load-fn]
+/// C: `static int history_load(TYPE(History) *h, const char *fname)`
+///
+/// The path is narrow `char` in both builds. Nothing keeps it past the call,
+/// so it is borrowed rather than raw.
+fn history_load(h: &mut HistoryW, fname: &str) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-save-fp-fn]
+// [spec:libedit:sem:history.history-save-fp-fn]
+/// C: `static int history_save_fp(TYPE(History) *h, size_t nelem, FILE *fp)`
+///
+/// `fp` is the caller's stream, neither flushed nor closed here.
+fn history_save_fp(h: &mut HistoryW, nelem: usize, fp: CFile) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-save-fn]
+// [spec:libedit:sem:history.history-save-fn]
+/// C: `static int history_save(TYPE(History) *h, const char *fname)`
+fn history_save(h: &mut HistoryW, fname: &str) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-prev-event-fn]
+// [spec:libedit:sem:history.history-prev-event-fn]
+/// C: `static int history_prev_event(TYPE(History) *h, TYPE(HistEvent) *ev, int num)`
+fn history_prev_event(h: &mut HistoryW, ev: &mut HistEventW, num: i32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-next-evdata-fn]
+// [spec:libedit:sem:history.history-next-evdata-fn]
+/// C: `static int history_next_evdata(TYPE(History) *h, TYPE(HistEvent) *ev,
+/// int num, void **d)`
+fn history_next_evdata(
+    h: &mut HistoryW,
+    ev: &mut HistEventW,
+    num: i32,
+    d: *mut *mut c_void,
+) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-next-event-fn]
+// [spec:libedit:sem:history.history-next-event-fn]
+/// C: `static int history_next_event(TYPE(History) *h, TYPE(HistEvent) *ev, int num)`
+fn history_next_event(h: &mut HistoryW, ev: &mut HistEventW, num: i32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-prev-string-fn]
+// [spec:libedit:sem:history.history-prev-string-fn]
+/// C: `static int history_prev_string(TYPE(History) *h, TYPE(HistEvent) *ev,
+/// const Char *str)`
+fn history_prev_string(h: &mut HistoryW, ev: &mut HistEventW, str: *const u32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:history.history-next-string-fn]
+// [spec:libedit:sem:history.history-next-string-fn]
+/// C: `static int history_next_string(TYPE(History) *h, TYPE(HistEvent) *ev,
+/// const Char *str)`
+fn history_next_string(h: &mut HistoryW, ev: &mut HistEventW, str: *const u32) -> i32 {
+    todo!()
+}
+
+/// The trailing argument of one [`history_w`] operation.
+///
+/// Not a ported C type: it is what the varargs tail of `history_w` becomes
+/// once `va_list` is dropped. `plan/decisions/idiomatic-core.md` puts the
+/// varargs face in the ABI crate, so the ABI shim is what reads the `va_list`
+/// and hands the core one of these; every opcode's argument list from
+/// `sem:history.funw-history-fn` has a variant here, including the two-argument
+/// ones the C reads in a fixed order.
+pub enum HistoryArg<'a> {
+    /// No trailing argument: `H_GETSIZE`, `H_FIRST`, `H_LAST`, `H_PREV`,
+    /// `H_NEXT`, `H_CURR`, `H_END`, `H_CLEAR`, `H_GETUNIQUE`.
+    None,
+    /// One `int`: `H_SETSIZE`, `H_SET`, `H_SETUNIQUE`, `H_DEL`,
+    /// `H_NEXT_EVENT`, `H_PREV_EVENT`.
+    Num(i32),
+    /// One `const Char *`: `H_ADD`, `H_ENTER`, `H_APPEND`, `H_NEXT_STR`,
+    /// `H_PREV_STR`.
+    Str(*const u32),
+    /// One `const char *` path, narrow in both builds: `H_LOAD`, `H_SAVE`.
+    Path(&'a str),
+    /// One `FILE *`: `H_SAVE_FP`.
+    Fp(CFile),
+    /// `size_t nelem` then `FILE *`: `H_NSAVE_FP`.
+    NSaveFp(usize, CFile),
+    /// `int num` then `void **d`: `H_NEXT_EVDATA`, `H_DELDATA`. The pointer
+    /// stays raw because `H_DELDATA` accepts the magic `(void **)-1`.
+    EvData(i32, *mut *mut c_void),
+    /// `const Char *line` then `void *data`: `H_REPLACE`.
+    Replace(*const u32, *mut c_void),
+    /// `H_FUNC`'s eleven varargs, already collected the way the C collects
+    /// them into its stack-local `TYPE(History) hf`: the cookie plus the ten
+    /// callbacks. `h_ent` is not part of the argument list and is never read.
+    Funcs(&'a HistoryW),
+}
+
+// [spec:libedit:def:history.funw-history-fn]
+// [spec:libedit:sem:history.funw-history-fn]
+/// C: `int FUNW(history)(TYPE(History) *h, TYPE(HistEvent) *ev, int fun, ...)`
+/// — `history_w` in the wide build, declared in `histedit.h`.
+///
+/// The varargs tail becomes a single [`HistoryArg`]; `fun` stays the raw `int`
+/// opcode, whose numbering is ABI. `h` is raw because the C does not check it
+/// for NULL, because internal callers reach it through `el_history.ref` (a
+/// `void *`), and because `H_END` frees it here.
+pub fn history_w(h: *mut HistoryW, ev: &mut HistEventW, fun: i32, arg: HistoryArg<'_>) -> i32 {
+    todo!()
 }
