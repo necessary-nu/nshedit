@@ -1,6 +1,10 @@
 //! Ported from `src/tty.c`; rules live in `docs/spec/port/src/tty.md`.
 
-use crate::el::ElActionT;
+// Every function body below is still `todo!()`, so every parameter is unused.
+// Remove this once the bodies land.
+#![allow(unused_variables)]
+
+use crate::el::{EditLine, ElActionT};
 
 /// C: `#define NN_IO 3` — the number of I/O modes (`ED_IO`, `EX_IO`,
 /// `QU_IO`).
@@ -101,4 +105,174 @@ pub struct ElTtyT {
     /// The `_POSIX_VDISABLE` value for this terminal.
     pub t_vdisable: u8,
     pub t_initialized: u8,
+}
+
+// [spec:libedit:def:tty.tty-getty-fn]
+// [spec:libedit:sem:tty.tty-getty-fn]
+/// C: `static int tty_getty(EditLine *el, struct termios *t)` — `tcgetattr`
+/// on `el->el_infd`, retried on EINTR.
+///
+/// Every call site passes a field of `el->el_tty` as `t`, which Rust will not
+/// let the caller borrow while `el` is borrowed; resolving that is the body
+/// translation's problem, and the signature stays the C's.
+fn tty_getty(el: &mut EditLine, t: &mut Termios) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-setty-fn]
+// [spec:libedit:sem:tty.tty-setty-fn]
+/// C: `static int tty_setty(EditLine *el, int action, const struct termios
+/// *t)` — `tcsetattr` on `el->el_infd`, retried on EINTR. Same aliasing note
+/// as [`tty_getty`].
+fn tty_setty(el: &mut EditLine, action: i32, t: &Termios) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-setup-fn]
+// [spec:libedit:sem:tty.tty-setup-fn]
+fn tty_setup(el: &mut EditLine) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-init-fn]
+// [spec:libedit:sem:tty.tty-init-fn]
+pub(crate) fn tty_init(el: &mut EditLine) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-end-fn]
+// [spec:libedit:sem:tty.tty-end-fn]
+pub(crate) fn tty_end(el: &mut EditLine, how: i32) {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-getspeed-fn]
+// [spec:libedit:sem:tty.tty-getspeed-fn]
+/// C: `static speed_t tty__getspeed(struct termios *td)` — the pointer is
+/// non-const but only read.
+///
+/// The C's doubled underscore is not snake case to rustc; the name stays,
+/// here and in the four below.
+#[allow(non_snake_case)]
+fn tty__getspeed(td: &Termios) -> SpeedT {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-getcharindex-fn]
+// [spec:libedit:sem:tty.tty-getcharindex-fn]
+/// Maps one of libedit's `C_*` indices to the termios `V*` subscript, or -1
+/// when the platform has no such control character.
+#[allow(non_snake_case)]
+fn tty__getcharindex(i: i32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-getchar-fn]
+// [spec:libedit:sem:tty.tty-getchar-fn]
+/// C: `static void tty__getchar(struct termios *td, unsigned char *s)` —
+/// reads `td->c_cc` by `V*` subscript into `s` by `C_*` index. `s` is one row
+/// of [`TtycharT`].
+#[allow(non_snake_case)]
+fn tty__getchar(td: &Termios, s: &mut [u8]) {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-setchar-fn]
+// [spec:libedit:sem:tty.tty-setchar-fn]
+/// The inverse of [`tty__getchar`]: writes `s`, indexed by `C_*`, into
+/// `td->c_cc`, indexed by `V*`.
+#[allow(non_snake_case)]
+fn tty__setchar(td: &mut Termios, s: &[u8]) {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-bind-char-fn]
+// [spec:libedit:sem:tty.tty-bind-char-fn]
+pub(crate) fn tty_bind_char(el: &mut EditLine, force: i32) {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-get-flag-fn]
+// [spec:libedit:sem:tty.tty-get-flag-fn]
+/// C: `static tcflag_t * tty__get_flag(struct termios *t, int kind)` — picks
+/// one of the four mode words by `MD_INP`/`MD_OUT`/`MD_CTL`/`MD_LIN`, and
+/// aborts on anything else. `tcflag_t` is the `u32` [`Termios`] uses.
+#[allow(non_snake_case)]
+fn tty__get_flag(t: &mut Termios, kind: i32) -> &mut u32 {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-update-flag-fn]
+// [spec:libedit:sem:tty.tty-update-flag-fn]
+fn tty_update_flag(el: &mut EditLine, f: u32, mode: i32, kind: i32) -> u32 {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-update-flags-fn]
+// [spec:libedit:sem:tty.tty-update-flags-fn]
+fn tty_update_flags(el: &mut EditLine, kind: i32) {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-update-char-fn]
+// [spec:libedit:sem:tty.tty-update-char-fn]
+fn tty_update_char(el: &mut EditLine, mode: i32, c: i32) {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-rawmode-fn]
+// [spec:libedit:sem:tty.tty-rawmode-fn]
+pub(crate) fn tty_rawmode(el: &mut EditLine) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-cookedmode-fn]
+// [spec:libedit:sem:tty.tty-cookedmode-fn]
+pub(crate) fn tty_cookedmode(el: &mut EditLine) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-quotemode-fn]
+// [spec:libedit:sem:tty.tty-quotemode-fn]
+pub(crate) fn tty_quotemode(el: &mut EditLine) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-noquotemode-fn]
+// [spec:libedit:sem:tty.tty-noquotemode-fn]
+pub(crate) fn tty_noquotemode(el: &mut EditLine) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-stty-fn]
+// [spec:libedit:sem:tty.tty-stty-fn]
+/// The `setty` editrc command handler, sharing the C's
+/// `int (*)(EditLine *, int, const wchar_t **)` shape with the three `*tc`
+/// handlers in `terminal.rs`; the C's NULL-terminated `wchar_t **` becomes a
+/// slice of wide strings.
+pub(crate) fn tty_stty(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-printchar-fn]
+// [spec:libedit:sem:tty.tty-printchar-fn]
+/// Debug dump of the control characters; the C guards it with `#ifdef notyet`
+/// and never calls it. `s` is one row of [`TtycharT`], read only.
+fn tty_printchar(el: &mut EditLine, s: &[u8]) {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-setup-flags-fn]
+// [spec:libedit:sem:tty.tty-setup-flags-fn]
+/// C: `static void tty_setup_flags(EditLine *el, struct termios *tios, int
+/// mode)`. Same aliasing note as [`tty_getty`]: `tios` is always a field of
+/// `el->el_tty` at the call sites.
+fn tty_setup_flags(el: &mut EditLine, tios: &mut Termios, mode: i32) {
+    todo!()
+}
+
+// [spec:libedit:def:tty.tty-get-signal-character-fn]
+// [spec:libedit:sem:tty.tty-get-signal-character-fn]
+pub(crate) fn tty_get_signal_character(el: &mut EditLine, sig: i32) -> i32 {
+    todo!()
 }
