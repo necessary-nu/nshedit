@@ -1,5 +1,12 @@
 //! Ported from `src/chared.c`; rules live in `docs/spec/port/src/chared.md`.
 
+// Every function body below is still `todo!()`, so no parameter is read yet.
+// Remove this once the function translations land.
+#![allow(unused_variables)]
+// The C's function names are kept verbatim, and several of them — the `c__`,
+// `cv__` and `isWord` families — are not snake case.
+#![allow(non_snake_case)]
+
 use core::ffi::{c_char, c_void};
 
 use crate::el::{EditLine, ElActionT};
@@ -98,4 +105,229 @@ pub struct ElCharedT {
     /// C: `void *c_aliasarg` — client cookie passed back to `c_aliasfun`,
     /// never inspected.
     pub c_aliasarg: *mut c_void,
+}
+
+// [spec:libedit:def:chared.cv-undo-fn]
+// [spec:libedit:sem:chared.cv-undo-fn]
+pub(crate) fn cv_undo(el: &mut EditLine) {
+    todo!()
+}
+
+// [spec:libedit:def:chared.cv-yank-fn]
+// [spec:libedit:sem:chared.cv-yank-fn]
+/// C: `const wchar_t *ptr` — an offset into `el_line.buffer`. Every caller
+/// passes `el_line.buffer`, `el_line.cursor`, or the cursor displaced by a
+/// count, so this is a line position and not a string of its own.
+pub(crate) fn cv_yank(el: &mut EditLine, ptr: usize, size: i32) {
+    todo!()
+}
+
+// [spec:libedit:def:chared.c-insert-fn]
+// [spec:libedit:sem:chared.c-insert-fn]
+pub(crate) fn c_insert(el: &mut EditLine, num: i32) {
+    todo!()
+}
+
+// [spec:libedit:def:chared.c-delafter-fn]
+// [spec:libedit:sem:chared.c-delafter-fn]
+pub(crate) fn c_delafter(el: &mut EditLine, num: i32) {
+    todo!()
+}
+
+// [spec:libedit:def:chared.c-delafter1-fn]
+// [spec:libedit:sem:chared.c-delafter1-fn]
+pub(crate) fn c_delafter1(el: &mut EditLine) {
+    todo!()
+}
+
+// [spec:libedit:def:chared.c-delbefore-fn]
+// [spec:libedit:sem:chared.c-delbefore-fn]
+pub(crate) fn c_delbefore(el: &mut EditLine, num: i32) {
+    todo!()
+}
+
+// [spec:libedit:def:chared.c-delbefore1-fn]
+// [spec:libedit:sem:chared.c-delbefore1-fn]
+pub(crate) fn c_delbefore1(el: &mut EditLine) {
+    todo!()
+}
+
+// [spec:libedit:def:chared.ce-isword-fn]
+// [spec:libedit:sem:chared.ce-isword-fn]
+pub(crate) fn ce__isword(el: &mut EditLine, p: u32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:chared.cv-isword-fn]
+// [spec:libedit:sem:chared.cv-isword-fn]
+pub(crate) fn cv__isword(el: &mut EditLine, p: u32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:chared.cv-is-word-fn]
+// [spec:libedit:sem:chared.cv-is-word-fn]
+/// The capital `W` is the C's: this is the vi big-word test, `cv__isword`'s
+/// coarser sibling.
+pub(crate) fn cv__isWord(el: &mut EditLine, p: u32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:chared.c-prev-word-fn]
+// [spec:libedit:sem:chared.c-prev-word-fn]
+/// `p` and `low` are offsets into `el_line.buffer`, and so is the result.
+pub(crate) fn c__prev_word(
+    el: &mut EditLine,
+    p: usize,
+    low: usize,
+    n: i32,
+    wtest: fn(&mut EditLine, u32) -> i32,
+) -> usize {
+    todo!()
+}
+
+// [spec:libedit:def:chared.c-next-word-fn]
+// [spec:libedit:sem:chared.c-next-word-fn]
+/// `p` and `high` are offsets into `el_line.buffer`, and so is the result.
+pub(crate) fn c__next_word(
+    el: &mut EditLine,
+    p: usize,
+    high: usize,
+    n: i32,
+    wtest: fn(&mut EditLine, u32) -> i32,
+) -> usize {
+    todo!()
+}
+
+// [spec:libedit:def:chared.cv-next-word-fn]
+// [spec:libedit:sem:chared.cv-next-word-fn]
+/// `p` and `high` are offsets into `el_line.buffer`, and so is the result.
+pub(crate) fn cv_next_word(
+    el: &mut EditLine,
+    p: usize,
+    high: usize,
+    n: i32,
+    wtest: fn(&mut EditLine, u32) -> i32,
+) -> usize {
+    todo!()
+}
+
+// [spec:libedit:def:chared.cv-prev-word-fn]
+// [spec:libedit:sem:chared.cv-prev-word-fn]
+/// `p` and `low` are offsets into `el_line.buffer`, and so is the result.
+pub(crate) fn cv_prev_word(
+    el: &mut EditLine,
+    p: usize,
+    low: usize,
+    n: i32,
+    wtest: fn(&mut EditLine, u32) -> i32,
+) -> usize {
+    todo!()
+}
+
+// [spec:libedit:def:chared.cv-delfini-fn]
+// [spec:libedit:sem:chared.cv-delfini-fn]
+pub(crate) fn cv_delfini(el: &mut EditLine) {
+    todo!()
+}
+
+// [spec:libedit:def:chared.cv-endword-fn]
+// [spec:libedit:sem:chared.cv-endword-fn]
+/// `p` and `high` are offsets into `el_line.buffer`, and so is the result.
+pub(crate) fn cv__endword(
+    el: &mut EditLine,
+    p: usize,
+    high: usize,
+    n: i32,
+    wtest: fn(&mut EditLine, u32) -> i32,
+) -> usize {
+    todo!()
+}
+
+// [spec:libedit:def:chared.ch-init-fn]
+// [spec:libedit:sem:chared.ch-init-fn]
+pub(crate) fn ch_init(el: &mut EditLine) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:chared.ch-reset-fn]
+// [spec:libedit:sem:chared.ch-reset-fn]
+pub(crate) fn ch_reset(el: &mut EditLine) {
+    todo!()
+}
+
+// [spec:libedit:def:chared.ch-enlargebufs-fn]
+// [spec:libedit:sem:chared.ch-enlargebufs-fn]
+pub(crate) fn ch_enlargebufs(el: &mut EditLine, addlen: usize) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:chared.ch-end-fn]
+// [spec:libedit:sem:chared.ch-end-fn]
+pub(crate) fn ch_end(el: &mut EditLine) {
+    todo!()
+}
+
+// [spec:libedit:def:chared.el-winsertstr-fn]
+// [spec:libedit:sem:chared.el-winsertstr-fn]
+/// C: `const wchar_t *s` — a NUL-terminated string the caller owns and
+/// libedit only reads, so the length comes from the slice rather than from
+/// `wcslen`. The C's `s == NULL` and `wcslen(s) == 0` rejections are the
+/// same case here: an empty slice.
+pub fn el_winsertstr(el: &mut EditLine, s: &[u32]) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:chared.el-deletestr-fn]
+// [spec:libedit:sem:chared.el-deletestr-fn]
+pub fn el_deletestr(el: &mut EditLine, n: i32) {
+    todo!()
+}
+
+// [spec:libedit:def:chared.el-deletestr1-fn]
+// [spec:libedit:sem:chared.el-deletestr1-fn]
+pub fn el_deletestr1(el: &mut EditLine, start: i32, end: i32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:chared.el-wreplacestr-fn]
+// [spec:libedit:sem:chared.el-wreplacestr-fn]
+/// `s` is borrowed exactly as in [`el_winsertstr`].
+pub fn el_wreplacestr(el: &mut EditLine, s: &[u32]) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:chared.el-cursor-fn]
+// [spec:libedit:sem:chared.el-cursor-fn]
+pub fn el_cursor(el: &mut EditLine, n: i32) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:chared.c-gets-fn]
+// [spec:libedit:sem:chared.c-gets-fn]
+/// `buf` is caller storage, not part of `el` — both callers pass a local
+/// `wchar_t[EL_BUFSIZ]` — so it stays a borrowed slice rather than becoming
+/// an index. `prompt` is optional because the C tests it against NULL.
+pub(crate) fn c_gets(el: &mut EditLine, buf: &mut [u32], prompt: Option<&[u32]>) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:chared.c-hpos-fn]
+// [spec:libedit:sem:chared.c-hpos-fn]
+pub(crate) fn c_hpos(el: &mut EditLine) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:chared.ch-resizefun-fn]
+// [spec:libedit:sem:chared.ch-resizefun-fn]
+/// `f` is optional because `el_set(EL_RESIZE, ...)` may pass NULL, which
+/// stores NULL and so switches the hook back off.
+pub(crate) fn ch_resizefun(el: &mut EditLine, f: Option<ElZfuncT>, a: *mut c_void) -> i32 {
+    todo!()
+}
+
+// [spec:libedit:def:chared.ch-aliasfun-fn]
+// [spec:libedit:sem:chared.ch-aliasfun-fn]
+/// `f` is optional for the same reason as in [`ch_resizefun`].
+pub(crate) fn ch_aliasfun(el: &mut EditLine, f: Option<ElAfuncT>, a: *mut c_void) -> i32 {
+    todo!()
 }
