@@ -46,10 +46,17 @@ fn re_addc(el: &mut EditLine, c: u32) {
 
 // [spec:libedit:def:refresh.re-putliteral-fn]
 // [spec:libedit:sem:refresh.re-putliteral-fn]
-/// C: `begin` and `end` delimit a half-open range of the prompt string the
-/// application's callback returned; that range is `s`. It is not part of
-/// `el`, so it stays a borrowed slice rather than becoming an index.
-pub(crate) fn re_putliteral(el: &mut EditLine, s: &[u32]) {
+/// C: `begin` and `end` are two pointers into the prompt string the
+/// application's callback returned. The string is not part of `el`, so it
+/// stays a borrowed slice; `end` indexes it.
+///
+/// The pair cannot collapse to one half-open slice, because
+/// [`crate::literal::literal_add`] reads *past* `end` — `buf[end]` is the
+/// closing delimiter and `buf[end + 1]` is the visible character glued to the
+/// literal, whose width decides whether the literal is kept at all. So `buf`
+/// must extend at least to `end + 1`, and the caller keeps the delimiter and
+/// the glued character inside the slice it passes.
+pub(crate) fn re_putliteral(el: &mut EditLine, buf: &[u32], end: usize) {
     todo!()
 }
 
