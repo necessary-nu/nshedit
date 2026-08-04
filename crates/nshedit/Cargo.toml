@@ -1,6 +1,6 @@
 [package]
-name = "histedit"
-description = "Line editing, history and tokenization — a Rust re-implementation of libedit"
+name = "nshedit"
+description = "Line editing, history and tokenization for nsh — a Rust re-implementation of libedit"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

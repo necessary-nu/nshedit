@@ -3,17 +3,17 @@
 version = 4
 
 [[package]]
-name = "histedit"
+name = "nshedit"
 version = "0.0.0"
 dependencies = [
  "term",
 ]
 
 [[package]]
-name = "histedit-abi"
+name = "nshedit-abi"
 version = "0.0.0"
 dependencies = [
- "histedit",
+ "nshedit",
 ]
 
 [[package]]

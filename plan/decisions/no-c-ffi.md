@@ -22,9 +22,11 @@ consequences {
         "Anything libedit got from a C library must be reimplemented in Rust or sourced from a pure-Rust crate."
         "The C ABI surface is both histedit.h and editline/readline.h, so the readline compatibility layer stays in scope."
         "Observable behaviour that crosses the ABI is frozen, including on-disk formats."
+        "Two crates: nshedit is the library nsh links, nshedit-abi exports the C symbols. See [dec:libedit:idiomatic-core]."
+        "One artifact, libnshedit.so, carries both exported surfaces. Compatibility names are symlinks onto it — libedit.so.0 and libreadline.so.8 — which is how the readline ABI becomes a supported target rather than an accident."
     )
     deferred (
-        "Crate layout for the ABI export is not settled; it is a boundary, not yet a design."
+        "Claiming the readline soname makes libedit's incomplete readline emulation our problem: real consumers exercise more of that API than its header admits, so the compatibility tests must target programs rather than the header."
     )
 }
 establishes ([arch:libedit:c-abi])

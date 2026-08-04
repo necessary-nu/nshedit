@@ -1,0 +1,26 @@
+[package]
+name = "nshedit-abi"
+description = "The libedit and readline C ABIs, exported from nshedit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+# Builds as libnshedit.so / libnshedit.a — one real artifact. The
+# compatibility names are symlinks onto it at install time:
+#   libedit.so.0     -> libnshedit.so
+#   libreadline.so.8 -> libnshedit.so
+# Both surfaces are exported from this one object, which is what libedit
+# itself already does. See plan/decisions/no-c-ffi.md.
+#
+# No `rlib`: the core crate already produces libnshedit.rlib, and two targets
+# cannot write the same filename.
+name = "nshedit"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+nshedit.workspace = true

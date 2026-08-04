@@ -28,12 +28,27 @@ elements (
         kind @boundary
         lifecycle @provisional
         owns ()
-        exposes ()
-        depends_on ()
+        exposes ("crates/nshedit-abi/src/**")
+        depends_on ([arch:libedit:core])
         composed_of ()
-        decisions ([dec:libedit:no-c-ffi])
+        decisions ([dec:libedit:no-c-ffi] [dec:libedit:conformance-policy] [dec:libedit:idiomatic-core])
         log (
             {at "2026-08-04T16:27:13Z", kind @established, by "[dec:libedit:no-c-ffi]"}
+            {at "2026-08-04T17:47:40Z", kind @modified, by "[dec:libedit:idiomatic-core]"}
+        )
+    }
+    {
+        id [arch:libedit:core]
+        name "nshedit, the line-editing library"
+        kind @subsystem
+        lifecycle @provisional
+        owns ()
+        exposes ("crates/nshedit/src/**")
+        depends_on ([arch:libedit:terminal-caps])
+        composed_of ()
+        decisions ([dec:libedit:idiomatic-core])
+        log (
+            {at "2026-08-04T17:47:40Z", kind @established, by "[dec:libedit:idiomatic-core]"}
         )
     }
     {
