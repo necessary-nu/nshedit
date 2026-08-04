@@ -1,8 +1,8 @@
 //! Ported from `src/literal.c`; rules live in
 //! `docs/spec/port/src/literal.md`.
 
-use crate::chartype::ct_encode_char;
-use core::cmp::Ordering;
+use crate::chartype::{MB_FILL_CHAR, ct_encode_char};
+use crate::locale::{self, MB_LEN_MAX};
 
 /// C: `EL_LITERAL` in `src/literal.h` — `(wint_t)0x80000000`, bit 31 alone.
 ///
@@ -13,18 +13,14 @@ use core::cmp::Ordering;
 /// image has to be able to carry a value that is not a Unicode scalar.
 pub(crate) const EL_LITERAL: u32 = 0x8000_0000;
 
-/// C: `MB_FILL_CHAR` in `src/chartype.h` — `(wint_t)-1`.
-///
-/// Not this module's constant; named here only because the usable index
-/// range below is derived from it. It has bit 31 set, so `terminal__putc`
-/// **must** keep testing `c == MB_FILL_CHAR` *before* `c & EL_LITERAL` — see
-/// `sem:literal.literal-add-fn`, "Distinguishing a sentinel from a real
-/// character". That ordering is load-bearing, and [`literal_add`] holds up
-/// its end of it by never issuing the one sentinel the earlier test would
-/// swallow.
-const MB_FILL_CHAR: u32 = u32::MAX;
-
 /// Highest table index a sentinel may carry: `0x7FFF_FFFE`.
+///
+/// Derived from `chartype`'s [`MB_FILL_CHAR`], which is `(wint_t)-1` and so
+/// has bit 31 set: `terminal__putc` **must** keep testing
+/// `c == MB_FILL_CHAR` *before* `c & EL_LITERAL` — see
+/// `sem:literal.literal-add-fn`, "Distinguishing a sentinel from a real
+/// character". That ordering is load-bearing, and [`literal_add`] holds up its
+/// end of it by never issuing the one sentinel the earlier test would swallow.
 ///
 /// The rule states the representable range as `0..=0x7FFF_FFFF`, but the top
 /// value is not *usable*: `EL_LITERAL | 0x7FFF_FFFF` is `0xFFFF_FFFF`, which
@@ -35,10 +31,6 @@ const MB_FILL_CHAR: u32 = u32::MAX;
 /// `sem:literal.literal-add-fn` directs a port to "bound the index explicitly
 /// or fail rather than silently wrap". [`literal_add`] fails past this.
 const LITERAL_INDEX_MAX: u32 = (MB_FILL_CHAR & !EL_LITERAL) - 1;
-
-/// `MB_LEN_MAX` as glibc defines it: the most bytes one character can encode
-/// to in any locale in scope under [dec:libedit:posix-only-scope].
-const MB_LEN_MAX: usize = 16;
 
 // [spec:libedit:def:literal.el-literal-t]
 /// The literal table: the invisible byte sequences the prompt asked to be
@@ -173,7 +165,7 @@ pub(crate) fn literal_add(
     // reports the column width of the *visible* character alone; the escape
     // sequence is zero columns by construction, which is the entire point of
     // the mechanism.
-    let w = wcwidth(visible);
+    let w = locale::wcwidth(locale::charset(), visible);
     *wp = w;
 
     // Step 2. Non-printable visible character: return at once. Nothing is
@@ -341,229 +333,11 @@ fn encode_onto(out: &mut Vec<u8>, c: u32) {
     }
 }
 
-/// The column width of one character: POSIX `wcwidth`.
-///
-/// -1 for a non-printable character, 0 for a zero-width or combining one, 2
-/// for East Asian wide and fullwidth, 1 otherwise.
-///
-/// `literal_add` calls `wcwidth` directly in the C — not
-/// `chartype::ct_visual_width`, which is a different function with a
-/// different contract (it answers per `ct_chr_class` and returns 7 or 8 for a
-/// non-printable). [dec:libedit:no-c-ffi] bars linking libc, so the width
-/// table has to be Rust, and nothing in the crate provides one yet.
-///
-/// **This wants hoisting.** `ct_visual_width` needs the same primitive, and
-/// so does `refresh.c`, which calls `wcwidth` directly ahead of
-/// `ct_visual_width` to decide whether a double-width character must be
-/// pushed to the next line. Three copies will drift. It lives here only
-/// because the alternative was inventing it inside a module another
-/// translation owns.
-///
-/// The interval tables are the standard Markus Kuhn set, which is what glibc
-/// agrees with for everything libedit puts through here. A current glibc also
-/// reports width 2 for several emoji blocks that Kuhn's tables predate; a
-/// hoisted implementation should carry a generated table instead.
-fn wcwidth(c: u32) -> i32 {
-    // Not a Unicode scalar value: a lone surrogate, or past the last code
-    // point. `MB_FILL_CHAR` and every `EL_LITERAL` sentinel land here, so a
-    // screen-image cell that is not a character is reported non-printable
-    // rather than charged a column.
-    if (0xD800..=0xDFFF).contains(&c) || c > 0x0010_FFFF {
-        return -1;
-    }
-    if c == 0 {
-        return 0;
-    }
-    // C0 and C1 control characters.
-    if c < 0x20 || (0x7F..0xA0).contains(&c) {
-        return -1;
-    }
-    // Combining first, then wide: the two tables overlap (0x302A..=0x302F and
-    // 0x3099..=0x309A sit inside the CJK wide range) and zero wins.
-    if in_table(c, ZERO_WIDTH) {
-        return 0;
-    }
-    if in_table(c, WIDE) {
-        return 2;
-    }
-    1
-}
-
-/// Membership test over a sorted, non-overlapping interval table.
-fn in_table(c: u32, table: &[(u32, u32)]) -> bool {
-    table
-        .binary_search_by(|&(lo, hi)| {
-            if hi < c {
-                Ordering::Less
-            } else if lo > c {
-                Ordering::Greater
-            } else {
-                Ordering::Equal
-            }
-        })
-        .is_ok()
-}
-
-/// Characters of zero column width: combining marks, the Hangul Jamo medial
-/// and final blocks, format controls and variation selectors.
-const ZERO_WIDTH: &[(u32, u32)] = &[
-    (0x0300, 0x036F),
-    (0x0483, 0x0486),
-    (0x0488, 0x0489),
-    (0x0591, 0x05BD),
-    (0x05BF, 0x05BF),
-    (0x05C1, 0x05C2),
-    (0x05C4, 0x05C5),
-    (0x05C7, 0x05C7),
-    (0x0600, 0x0603),
-    (0x0610, 0x0615),
-    (0x064B, 0x065E),
-    (0x0670, 0x0670),
-    (0x06D6, 0x06E4),
-    (0x06E7, 0x06E8),
-    (0x06EA, 0x06ED),
-    (0x070F, 0x070F),
-    (0x0711, 0x0711),
-    (0x0730, 0x074A),
-    (0x07A6, 0x07B0),
-    (0x07EB, 0x07F3),
-    (0x0901, 0x0902),
-    (0x093C, 0x093C),
-    (0x0941, 0x0948),
-    (0x094D, 0x094D),
-    (0x0951, 0x0954),
-    (0x0962, 0x0963),
-    (0x0981, 0x0981),
-    (0x09BC, 0x09BC),
-    (0x09C1, 0x09C4),
-    (0x09CD, 0x09CD),
-    (0x09E2, 0x09E3),
-    (0x0A01, 0x0A02),
-    (0x0A3C, 0x0A3C),
-    (0x0A41, 0x0A42),
-    (0x0A47, 0x0A48),
-    (0x0A4B, 0x0A4D),
-    (0x0A70, 0x0A71),
-    (0x0A81, 0x0A82),
-    (0x0ABC, 0x0ABC),
-    (0x0AC1, 0x0AC5),
-    (0x0AC7, 0x0AC8),
-    (0x0ACD, 0x0ACD),
-    (0x0AE2, 0x0AE3),
-    (0x0B01, 0x0B01),
-    (0x0B3C, 0x0B3C),
-    (0x0B3F, 0x0B3F),
-    (0x0B41, 0x0B43),
-    (0x0B4D, 0x0B4D),
-    (0x0B56, 0x0B56),
-    (0x0B82, 0x0B82),
-    (0x0BC0, 0x0BC0),
-    (0x0BCD, 0x0BCD),
-    (0x0C3E, 0x0C40),
-    (0x0C46, 0x0C48),
-    (0x0C4A, 0x0C4D),
-    (0x0C55, 0x0C56),
-    (0x0CBC, 0x0CBC),
-    (0x0CBF, 0x0CBF),
-    (0x0CC6, 0x0CC6),
-    (0x0CCC, 0x0CCD),
-    (0x0CE2, 0x0CE3),
-    (0x0D41, 0x0D43),
-    (0x0D4D, 0x0D4D),
-    (0x0DCA, 0x0DCA),
-    (0x0DD2, 0x0DD4),
-    (0x0DD6, 0x0DD6),
-    (0x0E31, 0x0E31),
-    (0x0E34, 0x0E3A),
-    (0x0E47, 0x0E4E),
-    (0x0EB1, 0x0EB1),
-    (0x0EB4, 0x0EB9),
-    (0x0EBB, 0x0EBC),
-    (0x0EC8, 0x0ECD),
-    (0x0F18, 0x0F19),
-    (0x0F35, 0x0F35),
-    (0x0F37, 0x0F37),
-    (0x0F39, 0x0F39),
-    (0x0F71, 0x0F7E),
-    (0x0F80, 0x0F84),
-    (0x0F86, 0x0F87),
-    (0x0F90, 0x0F97),
-    (0x0F99, 0x0FBC),
-    (0x0FC6, 0x0FC6),
-    (0x102D, 0x1030),
-    (0x1032, 0x1032),
-    (0x1036, 0x1037),
-    (0x1039, 0x1039),
-    (0x1058, 0x1059),
-    (0x1160, 0x11FF),
-    (0x135F, 0x135F),
-    (0x1712, 0x1714),
-    (0x1732, 0x1734),
-    (0x1752, 0x1753),
-    (0x1772, 0x1773),
-    (0x17B4, 0x17B5),
-    (0x17B7, 0x17BD),
-    (0x17C6, 0x17C6),
-    (0x17C9, 0x17D3),
-    (0x17DD, 0x17DD),
-    (0x180B, 0x180D),
-    (0x18A9, 0x18A9),
-    (0x1920, 0x1922),
-    (0x1927, 0x1928),
-    (0x1932, 0x1932),
-    (0x1939, 0x193B),
-    (0x1A17, 0x1A18),
-    (0x1B00, 0x1B03),
-    (0x1B34, 0x1B34),
-    (0x1B36, 0x1B3A),
-    (0x1B3C, 0x1B3C),
-    (0x1B42, 0x1B42),
-    (0x1B6B, 0x1B73),
-    (0x1DC0, 0x1DCA),
-    (0x1DFE, 0x1DFF),
-    (0x200B, 0x200F),
-    (0x202A, 0x202E),
-    (0x2060, 0x2063),
-    (0x206A, 0x206F),
-    (0x20D0, 0x20EF),
-    (0x302A, 0x302F),
-    (0x3099, 0x309A),
-    (0xA806, 0xA806),
-    (0xA80B, 0xA80B),
-    (0xA825, 0xA826),
-    (0xFB1E, 0xFB1E),
-    (0xFE00, 0xFE0F),
-    (0xFE20, 0xFE23),
-    (0xFEFF, 0xFEFF),
-    (0xFFF9, 0xFFFB),
-    (0x0001_0A01, 0x0001_0A03),
-    (0x0001_0A05, 0x0001_0A06),
-    (0x0001_0A0C, 0x0001_0A0F),
-    (0x0001_0A38, 0x0001_0A3A),
-    (0x0001_0A3F, 0x0001_0A3F),
-    (0x0001_D167, 0x0001_D169),
-    (0x0001_D173, 0x0001_D182),
-    (0x0001_D185, 0x0001_D18B),
-    (0x0001_D1AA, 0x0001_D1AD),
-    (0x0001_D242, 0x0001_D244),
-    (0x000E_0001, 0x000E_0001),
-    (0x000E_0020, 0x000E_007F),
-    (0x000E_0100, 0x000E_01EF),
-];
-
-/// Characters of two column widths: East Asian wide and fullwidth.
-const WIDE: &[(u32, u32)] = &[
-    (0x1100, 0x115F),
-    (0x2329, 0x232A),
-    // 0x2E80..=0xA4CF minus 0x303F, which is narrow.
-    (0x2E80, 0x303E),
-    (0x3040, 0xA4CF),
-    (0xAC00, 0xD7A3),
-    (0xF900, 0xFAFF),
-    (0xFE10, 0xFE19),
-    (0xFE30, 0xFE6F),
-    (0xFF00, 0xFF60),
-    (0xFFE0, 0xFFE6),
-    (0x0002_0000, 0x0002_FFFD),
-    (0x0003_0000, 0x0003_FFFD),
-];
+// `wcwidth`, `MB_LEN_MAX` and the two interval tables that used to live here
+// are `crate::locale`'s. `literal_add` calls `wcwidth` directly in the C — not
+// `chartype::ct_visual_width`, which is a different function with a different
+// contract (it answers per `ct_chr_class` and returns 7 or 8 for a
+// non-printable) — and `refresh.c` calls it directly too, ahead of
+// `ct_visual_width`, to decide whether a double-width character must be pushed
+// to the next line. One implementation, and it is locale-aware as libc's is:
+// in the C locale nothing above U+007E has a width at all.

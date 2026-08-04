@@ -8,37 +8,13 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use core::ffi::c_char;
-use std::cell::Cell;
 
-// ---------------------------------------------------------------------------
-// `errno`
-//
-// `[dec:libedit:no-c-ffi]` bars linking libc, so the C's `errno` has no home
-// here yet. The engine sets this thread-local wherever the C sets `errno`, so
-// the values the `sem` rules promise (`ENOSPC` for an undersized destination,
-// `ENOMEM` for the overflow guard) are recorded rather than lost; the crate
-// that exports the C ABI has to publish it. The numbers are Linux's.
-// ---------------------------------------------------------------------------
-
-/// C: `ENOMEM`.
-const ENOMEM: i32 = 12;
-/// C: `ENOSPC`.
-const ENOSPC: i32 = 28;
-
-thread_local! {
-    static ERRNO: Cell<i32> = const { Cell::new(0) };
-}
-
-/// Records what the C would have stored in `errno`.
-fn set_errno(e: i32) {
-    ERRNO.with(|c| c.set(e));
-}
-
-/// Reads back what the last failing call recorded. The ABI crate needs this
-/// to satisfy the `errno` half of the `sem` rules.
-pub(crate) fn errno() -> i32 {
-    ERRNO.with(Cell::get)
-}
+// `[dec:libedit:no-c-ffi]` bars linking libc, so the C's `errno` and its
+// `LC_CTYPE` queries come from the crate's own facilities. The `sem` rules'
+// `ENOSPC` for an undersized destination and `ENOMEM` for the overflow guard
+// are recorded in `crate::errno` for the ABI crate to publish.
+use crate::errno::{ENOMEM, ENOSPC, set_errno};
+use crate::locale::{self, MB_LEN_MAX, Mb};
 
 // ---------------------------------------------------------------------------
 // `vis.h` flag bits. Values from `src/vis.h`; the `sem` rules quote them.
@@ -167,295 +143,36 @@ unsafe fn cstr_bytes<'a>(s: *const c_char) -> &'a [u8] {
 // query: `[spec:libedit:sem:vis.strvis-fn]` calls the resulting locale
 // dependence "the single biggest hazard in the file", because `strvis(...,
 // VIS_WHITE)` is the on-disk history format. `[dec:libedit:no-c-ffi]` bars
-// calling libc, so the part of `LC_CTYPE` that `vis` observes is
-// reimplemented here.
+// calling libc, so `crate::locale` supplies them.
 //
-// `crate::chartype::locale` is the sibling of this module and wants merging
-// with it: it carries `iswcntrl`, `iswprint` and `wcwidth`, this one carries
-// `iswgraph`, `iswalnum`, `iswspace` and a resumable `mbrtowc`. They are not
-// interchangeable as they stand — that module models UTF-8 as Unicode defines
-// it, while glibc's UTF-8 converter is the *original* encoding: measured on
-// glibc 2.41, `mbrtowc` accepts five- and six-byte sequences up to
-// U+7FFFFFFF and `wcrtomb` encodes them back, rejecting only overlong forms
-// and surrogates. `vis` sees the difference (`strvisx(dst,
-// "\xf8\x88\x80\x80\x80", 5, 0)` is one character, `\040\^@\^@`, not five
-// invalid bytes), so this module reproduces the glibc range.
+// That module's codec is the one this file needs, and the merge that hoisted
+// it had to keep it: glibc's UTF-8 is the *original* encoding, not Unicode's
+// range. Measured on glibc 2.41, `mbrtowc` accepts five- and six-byte
+// sequences up to U+7FFFFFFF, `wcrtomb` encodes them back, and `MB_CUR_MAX`
+// is 6. `vis` observes it — `strvisx(dst, "\xf8\x88\x80\x80\x80", 5, 0)`
+// is one character, `\040\^@\^@`, not five invalid bytes — so a codec capped
+// at U+10FFFF would silently change what this encoder emits.
 //
-// Three deliberate choices:
+// Two of that module's approximations land here specifically:
 //
-//  1. **Which locale.** There is no `setlocale` to consult, so the charset
-//     comes from `LC_ALL`, then `LC_CTYPE`, then `LANG` — i.e. the port
-//     behaves as if the program called `setlocale(LC_ALL, "")`, which every
-//     interactive libedit consumer does. A C program that never calls
-//     `setlocale` stays in the C locale no matter what the environment says;
-//     that case is not distinguishable from here.
-//  2. **Which charsets.** UTF-8 and the C/POSIX single-byte charset only.
-//     Every other codeset (ISO-8859-x, EUC, Shift-JIS) is treated as C/POSIX,
-//     because reproducing it needs charmap tables. Faithful on any modern
-//     host, wrong on a legacy single-byte locale.
-//  3. **Which characters are graphic.** Measured against glibc rather than
-//     assumed: its UTF-8 `graph` class is every assigned code point that is
-//     neither in its `cntrl` class nor in its `space` class — and its `space`
-//     class deliberately excludes the non-breaking spaces U+00A0, U+2007 and
-//     U+202F, which are therefore *graphic* and pass through `strvis`
-//     untouched. Both sets are reproduced exactly. "Assigned" is the one part
-//     that cannot be: Rust's standard library exposes no general-category
-//     table, so unassigned code points (U+0378 and friends) are reported
-//     graphic here and are not by glibc. See the report note; it needs a
-//     Unicode table this module has no business carrying.
+//  1. **Which characters are graphic.** Its `graph` class is glibc's — every
+//     assigned code point that is in neither the `cntrl` nor the `space`
+//     class — and "assigned" is the part Rust's standard library cannot test.
+//     A differential run against the compiled C in a UTF-8 locale diverges on
+//     exactly that: unassigned code points (U+0378 and friends) are escaped by
+//     the C and passed through here.
+//  2. **Which characters are space.** glibc's `space` class deliberately
+//     excludes the non-breaking spaces U+00A0, U+2007 and U+202F, which are
+//     therefore *graphic* and pass through `strvis` untouched. Both sets are
+//     reproduced exactly, and this is where the difference is visible: it is
+//     why one `sem` rule's flag table is wrong about a lone 0xA0 in anything
+//     but the C locale.
+//
+// The charset is re-read once per public entry point — `locale::refresh` in
+// `istrsenvisx_engine` — which is what gives this file the C's "one
+// `LC_CTYPE` for the duration of one call", and what lets a test exercise both
+// locales in one process.
 // ---------------------------------------------------------------------------
-
-mod locale {
-    use std::cell::Cell;
-
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub enum Charset {
-        /// The C/POSIX locale: ASCII, one byte per character.
-        Ascii,
-        /// glibc's UTF-8: the full original encoding, up to six bytes and
-        /// 31 bits, rejecting overlong forms and surrogates.
-        Utf8,
-    }
-
-    thread_local! {
-        static CHARSET: Cell<Option<Charset>> = const { Cell::new(None) };
-    }
-
-    /// Re-reads the environment. Called once per public entry point, so the
-    /// charset is a snapshot for the duration of one call exactly as the C's
-    /// `LC_CTYPE` is, without an environment lookup per character.
-    pub fn refresh() {
-        CHARSET.with(|c| c.set(Some(from_env())));
-    }
-
-    pub fn charset() -> Charset {
-        CHARSET.with(|c| match c.get() {
-            Some(cs) => cs,
-            None => {
-                let cs = from_env();
-                c.set(Some(cs));
-                cs
-            }
-        })
-    }
-
-    fn from_env() -> Charset {
-        for key in ["LC_ALL", "LC_CTYPE", "LANG"] {
-            match std::env::var_os(key) {
-                Some(v) if !v.is_empty() => return from_name(v.as_encoded_bytes()),
-                _ => {}
-            }
-        }
-        Charset::Ascii
-    }
-
-    /// `lang_territory.codeset@modifier` — only the codeset matters, and only
-    /// UTF-8 is distinguished from the C locale. Comparison ignores case and
-    /// the `-`/`_` that separate "UTF-8" from "utf8".
-    fn from_name(name: &[u8]) -> Charset {
-        let name = match name.iter().position(|&b| b == b'@') {
-            Some(i) => &name[..i],
-            None => name,
-        };
-        let codeset = match name.iter().position(|&b| b == b'.') {
-            Some(i) => &name[i + 1..],
-            None => return Charset::Ascii,
-        };
-        let mut squashed = [0u8; 8];
-        let mut n = 0;
-        for &b in codeset {
-            if b == b'-' || b == b'_' {
-                continue;
-            }
-            if n == squashed.len() {
-                return Charset::Ascii;
-            }
-            squashed[n] = b.to_ascii_uppercase();
-            n += 1;
-        }
-        if &squashed[..n] == b"UTF8" {
-            Charset::Utf8
-        } else {
-            Charset::Ascii
-        }
-    }
-
-    /// C: `MB_LEN_MAX`. 16 on glibc — the size of `istrsenvisx`'s scratch
-    /// buffer, the cap on the `mbrtowc` input window, and the per-character
-    /// budget in the unbounded output bound.
-    pub const MB_LEN_MAX: usize = 16;
-
-    /// C: `MB_CUR_MAX`. glibc reports 6 in a UTF-8 locale, 1 in the C locale.
-    pub fn mb_cur_max() -> usize {
-        match charset() {
-            Charset::Ascii => 1,
-            Charset::Utf8 => 6,
-        }
-    }
-
-    /// What `mbrtowc` reports.
-    ///
-    /// `(size_t)-1` (EILSEQ) and `(size_t)-2` (incomplete) are one variant:
-    /// every caller in this file tests `clen < 0` and treats them alike.
-    pub enum Mb {
-        /// A whole character and the bytes it consumed. A NUL is
-        /// `Char(0, 1)`; the C's 0 return is normalised by the caller.
-        Char(u32, usize),
-        /// Invalid or incomplete.
-        Bad,
-    }
-
-    /// C: `mbrtowc(&wc, bytes, bytes.len(), &state)` from a zeroed state.
-    /// `bytes` is never empty.
-    pub fn mbrtowc(bytes: &[u8]) -> Mb {
-        let b0 = bytes[0];
-        match charset() {
-            Charset::Ascii => {
-                if b0 < 0x80 {
-                    Mb::Char(u32::from(b0), 1)
-                } else {
-                    Mb::Bad
-                }
-            }
-            Charset::Utf8 => {
-                let (len, mut value, min) = match b0 {
-                    0x00..=0x7f => return Mb::Char(u32::from(b0), 1),
-                    0xc2..=0xdf => (2usize, u32::from(b0 & 0x1f), 0x80u32),
-                    0xe0..=0xef => (3, u32::from(b0 & 0x0f), 0x800),
-                    0xf0..=0xf7 => (4, u32::from(b0 & 0x07), 0x1_0000),
-                    0xf8..=0xfb => (5, u32::from(b0 & 0x03), 0x20_0000),
-                    0xfc..=0xfd => (6, u32::from(b0 & 0x01), 0x400_0000),
-                    // 0x80..=0xbf is a stray continuation byte, 0xc0/0xc1 are
-                    // overlong two-byte forms, 0xfe/0xff are not UTF-8.
-                    _ => return Mb::Bad,
-                };
-                for i in 1..len {
-                    let Some(&b) = bytes.get(i) else {
-                        return Mb::Bad;
-                    };
-                    if !(0x80..=0xbf).contains(&b) {
-                        return Mb::Bad;
-                    }
-                    value = (value << 6) | u32::from(b & 0x3f);
-                }
-                if value < min || (0xd800..=0xdfff).contains(&value) {
-                    return Mb::Bad;
-                }
-                Mb::Char(value, len)
-            }
-        }
-    }
-
-    /// C: `wcrtomb(out, c, &state)` from a zeroed state. `None` is its
-    /// `(size_t)-1`/EILSEQ return.
-    pub fn wcrtomb(c: u32, out: &mut [u8; MB_LEN_MAX]) -> Option<usize> {
-        match charset() {
-            Charset::Ascii => {
-                if c < 0x80 {
-                    out[0] = c as u8;
-                    Some(1)
-                } else {
-                    None
-                }
-            }
-            Charset::Utf8 => {
-                if (0xd800..=0xdfff).contains(&c) || c > 0x7fff_ffff {
-                    return None;
-                }
-                let (len, lead_mask) = match c {
-                    0x0000_0000..=0x0000_007f => {
-                        out[0] = c as u8;
-                        return Some(1);
-                    }
-                    0x0000_0080..=0x0000_07ff => (2usize, 0xc0u8),
-                    0x0000_0800..=0x0000_ffff => (3, 0xe0),
-                    0x0001_0000..=0x001f_ffff => (4, 0xf0),
-                    0x0020_0000..=0x03ff_ffff => (5, 0xf8),
-                    _ => (6, 0xfc),
-                };
-                for i in (1..len).rev() {
-                    out[i] = 0x80 | ((c >> (6 * (len - 1 - i))) & 0x3f) as u8;
-                }
-                out[0] = lead_mask | (c >> (6 * (len - 1))) as u8;
-                Some(len)
-            }
-        }
-    }
-
-    /// glibc's `cntrl` class: the C0 and C1 controls, plus the line and
-    /// paragraph separators in a UTF-8 locale.
-    pub fn is_cntrl(c: u32) -> bool {
-        match charset() {
-            Charset::Ascii => c < 0x20 || c == 0x7f,
-            Charset::Utf8 => c < 0x20 || (0x7f..=0x9f).contains(&c) || c == 0x2028 || c == 0x2029,
-        }
-    }
-
-    /// glibc's `space` class. Note what is *not* here: U+0085, U+00A0,
-    /// U+2007 and U+202F are whitespace to Unicode but not to glibc, and
-    /// `[spec:libedit:sem:vis.do-mvis-fn]`'s trailing-whitespace test and the
-    /// graphic test below both turn on the difference.
-    pub fn is_space(c: u32) -> bool {
-        match charset() {
-            Charset::Ascii => (0x09..=0x0d).contains(&c) || c == 0x20,
-            Charset::Utf8 => {
-                (0x09..=0x0d).contains(&c)
-                    || c == 0x20
-                    || c == 0x1680
-                    || (0x2000..=0x2006).contains(&c)
-                    || (0x2008..=0x200a).contains(&c)
-                    || c == 0x2028
-                    || c == 0x2029
-                    || c == 0x205f
-                    || c == 0x3000
-            }
-        }
-    }
-
-    /// C: `iswgraph(c)`.
-    pub fn is_graph(c: u32) -> bool {
-        match charset() {
-            Charset::Ascii => (0x21..=0x7e).contains(&c),
-            Charset::Utf8 => {
-                // Surrogates and anything above U+10FFFF are unassigned, and
-                // glibc answers false for them; `char::from_u32` is that test.
-                if char::from_u32(c).is_none() {
-                    return false;
-                }
-                // Noncharacters are unassigned too. The rest of the
-                // unassigned range is not detectable without a general
-                // category table, and is reported graphic here.
-                if (0xfdd0..=0xfdef).contains(&c) || (c & 0xfffe) == 0xfffe {
-                    return false;
-                }
-                !is_cntrl(c) && !is_space(c)
-            }
-        }
-    }
-
-    /// C: `iswalnum(c)`.
-    ///
-    /// glibc's `alnum` is its `alpha` class plus its `digit` class, and
-    /// `digit` is only ASCII `0`-`9` in every locale, while `alpha` is the
-    /// Unicode Alphabetic property *plus* the non-ASCII decimal digits.
-    /// Plain `is_alphanumeric` is the wrong shape for it below U+0100 — that
-    /// would make the Latin-1 fractions and superscripts (`½ ¼ ¾ ¹ ² ³`,
-    /// category No) alphanumeric, which glibc does not, and those are exactly
-    /// the values the conversion-error fallback produces from raw bytes.
-    /// Measured against glibc over the whole code space, this form answers
-    /// true for every code point glibc calls alphanumeric, and additionally
-    /// for the numeric-but-not-decimal characters above U+00FF.
-    pub fn is_alnum(c: u32) -> bool {
-        match charset() {
-            Charset::Ascii => c < 0x80 && (c as u8).is_ascii_alphanumeric(),
-            Charset::Utf8 => char::from_u32(c).is_some_and(|ch| {
-                ch.is_alphabetic() || ch.is_ascii_digit() || (c >= 0x100 && ch.is_numeric())
-            }),
-        }
-    }
-}
-
-use locale::{MB_LEN_MAX, Mb};
 
 // [spec:libedit:def:vis.visfun-t-wchar-t-wint-t-int-wint-t-const-wchar-t]
 /// C: `typedef wchar_t *(*visfun_t)(wchar_t *, wint_t, int, wint_t, const wchar_t *);`
@@ -491,7 +208,7 @@ fn is_graph(flags: i32, c: u32) -> bool {
     if flags & VIS_NOLOCALE != 0 {
         iscgraph(c as i32) != 0
     } else {
-        locale::is_graph(c)
+        locale::iswgraph(locale::charset(), c)
     }
 }
 
@@ -503,7 +220,7 @@ fn do_hvis(dst: *mut u32, c: u32, flags: i32, nextc: u32, extra: *const u32) -> 
     // `iswalnum` is not gated by VIS_NOLOCALE — unlike the graphic test, it
     // always asks the current LC_CTYPE, so accented letters are URL-safe in a
     // UTF-8 locale and HTTP-style output can carry raw non-ASCII bytes.
-    if locale::is_alnum(c)
+    if locale::iswalnum(locale::charset(), c)
         // safe
         || c == b'$' as u32
         || c == b'-' as u32
@@ -558,7 +275,7 @@ fn do_mvis(dst: *mut u32, c: u32, flags: i32, nextc: u32, extra: *const u32) -> 
     ];
     let is_special = unsafe { wcschr(SPECIALS.as_ptr(), c) };
     // `iswspace` is not gated by VIS_NOLOCALE either.
-    let space = locale::is_space(c);
+    let space = locale::iswspace(locale::charset(), c);
     if c != 0x0a
         && ((space && (nextc == 0x0d || nextc == 0x0a))
             // The C writes the middle test as `(c > 60 && c < 62)`, which is
@@ -660,7 +377,7 @@ fn do_mbyte(dst: *mut u32, c: u32, flags: i32, nextc: u32, iswextra: i32) -> *mu
         c &= 0o177;
         put(b'M' as u32);
     }
-    if locale::is_cntrl(c) {
+    if locale::iswcntrl(locale::charset(), c) {
         put(b'^' as u32);
         if c == 0o177 {
             put(b'?' as u32);
@@ -752,6 +469,7 @@ fn makeextralist(flags: i32, src: *const c_char) -> Option<Vec<u32>> {
     // conversion.
     let mut converted = false;
     if flags & VIS_NOLOCALE == 0 {
+        let cs = locale::charset();
         let mut i = 0usize;
         let mut wide = Vec::with_capacity(len);
         loop {
@@ -759,7 +477,7 @@ fn makeextralist(flags: i32, src: *const c_char) -> Option<Vec<u32>> {
                 converted = true;
                 break;
             }
-            match locale::mbrtowc(&bytes[i..]) {
+            match locale::mbrtowc(cs, &bytes[i..]) {
                 // mbsrtowcs stops at the terminating NUL, which strlen has
                 // already excluded, so a NUL cannot appear here.
                 Mb::Char(c, n) => {
@@ -856,7 +574,11 @@ fn istrsenvisx_engine(
     cerr_ptr: Option<&mut i32>,
 ) -> i32 {
     // One LC_CTYPE snapshot per call, as the C has for the duration of a call.
+    // Every locale query below is passed this one charset, so the answer cannot
+    // change under the loops the way the C's would if the program called
+    // `setlocale` from a signal handler.
     locale::refresh();
+    let cs = locale::charset();
 
     // `dlen` is read once and never written back.
     let dlen: Option<usize> = dlen.map(|d| *d);
@@ -928,7 +650,7 @@ fn istrsenvisx_engine(
             let mut ok = false;
             if cerr == 0 {
                 let window = remaining.min(MB_LEN_MAX);
-                match locale::mbrtowc(&src[pos..pos + window]) {
+                match locale::mbrtowc(cs, &src[pos..pos + window]) {
                     Mb::Char(c, n) => {
                         psrc[nsrc] = c;
                         clen = n as isize;
@@ -1037,8 +759,8 @@ fn istrsenvisx_engine(
                 // With at least MB_CUR_MAX bytes of room the conversion goes
                 // straight into the destination and needs no check; nearer
                 // the end it goes to scratch and is checked.
-                let inplace = maxolen.saturating_sub(olen) > locale::mb_cur_max();
-                clen = match locale::wcrtomb(wc, &mut mbbuf) {
+                let inplace = maxolen.saturating_sub(olen) > locale::mb_cur_max(cs);
+                clen = match locale::wcrtomb(cs, wc, &mut mbbuf) {
                     Some(n) => n as isize,
                     None => -1,
                 };

@@ -6,35 +6,19 @@
 //! Every rule in this file is written against libc: `mbstowcs`, `wctomb`,
 //! `wcrtomb`, `iswcntrl`, `iswprint` and `wcwidth`, each reading the process's
 //! `LC_CTYPE`. `plan/decisions/no-c-ffi.md` bars linking libc, so the port has
-//! to supply them, and the `locale` module below is that supply. It is
-//! deliberately narrow, and the narrowness is a port decision, not an
-//! oversight:
+//! to supply them, and `crate::locale` is that supply — for this module,
+//! for `literal`, `vis`, `refresh`, `map` and `search` alike. What it does and
+//! does not model is documented there; two facts matter to the rules in this
+//! file:
 //!
-//! - **Two charsets are modelled**, `Utf8` and `Ascii`. `Ascii` is the
-//!   C/POSIX locale, whose charmap on glibc is ANSI_X3.4-1968: `wcrtomb`
-//!   fails above U+007F and `iswprint` is true only for U+0020..U+007E,
-//!   exactly as `sem:chartype.ct-chr-class-fn` describes. Any other named
-//!   codeset (ISO-8859-1, EUC-JP, the stateful ISO-2022 family) falls back to
-//!   `Ascii`, which renders the affected characters as `\U+nnnn` rather than
-//!   mis-encoding them. **Consequence: no stateful encoding exists in this
-//!   port**, which is what makes `ERR-encoding-02`, `ERR-encoding-12` and
-//!   `ERR-encoding-16` unreachable here.
-//! - **The charset is resolved once from the environment** (`LC_ALL`,
-//!   `LC_CTYPE`, `LANG`, in POSIX order; C/POSIX if none is set), because
-//!   there is no libc global to read. This diverges from the C in one visible
-//!   way: a program that never calls `setlocale(LC_CTYPE, "")` runs in the C
-//!   locale no matter what the environment says, and `sem:el.el-init-fn`
-//!   depends on that. The port behaves as if the application had always
-//!   called `setlocale(LC_CTYPE, "")`.
-//! - **`wcwidth` is table-driven and approximate.** The tables cover
-//!   combining marks, format characters and the East Asian wide blocks; they
-//!   are not a Unicode database. `iswprint` cannot test "unassigned" at all,
-//!   so it errs printable where glibc would say no.
-//!
-//! `locale` is `pub(crate)` because it is not really this module's property:
-//! `refresh.c` calls `wcwidth` directly, `map.c` calls `iswprint`, `search.c`
-//! and `vis.c` call other `LC_CTYPE` predicates. It wants hoisting into a
-//! module of its own once a second consumer appears.
+//! - **The UTF-8 codec is glibc's**, which is the *original* UTF-8: five- and
+//!   six-byte sequences decode and re-encode, up to U+7FFFFFFF, and
+//!   `MB_CUR_MAX` is 6. `ct_decode_string` therefore accepts input the Unicode
+//!   range would reject, and `ct_encode_char` can be handed a character needing
+//!   six bytes where `ct_encode_string` passes five — see `ERR-encoding-12` at
+//!   that call site.
+//! - **`iswprint` cannot test "unassigned"**, so it errs printable where glibc
+//!   would say no, and `wcwidth` is a table, not a Unicode database.
 //!
 //! # Buffer invariant
 //!
@@ -51,6 +35,8 @@
 //! still in the buffer, one element past the end of the returned slice, so an
 //! ABI shim can hand out `cbuff.as_ptr()`/`wbuff.as_ptr()` unchanged and the
 //! returned length is the `strlen`/`wcslen` a C caller would compute.
+
+use crate::locale;
 
 // [spec:libedit:def:chartype.ct-buffer-t]
 /// Conversion buffer: a byte half and a wide half, each grown independently.
@@ -211,10 +197,14 @@ pub fn ct_encode_string<'a>(s: Option<&[u32]>, conv: &'a mut CtBufferT) -> Optio
             // ERR-encoding-12 (needs decision). The C calls `abort()` here —
             // a library killing the process because one character needed more
             // than 5 bytes. Defined here as the C's own NULL return, which
-            // every caller of this function already handles. Unreachable in
-            // both charsets this port models (UTF-8 needs at most 4 bytes,
-            // C/POSIX 1), so nothing observable changes today; it becomes
-            // reachable only if a stateful encoding is ever added.
+            // every caller of this function already handles.
+            //
+            // Reachable, and reachable in the C too: the UTF-8 this port
+            // models is glibc's, whose `MB_CUR_MAX` is 6, so a character at or
+            // above U+4000000 needs six bytes and fails this five-byte
+            // headroom. The C aborts on exactly the same input. Below that
+            // boundary the two charsets need at most five and four bytes
+            // respectively, so ordinary text never reaches here.
             return None;
         }
         // A return of 0 is a character the locale cannot encode: `used` does
@@ -583,356 +573,8 @@ pub(crate) fn ct_chr_class(c: u32) -> i32 {
     }
 }
 
-/// The `LC_CTYPE` queries the C makes through libc, reimplemented; see the
-/// module documentation for what is and is not modelled.
-///
-/// `pub(crate)` because `refresh.c`, `map.c`, `search.c` and `vis.c` reach for
-/// the same predicates. The active charset is passed explicitly at every call
-/// so that the queries are visible as locale queries — and so that they are
-/// testable without mutating the process environment.
-pub(crate) mod locale {
-    use std::cmp::Ordering;
-    use std::sync::OnceLock;
-
-    /// The subset of `LC_CTYPE` codesets this port implements.
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub(crate) enum Charset {
-        /// The C/POSIX locale: ANSI_X3.4-1968, one byte, ASCII only.
-        Ascii,
-        /// UTF-8, as glibc's `*.UTF-8` locales define it.
-        Utf8,
-    }
-
-    /// The process's `LC_CTYPE`, resolved once. See the module documentation:
-    /// there is no libc global to read, so this reads the environment and
-    /// therefore behaves as if the application had called
-    /// `setlocale(LC_CTYPE, "")`.
-    pub(crate) fn charset() -> Charset {
-        static CHARSET: OnceLock<Charset> = OnceLock::new();
-        *CHARSET.get_or_init(|| {
-            for var in ["LC_ALL", "LC_CTYPE", "LANG"] {
-                let value = std::env::var(var).unwrap_or_default();
-                if !value.is_empty() {
-                    return charset_of(&value);
-                }
-            }
-            Charset::Ascii
-        })
-    }
-
-    /// Parses a POSIX locale name — `language[_TERRITORY][.codeset][@modifier]`
-    /// — for its codeset. Anything not recognisable as UTF-8 is treated as the
-    /// C locale, which renders the affected characters `\U+nnnn` rather than
-    /// mis-encoding them.
-    pub(super) fn charset_of(spec: &str) -> Charset {
-        let spec = spec.split('@').next().unwrap_or("");
-        let codeset = spec.split_once('.').map_or("", |(_, cs)| cs);
-        let normalised: String = codeset
-            .chars()
-            .filter(char::is_ascii_alphanumeric)
-            .map(|c| c.to_ascii_lowercase())
-            .collect();
-        if normalised == "utf8" {
-            Charset::Utf8
-        } else {
-            Charset::Ascii
-        }
-    }
-
-    /// C: `MB_CUR_MAX`. `el.c` and `hist.c` test it against 1 to decide
-    /// whether history can be narrow.
-    pub(crate) fn mb_cur_max(cs: Charset) -> usize {
-        match cs {
-            Charset::Ascii => 1,
-            Charset::Utf8 => 4,
-        }
-    }
-
-    /// C: `wcrtomb` from the initial conversion state, length only. `None` is
-    /// its `(size_t)-1`/`EILSEQ`.
-    ///
-    /// `c == 0` answers 1 — `wcrtomb` writes the null byte — so this is not a
-    /// string-length primitive.
-    pub(crate) fn enc_width(cs: Charset, c: u32) -> Option<usize> {
-        match cs {
-            Charset::Ascii => (c < 0x80).then_some(1),
-            // glibc's UTF-8 converter rejects surrogates and anything above
-            // U+10FFFF outright.
-            Charset::Utf8 => match c {
-                0x0000..=0x007F => Some(1),
-                0x0080..=0x07FF => Some(2),
-                0xD800..=0xDFFF => None,
-                0x0800..=0xFFFF => Some(3),
-                0x10000..=0x10FFFF => Some(4),
-                _ => None,
-            },
-        }
-    }
-
-    /// C: `wctomb`. Writes `c` into `dst` and returns the byte count; `None`
-    /// for a character the charset cannot represent, or for a `dst` too short
-    /// to hold it (which the caller has already excluded via [`enc_width`]).
-    ///
-    /// Unlike `wctomb` this carries no state, so it is reentrant and needs no
-    /// reset on the failure path (ERR-encoding-16).
-    pub(crate) fn encode(cs: Charset, dst: &mut [u8], c: u32) -> Option<usize> {
-        let width = enc_width(cs, c)?;
-        if dst.len() < width {
-            return None;
-        }
-        match width {
-            1 => dst[0] = c as u8,
-            2 => {
-                dst[0] = 0xC0 | (c >> 6) as u8;
-                dst[1] = 0x80 | (c & 0x3F) as u8;
-            }
-            3 => {
-                dst[0] = 0xE0 | (c >> 12) as u8;
-                dst[1] = 0x80 | ((c >> 6) & 0x3F) as u8;
-                dst[2] = 0x80 | (c & 0x3F) as u8;
-            }
-            _ => {
-                dst[0] = 0xF0 | (c >> 18) as u8;
-                dst[1] = 0x80 | ((c >> 12) & 0x3F) as u8;
-                dst[2] = 0x80 | ((c >> 6) & 0x3F) as u8;
-                dst[3] = 0x80 | (c & 0x3F) as u8;
-            }
-        }
-        Some(width)
-    }
-
-    /// C: one `mbrtowc` step from the initial state. Returns the character
-    /// and the bytes consumed; `None` for an invalid or incomplete sequence.
-    ///
-    /// Strict, as glibc is: overlong forms, surrogate encodings, anything
-    /// above U+10FFFF and truncated sequences are all `EILSEQ`.
-    fn decode_one(cs: Charset, s: &[u8]) -> Option<(u32, usize)> {
-        let b0 = *s.first()?;
-        if cs == Charset::Ascii {
-            return (b0 < 0x80).then_some((u32::from(b0), 1));
-        }
-        let (len, mut acc) = match b0 {
-            0x00..=0x7F => return Some((u32::from(b0), 1)),
-            0xC2..=0xDF => (2, u32::from(b0 & 0x1F)),
-            0xE0..=0xEF => (3, u32::from(b0 & 0x0F)),
-            0xF0..=0xF4 => (4, u32::from(b0 & 0x07)),
-            // 0x80..=0xC1 is a stray continuation byte or an overlong
-            // two-byte lead; 0xF5..=0xFF is above U+10FFFF.
-            _ => return None,
-        };
-        if s.len() < len {
-            return None;
-        }
-        for &b in &s[1..len] {
-            if b & 0xC0 != 0x80 {
-                return None;
-            }
-            acc = (acc << 6) | u32::from(b & 0x3F);
-        }
-        let overlong = (len == 3 && acc < 0x800) || (len == 4 && acc < 0x10000);
-        if overlong || acc > 0x10FFFF || (0xD800..=0xDFFF).contains(&acc) {
-            return None;
-        }
-        Some((acc, len))
-    }
-
-    /// C: `mbstowcs(NULL, s, 0)` — how many wide characters `s` would
-    /// produce, not counting the terminator. `None` is its `(size_t)-1`.
-    pub(crate) fn mbstowcs_len(cs: Charset, s: &[u8]) -> Option<usize> {
-        let mut at = 0usize;
-        let mut count = 0usize;
-        while at < s.len() {
-            let (_, used) = decode_one(cs, &s[at..])?;
-            at += used;
-            count += 1;
-        }
-        Some(count)
-    }
-
-    /// C: `mbstowcs(dst, s, dst.len())`. `s` is the source without its
-    /// terminator; the `L'\0'` is written when it fits, as the C's `n`-limited
-    /// form does. Returns the count of wide characters written, terminator
-    /// excluded; `None` is its `(size_t)-1`.
-    pub(crate) fn mbstowcs(cs: Charset, dst: &mut [u32], s: &[u8]) -> Option<usize> {
-        let mut at = 0usize;
-        let mut count = 0usize;
-        while at < s.len() && count < dst.len() {
-            let (c, used) = decode_one(cs, &s[at..])?;
-            dst[count] = c;
-            at += used;
-            count += 1;
-        }
-        if count < dst.len() {
-            dst[count] = 0;
-        }
-        Some(count)
-    }
-
-    /// C: `iswcntrl`. Total over `u32`: values that are not code points
-    /// answer false rather than being undefined (ERR-encoding-01).
-    pub(crate) fn iswcntrl(cs: Charset, c: u32) -> bool {
-        match cs {
-            Charset::Ascii => c < 0x20 || c == 0x7F,
-            // glibc's `cntrl` class is the C0 and C1 controls plus the `Zl`
-            // and `Zp` separators. The last two are above U+00FF, so
-            // `ct_chr_class`'s `c < 0x100` guard hides them; they are here for
-            // the other callers of this predicate.
-            Charset::Utf8 => c < 0x20 || (0x7F..=0x9F).contains(&c) || c == 0x2028 || c == 0x2029,
-        }
-    }
-
-    /// C: `iswprint`. Total over `u32` (ERR-encoding-01).
-    ///
-    /// The C locale answer is exact. The UTF-8 answer is glibc's rule —
-    /// printable is anything with a Unicode name that is not a control —
-    /// minus the part that needs a character database: unassigned code points
-    /// have no name and glibc calls them unprintable, whereas this says
-    /// printable. Surrogates, noncharacters and out-of-range values are
-    /// excluded, which covers every value the screen image can hold.
-    pub(crate) fn iswprint(cs: Charset, c: u32) -> bool {
-        match cs {
-            // In the C locale everything above U+007E is unprintable, so
-            // every non-ASCII character renders as `\U+nnnn`.
-            Charset::Ascii => (0x20..=0x7E).contains(&c),
-            Charset::Utf8 => {
-                c > 0x1F
-                    && c <= 0x10FFFF
-                    && !(0x7F..=0x9F).contains(&c)
-                    && !(0xD800..=0xDFFF).contains(&c)
-                    && !(0xFDD0..=0xFDEF).contains(&c)
-                    && (c & 0xFFFE) != 0xFFFE
-            }
-        }
-    }
-
-    /// C: `wcwidth` — terminal columns, 0 for a zero-width character, 2 for a
-    /// double-width one, and **-1 for a character the locale calls
-    /// unprintable**. `ct_visual_width` passes that -1 straight through
-    /// (ERR-encoding-17).
-    ///
-    /// The tables below are an approximation, not a Unicode database; see the
-    /// module documentation.
-    pub(crate) fn wcwidth(cs: Charset, c: u32) -> i32 {
-        if c == 0 {
-            return 0;
-        }
-        if !iswprint(cs, c) {
-            return -1;
-        }
-        if cs == Charset::Ascii {
-            return 1;
-        }
-        if in_ranges(ZERO_WIDTH, c) {
-            0
-        } else if in_ranges(WIDE, c) {
-            2
-        } else {
-            1
-        }
-    }
-
-    /// Both tables are sorted and disjoint, which the tests assert.
-    fn in_ranges(table: &[(u32, u32)], c: u32) -> bool {
-        table
-            .binary_search_by(|&(lo, hi)| {
-                if c < lo {
-                    Ordering::Greater
-                } else if c > hi {
-                    Ordering::Less
-                } else {
-                    Ordering::Equal
-                }
-            })
-            .is_ok()
-    }
-
-    /// Combining marks and format characters: one cell in the screen image,
-    /// zero terminal columns.
-    #[rustfmt::skip]
-    pub(super) const ZERO_WIDTH: &[(u32, u32)] = &[
-        (0x0300, 0x036F), (0x0483, 0x0489), (0x0591, 0x05BD), (0x05BF, 0x05BF),
-        (0x05C1, 0x05C2), (0x05C4, 0x05C5), (0x05C7, 0x05C7), (0x0610, 0x061A),
-        (0x064B, 0x065F), (0x0670, 0x0670), (0x06D6, 0x06DC), (0x06DF, 0x06E4),
-        (0x06E7, 0x06E8), (0x06EA, 0x06ED), (0x0711, 0x0711), (0x0730, 0x074A),
-        (0x07A6, 0x07B0), (0x07EB, 0x07F3), (0x0816, 0x0819), (0x081B, 0x0823),
-        (0x0825, 0x0827), (0x0829, 0x082D), (0x0859, 0x085B), (0x08E3, 0x0902),
-        (0x093A, 0x093A), (0x093C, 0x093C), (0x0941, 0x0948), (0x094D, 0x094D),
-        (0x0951, 0x0957), (0x0962, 0x0963), (0x0981, 0x0981), (0x09BC, 0x09BC),
-        (0x09C1, 0x09C4), (0x09CD, 0x09CD), (0x09E2, 0x09E3), (0x0A01, 0x0A02),
-        (0x0A3C, 0x0A3C), (0x0A41, 0x0A42), (0x0A47, 0x0A48), (0x0A4B, 0x0A4D),
-        (0x0A51, 0x0A51), (0x0A70, 0x0A71), (0x0A75, 0x0A75), (0x0A81, 0x0A82),
-        (0x0ABC, 0x0ABC), (0x0AC1, 0x0AC5), (0x0AC7, 0x0AC8), (0x0ACD, 0x0ACD),
-        (0x0AE2, 0x0AE3), (0x0B01, 0x0B01), (0x0B3C, 0x0B3C), (0x0B3F, 0x0B3F),
-        (0x0B41, 0x0B44), (0x0B4D, 0x0B4D), (0x0B56, 0x0B56), (0x0B62, 0x0B63),
-        (0x0B82, 0x0B82), (0x0BC0, 0x0BC0), (0x0BCD, 0x0BCD), (0x0C00, 0x0C00),
-        (0x0C3E, 0x0C40), (0x0C46, 0x0C48), (0x0C4A, 0x0C4D), (0x0C55, 0x0C56),
-        (0x0C62, 0x0C63), (0x0C81, 0x0C81), (0x0CBC, 0x0CBC), (0x0CBF, 0x0CBF),
-        (0x0CC6, 0x0CC6), (0x0CCC, 0x0CCD), (0x0CE2, 0x0CE3), (0x0D01, 0x0D01),
-        (0x0D41, 0x0D44), (0x0D4D, 0x0D4D), (0x0D62, 0x0D63), (0x0DCA, 0x0DCA),
-        (0x0DD2, 0x0DD4), (0x0DD6, 0x0DD6), (0x0E31, 0x0E31), (0x0E34, 0x0E3A),
-        (0x0E47, 0x0E4E), (0x0EB1, 0x0EB1), (0x0EB4, 0x0EB9), (0x0EBB, 0x0EBC),
-        (0x0EC8, 0x0ECD), (0x0F18, 0x0F19), (0x0F35, 0x0F35), (0x0F37, 0x0F37),
-        (0x0F39, 0x0F39), (0x0F71, 0x0F7E), (0x0F80, 0x0F84), (0x0F86, 0x0F87),
-        (0x0F8D, 0x0F97), (0x0F99, 0x0FBC), (0x0FC6, 0x0FC6), (0x102D, 0x1030),
-        (0x1032, 0x1037), (0x1039, 0x103A), (0x103D, 0x103E), (0x1058, 0x1059),
-        (0x105E, 0x1060), (0x1071, 0x1074), (0x1082, 0x1082), (0x1085, 0x1086),
-        (0x108D, 0x108D), (0x109D, 0x109D), (0x1160, 0x11FF), (0x135D, 0x135F),
-        (0x1712, 0x1714), (0x1732, 0x1734), (0x1752, 0x1753), (0x1772, 0x1773),
-        (0x17B4, 0x17B5), (0x17B7, 0x17BD), (0x17C6, 0x17C6), (0x17C9, 0x17D3),
-        (0x17DD, 0x17DD), (0x180B, 0x180E), (0x18A9, 0x18A9), (0x1920, 0x1922),
-        (0x1927, 0x1928), (0x1932, 0x1932), (0x1939, 0x193B), (0x1A17, 0x1A18),
-        (0x1A60, 0x1A60), (0x1A75, 0x1A7C), (0x1A7F, 0x1A7F), (0x1AB0, 0x1AFF),
-        (0x1B00, 0x1B03), (0x1B34, 0x1B34), (0x1B36, 0x1B3A), (0x1B3C, 0x1B3C),
-        (0x1B42, 0x1B42), (0x1B6B, 0x1B73), (0x1B80, 0x1B81), (0x1BA2, 0x1BA5),
-        (0x1BA8, 0x1BA9), (0x1BE6, 0x1BE6), (0x1BE8, 0x1BE9), (0x1BED, 0x1BED),
-        (0x1BEF, 0x1BF1), (0x1C2C, 0x1C33), (0x1C36, 0x1C37), (0x1CD0, 0x1CD2),
-        (0x1CD4, 0x1CE0), (0x1CE2, 0x1CE8), (0x1CED, 0x1CED), (0x1CF4, 0x1CF4),
-        (0x1DC0, 0x1DFF), (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x2064),
-        (0x2066, 0x206F), (0x20D0, 0x20F0), (0x2CEF, 0x2CF1), (0x2D7F, 0x2D7F),
-        (0x2DE0, 0x2DFF), (0x302A, 0x302D), (0x3099, 0x309A), (0xA66F, 0xA672),
-        (0xA674, 0xA67D), (0xA69E, 0xA69F), (0xA6F0, 0xA6F1), (0xA802, 0xA802),
-        (0xA806, 0xA806), (0xA80B, 0xA80B), (0xA825, 0xA826), (0xA8C4, 0xA8C5),
-        (0xA8E0, 0xA8F1), (0xA926, 0xA92D), (0xA947, 0xA951), (0xA980, 0xA982),
-        (0xA9B3, 0xA9B3), (0xA9B6, 0xA9B9), (0xA9BC, 0xA9BC), (0xAA29, 0xAA2E),
-        (0xAA31, 0xAA32), (0xAA35, 0xAA36), (0xAA43, 0xAA43), (0xAA4C, 0xAA4C),
-        (0xAAB0, 0xAAB0), (0xAAB2, 0xAAB4), (0xAAB7, 0xAAB8), (0xAABE, 0xAABF),
-        (0xAAC1, 0xAAC1), (0xAAEC, 0xAAED), (0xAAF6, 0xAAF6), (0xABE5, 0xABE5),
-        (0xABE8, 0xABE8), (0xABED, 0xABED), (0xFB1E, 0xFB1E), (0xFE00, 0xFE0F),
-        (0xFE20, 0xFE2F), (0xFEFF, 0xFEFF), (0xFFF9, 0xFFFB), (0x101FD, 0x101FD),
-        (0x10376, 0x1037A), (0x10A01, 0x10A0F), (0x10A38, 0x10A3F), (0x11001, 0x11001),
-        (0x11038, 0x11046), (0x1112D, 0x11134), (0x11180, 0x11181), (0x111B6, 0x111BE),
-        (0x116AB, 0x116AD), (0x116B0, 0x116B7), (0x11C30, 0x11C3D), (0x1D165, 0x1D169),
-        (0x1D16D, 0x1D172), (0x1D17B, 0x1D182), (0x1D185, 0x1D18B), (0x1D1AA, 0x1D1AD),
-        (0x1D242, 0x1D244), (0xE0001, 0xE0001), (0xE0020, 0xE007F), (0xE0100, 0xE01EF),
-    ];
-
-    /// East Asian Wide and Fullwidth, plus the emoji ranges terminals render
-    /// double-width: one cell in the screen image, two terminal columns, the
-    /// second of which the display layer fills with `MB_FILL_CHAR`.
-    #[rustfmt::skip]
-    pub(super) const WIDE: &[(u32, u32)] = &[
-        (0x1100, 0x115F), (0x231A, 0x231B), (0x2329, 0x232A), (0x23E9, 0x23EC),
-        (0x23F0, 0x23F0), (0x23F3, 0x23F3), (0x25FD, 0x25FE), (0x2614, 0x2615),
-        (0x2648, 0x2653), (0x267F, 0x267F), (0x2693, 0x2693), (0x26A1, 0x26A1),
-        (0x26AA, 0x26AB), (0x26BD, 0x26BE), (0x26C4, 0x26C5), (0x26CE, 0x26CE),
-        (0x26D4, 0x26D4), (0x26EA, 0x26EA), (0x26F2, 0x26F3), (0x26F5, 0x26F5),
-        (0x26FA, 0x26FA), (0x26FD, 0x26FD), (0x2705, 0x2705), (0x270A, 0x270B),
-        (0x2728, 0x2728), (0x274C, 0x274C), (0x274E, 0x274E), (0x2753, 0x2755),
-        (0x2757, 0x2757), (0x2795, 0x2797), (0x27B0, 0x27B0), (0x27BF, 0x27BF),
-        (0x2B1B, 0x2B1C), (0x2B50, 0x2B50), (0x2B55, 0x2B55), (0x2E80, 0x303E),
-        (0x3041, 0x33FF), (0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xA000, 0xA4CF),
-        (0xA960, 0xA97F), (0xAC00, 0xD7A3), (0xF900, 0xFAFF), (0xFE10, 0xFE19),
-        (0xFE30, 0xFE6F), (0xFF00, 0xFF60), (0xFFE0, 0xFFE6), (0x16FE0, 0x16FE4),
-        (0x17000, 0x187F7), (0x18800, 0x18AFF), (0x1B000, 0x1B001), (0x1F004, 0x1F004),
-        (0x1F0CF, 0x1F0CF), (0x1F18E, 0x1F18E), (0x1F191, 0x1F19A), (0x1F200, 0x1F202),
-        (0x1F210, 0x1F23B), (0x1F240, 0x1F248), (0x1F250, 0x1F251), (0x1F300, 0x1F64F),
-        (0x1F680, 0x1F6C5), (0x1F900, 0x1F9FF), (0x20000, 0x2FFFD), (0x30000, 0x3FFFD),
-    ];
-}
-
 #[cfg(test)]
 mod tests {
-    use super::locale::Charset;
     use super::*;
 
     fn empty() -> CtBufferT {
@@ -1109,62 +751,6 @@ mod tests {
         assert_eq!(ct_enc_width(0), 1);
     }
 
-    #[test]
-    fn charset_is_parsed_from_a_posix_locale_name() {
-        for name in ["en_US.UTF-8", "C.utf8", "de_DE.utf-8@euro"] {
-            assert_eq!(locale::charset_of(name), Charset::Utf8, "{name}");
-        }
-        for name in ["C", "POSIX", "en_US", "en_US.ISO-8859-1", "ja_JP.eucJP"] {
-            assert_eq!(locale::charset_of(name), Charset::Ascii, "{name}");
-        }
-    }
-
-    #[test]
-    fn utf8_conversion_is_strict() {
-        let cs = Charset::Utf8;
-        assert_eq!(locale::mbstowcs_len(cs, "€".as_bytes()), Some(1));
-        assert_eq!(locale::enc_width(cs, 0x20AC), Some(3));
-        let mut dst = [0u8; 4];
-        assert_eq!(locale::encode(cs, &mut dst, 0x20AC), Some(3));
-        assert_eq!(&dst[..3], "€".as_bytes());
-        // Overlong, surrogate, truncated, stray continuation: all EILSEQ.
-        for bad in [
-            &b"\xC0\xAF"[..],
-            &b"\xED\xA0\x80"[..],
-            &b"\xE2\x82"[..],
-            &b"\x80"[..],
-        ] {
-            assert_eq!(locale::mbstowcs_len(cs, bad), None);
-        }
-        // The C locale rejects every byte above 0x7F.
-        assert_eq!(locale::mbstowcs_len(Charset::Ascii, "é".as_bytes()), None);
-        assert_eq!(locale::enc_width(Charset::Ascii, 0xE9), None);
-    }
-
-    #[test]
-    fn locale_predicates_follow_the_charset() {
-        // C1 controls are `iswcntrl` in a UTF-8 locale and below 0x100, so
-        // they take the caret arm: U+0085 renders as `^` U+00C5.
-        assert!(locale::iswcntrl(Charset::Utf8, 0x85));
-        assert!(!locale::iswcntrl(Charset::Ascii, 0x85));
-        // In the C locale nothing above U+007E is printable.
-        assert!(!locale::iswprint(Charset::Ascii, 0xE9));
-        assert!(locale::iswprint(Charset::Utf8, 0xE9));
-        assert!(!locale::iswprint(Charset::Utf8, MB_FILL_CHAR));
-        assert_eq!(locale::wcwidth(Charset::Utf8, 0x4E00), 2);
-        assert_eq!(locale::wcwidth(Charset::Utf8, 0x0301), 0);
-        assert_eq!(locale::wcwidth(Charset::Utf8, u32::from(b'a')), 1);
-        // ERR-encoding-17: the -1 `ct_visual_width` passes through.
-        assert_eq!(locale::wcwidth(Charset::Ascii, 0xE9), -1);
-    }
-
-    #[test]
-    fn width_tables_are_sorted_and_disjoint() {
-        for table in [locale::ZERO_WIDTH, locale::WIDE] {
-            for pair in table.windows(2) {
-                assert!(pair[0].0 <= pair[0].1);
-                assert!(pair[0].1 < pair[1].0, "{:x?} then {:x?}", pair[0], pair[1]);
-            }
-        }
-    }
+    // The locale layer's own tests — the charset parser, the codec, the
+    // predicates and the width tables — live with it in `crate::locale`.
 }

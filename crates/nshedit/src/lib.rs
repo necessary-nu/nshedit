@@ -75,6 +75,14 @@
 pub mod editline;
 pub mod histedit;
 
+// Host facilities the port has to supply itself. Neither has a C counterpart:
+// `plan/decisions/no-c-ffi.md` bars linking libc, so the `LC_CTYPE` queries and
+// the `errno` the C makes through it have nowhere else to come from. Every
+// module that needs one takes it from here — two independent copies of the
+// locale layer and two of `errno` existed before they were hoisted.
+pub mod errno;
+pub(crate) mod locale;
+
 // Encoding and escaping.
 pub mod chartype;
 pub mod literal;
@@ -102,9 +110,11 @@ pub mod hist;
 pub mod history;
 pub mod search;
 
-// Editor command sets.
+// Editor command sets, and the command table `src/makelist` generates from
+// their doc comments.
 pub mod common;
 pub mod emacs;
+pub(crate) mod fcns;
 pub mod vi;
 
 // Completion and tokenization.

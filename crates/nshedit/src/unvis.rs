@@ -1,34 +1,13 @@
 //! Ported from `src/unvis.c`; rules live in `docs/spec/port/src/unvis.md`.
 
 use core::ffi::c_char;
-use std::cell::Cell;
 
-// ---------------------------------------------------------------------------
-// `errno`
-// ---------------------------------------------------------------------------
-
-/// `EINVAL` and `ENOSPC` as Linux numbers them. The port links no libc
-/// (`plan/decisions/no-c-ffi.md`), so it cannot write the real thread-local
-/// `errno`; the value is parked in [`errno`] instead, and re-publishing it to a
-/// C caller is the ABI crate's job. If a shared errno facility lands later,
-/// this pair of items is what it replaces.
-const EINVAL: i32 = 22;
-const ENOSPC: i32 = 28;
-
-thread_local! {
-    static ERRNO: Cell<i32> = const { Cell::new(0) };
-}
-
-/// The last `errno` this module set. Matching the C, it is written only on the
-/// two failure paths and never cleared on success, so it is meaningful only
-/// immediately after a -1 return.
-pub fn errno() -> i32 {
-    ERRNO.with(Cell::get)
-}
-
-fn set_errno(e: i32) {
-    ERRNO.with(|slot| slot.set(e));
-}
+// The port links no libc (`plan/decisions/no-c-ffi.md`), so it cannot write the
+// real thread-local `errno`; `crate::errno` is where the value is parked, and
+// re-publishing it to a C caller is the ABI crate's job. Matching the C, it is
+// written only on this file's two failure paths and never cleared on success,
+// so it is meaningful only immediately after a -1 return.
+use crate::errno::{EINVAL, ENOSPC, set_errno};
 
 // ---------------------------------------------------------------------------
 // State machine constants

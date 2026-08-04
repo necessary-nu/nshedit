@@ -6,6 +6,10 @@ use core::ffi::c_char;
 use crate::chared::{c__next_word, c_gets, ce__isword, cv_delfini};
 use crate::common::{ed_end_of_file, ed_newline, ed_search_next_history, ed_search_prev_history};
 use crate::el::{EditLine, ElActionT};
+use crate::fcns::{
+    ED_DELETE_PREV_CHAR, ED_DIGIT, ED_INSERT, ED_SEARCH_NEXT_HISTORY, ED_SEARCH_PREV_HISTORY,
+    EM_DELETE_PREV_CHAR, EM_INC_SEARCH_NEXT, EM_INC_SEARCH_PREV,
+};
 use crate::hist::hist_get;
 use crate::map::ElMapCurrent;
 use crate::read::{el_wgetc, el_wpush};
@@ -16,14 +20,15 @@ use crate::terminal::terminal_beep;
 // Constants the C takes from headers this crate has not grown yet.
 //
 // `CC_*` are `histedit.h`; `EL_BUFSIZ` and `ANCHOR` are `el.h`; `MAP_VI` is
-// `map.h`; `NOP` and `CHAR_FWD` are `chared.h`; and the `ED_*`/`EM_*` command
-// codes are `fcns.h`, which the C *generates* with `makelist -fh` by sorting
-// the command names from `vi.c`, `emacs.c` and `common.c` and numbering them
-// from zero. The values below were read out of that generated header.
+// `map.h`; `NOP` and `CHAR_FWD` are `chared.h`. The `ED_*`/`EM_*` command codes
+// are `fcns.h`, which `src/makelist` generates; they come from
+// [`crate::fcns`] and are no longer restated here.
 //
-// They are private here only because no module owns them yet. When a `fcns`
-// (or `histedit`) module publishes them, these must be deleted rather than
-// left to drift.
+// The two history-search codes double as this file's `dir`/`newdir` values and
+// as the sentinel `c_setpat` tests for, all of which are the C's `int`, so they
+// are widened with `i32::from` at each comparison and narrowed with
+// `as ElActionT` wherever one is stored into `el_state.lastcmd`. The C's
+// `#define` is untyped and needs neither.
 // ---------------------------------------------------------------------------
 
 /// C: `el.h` — `#define EL_BUFSIZ ((size_t)1024)`, the fixed `patbuf` size.
@@ -37,20 +42,6 @@ const CC_NORM: ElActionT = 0;
 const CC_REFRESH: ElActionT = 4;
 const CC_CURSOR: ElActionT = 5;
 const CC_ERROR: ElActionT = 6;
-
-const ED_DELETE_PREV_CHAR: ElActionT = 4;
-const ED_DIGIT: ElActionT = 6;
-const ED_INSERT: ElActionT = 9;
-const EM_DELETE_PREV_CHAR: ElActionT = 34;
-const EM_INC_SEARCH_NEXT: ElActionT = 37;
-const EM_INC_SEARCH_PREV: ElActionT = 38;
-
-/// The two history-search command codes. They double as the `dir`/`newdir`
-/// values throughout this file and as the sentinel `c_setpat` tests for, so
-/// they are `i32` (the C's `int` parameter) and narrowed with `as ElActionT`
-/// wherever they are stored into `el_state.lastcmd`.
-const ED_SEARCH_NEXT_HISTORY: i32 = 23;
-const ED_SEARCH_PREV_HISTORY: i32 = 24;
 
 /// C: `map.h` — `#define MAP_VI 1`.
 const MAP_VI: i32 = 1;
@@ -397,7 +388,8 @@ pub(crate) fn c_setpat(el: &mut EditLine) {
     // `ce_inc_search`, `cv_search` and `cv_repeat_srch` all fake `lastcmd`
     // precisely to reach it.
     let lastcmd = el.el_state.lastcmd as i32;
-    if lastcmd == ED_SEARCH_PREV_HISTORY || lastcmd == ED_SEARCH_NEXT_HISTORY {
+    if lastcmd == i32::from(ED_SEARCH_PREV_HISTORY) || lastcmd == i32::from(ED_SEARCH_NEXT_HISTORY)
+    {
         return;
     }
 
@@ -529,7 +521,7 @@ pub(crate) fn ce_inc_search(el: &mut EditLine, dir: i32) -> ElActionT {
         //    second display line appended to the user's real line, and
         //    `lastchar` temporarily includes it.
         line_put(el, '\n' as u32);
-        let word: &[u32] = if newdir == ED_SEARCH_PREV_HISTORY {
+        let word: &[u32] = if newdir == i32::from(ED_SEARCH_PREV_HISTORY) {
             &STRBCK
         } else {
             &STRFWD
@@ -602,12 +594,12 @@ pub(crate) fn ce_inc_search(el: &mut EditLine, dir: i32) -> ElActionT {
             }
 
             EM_INC_SEARCH_NEXT => {
-                newdir = ED_SEARCH_NEXT_HISTORY;
+                newdir = i32::from(ED_SEARCH_NEXT_HISTORY);
                 redo += 1;
             }
 
             EM_INC_SEARCH_PREV => {
-                newdir = ED_SEARCH_PREV_HISTORY;
+                newdir = i32::from(ED_SEARCH_PREV_HISTORY);
                 redo += 1;
             }
 
@@ -741,7 +733,7 @@ pub(crate) fn ce_inc_search(el: &mut EditLine, dir: i32) -> ElActionT {
                 if redo != 0 && newdir == dir {
                     if pchar_get() == '?' as u32 {
                         // The previous search failed: wrap around.
-                        el.el_history.eventno = if newdir == ED_SEARCH_PREV_HISTORY {
+                        el.el_history.eventno = if newdir == i32::from(ED_SEARCH_PREV_HISTORY) {
                             0
                         } else {
                             0x7fff_ffff
@@ -752,12 +744,12 @@ pub(crate) fn ce_inc_search(el: &mut EditLine, dir: i32) -> ElActionT {
                             // second then loads it.
                             let _ = hist_get(el);
                         }
-                        el.el_line.cursor = if newdir == ED_SEARCH_PREV_HISTORY {
+                        el.el_line.cursor = if newdir == i32::from(ED_SEARCH_PREV_HISTORY) {
                             el.el_line.lastchar
                         } else {
                             0
                         };
-                    } else if newdir == ED_SEARCH_PREV_HISTORY {
+                    } else if newdir == i32::from(ED_SEARCH_PREV_HISTORY) {
                         if el.el_line.cursor == 0 {
                             below = true;
                         } else {
@@ -787,13 +779,13 @@ pub(crate) fn ce_inc_search(el: &mut EditLine, dir: i32) -> ElActionT {
                 if to_history {
                     // Stop `c_setpat` from overwriting the pattern.
                     el.el_state.lastcmd = newdir as ElActionT;
-                    ret = if newdir == ED_SEARCH_PREV_HISTORY {
+                    ret = if newdir == i32::from(ED_SEARCH_PREV_HISTORY) {
                         ed_search_prev_history(el, 0)
                     } else {
                         ed_search_next_history(el, 0)
                     };
                     if ret != CC_ERROR {
-                        el.el_line.cursor = if newdir == ED_SEARCH_PREV_HISTORY {
+                        el.el_line.cursor = if newdir == i32::from(ED_SEARCH_PREV_HISTORY) {
                             el.el_line.lastchar
                         } else {
                             0
@@ -884,7 +876,7 @@ pub(crate) fn cv_search(el: &mut EditLine, dir: i32) -> ElActionT {
     //    with `/`. `c_gets` renders it by overwriting `el_line.buffer`, so
     //    the line the user was editing is destroyed the moment `/` is
     //    pressed, whatever happens afterwards.
-    let prompt: [u32; 3] = if dir == ED_SEARCH_PREV_HISTORY {
+    let prompt: [u32; 3] = if dir == i32::from(ED_SEARCH_PREV_HISTORY) {
         ['\n' as u32, '/' as u32, 0]
     } else {
         ['\n' as u32, '?' as u32, 0]
@@ -970,7 +962,7 @@ pub(crate) fn cv_search(el: &mut EditLine, dir: i32) -> ElActionT {
     el.el_line.lastchar = 0;
 
     // 10.
-    let found = if dir == ED_SEARCH_PREV_HISTORY {
+    let found = if dir == i32::from(ED_SEARCH_PREV_HISTORY) {
         ed_search_prev_history(el, 0)
     } else {
         ed_search_next_history(el, 0)
@@ -1013,7 +1005,7 @@ pub(crate) fn ce_search_line(el: &mut EditLine, dir: i32) -> ElActionT {
         anchored.extend_from_slice(wcs(&el.el_search.patbuf[LEN..]));
     }
 
-    if dir == ED_SEARCH_PREV_HISTORY {
+    if dir == i32::from(ED_SEARCH_PREV_HISTORY) {
         // ERR-modes-09: the C's backward walk forms `buffer - 1` before the
         // guard rejects it. Defined here with a bounded index; the cursor
         // position itself is still tried first, and position zero last.
@@ -1067,9 +1059,9 @@ pub(crate) fn cv_repeat_srch(el: &mut EditLine, c: u32) -> ElActionT {
 
     // 4. `patdir` is deliberately not updated here, so `N` searches the
     //    opposite way without making that the new default direction.
-    if c == ED_SEARCH_NEXT_HISTORY as u32 {
+    if c == u32::from(ED_SEARCH_NEXT_HISTORY) {
         ed_search_next_history(el, 0)
-    } else if c == ED_SEARCH_PREV_HISTORY as u32 {
+    } else if c == u32::from(ED_SEARCH_PREV_HISTORY) {
         ed_search_prev_history(el, 0)
     } else {
         CC_ERROR
