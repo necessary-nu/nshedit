@@ -542,6 +542,37 @@ children (
                     }
                 )
             }
+
+            {
+                id abi-missing-exports
+                title "Export the nine symbols we are missing, eight of which deployed consumers already reach"
+                log (
+                    {
+                        at 2026-08-05T10:57:51.013898095Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Measured by conformance/abi-shape.sh, not inferred. The port exports 198 dynamic symbols against the oracle's 227: 29 missing, ZERO extra.\n\nTwenty of the 29 are the vis family and are missing CORRECTLY. Debian's libedit.so.2 has NEEDED libbsd.so.0 and imports strvis@LIBBSD_0.0, strunvis@LIBBSD_0.0 and vis@LIBBSD_0.0 while exporting none of them; the port exports and imports none, so it matches the deployment target. The oracle exports all twenty only because libbsd-dev is absent on this host, so configure answered no to HAVE_VIS/HAVE_UNVIS and src/Makefile.am compiled vis.c and unvis.c in. That is a property of the oracle's build configuration and not a gap. abi-shape.sh already splits the missing set so these never masquerade as one. Do NOT export them — see the interposition hazard on abi-surface.\n\nThe nine that are real:\n\n    ct_decode_string\n    ct_encode_string\n    fn_complete\n    fn_complete2\n    fn_display_match_list\n    fn_filename_completion_function\n    fn_tilde_expand\n    reallocarr\n    wcsdup\n\nEIGHT of those nine — all but wcsdup — are exported by Debian's libedit.so.2 as well. So a consumer deployed today reaches them, and linking against us gives an unresolved symbol. That is the whole drop-in claim failing for that consumer, not a cosmetic gap. Only _el_fn_complete is declared in histedit.h, but export is export: the symbol table is the contract, not the header.\n\nwcsdup is its own problem and belongs with the rule correction rather than here. src/wcsdup.c:14 is `#ifndef HAVE_WCSDUP` and :16 is `#include \"config.h\"`, so the guard is evaluated before the macro exists, is always true, and the bundled wcsdup always compiles — overriding glibc's for anything that links libedit. Exporting ours therefore reproduces an override the C does by accident. Decide that deliberately rather than by symmetry; note Debian's libedit IMPORTS wcsdup@GLIBC_2.2.5 rather than exporting it, so the deployed target and the oracle already disagree.\n\nTwo version-skew data points from the same run, which is exactly why the oracle is the in-tree C: the oracle and the port both export rl_kill_full_line and Debian does not, and Debian imports wcsdup where the oracle exports it.\n\nReadline coverage needs no work: port 149, Debian's libedit 148, oracle 149, against libreadline.so.8's 736. No readline symbol Debian's libedit exports is missing from the port.\n\nRe-run conformance/abi-shape.sh after this lands; it is the acceptance test and it currently FAILs."
+                    }
+                )
+            }
+
+            {
+                id abi-file-surface
+                title "Argue and build the FILE * surface, which blocks H_SAVE_FP, EL_SETFP and foreign streams"
+                log (
+                    {
+                        at 2026-08-05T10:58:09.978302682Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "This is one wall behind four separate symptoms, which is why it is its own node rather than a footnote on each.\n\nMeasured by the first conformance run: H_SAVE_FP and H_NSAVE_FP return -1 with \"can't write history\" and write ZERO bytes, where the oracle writes 322 under C.UTF-8 and 306 under C. Four of the six divergences in a 247-operation trace are this. The other two are abi-narrow.\n\nThe same wall also blocks:\n- EL_SETFP, which has no escape hatch at all.\n- el_init with caller-supplied FILE * streams; the ABI crate currently assumes fds 0/1/2, so an application handing us its own streams gets the wrong descriptors.\n- rl_initialize's tcgetattr ECHO test, which is the one divergence in the whole register that fails OPEN — we edit on non-echoing input where the C would not.\n\nCause: CFile is an opaque FILE * and dec:libedit:no-c-ffi bars fputs, ftell and fileno through it. nshedit::history::history_save_fp (crates/nshedit/src/history.rs:1608-1625) documents the hole deliberately, and el.rs:442-458 has `fn fileno(_stream: CFile) -> i32` as a stub.\n\nTHE DECISION COMES FIRST, and no-c-ffi says where. Its enumeration is closed and names this surface as a CANDIDATE third site, not an approved one: \"It passes the test on its face, since a caller's FILE * is opaque to Rust and sem:el.el-init-fn is specified in terms of fileno(fin), but dec:libedit:platform-layer defers it and the enumeration above stays closed until it is argued here.\" So amend no-c-ffi or find a route that does not need the exception — do not just add the extern and move on.\n\nThe two-part test any argument has to carry, from that decision: no pure-Rust route delivers the facility, AND a rule in the corpus specifies behaviour that cannot be implemented without it. Both halves. Note the current failure mode is defensible — \"can't write history\" is an error the C can itself produce — so the honest framing is that we return a plausible error instead of doing the work, which a differential exposes and a unit test would not have.\n\nWorth checking before assuming the exception is needed: whether the caller's FILE * can be reached through its file descriptor alone once fileno exists, since std::fs::File::from_raw_fd would then carry the write without naming any other libc symbol. That would make this one symbol rather than a family, and buffering interleaving between the C's FILE and our writes becomes the question to answer instead.\n\nAcceptance: the four H_SAVE_FP / H_NSAVE_FP lines in conformance/differential.sh stop diverging."
+                    }
+                )
+            }
+
+            {
+                id abi-soname
+                title "Give the cdylib a SONAME and the install symlinks a consumer's DT_NEEDED actually records"
+            }
         )
         log (
             {
@@ -627,6 +658,33 @@ children (
                     }
                 )
             }
+
+            {
+                id spec-corrections-2
+                title "Correct the rules the ABI pass and the first conformance run proved wrong"
+                log (
+                    {
+                        at 2026-08-05T10:58:32.379154494Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Accumulated since spec-rule-corrections closed. Each was found by doing something rather than by re-reading, which is why they were not in the first pass. Verify each against the C before editing, as before — two of these are second-hand.\n\n1. sem:histedit.wcsdup-fn is wrong about the C. VERIFIED BY ME, not second-hand. docs/spec/port/src/histedit.md:1635-1637 says the bundled implementation \"is only compiled in that case\", i.e. when the system lacks wcsdup. It always compiles: src/wcsdup.c:14 is `#ifndef HAVE_WCSDUP` and :16 is `#include \"config.h\"`, so the guard is evaluated before the macro is defined and is unconditionally true. config.h.in:196 has the macro and src/histedit.h:323 guards the DECLARATION with it correctly, so header and source disagree — the declaration disappears on a system that has wcsdup while the definition stays. Consequence: libedit's own wcsdup overrides glibc's for everything that links it. Found by building the oracle.\n\n2. sem:histedit.el-wset-fn and sem:histedit.el-wget-fn give the four prompt arms' argument type as el_wpfunc_t, a type the C never declares. Grep finds it only in a comment at histedit.h:152, which spells a pair of names — el_pfunct_t / el_wpfunct_t — that nothing declares either. src/prompt.h:44 declares exactly one prompt typedef, el_pfunc_t, and src/el.c uses it in all four arms (lines 240, 262, 471, 477). The rule invented a wide/narrow pair by analogy; prompts have no narrow variant because the prompt is stored wide either way. Check whether the same false analogy reached any other rule describing a narrow entry point. Already fixed in the code comments at crates/nshedit-abi/src/histedit.rs; the rules still carry it.\n\n3. sem:histedit.el-wset-fn's EL_TERMINAL arm says it \"Returns 0 on success, -1 if the display arrays could not be allocated\". It also returns -1 whenever the capability lookup failed, however usable the dumb-terminal fallback is. That is ERR-terminal-22, registered against sem:terminal.terminal-set-fn but not against this rule.\n\n4. ERR-readline-35 asserts rl_point and rl_end are byte offsets without qualification. True only of _rl_update_pos, which computes from el_line, the narrow LineInfo. fn_complete2 declares `const LineInfoW *li` and computes over wchar_t, so the copy a completion callback sees is a CHARACTER offset. Qualify the sentence and cross-reference ERR-completion-13, which already records the wide producer. This is a correction, not a new entry — an earlier proposal to add one was withdrawn as a duplicate.\n\n5. crates/nshedit/src/map.rs:1101-1103 carries a comment repeating the map_init_nls claim that spec-rule-corrections corrected away (\"they survive only as the ESC-prefixed keymacros map_init_meta just made\"). The code is right — it queries iswprint — only the prose is stale. Code comment, not a rule, but it belongs in the same sweep.\n\nNot a rule error but the same class of problem, worth deciding here: histedit.h documents H_NEXT_EVDATA, H_DELDATA and H_REPLACE in terms of histdata_t, a type it never declares — it exists only in editline/readline.h:68. A consumer including only histedit.h cannot name it. Possibly inside ERR-core-api-34's annotation-error group; unconfirmed."
+                    }
+                )
+            }
+
+            {
+                id errata-reconcile-2
+                title "Reconcile the register against the ABI pass, the first conformance run and the withdrawals"
+                deps (spec-corrections-2)
+                log (
+                    {
+                        at 2026-08-05T10:58:55.169931851Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Second reconciliation pass. The first one was accurate when written; these went stale as work landed, plus new entries and three withdrawals.\n\nSTALE STATUS LINES — the entry point they describe is no longer a core_gap panic, as of commit e7ddcd7 (abi-visibility):\n- ERR-modes-27 and ERR-core-api-07 (map_bind's argc overwrite, el_wset's collection loop). Now defined as \"always terminate\" via a list_args helper whose returned length is the C's i. BOTH halves of the C's over-read are now unreachable rather than reproduced: a Vec ends where it ends, and el_wset's fixed arity means there is no caller argument list to run off.\n- ERR-core-api-08 — the EL_EDITOR and EL_WORDCHARS halves now reject NULL with -1. Only the EL_SETFP half stays open, blocked on abi-file-surface.\n- ERR-core-api-14 — now observable through el_wget and reproduced end to end.\n- ERR-core-api-16 — reachable now.\n- The summary paragraph at roughly line 113.\n\nSTALE, AND DISPROVEN BY EXECUTION rather than by reading:\n- ERR-history-17's status (docs/errata.md:1301) says \"the ABI H_FUNC opcode is still a core_gap(...) panic ... so no C caller reaches it yet\". It is not. The first conformance run drives H_FUNC through the port's fixed-arity history_w with all eleven varargs and it matches the oracle exactly, including reproducing the defect itself (callbacks receive something other than the installed ref, is-installed-ref=0 on both sides).\n\nNEW ENTRIES:\n- MB_CUR_MAX divergence, documented on the new el::mb_cur_max. The C's follows setlocale; the port's follows the environment, because crate::locale cannot call setlocale and records why. Observable across the ABI: a C application that never calls setlocale under a UTF-8 LANG gets NARROW_HISTORY cleared by el_wset(EL_HIST) where the port leaves it set. Rule: sem:histedit.el-wset-fn's EL_HIST arm. Reach: any C consumer that skips setlocale, common in small programs.\n- rl_terminal_name is written back as a borrowed pointer — the caller's own buffer, getenv(\"TERM\")'s environment string, or the literal \"dumb\" — under a declared type of char * that invites a write, making two of the three cases undefined and free() a corruption. Same call site passes char ** where el_get reads const char **.\n- Seventeen further inert exports beyond ERR-readline-54's list. Four of them default to 0 where GNU's default to 1, so an untouched consumer sees different behaviour before doing anything.\n- rl_already_prompted's direction is reversed relative to GNU: there the application sets it to suppress a redisplay, here libedit writes it and reads it nowhere, so a consumer using the GNU idiom gets a duplicated prompt. Nothing clears it in callback mode.\n- emacs_meta_keymap is defined twice in one translation unit (readline.c:93 and :137). Both tentative, so C merges them and nothing observable changes — but a declaration-by-declaration translation emits two definitions and fails to link.\n- src/wcsdup.c's always-true guard (see spec-corrections-2 item 1). A C defect in no entry under any id.\n\nWITHDRAWALS — proposed during readline-globals-rules, then found to be duplicates when the WHOLE register was checked rather than its readline section. Do not re-add:\n- The rl_point/rl_end unit disagreement is ERR-completion-13, cited by id at the very site that produces it.\n- The completion-append-character condition is ERR-completion-14.\n- The getc(stdin) half of the query-items entry is ERR-completion-12; only the (size_t) cast remains uncovered.\n- ERR-readline-61 narrows to the ownership contract alone; the leak half is ERR-readline-18.\n\nNOT errata, and must not become entries: the six divergences the first conformance run found are port-side gaps, not C defects. The register is C defects only. The narrow-instantiation aborts belong to abi-narrow and the H_SAVE_FP zero-byte writes to abi-file-surface."
+                    }
+                )
+            }
         )
         log (
             {
@@ -645,12 +703,20 @@ children (
             {
                 id conformance-oracle
                 title "Build the in-tree C as the reference artifact, at the version we actually ported"
+                sealed true
                 log (
                     {
                         at 2026-08-05T10:41:06.425370151Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-05T10:59:31.364311107Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -659,18 +725,62 @@ children (
                 id conformance-abi-shape
                 title "Diff our exported symbols against the C's, which is the drop-in claim stated as a test"
                 deps (conformance-oracle)
+                sealed true
+                log (
+                    {
+                        at 2026-08-05T10:59:33.018312897Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
 
             {
                 id conformance-differential
                 title "Drive both libraries through the non-interactive API and diff the traces"
                 deps (conformance-oracle)
+                sealed true
+                log (
+                    {
+                        at 2026-08-05T10:59:37.412561917Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
 
             {
                 id conformance-pty
                 title "Drive both libraries through a real pty and diff the emitted byte streams"
                 deps (conformance-differential platform-build)
+            }
+
+            {
+                id conformance-driver-el
+                title "Differential driver for the el_* non-interactive surface, the largest untested area"
+                deps (conformance-differential)
+                log (
+                    {
+                        at 2026-08-05T10:59:11.080143617Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Recommended as the next driver by the agent that built the first one, and the reasoning holds: this is the largest surface still untested, and none of it needs a tty.\n\nCover: el_init_fd against pipes; el_set and el_get across EVERY op, since the wide varargs dispatch is essentially untested — H_FUNC proved the eleven-slot path exactly once; EL_EDITOR, EL_BIND, EL_HIST; el_source against a controlled .editrc; el_parse.\n\nThat reaches map, parse, keymacro and chared, four concerns whose translate leaves are complete and whose behaviour has never been executed against the C.\n\nIt will also force the abi-file-surface decision from a second direction: EL_SETFP hits the same FILE * wall as H_SAVE_FP, so this driver will produce a second cluster of divergences with a single cause. Expect that rather than treating it as new.\n\nReuse conformance/lib.sh's pinned environment as-is. It builds the environment with env -i rather than overlaying, so an inherited EDITRC cannot leak in — which matters more for this driver than the last one, since el_source reads EDITRC and HOME directly. The four variables the C reads through el_getenv are EDITRC (src/el.c:610), HOME (:614), TERM (src/terminal.c:906) and EDITOR (src/vi.c:1112).\n\nFollow the existing conventions: trace lines are `NNNN <26-char operation label> <result>`, never a raw pointer, never a path, never strerror text — errno numeric only. Anything address-derived gets reduced to a boolean, the way H_FUNC's ref did. Run it under both LC_ALL=C.UTF-8 and LC_ALL=C; the two produce materially different results and that is real coverage rather than a repeat.\n\nAdd it to conformance/determinism.sh's list, which runs every driver three times per library per locale from a wiped directory and requires byte-identical output.\n\nAnd the standing rule from the first run: DO NOT fix the Rust to make the diff go away. Report each divergence with its governing rule and whether the register already holds it as a frozen defect."
+                    }
+                )
+            }
+
+            {
+                id conformance-driver-readline
+                title "Differential driver for the readline layer, with GNU readline as a second reference"
+                deps (conformance-differential)
+            }
+
+            {
+                id conformance-driver-ub
+                title "Forked UB corpus, where the oracle is expected to die and the port to define"
+                deps (conformance-differential)
             }
         )
         log (
