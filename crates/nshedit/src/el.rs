@@ -248,6 +248,34 @@ pub struct EditLine {
     pub el_getenv: Option<FuncT>,
 }
 
+/// C: `MB_CUR_MAX`, for the one place in `el.c` that reads it.
+///
+/// The module documentation above records that `el_wset`'s `EL_HIST` arm is
+/// the file's only locale-sensitive decision, and that the arm itself belongs
+/// to the ABI crate — the varargs dispatch is
+/// `plan/decisions/idiomatic-core.md`'s, not the core's. That leaves the
+/// dispatch needing the answer and having no way to ask: `crate::locale` is
+/// `pub(crate)`, and `plan/decisions/no-c-ffi.md` bars `nshedit-abi` from
+/// naming libc's `MB_CUR_MAX` (the ration is spent on the `errno` accessor).
+/// So the core answers, in one line, and this is the whole of it.
+///
+/// Hidden: it is not core API, it is the ABI crate's one locale question.
+/// `sem:histedit.el-wset-fn` and `sem:hist.hist-set-fn` are what require it —
+/// the wide `EL_HIST` clears `NARROW_HISTORY` only when this is 1, which is
+/// ERR-core-api-16.
+///
+/// Divergence, inherited from `crate::locale` and observable exactly here:
+/// the C's `MB_CUR_MAX` follows `setlocale`, so a program that never calls it
+/// reads 1 whatever the environment says, while this reads the environment as
+/// if `setlocale(LC_ALL, "")` had run. A C application that sets no locale and
+/// runs under a UTF-8 `LANG` therefore has `el_set(EL_HIST, ...)` followed by
+/// `el_wset(EL_HIST, ...)` clear `NARROW_HISTORY` where the port leaves it
+/// set. `crate::locale` records why the port cannot follow `setlocale` at all.
+#[doc(hidden)]
+pub fn mb_cur_max() -> usize {
+    locale::mb_cur_max(locale::charset())
+}
+
 // [spec:libedit:def:el.secure-getenv-fn]
 // [spec:libedit:sem:el.secure-getenv-fn]
 /// C: `char *secure_getenv(char const *name)`.

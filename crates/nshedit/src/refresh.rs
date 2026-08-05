@@ -326,7 +326,7 @@ pub(crate) fn re_putc(el: &mut EditLine, c: u32, shift: i32) {
 
 // [spec:libedit:def:refresh.re-refresh-fn]
 // [spec:libedit:sem:refresh.re-refresh-fn]
-pub(crate) fn re_refresh(el: &mut EditLine) {
+pub fn re_refresh(el: &mut EditLine) {
     // Step 1: the magic characters about to be written index a freshly
     // numbered table.
     //
@@ -1330,7 +1330,7 @@ pub(crate) fn re_fastaddc(el: &mut EditLine) {
 
 // [spec:libedit:def:refresh.re-clear-display-fn]
 // [spec:libedit:sem:refresh.re-clear-display-fn]
-pub(crate) fn re_clear_display(el: &mut EditLine) {
+pub fn re_clear_display(el: &mut EditLine) {
     // Step 1: assert that the real terminal cursor is at the home position of
     // the region. The caller is responsible for having actually put it there —
     // see `re_goto_bottom`, which writes the newline first.

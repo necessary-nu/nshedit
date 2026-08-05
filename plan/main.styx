@@ -479,6 +479,14 @@ children (
             {
                 id abi-visibility
                 title "Publish the thirty core entry points the ABI crate has to call"
+                log (
+                    {
+                        at 2026-08-05T09:46:11.904412561Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

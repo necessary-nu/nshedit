@@ -1493,7 +1493,7 @@ fn tty_update_char(el: &mut EditLine, mode: i32, c: i32) {
 
 // [spec:libedit:def:tty.tty-rawmode-fn]
 // [spec:libedit:sem:tty.tty-rawmode-fn]
-pub(crate) fn tty_rawmode(el: &mut EditLine) -> i32 {
+pub fn tty_rawmode(el: &mut EditLine) -> i32 {
     // Step 1. Already raw or quoting: no syscall issued.
     if el.el_tty.t_mode == ED_IO as u8 || el.el_tty.t_mode == QU_IO as u8 {
         return 0;
@@ -1594,7 +1594,7 @@ pub(crate) fn tty_rawmode(el: &mut EditLine) -> i32 {
 
 // [spec:libedit:def:tty.tty-cookedmode-fn]
 // [spec:libedit:sem:tty.tty-cookedmode-fn]
-pub(crate) fn tty_cookedmode(el: &mut EditLine) -> i32 {
+pub fn tty_cookedmode(el: &mut EditLine) -> i32 {
     // Step 1. Already cooked: no syscall issued.
     if el.el_tty.t_mode == EX_IO as u8 {
         return 0;
@@ -1691,7 +1691,7 @@ pub(crate) fn tty_noquotemode(el: &mut EditLine) -> i32 {
 /// `int (*)(EditLine *, int, const wchar_t **)` shape with the three `*tc`
 /// handlers in `terminal.rs`; the C's NULL-terminated `wchar_t **` becomes a
 /// slice of wide strings.
-pub(crate) fn tty_stty(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
+pub fn tty_stty(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     // `argc` is completely ignored, as in the C.
     let _ = argc;
 

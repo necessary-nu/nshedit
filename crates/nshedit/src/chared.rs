@@ -1337,7 +1337,7 @@ pub(crate) fn c_hpos(el: &mut EditLine) -> i32 {
 // [spec:libedit:sem:chared.ch-resizefun-fn]
 /// `f` is optional because `el_set(EL_RESIZE, ...)` may pass NULL, which
 /// stores NULL and so switches the hook back off.
-pub(crate) fn ch_resizefun(el: &mut EditLine, f: Option<ElZfuncT>, a: *mut c_void) -> i32 {
+pub fn ch_resizefun(el: &mut EditLine, f: Option<ElZfuncT>, a: *mut c_void) -> i32 {
     // Unconditional and unvalidated; `None` clears the hook. It cannot fail —
     // the `i32` exists only so `el_set(EL_RESIZE, f, a)` can propagate a
     // status.
@@ -1349,7 +1349,7 @@ pub(crate) fn ch_resizefun(el: &mut EditLine, f: Option<ElZfuncT>, a: *mut c_voi
 // [spec:libedit:def:chared.ch-aliasfun-fn]
 // [spec:libedit:sem:chared.ch-aliasfun-fn]
 /// `f` is optional for the same reason as in [`ch_resizefun`].
-pub(crate) fn ch_aliasfun(el: &mut EditLine, f: Option<ElAfuncT>, a: *mut c_void) -> i32 {
+pub fn ch_aliasfun(el: &mut EditLine, f: Option<ElAfuncT>, a: *mut c_void) -> i32 {
     // As in `ch_resizefun`: unconditional, unvalidated, cannot fail. `None`
     // clears the hook, and `vi_alias` then returns `CC_ERROR` without calling
     // anything.

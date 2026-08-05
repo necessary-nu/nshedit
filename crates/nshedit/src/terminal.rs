@@ -1526,7 +1526,7 @@ pub(crate) fn terminal_beep(el: &mut EditLine) {
 /// hands back `el_terminal.t_name` through an out-parameter, which stays one
 /// here. The borrow is tied to `el` because the name is `t_name`'s own
 /// storage, exactly as the C hands out its interior pointer.
-pub(crate) fn terminal_get<'a>(el: &'a mut EditLine, term: &mut Option<&'a str>) {
+pub fn terminal_get<'a>(el: &'a mut EditLine, term: &mut Option<&'a str>) {
     *term = el.el_terminal.t_name.as_deref();
 }
 
@@ -1534,7 +1534,7 @@ pub(crate) fn terminal_get<'a>(el: &'a mut EditLine, term: &mut Option<&'a str>)
 // [spec:libedit:sem:terminal.terminal-set-fn]
 /// `term` is `None` for the C's NULL, which means "take the type from the
 /// environment".
-pub(crate) fn terminal_set(el: &mut EditLine, term: Option<&str>) -> i32 {
+pub fn terminal_set(el: &mut EditLine, term: Option<&str>) -> i32 {
     // Step 1: block SIGWINCH so a resize cannot arrive while the capability
     // tables and the screen images are inconsistent. See `plat` for why this
     // reports failure today.
@@ -2105,7 +2105,7 @@ pub(crate) fn terminal__putc(el: &mut EditLine, c: u32) -> i32 {
 // [spec:libedit:def:terminal.terminal-flush-fn]
 // [spec:libedit:sem:terminal.terminal-flush-fn]
 #[allow(non_snake_case)]
-pub(crate) fn terminal__flush(el: &mut EditLine) {
+pub fn terminal__flush(el: &mut EditLine) {
     // C: `(void) fflush(el->el_outfile)`, its result discarded, so a write
     // error at this point is not reported to anyone.
     //
@@ -2138,7 +2138,7 @@ pub(crate) fn terminal_writec(el: &mut EditLine, c: u32) {
 /// `int (*)(EditLine *, int, const wchar_t **)` shape. The C's
 /// NULL-terminated `wchar_t **` becomes a slice of wide strings; `argc` is
 /// kept because the C passes it, even though this handler ignores both.
-pub(crate) fn terminal_telltc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
+pub fn terminal_telltc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     let _ = (argc, argv);
 
     write_outfile(el, b"\n\tYour terminal has the\n");
@@ -2207,7 +2207,7 @@ pub(crate) fn terminal_telltc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> 
 
 // [spec:libedit:def:terminal.terminal-settc-fn]
 // [spec:libedit:sem:terminal.terminal-settc-fn]
-pub(crate) fn terminal_settc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
+pub fn terminal_settc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     let _ = argc;
 
     // Step 1. The C tests `argv`, `argv[1]` and `argv[2]` for NULL; the
@@ -2322,7 +2322,14 @@ fn strtol10(s: &[u8]) -> (i64, usize) {
 /// capabilities, `int *` for the numeric ones. It stays a raw pointer array:
 /// it arrives from `el_get`'s varargs and crosses the C ABI unchanged, so the
 /// body writes through it unsafely.
-pub(crate) fn terminal_gettc(el: &mut EditLine, argc: i32, argv: &[*mut c_char]) -> i32 {
+///
+/// Public only so `nshedit-abi` can write `el_wget`'s `EL_GETTC` arm, and
+/// hidden because the signature *is* that smuggled out-pointer: `argv[2]` is
+/// a `char **` for some capability names and an `int *` for others, and
+/// getting it wrong is a type-confusing store. Idiomatization owes the core a
+/// capability query that returns a value.
+#[doc(hidden)]
+pub fn terminal_gettc(el: &mut EditLine, argc: i32, argv: &[*mut c_char]) -> i32 {
     let _ = argc;
 
     // Step 1.
@@ -2375,7 +2382,7 @@ pub(crate) fn terminal_gettc(el: &mut EditLine, argc: i32, argv: &[*mut c_char])
 
 // [spec:libedit:def:terminal.terminal-echotc-fn]
 // [spec:libedit:sem:terminal.terminal-echotc-fn]
-pub(crate) fn terminal_echotc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
+pub fn terminal_echotc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     let _ = argc;
 
     let mut verbose = false;

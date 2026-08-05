@@ -119,7 +119,15 @@ pub(crate) fn hist_end(el: &mut EditLine) {
 /// `fun` is `Option<HistFunT>` because the C stores it straight into
 /// [`ElHistoryT::fun`] with no NULL check, and `el_set(EL_HIST, NULL, NULL)`
 /// is how a caller detaches the history.
-pub(crate) fn hist_set(el: &mut EditLine, fun: Option<HistFunT>, ptr: *mut c_void) -> i32 {
+///
+/// Public only so `nshedit-abi` can write `el_wset`'s `EL_HIST` arm, and
+/// hidden because a Rust caller cannot supply the argument: [`HistFunT`] is
+/// C-variadic, and stable Rust cannot *define* a `...` function
+/// (rust-lang/rust#44930). The only values that can reach this slot are the
+/// `history`/`history_w` symbols `nshedit-abi` exports. Idiomatization owes
+/// the core a history interface that is not a varargs dispatch.
+#[doc(hidden)]
+pub fn hist_set(el: &mut EditLine, fun: Option<HistFunT>, ptr: *mut c_void) -> i32 {
     // ERR-history-04, defined here: the C accepts a NULL `fun` alongside a
     // non-NULL `ptr` and every guard in this file then tests `ref` only, so
     // the next history access is a NULL indirect call. The rule says to

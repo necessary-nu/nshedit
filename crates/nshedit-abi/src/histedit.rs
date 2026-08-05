@@ -40,10 +40,16 @@
 //!
 //! # Core gaps
 //!
-//! Some bodies below are one call into `nshedit` that this crate cannot make,
-//! because the entry point is `pub(crate)` there or because its type is not a
-//! C ABI type. Those are marked with [`core_gap`] rather than guessed at; see
-//! that function's documentation for the full list.
+//! Some bodies below are one call into `nshedit` that this crate cannot yet
+//! make: the narrow `history`/`tok_*` entry points, which have no narrow
+//! instantiation to call, and `el_wset(EL_SETFP)`, which needs a descriptor
+//! this crate may not derive. Those are marked with [`core_gap`] rather than
+//! guessed at; see that function's documentation.
+//!
+//! The `el_wset`/`el_wget` arms that were gapped on visibility are not: the
+//! twenty-six core entry points they call are `pub` now, four of them
+//! `#[doc(hidden)]` because their signatures are this boundary's business and
+//! not the core's API.
 
 use core::ffi::{c_char, c_int, c_uchar, c_void};
 use std::cell::RefCell;
@@ -51,11 +57,16 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::os::unix::ffi::OsStringExt;
 
+use nshedit::chared::{ElAfuncT, ElZfuncT};
 use nshedit::el::{CFile, FuncT};
+use nshedit::hist::HistFunT;
 use nshedit::histedit::{
-    EditLine, HistEvent, HistEventW, History, HistoryW, LineInfo, LineInfoW, Tokenizer, TokenizerW,
+    EditLine, ElRfuncT, HistEvent, HistEventW, History, HistoryW, LineInfo, LineInfoW, Tokenizer,
+    TokenizerW,
 };
 use nshedit::history::{HistoryArg, HistoryEfunT, HistoryGfunT, HistorySfunT, HistoryVfunT};
+use nshedit::map::ElFuncT;
+use nshedit::prompt::ElPfuncT;
 
 // ---------------------------------------------------------------------------
 // `el_set`/`el_get` operation codes. C: `histedit.h`, which defines them as
@@ -101,9 +112,48 @@ const EL_GETENV: c_int = 27;
 const HANDLE_SIGNALS: i32 = 0x001;
 const EDIT_DISABLED: i32 = 0x004;
 const UNBUFFERED: i32 = 0x008;
+/// Cleared — never set — by `el_wset(EL_HIST)`, and only in a single-byte
+/// locale. The narrow `el_set(EL_HIST)` in [`crate::eln`] is the one place it
+/// is set. ERR-core-api-16.
+const NARROW_HISTORY: i32 = 0x040;
 /// The bit `el_wget(EL_SAFEREAD)` stores raw — 256, not 1. See
 /// `sem:histedit.el-wget-fn`.
 const FIXIO: i32 = 0x100;
+
+// ---------------------------------------------------------------------------
+// Wide literals. The C spells these `L"..."` inline; here they are `[u32]`,
+// and the two that cross the ABI carry the terminating NUL a C caller reads to
+// while the rest, which are consumed by `nshedit` as slices, do not.
+// ---------------------------------------------------------------------------
+
+/// The C's `L"..."` for an ASCII literal.
+const fn wide<const N: usize>(s: &[u8; N]) -> [u32; N] {
+    let mut out = [0u32; N];
+    let mut i = 0;
+    while i < N {
+        out[i] = s[i] as u32;
+        i += 1;
+    }
+    out
+}
+
+/// `argv[0]` for the five list ops, which is what their diagnostics print.
+static BIND: [u32; 4] = wide(b"bind");
+static TELLTC: [u32; 6] = wide(b"telltc");
+static SETTC: [u32; 5] = wide(b"settc");
+static ECHOTC: [u32; 6] = wide(b"echotc");
+static SETTY: [u32; 5] = wide(b"setty");
+
+/// C: `static char name[] = "gettc"` — `el_wget(EL_GETTC)`'s `argv[0]`.
+/// `terminal_gettc` never reads it; it is built because the C builds it.
+static GETTC: [u8; 6] = *b"gettc\0";
+
+/// The two answers `el_wget(EL_EDITOR)` hands out. `sem:map.map-get-editor-fn`
+/// makes them process-lifetime statics the caller must not free, so they are
+/// statics here rather than anything materialised per call — `nshedit`'s own
+/// `EDITOR_EMACS`/`EDITOR_VI` are Rust slices and carry no terminator.
+static EDITOR_EMACS: [u32; 6] = wide(b"emacs\0");
+static EDITOR_VI: [u32; 3] = wide(b"vi\0");
 
 // ---------------------------------------------------------------------------
 // Helpers: the C-shaped plumbing this crate exists to own.
@@ -116,15 +166,13 @@ const FIXIO: i32 = 0x100;
 ///
 /// Two causes, both of them things `nshedit` owes this crate:
 ///
-/// 1. **Visibility.** `prompt_set`, `prompt_get`, `ch_resizefun`,
-///    `ch_aliasfun`, `terminal_set`, `terminal_get`, `terminal_gettc`,
-///    `terminal_telltc`, `terminal_settc`, `terminal_echotc`,
-///    `terminal__flush`, `map_set_editor`, `map_get_editor`, `map_bind`,
-///    `map_addfunc`, `map_set_wordchars`, `map_get_wordchars`, `tty_stty`,
-///    `tty_rawmode`, `tty_cookedmode`, `hist_set`, `el_read_setfn`,
-///    `el_read_getfn`, `read_prepare`, `read_finish`, `re_clear_display` and
-///    `re_refresh` are all `pub(crate)` in `nshedit`. Every one of them is
-///    the whole body of an `el_wset`/`el_wget` arm in `el.c`.
+/// 1. **A stream facility.** `el_wset(EL_SETFP)` installs a `FILE *` *and its
+///    `fileno`*, and `nshedit::el::CFile` is an opaque `*mut c_void` with no
+///    way to derive a descriptor from it. `plan/decisions/no-c-ffi.md` calls
+///    the `FILE *` surface a candidate site for the libc ration and
+///    `plan/decisions/platform-layer.md` defers it, so this crate may not
+///    simply declare `fileno` — the enumeration is closed until that is
+///    argued.
 /// 2. **The narrow instantiations.** `historyn.c` and `tokenizern.c` are
 ///    `history.c`/`tokenizer.c` recompiled with `Char = char`. `nshedit`
 ///    declares `History` and `Tokenizer` as opaque placeholders and leaves
@@ -225,10 +273,55 @@ thread_local! {
     // the pointer array is materialised here and replaced — invalidating the
     // previous one, exactly as the rule says — on every call.
     static TOKARGV: RefCell<HashMap<usize, Vec<*const u32>>> = RefCell::new(HashMap::new());
+    // `el_wget(EL_TERMINAL)`'s `const char *`. The C hands out
+    // `el_terminal.t_name`, a borrowed `char *` a later `terminal_set`
+    // replaces; `nshedit` keeps a `String`, which has no terminator, so the
+    // NUL-terminated copy is made here and owned per editor.
+    static TERMNAME: RefCell<HashMap<usize, CString>> = RefCell::new(HashMap::new());
+    // `el_wget(EL_WORDCHARS)`'s `const wchar_t *`, for the same reason:
+    // `nshedit::map::map_get_wordchars` hands back an owned `Vec<u32>` with no
+    // terminator, and the C hands back its own buffer.
+    static WORDCHARS: RefCell<HashMap<usize, Vec<u32>>> = RefCell::new(HashMap::new());
     // [`default_getenv`]'s last answer, kept alive until the next call through
     // it. That is `getenv(3)`'s own contract and is at least as strong as the
     // one `def:el.editline.el-getenv-fn` puts on the hook.
     static GETENV_VALUE: RefCell<Option<CString>> = const { RefCell::new(None) };
+}
+
+/// The C's `const wchar_t *argv[20]` for `EL_BIND`, `EL_TELLTC`, `EL_SETTC`,
+/// `EL_ECHOTC` and `EL_SETTY`, built from the varargs slots.
+///
+/// `cmd` becomes `argv[0]` and the slots become `argv[1..]`, the scan stopping
+/// at the first NULL — so the returned length *is* the C's `i`, the `argc` it
+/// passes on. That count is what every one of the five handlers ignores;
+/// `sem:map.map-bind-fn` records that `map_bind` overwrites it with 1 and
+/// iterates to the terminator instead (ERR-modes-27), which is why the vector
+/// is cut at the NULL rather than at the caller's count.
+///
+/// ERR-core-api-07, disposition `define — always terminate`: with all
+/// nineteen slots non-NULL the C's array is full, unterminated, and passed
+/// with `argc == 20`, and a handler scanning for the terminator then reads a
+/// twenty-first element that does not exist. A `Vec` ends where it ends, so
+/// the over-read cannot arise; the definition is that the list is always
+/// terminated. Note the C's *other* half of that defect — reading past the
+/// end of the caller's argument list when the sentinel is missing entirely —
+/// cannot arise either, because [`el_wset`] is declared with nineteen fixed
+/// parameters rather than varargs.
+///
+/// # Safety
+/// Each slot is null or a NUL-terminated wide string that outlives the call,
+/// which is the op's contract with the caller.
+unsafe fn list_args<'a>(cmd: &'a [u32], slots: &[*mut c_void]) -> Vec<&'a [u32]> {
+    let mut argv: Vec<&[u32]> = Vec::with_capacity(slots.len() + 1);
+    argv.push(cmd);
+    for &p in slots {
+        // SAFETY: the caller's contract, above.
+        let Some(s) = (unsafe { wstr(p.cast::<u32>()) }) else {
+            break;
+        };
+        argv.push(s);
+    }
+    argv
 }
 
 /// C: `el->el_getenv = secure_getenv` — the accessor `el_init` installs, and
@@ -316,9 +409,11 @@ pub unsafe extern "C" fn el_end(el: *mut EditLine) {
         nshedit::el::el_end(None);
         return;
     }
-    // Every pointer this handle ever handed out is dangling after this, the
-    // `el_wline` view included, so drop our copy of it too.
+    // Every pointer this handle ever handed out is dangling after this — the
+    // `el_wline` view and the two `el_wget` copies included — so drop ours too.
     WLINE.with_borrow_mut(|m| m.remove(&(el as usize)));
+    TERMNAME.with_borrow_mut(|m| m.remove(&(el as usize)));
+    WORDCHARS.with_borrow_mut(|m| m.remove(&(el as usize)));
     // SAFETY: the caller gives us a live handle from `el_init`/`el_init_fd`,
     // which is exactly the `Box` those returned. A second `el_end` on the
     // same handle is the C's double free and stays the caller's error.
@@ -706,31 +801,78 @@ pub unsafe extern "C" fn el_wset(
         // prompt for EL_PROMPT and the right otherwise, marks it wide, resets
         // the cached prompt position, and restores the built-in default for a
         // NULL function. Always 0.
-        EL_PROMPT | EL_RPROMPT => core_gap("`prompt::prompt_set`"),
+        //
+        // The escape character is passed as 0 unconditionally, so this op
+        // erases one installed earlier through the `_ESC` form
+        // (ERR-core-api-36, reproduced in `prompt_set` itself).
+        EL_PROMPT | EL_RPROMPT => {
+            // SAFETY: the op's argument is an `el_pfunc_t`, per the header.
+            let p = unsafe { fn_slot::<ElPfuncT>(a1) };
+            nshedit::prompt::prompt_set(el, p, 0, op, 1)
+        }
 
         // An `el_pfunc_t` then an `int` narrowed to `wchar_t`: the literal
         // escape character bracketing zero-width prompt runs. Always 0. Note
         // `prompt_set` does treat EL_PROMPT_ESC as the left prompt, which is
         // the half of the asymmetry `prompt_get` gets wrong.
-        EL_PROMPT_ESC | EL_RPROMPT_ESC => core_gap("`prompt::prompt_set`"),
+        EL_PROMPT_ESC | EL_RPROMPT_ESC => {
+            // SAFETY: as above.
+            let p = unsafe { fn_slot::<ElPfuncT>(a1) };
+            // C: `(wchar_t)c` on an `int` vararg — the low 32 bits kept and
+            // reinterpreted, which is what the core's `u32` holds.
+            nshedit::prompt::prompt_set(el, p, int_arg(a2) as u32, op, 1)
+        }
 
         // An `el_zfunc_t` then a `void *`: the resize callback and its
         // cookie. Always 0. Invoked from `el_resize`, from buffer growth and
         // from `el_line`.
-        EL_RESIZE => core_gap("`chared::ch_resizefun`"),
+        EL_RESIZE => {
+            // SAFETY: the op's first argument is an `el_zfunc_t`, per the
+            // header; the second is an opaque cookie stored verbatim.
+            let p = unsafe { fn_slot::<ElZfuncT>(a1) };
+            nshedit::chared::ch_resizefun(el, p, a2)
+        }
 
         // An `el_afunc_t` then a `void *`: the alias-expansion callback and
         // its cookie — narrow `char` even in the wide API. Always 0.
-        EL_ALIAS_TEXT => core_gap("`chared::ch_aliasfun`"),
+        EL_ALIAS_TEXT => {
+            // SAFETY: the op's first argument is an `el_afunc_t`.
+            let p = unsafe { fn_slot::<ElAfuncT>(a1) };
+            nshedit::chared::ch_aliasfun(el, p, a2)
+        }
 
         // One `char *` terminal type, bytes even here. NULL means `$TERM`
         // through the environment hook; `"emacs"` additionally sets
-        // EDIT_DISABLED. 0, or -1 if the display arrays could not be grown.
-        EL_TERMINAL => core_gap("`terminal::terminal_set`"),
+        // EDIT_DISABLED. 0, or -1 if the display arrays could not be grown —
+        // and also -1, which `sem:histedit.el-wset-fn` does not say, whenever
+        // the capability lookup failed, however usable the dumb-terminal
+        // fallback it then installed is (ERR-terminal-22, reproduced by
+        // `terminal_set` and propagated here).
+        EL_TERMINAL => {
+            // SAFETY: `a1` is null or a NUL-terminated byte string.
+            let bytes = unsafe { cbytes(a1.cast::<c_char>()) };
+            // The core takes `&str`. A type name that is not UTF-8 is passed
+            // on lossily rather than rejected — unlike `el_init`'s program
+            // name and `H_LOAD`'s filename, which fail the call. The reason
+            // is that this string is only ever a lookup key: the C's own
+            // outcome for a name the terminfo database has no entry for is
+            // the diagnostic, the hardcoded dumb terminal and -1, and running
+            // that path is closer than refusing to configure anything.
+            let name = bytes.map(String::from_utf8_lossy);
+            nshedit::terminal::terminal_set(el, name.as_deref())
+        }
 
         // One `wchar_t *`: `L\"emacs\"` or `L\"vi\"`, anything else -1. Also
         // resets the word-character set to the map's default.
-        EL_EDITOR => core_gap("`map::map_set_editor`"),
+        EL_EDITOR => {
+            // ERR-core-api-08, disposition `define — reject NULL`: the C
+            // hands the argument straight to `wcscmp`, which dereferences it.
+            // SAFETY: `a1` is null or a NUL-terminated wide string.
+            match unsafe { wstr(a1.cast::<u32>()) } {
+                Some(e) => nshedit::map::map_set_editor(el, e),
+                None => -1,
+            }
+        }
 
         // One `int`. Inline in the C's own dispatch, so inline here.
         EL_SIGNAL => {
@@ -746,26 +888,75 @@ pub unsafe extern "C" fn el_wset(
         // A NULL-terminated list of `wchar_t *`, read into slots 1..19 of a
         // 20-entry array and stopping at the first NULL; slot 0 becomes the
         // command name and `argc` the index the scan stopped at. Nineteen
-        // non-NULL strings leave the array unterminated with `argc == 20`,
+        // non-NULL strings leave the C's array unterminated with `argc == 20`,
         // which handlers that scan for a terminator then read past
         // (ERR-modes-27, and ERR-core-api-07 for this collection loop's own
-        // half of it). The handler's 0/-1 is the result.
-        EL_BIND => core_gap("`map::map_bind`"),
-        EL_TELLTC => core_gap("`terminal::terminal_telltc`"),
-        EL_SETTC => core_gap("`terminal::terminal_settc`"),
-        EL_ECHOTC => core_gap("`terminal::terminal_echotc`"),
-        EL_SETTY => core_gap("`tty::tty_stty`"),
+        // half of it) — defined away by [`list_args`], which always
+        // terminates. The handler's 0/-1 is the result.
+        EL_BIND | EL_TELLTC | EL_SETTC | EL_ECHOTC | EL_SETTY => {
+            let cmd: &[u32] = match op {
+                EL_BIND => &BIND,
+                EL_TELLTC => &TELLTC,
+                EL_SETTC => &SETTC,
+                EL_ECHOTC => &ECHOTC,
+                // The C's inner `default` is an `EL_ABORT` the outer match
+                // makes unreachable; this arm is EL_SETTY.
+                _ => &SETTY,
+            };
+            let slots = [
+                a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18,
+                a19,
+            ];
+            // SAFETY: each slot is null or a NUL-terminated wide string the
+            // caller keeps alive across the call.
+            let argv = unsafe { list_args(cmd, &slots) };
+            // The C's `i`: where the scan stopped, not how many strings the
+            // caller passed. Every handler ignores it.
+            let argc = argv.len() as c_int;
+            match op {
+                EL_BIND => nshedit::map::map_bind(el, argc, &argv),
+                EL_TELLTC => nshedit::terminal::terminal_telltc(el, argc, &argv),
+                EL_SETTC => nshedit::terminal::terminal_settc(el, argc, &argv),
+                EL_ECHOTC => nshedit::terminal::terminal_echotc(el, argc, &argv),
+                _ => nshedit::tty::tty_stty(el, argc, &argv),
+            }
+        }
 
         // `wchar_t *name`, `wchar_t *help`, `el_func_t`. -1 if any is NULL or
         // either table reallocation fails, else 0. Both strings are
         // duplicated, so the caller keeps its own.
-        EL_ADDFN => core_gap("`map::map_addfunc`"),
+        EL_ADDFN => {
+            // The C's three NULL checks, which `map_addfunc` cannot make: a
+            // `&[u32]` is never null and `ElFuncT` is not nullable.
+            // SAFETY: `a1` and `a2` are null or NUL-terminated wide strings;
+            // `a3` is an `el_func_t`, per the header.
+            let name = unsafe { wstr(a1.cast::<u32>()) };
+            let help = unsafe { wstr(a2.cast::<u32>()) };
+            let func = unsafe { fn_slot::<ElFuncT>(a3) };
+            let (Some(name), Some(help), Some(func)) = (name, help, func) else {
+                return -1;
+            };
+            nshedit::map::map_addfunc(el, name, help, func)
+        }
 
         // A `hist_fun_t` then its `void *` handle. Then, and only when
         // `MB_CUR_MAX == 1`, clear NARROW_HISTORY — so a narrow
         // `el_set(EL_HIST, ...)` is not undone in a multibyte locale
-        // (ERR-history-19). Always 0; libedit does not own the handle.
-        EL_HIST => core_gap("`hist::hist_set`"),
+        // (ERR-core-api-16). Always 0; libedit does not own the handle.
+        EL_HIST => {
+            // SAFETY: the op's first argument is a `hist_fun_t`, per the
+            // header; the second is the opaque handle it is called with.
+            let f = unsafe { fn_slot::<HistFunT>(a1) };
+            // ERR-history-04, defined by the core: a NULL function with a
+            // non-NULL handle is -1 here rather than the C's armed NULL
+            // indirect call. Every other combination is the C's 0.
+            let rv = nshedit::hist::hist_set(el, f, a2);
+            // The flag clear is not conditional on `rv` in the C either.
+            if nshedit::el::mb_cur_max() == 1 {
+                el.el_flags &= !NARROW_HISTORY;
+            }
+            rv
+        }
 
         // One `int`, the EINTR-recovery flag. Inline in the C.
         EL_SAFEREAD => {
@@ -789,7 +980,16 @@ pub unsafe extern "C" fn el_wset(
 
         // One `el_rfunc_t`; `EL_BUILTIN_GETCFN` (NULL) restores the builtin.
         // Always 0.
-        EL_GETCFN => core_gap("`read::el_read_setfn`"),
+        EL_GETCFN => {
+            // SAFETY: the op's argument is an `el_rfunc_t`, per the header.
+            let rc = unsafe { fn_slot::<ElRfuncT>(a1) };
+            // The C dereferences `el->el_read` unchecked. `Option` makes the
+            // uninitialised case representable (ERR-input-16), and there is
+            // nothing to install into: 0 is what the op always returns.
+            el.el_read
+                .as_deref_mut()
+                .map_or(0, |rd| nshedit::read::el_read_setfn(rd, rc))
+        }
 
         // One `void *`, stored verbatim and never dereferenced. Inline in the
         // C, and this arm leaves `rv` at 0.
@@ -801,11 +1001,36 @@ pub unsafe extern "C" fn el_wset(
         // One `int`. A 0 -> non-zero transition sets UNBUFFERED and runs the
         // read-prepare sequence; the reverse clears it and runs read-finish;
         // setting it to the value it already holds does nothing. Always 0.
-        EL_UNBUFFERED => core_gap("`read::read_prepare` and `read::read_finish`"),
+        EL_UNBUFFERED => {
+            let on = int_arg(a1) != 0;
+            let was = el.el_flags & UNBUFFERED != 0;
+            // The flag is written *before* the sequence runs, and both
+            // sequences read it: `read_prepare` enters raw mode only when
+            // UNBUFFERED is set and editing is enabled, and `read_finish`
+            // leaves the tty raw when it is set — which is why
+            // `read_finish` here returns it to cooked mode.
+            if on && !was {
+                el.el_flags |= UNBUFFERED;
+                nshedit::read::read_prepare(el);
+            } else if !on && was {
+                el.el_flags &= !UNBUFFERED;
+                nshedit::read::read_finish(el);
+            }
+            0
+        }
 
         // One `int`: non-zero raw, zero cooked, tty errors discarded.
         // Always 0. There is no matching get.
-        EL_PREP_TERM => core_gap("`tty::tty_rawmode` and `tty::tty_cookedmode`"),
+        EL_PREP_TERM => {
+            // Both results are discarded, so a terminal that refused the mode
+            // change is indistinguishable from one that took it.
+            let _ = if int_arg(a1) != 0 {
+                nshedit::tty::tty_rawmode(el)
+            } else {
+                nshedit::tty::tty_cookedmode(el)
+            };
+            0
+        }
 
         // An `int what` then a `FILE *`, installed together with its
         // `fileno`. 0 for what in {0,1,2}, -1 otherwise. `fileno` is called
@@ -813,15 +1038,32 @@ pub unsafe extern "C" fn el_wset(
         EL_SETFP => core_gap("`nshedit`'s `fileno` equivalent for `CFile`"),
 
         // No further arguments: clear the recorded display, redraw prompt and
-        // line, flush. Returns 0.
-        EL_REFRESH => core_gap(
-            "`refresh::re_clear_display`, `refresh::re_refresh` and `terminal::terminal__flush`",
-        ),
+        // line, flush. Returns 0 — the arm assigns nothing to `rv`.
+        EL_REFRESH => {
+            nshedit::refresh::re_clear_display(el);
+            nshedit::refresh::re_refresh(el);
+            // A no-op in the port: nothing is buffered on this side, because
+            // the core writes through `el_outfd` rather than the caller's
+            // `FILE *`. Called anyway, so the sequence stays the C's.
+            nshedit::terminal::terminal__flush(el);
+            0
+        }
 
         // One `wchar_t *`: frees the previous set and installs a duplicate.
         // Always 0 even when the duplication fails or the argument is NULL —
         // the latter is dereferenced by the duplication, undefined in the C.
-        EL_WORDCHARS => core_gap("`map::map_set_wordchars`"),
+        EL_WORDCHARS => {
+            // ERR-core-api-08, disposition `define — reject NULL`: the C
+            // hands the argument to `wcsdup`, which dereferences it. -1 is
+            // the only failure this op has to report it with; every
+            // well-formed call still returns 0, the duplication failing
+            // included (ERR-core-api-30).
+            // SAFETY: `a1` is null or a NUL-terminated wide string.
+            match unsafe { wstr(a1.cast::<u32>()) } {
+                Some(w) => nshedit::map::map_set_wordchars(el, w),
+                None => -1,
+            }
+        }
 
         // One `char *(*)(const char *)`. Always 0. A NULL accessor is
         // installed as-is and every later lookup calls through it, which the
@@ -866,17 +1108,59 @@ pub unsafe extern "C" fn el_wget(
     match op {
         // One `el_pfunc_t *`. -1 if NULL, else 0. The value may be the
         // internal default rather than anything the application installed.
-        EL_PROMPT | EL_RPROMPT => core_gap("`prompt::prompt_get`"),
+        EL_PROMPT | EL_RPROMPT => {
+            // SAFETY: the op's argument is an `el_pfunc_t *`. A slot holding
+            // a possibly-NULL function pointer and an `Option<ElPfuncT>` are
+            // the same object: `Option` of a function pointer is null-niche
+            // optimised, which [`fn_slot`] asserts for the reverse direction.
+            let prf = unsafe { a1.cast::<Option<ElPfuncT>>().as_mut() };
+            // The C passes a NULL escape-character pointer here, which is why
+            // `el_prompt.p_ignore` has no route out of the library at all
+            // (the other half of ERR-core-api-14).
+            nshedit::prompt::prompt_get(el, prf, None, op)
+        }
 
         // An `el_pfunc_t *` then a `wchar_t *`, the latter optional.
         // `prompt_get` selects the left prompt only for `op == EL_PROMPT`, so
         // EL_PROMPT_ESC reads the *right* prompt's function and escape
         // character — ERR-core-api-14, frozen, and the reason set/get through
-        // EL_PROMPT_ESC does not round-trip.
-        EL_PROMPT_ESC | EL_RPROMPT_ESC => core_gap("`prompt::prompt_get`"),
+        // EL_PROMPT_ESC does not round-trip. `op` is passed through unchanged,
+        // so the core's own reproduction of the defect is what decides.
+        EL_PROMPT_ESC | EL_RPROMPT_ESC => {
+            // SAFETY: as above.
+            let prf = unsafe { a1.cast::<Option<ElPfuncT>>().as_mut() };
+            // SAFETY: the op's second argument is a `wchar_t *`, which the
+            // rule allows to be NULL; the store is then skipped.
+            let c = unsafe { a2.cast::<u32>().as_mut() };
+            nshedit::prompt::prompt_get(el, prf, c, op)
+        }
 
         // One `const wchar_t **`, set to the static `L\"emacs\"`/`L\"vi\"`.
-        EL_EDITOR => core_gap("`map::map_get_editor`"),
+        EL_EDITOR => {
+            // `map_get_editor`'s NULL check, which its `&mut` cannot make.
+            if a1.is_null() {
+                return -1;
+            }
+            let mut editor: &'static [u32] = &[];
+            let rv = nshedit::map::map_get_editor(el, &mut editor);
+            if rv != 0 {
+                // The unreachable third map type: nothing is stored.
+                return rv;
+            }
+            // Back onto the terminated statics. The core's answer is one of
+            // its own two literals and nothing else, so the fall-through is
+            // as dead as the -1 above (ERR-modes-71).
+            let p = if editor == &EDITOR_EMACS[..5] {
+                EDITOR_EMACS.as_ptr()
+            } else if editor == &EDITOR_VI[..2] {
+                EDITOR_VI.as_ptr()
+            } else {
+                return -1;
+            };
+            // SAFETY: the op's argument is a `const wchar_t **`.
+            unsafe { *a1.cast::<*const u32>() = p };
+            0
+        }
 
         // One `int *`, set to the raw HANDLE_SIGNALS bit. Not normalised —
         // it reads as 1 only because that bit happens to be 0x001.
@@ -905,7 +1189,37 @@ pub unsafe extern "C" fn el_wget(
 
         // One `const char **`, set to the loaded terminal type name — narrow
         // bytes even in the wide API. Always 0.
-        EL_TERMINAL => core_gap("`terminal::terminal_get`"),
+        EL_TERMINAL => {
+            let key = core::ptr::from_mut(el) as usize;
+            let mut name: Option<&str> = None;
+            nshedit::terminal::terminal_get(el, &mut name);
+            // The C hands out `t_name` itself, a borrowed pointer a later
+            // `terminal_set` replaces; the core's `String` carries no
+            // terminator, so a NUL-terminated copy is owned here per editor.
+            // Divergence worth naming: this copy is replaced on every call,
+            // so a pointer from an earlier `el_wget(EL_TERMINAL)` is
+            // invalidated by a later one — where the C's survives until the
+            // type is reloaded. A name containing an interior NUL, which the
+            // C could not have produced, reports NULL.
+            let p = TERMNAME.with_borrow_mut(|m| {
+                match name.and_then(|s| CString::new(s).ok()) {
+                    Some(c) => {
+                        let slot = m.entry(key).or_default();
+                        *slot = c;
+                        slot.as_ptr()
+                    }
+                    // `t_name` is NULL until the first `terminal_set`.
+                    None => {
+                        m.remove(&key);
+                        core::ptr::null()
+                    }
+                }
+            });
+            // SAFETY: the op's argument is a `const char **`. The C has no
+            // NULL check here and neither has this.
+            unsafe { *a1.cast::<*const c_char>() = p };
+            0
+        }
 
         // A `char *` capability name then a capability-dependent out pointer,
         // built into the argv `{\"gettc\", name, out}`. Exactly two arguments
@@ -913,12 +1227,34 @@ pub unsafe extern "C" fn el_wget(
         // the boolean-ish `pt`/`km`/`am`/`xn` want a `char **`; every other
         // numeric one wants an `int *`, and passing the wrong one is a
         // type-confusing store the C leaves undefined.
-        EL_GETTC => core_gap("`terminal::terminal_gettc`"),
+        EL_GETTC => {
+            // C: `argv[0] = name; argv[1] = va_arg(char *); argv[2] =
+            // va_arg(void *)`, then `terminal_gettc(el, 3, argv)`. The count
+            // is the literal 3 and the handler ignores it.
+            let argv = [
+                GETTC.as_ptr().cast::<c_char>().cast_mut(),
+                a1.cast::<c_char>(),
+                a2.cast::<c_char>(),
+            ];
+            nshedit::terminal::terminal_gettc(el, 3, &argv)
+        }
 
         // One `el_rfunc_t *`, set to `EL_BUILTIN_GETCFN` (NULL) when the
         // builtin reader is installed — so a set/get round trip normalises
         // the builtin to NULL rather than reporting its address.
-        EL_GETCFN => core_gap("`read::el_read_getfn`"),
+        EL_GETCFN => {
+            // As in the setter, an uninitialised read subsystem is the C's
+            // NULL dereference and is defined here; it reports the builtin,
+            // which is what a reader installed after `read_init` would be.
+            let f = el
+                .el_read
+                .as_deref_mut()
+                .and_then(nshedit::read::el_read_getfn);
+            // SAFETY: the op's argument is an `el_rfunc_t *`, and an
+            // `Option<ElRfuncT>` is that slot's exact representation.
+            unsafe { *a1.cast::<Option<ElRfuncT>>() = f };
+            0
+        }
 
         // One `void **`, set to the registered client pointer.
         EL_CLIENTDATA => {
@@ -952,7 +1288,40 @@ pub unsafe extern "C" fn el_wget(
 
         // One `const wchar_t **`, set to the word-character set. NULL means
         // "the built-in defaults are in use", not "empty".
-        EL_WORDCHARS => core_gap("`map::map_get_wordchars`"),
+        EL_WORDCHARS => {
+            // `map_get_wordchars`'s NULL check, which its `&mut` cannot make.
+            if a1.is_null() {
+                return -1;
+            }
+            let key = core::ptr::from_mut(el) as usize;
+            let mut wordchars: Option<Vec<u32>> = None;
+            let rv = nshedit::map::map_get_wordchars(el, &mut wordchars);
+            if rv != 0 {
+                return rv;
+            }
+            // As `EL_TERMINAL`: the C lends out its own buffer, the core
+            // hands back an owned copy with no terminator, and the
+            // terminated one is owned here per editor and replaced on every
+            // call. The C's buffer instead survives until the set is
+            // reinstalled — by `EL_WORDCHARS`, `bind -v`/`bind -e`, an
+            // `EL_EDITOR` switch or `el_end`, each of which frees it and any
+            // of which the C's caller must not hold a pointer across.
+            let p = WORDCHARS.with_borrow_mut(|m| match wordchars {
+                Some(mut w) => {
+                    w.push(0);
+                    let slot = m.entry(key).or_default();
+                    *slot = w;
+                    slot.as_ptr()
+                }
+                None => {
+                    m.remove(&key);
+                    core::ptr::null()
+                }
+            });
+            // SAFETY: the op's argument is a `const wchar_t **`.
+            unsafe { *a1.cast::<*const u32>() = p };
+            0
+        }
 
         // One `func_t *`, set to the installed environment accessor. Always 0.
         // The C stores `secure_getenv` itself at construction, so a fresh

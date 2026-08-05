@@ -291,13 +291,15 @@ pub(crate) fn prompt_end(el: &mut EditLine) {
 // [spec:libedit:sem:prompt.prompt-set-fn]
 /// `prf` is optional because a NULL function is the documented way to ask
 /// for the built-in default back.
-pub(crate) fn prompt_set(
-    el: &mut EditLine,
-    prf: Option<ElPfuncT>,
-    c: u32,
-    op: i32,
-    wide: i32,
-) -> i32 {
+///
+/// Public only so `nshedit-abi` can write `el_wset`'s `EL_PROMPT` family, and
+/// hidden because `op` is a raw `histedit.h` operation code — 0, 12, 21 or 22
+/// — which means nothing outside that dispatch. Idiomatization replaces it
+/// with a side selector; the four values have to stay distinguishable there,
+/// because [`prompt_get`] tells `EL_PROMPT` apart from `EL_PROMPT_ESC` and
+/// this function does not (ERR-core-api-14).
+#[doc(hidden)]
+pub fn prompt_set(el: &mut EditLine, prf: Option<ElPfuncT>, c: u32, op: i32, wide: i32) -> i32 {
     // Step 1: unlike `prompt_print` and `prompt_get`, this one does
     // recognise `EL_PROMPT_ESC` as the left-hand prompt. `EL_RPROMPT`,
     // `EL_RPROMPT_ESC` and any unrecognised `op` land on the right.
@@ -342,7 +344,13 @@ pub(crate) fn prompt_set(
 // [spec:libedit:sem:prompt.prompt-get-fn]
 /// Both out-parameters keep the C's nullability: a NULL `prf` is the one
 /// failure path, and a NULL `c` simply skips the escape-character store.
-pub(crate) fn prompt_get(
+///
+/// Public and hidden for the same reason as [`prompt_set`], with one more:
+/// which record this reads is decided by `op` through a defect
+/// (ERR-core-api-14), so calling it outside the `el_wget` dispatch gets the
+/// wrong prompt for three of the four op codes.
+#[doc(hidden)]
+pub fn prompt_get(
     el: &mut EditLine,
     prf: Option<&mut Option<ElPfuncT>>,
     c: Option<&mut u32>,

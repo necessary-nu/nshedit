@@ -1259,7 +1259,7 @@ pub(crate) fn map_init_emacs(el: &mut EditLine) {
 // [spec:libedit:def:map.map-set-editor-fn]
 // [spec:libedit:sem:map.map-set-editor-fn]
 /// Switch to the named editor: 0 for `emacs` or `vi`, -1 for anything else.
-pub(crate) fn map_set_editor(el: &mut EditLine, editor: &[u32]) -> i32 {
+pub fn map_set_editor(el: &mut EditLine, editor: &[u32]) -> i32 {
     // Exact and case-sensitive; no aliases, no abbreviations, no third mode.
     // A successful call is destructive — see the two initialisers.
     if wcs_eq_ascii(editor, b"emacs") {
@@ -1278,7 +1278,7 @@ pub(crate) fn map_set_editor(el: &mut EditLine, editor: &[u32]) -> i32 {
 /// Report the current editor. The C's two answers are static wide literals,
 /// so the out-parameter is a `&'static` one; its NULL check has no Rust
 /// counterpart, a reference being non-null.
-pub(crate) fn map_get_editor(el: &mut EditLine, editor: &mut &'static [u32]) -> i32 {
+pub fn map_get_editor(el: &mut EditLine, editor: &mut &'static [u32]) -> i32 {
     match el.el_map.r#type {
         MAP_EMACS => {
             *editor = &EDITOR_EMACS;
@@ -1298,7 +1298,7 @@ pub(crate) fn map_get_editor(el: &mut EditLine, editor: &mut &'static [u32]) -> 
 // [spec:libedit:def:map.map-set-wordchars-fn]
 // [spec:libedit:sem:map.map-set-wordchars-fn]
 /// Replace the word-separator set with a copy of `wordchars`.
-pub(crate) fn map_set_wordchars(el: &mut EditLine, wordchars: &[u32]) -> i32 {
+pub fn map_set_wordchars(el: &mut EditLine, wordchars: &[u32]) -> i32 {
     // ERR-modes-15, disposition define: the C frees the old set *before*
     // duplicating the argument, so handing back the pointer
     // `map_get_wordchars` lent out is a use-after-free. The copy is made
@@ -1317,7 +1317,7 @@ pub(crate) fn map_set_wordchars(el: &mut EditLine, wordchars: &[u32]) -> i32 {
 /// out-parameter mirrors the field's own type so the port can copy, and so
 /// that the C's legitimately-NULL set stays distinguishable from an empty
 /// one.
-pub(crate) fn map_get_wordchars(el: &mut EditLine, wordchars: &mut Option<Vec<u32>>) -> i32 {
+pub fn map_get_wordchars(el: &mut EditLine, wordchars: &mut Option<Vec<u32>>) -> i32 {
     // `None` is handed out and reported as success, as in the C: between
     // `map_init` and the mode init that follows it, and after a failed
     // `map_set_wordchars`, the field really is NULL and that means "the
@@ -1471,7 +1471,7 @@ fn print_runs(el: &mut EditLine, map: ElMapCurrent) {
 /// The `bind` builtin: add, remove, change or show bindings. `argc` is the
 /// C's — reassigned on entry and ignored — and the C's NULL terminator on
 /// `argv` is the slice length here.
-pub(crate) fn map_bind(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
+pub fn map_bind(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     // ERR-modes-27. The C's first statement of the argument loop is
     // `argc = 1`, so the caller's count is dead and iteration runs to the
     // first NULL element instead — which is why `el_wset(EL_BIND, ...)`
@@ -1698,7 +1698,7 @@ pub(crate) fn map_bind(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
 // [spec:libedit:def:map.map-addfunc-fn]
 // [spec:libedit:sem:map.map-addfunc-fn]
 /// Append a user-defined editor function and its help entry.
-pub(crate) fn map_addfunc(el: &mut EditLine, name: &[u32], help: &[u32], func: ElFuncT) -> i32 {
+pub fn map_addfunc(el: &mut EditLine, name: &[u32], help: &[u32], func: ElFuncT) -> i32 {
     // The C's three NULL checks have no counterpart: a reference is non-null
     // and `ElFuncT` is not nullable. There is no other validation — a name
     // identical to an existing one is accepted, and since `parse_cmd` returns

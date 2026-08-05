@@ -171,7 +171,7 @@ pub(crate) fn read_end(el: &mut EditLine) {
 // [spec:libedit:sem:read.el-read-setfn-fn]
 /// Set the read-char function to the one provided. `None` is the C's
 /// `EL_BUILTIN_GETCFN` — a NULL `el_rfunc_t` — and restores [`read_char`].
-pub(crate) fn el_read_setfn(el_read: &mut ElReadT, rc: Option<ElRfuncT>) -> i32 {
+pub fn el_read_setfn(el_read: &mut ElReadT, rc: Option<ElRfuncT>) -> i32 {
     // Steps 1 and 2. No validation of any kind, exactly as the C.
     el_read.read_char = Some(rc.unwrap_or(read_char as ElRfuncT));
     // Step 3: unconditional, so `el_set(EL_GETCFN, ...)` always succeeds.
@@ -182,7 +182,7 @@ pub(crate) fn el_read_setfn(el_read: &mut ElReadT, rc: Option<ElRfuncT>) -> i32 
 // [spec:libedit:sem:read.el-read-getfn-fn]
 /// Return the current read-char function, or `None` when it is the builtin
 /// one — the C's `EL_BUILTIN_GETCFN`.
-pub(crate) fn el_read_getfn(el_read: &mut ElReadT) -> Option<ElRfuncT> {
+pub fn el_read_getfn(el_read: &mut ElReadT) -> Option<ElRfuncT> {
     // The exact inverse of `el_read_setfn`, so a get/set round trip is
     // lossless and the builtin's address is never handed out.
     //
@@ -829,7 +829,7 @@ pub fn el_wgetc(el: &mut EditLine, cp: &mut u32) -> i32 {
 // [spec:libedit:def:read.read-prepare-fn]
 // [spec:libedit:sem:read.read-prepare-fn]
 /// Set up for a read: signals, raw mode, resize, and the prompt.
-pub(crate) fn read_prepare(el: &mut EditLine) {
+pub fn read_prepare(el: &mut EditLine) {
     // Step 1. Runs FIRST, and importantly runs even for `NO_TTY`.
     if (el.el_flags & HANDLE_SIGNALS) != 0 {
         sig_set(el);
@@ -869,7 +869,7 @@ pub(crate) fn read_prepare(el: &mut EditLine) {
 // [spec:libedit:def:read.read-finish-fn]
 // [spec:libedit:sem:read.read-finish-fn]
 /// Undo [`read_prepare`]: cooked mode and the signal handlers.
-pub(crate) fn read_finish(el: &mut EditLine) {
+pub fn read_finish(el: &mut EditLine) {
     // Step 1. When `UNBUFFERED` is set the tty is deliberately LEFT in raw
     // mode, because the caller is mid-line and will call back in. Neither of
     // libedit's own callers reaches this branch — `el_wgets` calls this only
