@@ -585,6 +585,7 @@ children (
             {
                 id abi-missing-exports
                 title "Export the nine symbols we are missing, eight of which deployed consumers already reach"
+                sealed true
                 log (
                     {
                         at 2026-08-05T10:57:51.013898095Z
@@ -605,6 +606,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-05T13:46:02.259730161Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -779,6 +787,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Further stale status lines, from abi-file-surface landing as 6912ead. Supplements the two lists already on this node.\n\n- ERR-history-19 and ERR-history-20 both say \"Not yet reachable across the ABI: history_save_fp returns -1\". Both are now reachable and reproduced end to end, byte-identical to the oracle in the differential. ERR-history-20's at_start now comes from a real ftell in nshedit-abi's cstdio module, which is the whole point of that entry -- on a pipe or socket ftell returns -1, so the file comes out headerless and history_load later rejects it. That is now genuinely exercised rather than unreachable.\n\n- ERR-core-api-08 says the EL_SETFP arm is a core_gap panic. It is implemented, with NULL defined as descriptor -1.\n\n- ERR-core-api-06's status says the -1-descriptor half is \"over-applied ... every el_init gets descriptor -1 ... blocked on the platform layer\". No longer true. Only NULL or descriptor-less streams get -1 now, so the C's outcome is genuinely reproduced rather than approximated. This one is worth reading carefully -- the status was describing a port limitation as if it were the C's behaviour.\n\nNot errata, recorded so it is not mistaken for one: plan/decisions/platform-layer.md group 12 (\"fileno is unreachable...\") is now stale except for its tcgetattr half. The file's statement that the surface \"is nshedit-abi's alone\" stays correct. Fixing that group belongs with platform-build, not here.\n\nOne measurement from the same run, for whoever owns the terminal concern rather than this node: EL_TELLTC output differs between oracle and port in the CAPABILITY NAMES ONLY -- al/bl/cd/ce/ch against il1/bel/ed/el/hpa. That is termcap spelling against terminfo spelling, i.e. dec:libedit:terminal-caps-via-term-crate, and it is a real observable difference for any consumer that parses telltc output. It did not show as a differential divergence because the current driver does not exercise EL_TELLTC; the next driver (conformance-driver-el) will, so expect it and do not treat it as new."
+                    }
+
+                    {
+                        at 2026-08-05T13:53:36.871034218Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
                     }
                 )
             }

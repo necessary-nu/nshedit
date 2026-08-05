@@ -17,7 +17,11 @@ anything was fixed — the status line is.
 the port cannot yet carry out a disposition because the facility standing in for
 libc is a stub — no `fcntl`, no signal installation, no `ioctl(FIONREAD)`, no
 `vsnprintf`, no POSIX BRE engine — the status line says so and names the gap.
-Tracking those belongs to the platform-layer decision, not to this file.
+The same goes for a substitute that is present but does not answer the way
+libc's does: the port's `MB_CUR_MAX` follows the environment where the C's
+follows `setlocale`, and that is recorded on ERR-core-api-16, the one entry it
+is observable through, rather than given an id. Tracking either belongs to the
+platform-layer decision, not to this file.
 
 **Ids are stable.** `ERR-<concern>-<nn>` ids are referenced from tests and from
 code comments in `crates/`. Numbering runs within a concern; new findings are
@@ -80,9 +84,9 @@ per entry: for `reproduce` entries a test asserting the defective behaviour, for
 
 ## Summary
 
-405 entries — 380 from the markup pass and 25 added during translation. A handful
-carry a secondary class in parentheses (for example "UB … / logic …"); the table
-counts the primary class only.
+410 entries — 380 from the markup pass, 25 added during translation and 5 during
+the second reconciliation. A handful carry a secondary class in parentheses (for
+example "UB … / logic …"); the table counts the primary class only.
 
 | concern | UB | memory | logic | divergence | dead | total |
 |---|---|---|---|---|---|---|
@@ -93,30 +97,43 @@ counts the primary class only.
 | history | 13 | 5 | 17 | 4 | 1 | **40** |
 | modes | 18 | 1 | 37 | 19 | 1 | **76** |
 | completion | 6 | 1 | 15 | 3 | 1 | **26** |
-| core-api | 11 | 2 | 19 | 4 | 1 | **37** |
-| readline-compat | 14 | 7 | 22 | 13 | 1 | **57** |
-| **total** | **118** | **27** | **199** | **52** | **9** | **405** |
+| core-api | 11 | 2 | 19 | 5 | 1 | **38** |
+| readline-compat | 15 | 7 | 22 | 14 | 3 | **61** |
+| **total** | **119** | **27** | **199** | **54** | **11** | **410** |
 
-### Status after the wave 2 reconciliation
+### Status after the second reconciliation
+
+The first reconciliation ran at the end of wave 2. This one follows the ABI
+pass, the `FILE *` surface, the narrow instantiation and the first conformance
+run, all of which turned status lines that were accurate when written into
+descriptions of a world that no longer exists.
 
 | status | count | meaning |
 |---|---|---|
-| `reproduced` | 194 | the defect is in the Rust on purpose |
-| `defined` | 116 | undefined in C, given a defined behaviour here |
-| `fixed` | 40 | genuinely absent or corrected |
-| `partial` | 36 | one half carried out; the entry says which half is not |
-| mixed | 7 | two sub-defects settled differently, e.g. `reproduced … / defined …` |
-| `open` | 11 | not carried out — mostly blocked on the platform layer or on the ABI dispatch |
-| `withdrawn` | 1 | not a defect (ERR-core-api-22) |
+| `reproduced` | 199 | the defect is in the Rust on purpose |
+| `defined` | 118 | undefined in C, given a defined behaviour here |
+| `fixed` | 43 | genuinely absent or corrected |
+| `partial` | 33 | one half carried out; the entry says which half is not |
+| mixed | 8 | two sub-defects settled differently, e.g. `reproduced … / defined …` |
+| `open` | 7 | not carried out — blocked on the platform layer or on the narrow dispatch |
+| `withdrawn` | 2 | not a defect (ERR-core-api-22, ERR-terminal-61) |
 
-The eleven `open` entries are ERR-terminal-43, ERR-terminal-56, ERR-terminal-64,
-ERR-input-21, ERR-modes-37, and ERR-core-api-07, -09, -16, -18, -29 and -32. Six
-of those are the `el_set`/`el_get` varargs dispatch, which is still a set of
-`core_gap(...)` panics in `crates/nshedit-abi/src/histedit.rs`; two are blocked
-on the platform layer; ERR-terminal-64 is a manual-page correction nobody has
-made; ERR-terminal-43 has nothing to reproduce on any platform in scope; and
+The seven `open` entries are ERR-terminal-43, ERR-terminal-56, ERR-terminal-64,
+ERR-input-21, ERR-modes-37, ERR-core-api-09 and ERR-core-api-18. Two are blocked
+on the platform layer; two — ERR-core-api-09 and -18 — are the narrow
+`el_set`/`el_get` dispatch, which is a blanket -1 stub in
+`crates/nshedit-abi/src/eln.rs` because Rust cannot yet define a C-variadic
+function on stable; ERR-terminal-64 is a manual-page correction nobody has made;
+ERR-terminal-43 has nothing to reproduce on any platform in scope; and
 ERR-modes-37 is a `fix` that turned out to need a `c_gets` signature change
 first.
+
+The wide `el_set`/`el_get` varargs dispatch, which held six of the previous
+eleven open entries, is written: ERR-core-api-07 and -08 are now `defined`,
+ERR-core-api-14 and -19 `reproduced`, and ERR-core-api-16, -29 and -32 are
+`partial` with only their narrow halves outstanding. Where a status line now
+says a facility is missing it names the *narrow* entry points, not the wide
+ones, and no `core_gap(...)` panic remains anywhere in `crates/nshedit-abi`.
 
 ### Entries still marked `needs decision` (2)
 
@@ -141,10 +158,17 @@ reproducing the dropped character but defining the `len == 0` return rather than
 passing `len + 1`; and **ERR-core-api-22** turned out to be no defect at all.
 
 The conformance policy names six behavioural forks that default to `reproduce`.
-All six are now reproduced: ERR-buffer-15, ERR-completion-07, ERR-history-17,
-ERR-readline-15, ERR-terminal-61 (the physical-tabs capability, which
-`[dec:libedit:terminal-caps-via-term-crate]` had reopened and which translation
-closed the same way), and ERR-readline-01.
+Five are reproduced: ERR-buffer-15, ERR-completion-07, ERR-history-17,
+ERR-readline-15 and ERR-readline-01 — and ERR-history-17 is now reproduced
+through the ABI and measured against the oracle rather than only coded. The
+sixth, the physical-tabs capability, is **not** settled: ERR-terminal-61 is
+withdrawn because its premise was measurably wrong — `tgetflag("pt")` is live
+under ncurses, which resolves it onto `OTpt` — so keeping the termcap spelling
+`pt` in the port's capability table diverges from the C rather than reproducing
+it. `[dec:libedit:conformance-policy]` and
+`[dec:libedit:terminal-caps-via-term-crate]` both rest on the withdrawn reading
+and need revisiting; the fix is port-side and belongs with the
+termcap-to-terminfo naming work, not here.
 
 ---
 
@@ -447,7 +471,7 @@ prompt rendering.
 - rule: `[spec:libedit:sem:prompt.prompt-set-fn]`, `[spec:libedit:sem:prompt.prompt-print-fn]` (step 2) · C: `src/prompt.c`
 - class: UB · reach: hot — every narrow-API application with a prompt.
 - disposition: define — model the callback as a tagged (pointer, narrow-or-wide) pair at the ABI boundary.
-- status: partial — the core half is done: `crates/nshedit/src/prompt.rs` reads the callback's result per `p_wide` (bytes or `u32`), so no call goes through an incompatible prototype. The ABI half — the tagged (pointer, narrow-or-wide) pair at the boundary — is unwritten: `el_wset(EL_PROMPT, ...)` is a `core_gap(...)` panic.
+- status: partial — the core half is done: `crates/nshedit/src/prompt.rs` reads the callback's result per `p_wide` (bytes or `u32`), so no call goes through an incompatible prototype. The ABI half — the tagged (pointer, narrow-or-wide) pair at the boundary — is still unwritten, but for a different reason now: `crates/nshedit-abi/src/histedit.rs` `el_wset`'s `EL_PROMPT`/`EL_RPROMPT` arm passes `wide = 1` unconditionally, and the narrow `el_set` that would pass 0 is a blanket -1 stub (`crates/nshedit-abi/src/eln.rs` `el_set`), so no narrow callback can be installed to be mis-called.
 
 **ERR-terminal-18** — `sig_end` frees `el->el_signal` without ever calling `sig_clr`, and neither `sig_clr` nor `sig_end` clears the file-static `sel`. If the `EditLine` is destroyed without a matching `read_finish` (a `longjmp` out of a read, an `el_end` from a handler, `EL_SIGNAL` toggled off mid-read), libedit's handler is still installed for up to seven signals when the state it dereferences is freed, and `sel` dangles for the rest of the process.
 - rule: `[spec:libedit:sem:sig.sig-end-fn]`, `[spec:libedit:sem:sig.sig-handler-fn]` (global-instance note) · C: `src/sig.c`
@@ -474,7 +498,7 @@ prompt rendering.
 - status: fixed — `crates/nshedit/src/terminal.rs` `terminal_set` restores the saved mask on the `terminal_change_size` failure path as well as on success.
 
 **ERR-terminal-22** — `terminal_set` returns -1 whenever the capability-database lookup failed, even though dumb-terminal defaults were installed successfully and the `EditLine` is fully usable. `el_wset(EL_TERMINAL, ...)` propagates that.
-- rule: `[spec:libedit:sem:terminal.terminal-set-fn]` (step 14) · C: `src/terminal.c` `terminal_set`
+- rule: `[spec:libedit:sem:terminal.terminal-set-fn]` (step 14), `[spec:libedit:sem:histedit.el-wset-fn]` (`EL_TERMINAL`), `[spec:libedit:sem:el.el-wset-fn]` (`EL_TERMINAL`) · C: `src/terminal.c` `terminal_set`
 - class: logic · reach: hot on any host with an unknown `TERM`.
 - disposition: reproduce — the return value crosses the ABI.
 - status: reproduced — `crates/nshedit/src/terminal.rs` `terminal_set` returns -1 when the lookup failed, after the dumb defaults are installed and `terminal_bind_arrow` has run.
@@ -493,7 +517,7 @@ prompt rendering.
 
 **ERR-terminal-25** — `terminal_move_to_char`'s tab optimisation compares `el_cursor.h & 0370` against `where & ~0x7` and indexes the display at `where & 0370`. The two masks are not the same operation: `0370` also clears every bit above bit 7, so both the comparison and the index are wrong for columns of 256 or more.
 - rule: `[spec:libedit:sem:terminal.terminal-move-to-char-fn]` (step 6b) · C: `src/terminal.c` `terminal_move_to_char`
-- class: logic · reach: cold — needs a terminal wider than 255 columns and `TERM_CAN_TAB`, which is itself effectively dead (see ERR-terminal-61).
+- class: logic · reach: cold — needs a terminal wider than 255 columns and `TERM_CAN_TAB`, which is live under ncurses (ERR-terminal-61, corrected) but off in the port, where the `pt` lookup misses and `t_tabs` comes from a stubbed `tcgetattr`.
 - disposition: fix — clear the low three bits consistently.
 - status: fixed — `crates/nshedit/src/terminal.rs` `terminal_move_to_char` uses `& !0x7` for both the comparison and the index.
 
@@ -524,7 +548,7 @@ prompt rendering.
 **ERR-terminal-30** — `terminal_settc` copies both the capability name and the value into 8-byte buffers with a truncating bounded copy, so a capability *string* longer than 7 bytes cannot be installed through `settc` or `el_set(EL_SETTC, ...)`.
 - rule: `[spec:libedit:sem:terminal.terminal-settc-fn]` (step 2) · C: `src/terminal.c` `terminal_settc`
 - class: logic · reach: hot for anyone overriding a real capability string.
-- disposition: reproduce — **decided in translation**: the 7-byte limit stays. `crates/nshedit/src/terminal.rs` `terminal_settc` runs both the name and the value through a `truncate7` helper reproducing `strlcpy` into `char[8]`. The rule allowed keeping or changing it deliberately, and `[dec:libedit:conformance-policy]` makes reproduce the default. Reachable today through an `.editrc` `settc` line; the `el_set(EL_SETTC, ...)` route is still a `core_gap(...)` panic.
+- disposition: reproduce — **decided in translation**: the 7-byte limit stays. `crates/nshedit/src/terminal.rs` `terminal_settc` runs both the name and the value through a `truncate7` helper reproducing `strlcpy` into `char[8]`. The rule allowed keeping or changing it deliberately, and `[dec:libedit:conformance-policy]` makes reproduce the default. Reachable today through an `.editrc` `settc` line and through `el_wset(EL_SETTC, ...)`; only the narrow `el_set(EL_SETTC, ...)` route is unreachable, its dispatch being a blanket -1 stub.
 - status: reproduced — `crates/nshedit/src/terminal.rs` `terminal_settc`.
 
 **ERR-terminal-31** — `terminal_settc`'s numeric path never calls `terminal_setflags`, so changing the destructive-tabs value does not update `TERM_CAN_TAB` until some later event recomputes the flags; and an empty numeric value is *accepted* as 0, because the string-to-long conversion consumes nothing and leaves the terminator at the first position.
@@ -707,23 +731,23 @@ prompt rendering.
 - disposition: reproduce.
 - status: reproduced — `crates/nshedit/src/refresh.rs` `re_refresh` runs the measuring `prompt_print` against the live literal table, and it can drive `re_nextline` before anything is drawn.
 
-**ERR-terminal-61** — `tgetflag("pt")` has no terminfo counterpart: terminfo expresses hardware tabbing as the *string* capability `tab_to_next_stop`, not a boolean, so on an ncurses-backed system the C already returns 0 for every terminal and `TERM_CAN_TAB` is effectively dead.
+**ERR-terminal-61** — **the original claim was wrong and is withdrawn.** It read: "`tgetflag("pt")` has no terminfo counterpart: terminfo expresses hardware tabbing as the *string* capability `tab_to_next_stop`, not a boolean, so on an ncurses-backed system the C already returns 0 for every terminal and `TERM_CAN_TAB` is effectively dead." terminfo does carry it — as `OTpt` (`has_hardware_tabs`), one of the obsolete termcap-compatibility booleans — and ncurses stores it and resolves the termcap spelling onto it, so `tgetflag("pt")` is live and the C does set `TERM_CAN_TAB`.
 - rule: `[spec:libedit:sem:terminal.tgetflag-fn]` · C: `src/terminal.c` `terminal_set` / `terminal_setflags`
-- class: divergence · reach: universal on terminfo systems.
-- disposition: reproduce — **decided in translation**: permanently false. `crates/nshedit/src/terminal.rs` keeps the termcap spelling `pt` in the capability table, which is not a terminfo capname, so the lookup misses and `TERM_CAN_TAB` never sets — which is exactly what the C already does through ncurses. `[dec:libedit:conformance-policy]` names the physical-tabs capability as one of the six forks defaulting to reproduce, and `[dec:libedit:terminal-caps-via-term-crate]`'s deferred item is resolved that way.
-- status: reproduced — `crates/nshedit/src/terminal.rs`, capability table and `terminal_setflags`.
+- class: divergence · reach: (as claimed) universal on terminfo systems; in fact `pt` is set by 262 of the 2883 entries in this host's `/usr/share/terminfo`.
+- disposition: withdrawn — **measured, not read.** A three-line program linked against `libtinfo` calling `tgetent` then `tgetflag("pt")` answers **1** for `screen`, `screen-256color` and `tmux`, and 0 for `xterm`, `vt100`, `linux`, `ansi` and `dumb`; `infocmp -x screen` lists `OTpt`. `MT` is the one that really is dead (ERR-terminal-62). There is therefore no defect in the C here: the capability the C asks for exists, resolves, and gates a real optimisation.
+- status: withdrawn — no defect in the C. What the measurement does expose is a **port** defect, which this register does not carry: `crates/nshedit/src/terminal.rs`'s `TVAL` table keys the literal `"pt"`, which is not a terminfo capname, so the port's lookup misses and `TERM_CAN_TAB` never sets where the C sets it — the same termcap-versus-terminfo naming break that `settc cl` has, and it belongs with that work, not here. Two decisions rest on the withdrawn claim and both need revisiting: `[dec:libedit:conformance-policy]` names the physical-tabs capability as one of six behavioural forks defaulting to `reproduce`, and reproducing now means keying `OTpt` rather than keeping `pt`; `[dec:libedit:terminal-caps-via-term-crate]`'s rationale already records the correction and says so.
 
-**ERR-terminal-62** — `xt` (destructive tabs) resolves onto terminfo `dest_tabs_magic_smso`, which conflates tab destruction with the Teleray magic-standout quirk — an inherited conflation, since termcap `xt` and the terminfo capname are the same string and ncurses already resolves them identically. `MT` is the real divergence: a termcap-only meta-key extension with no terminfo counterpart, which already reads 0 under ncurses.
+**ERR-terminal-62** — `xt` (destructive tabs) resolves onto terminfo `dest_tabs_magic_smso`, which conflates tab destruction with the Teleray magic-standout quirk — an inherited conflation, since termcap `xt` and the terminfo capname are the same string and ncurses already resolves them identically. `MT` is the dead one: **corrected**, it is not "a termcap-only extension with no terminfo counterpart" — terminfo carries it as `OTMT` (`gnu_has_meta_key`), exactly as it carries `pt` as `OTpt` (ERR-terminal-61) — but no entry anywhere sets it, so it reads 0 whichever spelling is used and the C agrees.
 - rule: `[spec:libedit:sem:terminal.tgetflag-fn]` · C: `src/terminal.c` `terminal_set`
 - class: divergence · reach: `MT` is universally false on terminfo systems; the `xt` conflation is inherited from terminfo itself and is not port-introduced.
-- disposition: reproduce — **decided in translation**. `crates/nshedit/src/terminal.rs` uses `xt` as-is (it is also the terminfo capname, so no translation is needed) and keeps the termcap spelling `MT`, which therefore stays permanently 0. The Teleray conflation is accepted; the meta-key extension is conceded as dead. Resolves `[dec:libedit:terminal-caps-via-term-crate]`'s deferred item for these two.
-- status: reproduced — `crates/nshedit/src/terminal.rs`, capability table.
+- disposition: reproduce — **decided in translation**. `crates/nshedit/src/terminal.rs` uses `xt` as-is (it is also the terminfo capname, so no translation is needed) and keeps the termcap spelling `MT`, which therefore stays permanently 0. The Teleray conflation is accepted; the meta-key extension is conceded as dead. Unlike `pt`, keeping the termcap spelling here costs nothing, which is why this entry survives ERR-terminal-61's withdrawal.
+- status: reproduced — `crates/nshedit/src/terminal.rs`, capability table. Measured: 0 of the 2883 entries in this host's `/usr/share/terminfo` set `OTMT`, and `tgetflag("MT")` through `libtinfo` answers 0 for every terminal tried, so the port's permanent 0 and the C's answer are the same value and not merely the same intent.
 
-**ERR-terminal-63** — `tgoto` takes its parameters column-first while terminfo's two-parameter cursor addressing (`cup`) takes row first, a discrepancy the C's termcap emulation hides by swapping at the boundary; and `term`'s parameter expander recognises `$<...>` delay markers and **discards** them, so a parameterised capability would silently lose its padding.
+**ERR-terminal-63** — `tgoto` takes its parameters column-first while terminfo's two-parameter cursor addressing (`cup`) takes row first, a discrepancy the C's termcap emulation hides by swapping at the boundary. The second half of this entry was never a defect in the C at all and is **corrected** here: it read "`term`'s parameter expander recognises `$<...>` delay markers and **discards** them", which described the dependency rather than libedit, understated the mechanism — `term` 1.2.1 entered its delay state on a *bare* `$`, so it also swallowed ordinary text — and no longer describes anything, the expander now being ours.
 - rule: `[spec:libedit:sem:terminal.tgoto-fn]`, `[spec:libedit:sem:terminal.tputs-fn]` · C: `src/terminal.c` (all `tgoto` call sites)
-- class: divergence · reach: the order is exposed only through user-supplied `echotc`; the padding loss affects every parameterised motion/insert/delete.
-- disposition: fix both halves — **decided in translation**. Parameter order: `crates/nshedit/src/terminal.rs` `tgoto` keeps the C's `(cap, col, row)` signature but binds row to `%p1` and column to `%p2`, so the terminfo convention is what the function exposes and `echotc`'s user-visible order is unchanged. Padding: the capability string is cut at every `$` so `term`'s expander cannot swallow a delay run, and the port's own `tputs` parses `$<N[*][/]>` and emits pad characters derived from the output baud rate. The padding loss is therefore repaired, not reproduced — which is what `[dec:libedit:terminal-caps-via-term-crate]` committed to.
-- status: fixed — `crates/nshedit/src/terminal.rs` `tgoto` and `tputs`.
+- class: divergence · reach: the order is exposed only through user-supplied `echotc`; the padding half was a dependency defect, not a C one, and reached every parameterised motion/insert/delete.
+- disposition: fix both halves — **decided in translation**. Parameter order: `crates/nshedit/src/terminal.rs` `tgoto` keeps the C's `(cap, col, row)` signature but binds row to `%p1` and column to `%p2`, so the terminfo convention is what the function exposes and `echotc`'s user-visible order is unchanged. Padding: the port's own `tputs` parses `$<N[*][/]>` and emits pad characters derived from the output baud rate, which is what `[dec:libedit:terminal-caps-via-term-crate]` committed to.
+- status: fixed — `crates/nshedit/src/terminal.rs` `tgoto` and `tputs`. The dependency half is fixed at the source instead of worked around: `crates/nshterm/src/parm.rs` `expand` treats `$` as an ordinary byte and passes a `$<...>` run through verbatim, as `tparm(3)` does (commit c146bb7 deleted the inherited delay state). `tgoto`'s cut-at-every-`$` segmentation is still there and is now redundant — belt over braces, and a port-side cleanup rather than a register item.
 
 **ERR-terminal-64** — `editline.3` lists `SIGSTOP` among the signals `EL_SIGNAL` traps. `sig_init` traps exactly seven and `SIGSTOP` is not among them; it cannot be caught or blocked.
 - rule: `[spec:libedit:sem:sig.sig-init-fn]` (step 2) · C: `doc/editline.3`
@@ -1298,25 +1322,25 @@ file format.
 - rule: `[spec:libedit:sem:history.history-set-fun-fn]`, `[spec:libedit:sem:histedit.history-fn]` (`H_FUNC`) · C: `src/history.c` `history_set_fun`
 - class: logic · reach: dormant — nothing in the C tree uses `H_FUNC`.
 - disposition: reproduce — named explicitly in `[dec:libedit:conformance-policy]` as one of the six forks; the rule additionally requires the choice to be recorded rather than silently applied, and notes that assigning `h_ref` would make ERR-history-12's unconditional free start freeing caller-owned memory.
-- status: reproduced — `crates/nshedit/src/history.rs` `history_set_fun` copies the ten vtable fields from `nh` and assigns `h.h_ref` nowhere. Note the ABI `H_FUNC` opcode is still a `core_gap(...)` panic in `crates/nshedit-abi/src/histedit.rs`, so no C caller reaches it yet.
+- status: reproduced — `crates/nshedit/src/history.rs` `history_set_fun` copies the ten vtable fields from `nh` and assigns `h.h_ref` nowhere, and a C caller now reaches it: `crates/nshedit-abi/src/histedit.rs` `history_dispatch`'s `H_FUNC` arm assembles the caller's ref and ten callbacks out of the eleven varargs slots. Measured rather than read — `conformance/driver/hist_tok.c` section 8 installs the vtable and drives `H_FIRST`, `H_NEXT`, `H_LAST`, `H_PREV`, `H_CURR`, `H_SET`, `H_ENTER`, `H_ADD`, `H_DEL` and `H_CLEAR` through it, and the oracle and port traces are byte-identical in both locales, `is-installed-ref=0` on each side, which is this defect being reproduced rather than merely coded.
 
 **ERR-history-18** — `hist_convert` fills a **local** `HistEventW`, so under `NARROW_HISTORY` the cookie `el->el_history.ev` is never written by any history operation and keeps its all-zero `calloc` value. Its one reader, `vi_to_history_line`, computes `eventno = 1 + ev.num - argument` after a successful `hist_get`, so vi `G` with a count reads a stale `num` of 0 and derives a negative, rejected event. Narrow history is the default configuration.
 - rule: `[spec:libedit:sem:hist.hist-convert-fn]`, `[spec:libedit:sem:vi.vi-to-history-line-fn]` · C: `src/hist.c` `hist_convert`
 - class: logic · reach: hot — every `nG` in a readline-layer or narrow-API application.
 - disposition: reproduce — **decided in translation**. `crates/nshedit/src/hist.rs` `hist_convert` fills a local event and deliberately does not touch `el.el_history.ev`; `crates/nshedit/src/vi.rs` `vi_to_history_line` correspondingly computes its event number from the never-written cookie. Defined behaviour that is wrong, so the conformance policy's default applies, and writing the cookie here would change `vi_to_history_line`'s result silently in the middle of a translation wave.
-- status: partial — the decision is recorded and coded, but not yet exercisable: the narrow arm is selected by `el_flags & NARROW_HISTORY`, which nothing in either crate ever sets (the narrow `el_set` is a blanket -1 stub and the narrow `history()` entry points are `core_gap` panics). Every reachable call takes the wide arm, which *does* write the cookie, so vi `nG` currently works.
+- status: partial — the decision is recorded and coded, but still not exercisable, and now for one reason rather than two. The narrow `history()`/`tok_*` entry points exist (`crates/nshedit-abi/src/histedit.rs`, dispatching through `history_dispatch::<c_char>`), but the flag that selects this arm, `el_flags & NARROW_HISTORY`, has exactly one set site in the C — the narrow `el_set(EL_HIST)` — and that dispatch is a blanket -1 stub in `crates/nshedit-abi/src/eln.rs` `el_set`. Every reachable call still takes the wide arm, which *does* write the cookie, so vi `nG` currently works.
 
 **ERR-history-19** — `H_NSAVE_FP`'s positioning loop uses a post-decrement in its condition, so the walk stops *on* the entry at index `nelem` and the write loop then emits that entry plus every newer one: `min(n + 1, size)` entries, not `n`. `n == 0` writes one entry.
 - rule: `[spec:libedit:sem:history.history-save-fp-fn]` (step 3), `[spec:libedit:sem:histedit.history-fn]`, `[spec:libedit:sem:readline.append-history-fn]` · C: `src/history.c` `history_save_fp`
 - class: logic · reach: hot — every `append_history(n, ...)`.
 - disposition: reproduce.
-- status: reproduced — `crates/nshedit/src/history.rs` `history_save_out` keeps the post-decrement off-by-one. Not yet reachable across the ABI: `history_save_fp` returns -1 unconditionally and nothing calls `history_save_fd`.
+- status: reproduced — `crates/nshedit/src/history.rs` `history_save_out` keeps the post-decrement off-by-one, and it is reachable now: `crates/nshedit-abi/src/histedit.rs` `history_dispatch`'s `H_NSAVE_FP` arm passes `n` through unchanged onto a `SaveStream` over the caller's own `FILE *`. The differential drives it and the bytes match the oracle exactly, but note what that does *not* prove: the driver's `H_NSAVE_FP 40` runs against a 20-entry store, where `min(n + 1, size)` and `n` are both the whole store, so what is measured is reachability and byte-identity rather than the off-by-one itself. A case with `n` below the store size is still owed.
 
 **ERR-history-20** — `history_save_fp` writes the `_HiStOrY_V2_` cookie only when `ftell(fp) == 0`. On a non-seekable stream `ftell` returns -1, so `H_SAVE_FP` to a pipe or socket silently produces a headerless file that `history_load` later rejects outright.
 - rule: `[spec:libedit:sem:history.history-save-fp-fn]` (step 1) · C: `src/history.c` `history_save_fp`
 - class: logic · reach: cold but plausible.
 - disposition: reproduce.
-- status: reproduced — `crates/nshedit/src/history.rs` `history_save_fd` derives `at_start` from `stream_position()`, so a non-seekable stream produces the headerless file. Not yet reachable across the ABI: `H_SAVE_FP`/`H_NSAVE_FP` return -1.
+- status: reproduced — and reachable through the op the entry is about. `crates/nshedit-abi/src/histedit.rs` `history_dispatch` builds `H_SAVE_FP`/`H_NSAVE_FP`'s `at_start` from `crate::cstdio::at_start`, a real `ftell(fp)` on the caller's stream, and `crates/nshedit/src/history.rs` `history_save_out` writes the cookie only when it is true — so a pipe or socket, where `ftell` answers -1, produces the headerless file that `history_load` then rejects, exactly as the C does. (`history_save_fd`'s `stream_position()` is the Rust-caller path to the same code and is not what the ABI uses.) The differential's `H_SAVE_FP` bytes are identical to the oracle's in both locales.
 
 **ERR-history-21** — write errors are invisible: `history_save` ignores `fclose`'s result, so a failure to flush the final buffer is swallowed and success is still reported; `history_save_fp` ignores every `fprintf` result, so `ENOSPC`, `EIO` and a full pipe go unnoticed.
 - rule: `[spec:libedit:sem:history.history-save-fn]` (step 4), `[spec:libedit:sem:history.history-save-fp-fn]` (step 4) · C: `src/history.c`
@@ -1605,7 +1629,7 @@ keymaps, the emacs and vi command sets, and the search machinery.
 - rule: `[spec:libedit:sem:map.map-bind-fn]`, `[spec:libedit:sem:el.el-wset-fn]` · C: `src/map.c` `map_bind`
 - class: logic · reach: cold — needs 19 `EL_BIND` arguments.
 - disposition: reproduce the termination convention at the ABI boundary; the over-read itself is ERR-core-api-07.
-- status: partial — the core half is done (`crates/nshedit/src/map.rs` `map_bind` ignores `argc` and scans to the first NULL), but the ABI boundary that has to supply the terminator is unwritten: `el_wset(EL_BIND, ...)` is a `core_gap(...)` panic in `crates/nshedit-abi/src/histedit.rs`.
+- status: reproduced — both halves. The core keeps the convention (`crates/nshedit/src/map.rs` `map_bind` ignores `argc` and scans to the first NULL), and the ABI boundary now supplies the terminator it depends on: `crates/nshedit-abi/src/histedit.rs` `list_args` collects the nineteen slots, stops at the first NULL and hands back a `Vec` whose length is the C's `i`, which `el_wset`'s `EL_BIND` arm passes as `argc`. The C's over-read is unreachable in that shape rather than reproduced — a `Vec` ends where it ends — which is ERR-core-api-07's `define`.
 
 **ERR-modes-28** — `map_bind` stores the resolved command number through an `(el_action_t)` cast, i.e. modulo 256. With `EL_NUM_FCNS == 96` the 160th function registered by `map_addfunc` is the first whose number does not fit; the truncated value may name no help entry, and `map_print_some_keys` then falls through to `EL_ABORT` — a plain `abort()` — on the next bare `bind`.
 - rule: `[spec:libedit:sem:map.map-addfunc-fn]`, `[spec:libedit:sem:map.map-bind-fn]` (step 9), `[spec:libedit:sem:map.map-print-some-keys-fn]` (step 4) · C: `src/map.c`
@@ -2070,7 +2094,8 @@ escaping applied to an inserted completion.
 
 `src/el.c`, `src/eln.c` and the contracts `src/histedit.h` documents — object
 construction and teardown, the `el_set`/`el_get` surface and the narrow
-wrappers.
+wrappers, plus the libc gap-fillers `histedit.h` declares (`src/wcsdup.c`,
+`src/reallocarr.c`).
 
 **ERR-core-api-01** — `el_init_internal` step 4 is `el->el_prog = wcsdup(ct_decode_string(prog, &el->el_scratch))`, and the NULL test covers only `wcsdup`'s own failure. `ct_decode_string` returns NULL for a NULL `prog` **and** for a `prog` that is not a valid multibyte string in the current `LC_CTYPE`, and that NULL is handed straight to `wcsdup`.
 - rule: `[spec:libedit:sem:el.el-init-internal-fn]` (step 4), `[spec:libedit:sem:histedit.el-init-fd-fn]` · C: `src/el.c` `el_init_internal`
@@ -2106,19 +2131,19 @@ wrappers.
 - rule: `[spec:libedit:sem:el.el-init-fn]`, `[spec:libedit:sem:histedit.el-init-fn]` · C: `src/el.c` `el_init`
 - class: UB · reach: caller error; the -1 case is defined-but-wrong and shows up later as a `tty_init` failure setting `NO_TTY`.
 - disposition: define for the NULL case; reproduce the -1-descriptor outcome.
-- status: partial — the NULL half is defined: `crates/nshedit/src/el.rs` `el_init` stores the stream handle and never dereferences it. The -1-descriptor half is not reproduced but over-applied: the port's `fileno` equivalent is a stub returning -1 unconditionally, so *every* `el_init` gets descriptor -1 and `NO_TTY`, not only a caller passing an unopened stream. Blocked on the platform layer.
+- status: defined (the NULL half) / reproduced (the -1 half) — `crates/nshedit-abi/src/histedit.rs` `el_init` computes all three descriptors through `crate::cstdio::fileno_of`, which answers -1 for a NULL stream instead of dereferencing it and otherwise calls the real `fileno(3)`. So the C's outcome is now genuinely reproduced rather than approximated: only a NULL or descriptor-less stream gets -1, that -1 is stored undiagnosed, construction still reports success and `tty_init` later sets `NO_TTY`. The earlier reading of this line — "every `el_init` gets descriptor -1, blocked on the platform layer" — described a port limitation as though it were the C's behaviour, and the limitation is gone.
 
 **ERR-core-api-07** — `el_wset`'s collection loop for `EL_BIND`/`EL_TELLTC`/`EL_SETTC`/`EL_ECHOTC`/`EL_SETTY` runs `for (i = 1; i < 20; i++)` reading varargs until the first NULL. If the caller omits the NULL sentinel with fewer than 19 arguments the loop **reads past the end of the argument list**; if all 19 slots are filled the loop exits with `i == 20` and no terminator is stored, so `argv` reaches the callee unterminated with `argc == 20`, and a 20th and further varargs are silently dropped rather than diagnosed.
 - rule: `[spec:libedit:sem:el.el-wset-fn]` (bounds), `[spec:libedit:sem:histedit.el-wset-fn]`, `[spec:libedit:sem:map.map-bind-fn]` · C: `src/el.c` `el_wset`
 - class: UB · reach: caller error for the missing sentinel; the 19-argument case is reachable by construction.
 - disposition: define — always terminate; the port's ABI shim inherits the requirement.
-- status: open — not carried out. All five list ops are `core_gap(...)` panics in `crates/nshedit-abi/src/histedit.rs`, so there is no argument collection, no cap and no terminator anywhere. Note the C's read-past-the-argument-list cannot arise in the port's shape regardless: `el_wset` is declared with nineteen fixed parameters rather than varargs.
+- status: defined — `crates/nshedit-abi/src/histedit.rs` `list_args` builds the argument vector for all five list ops, stops at the first NULL and **always terminates**, because a `Vec` ends where it ends; `el_wset`'s `EL_BIND`/`EL_TELLTC`/`EL_SETTC`/`EL_ECHOTC`/`EL_SETTY` arm then passes its length as the C's `i`. Both halves of the C's over-read are unreachable rather than reproduced: with nineteen non-NULL strings the callee still gets a terminated list, and the missing-sentinel read past the argument list cannot arise at all, `el_wset` being declared with nineteen fixed parameters rather than varargs. A twentieth argument is still silently dropped, which is the C's behaviour and is kept.
 
 **ERR-core-api-08** — several `el_wset` ops accept NULL and pass it straight on: `EL_EDITOR` reaches `wcscmp`, `EL_WORDCHARS` reaches `wcsdup`, `EL_SETFP` reaches `fileno`, and `EL_GETENV` stores a NULL hook that the next environment lookup calls through.
 - rule: `[spec:libedit:sem:el.el-wset-fn]`, `[spec:libedit:sem:el.editline.el-getenv-fn]`, `[spec:libedit:sem:map.map-set-editor-fn]`, `[spec:libedit:sem:map.map-set-wordchars-fn]`, `[spec:libedit:sem:histedit.el-wset-fn]` · C: `src/el.c` `el_wset`
 - class: UB · reach: caller error.
 - disposition: define — reject NULL.
-- status: partial — the `EL_GETENV` half is defined in the core (`crates/nshedit/src/el.rs` falls back to the built-in lookup when no hook is installed). The other three arms that must reject NULL — `EL_EDITOR`, `EL_WORDCHARS`, `EL_SETFP` — are `core_gap(...)` panics in `crates/nshedit-abi/src/histedit.rs`.
+- status: defined — all four arms, in `crates/nshedit-abi/src/histedit.rs` `el_wset`: `EL_EDITOR` and `EL_WORDCHARS` return -1 for a NULL string instead of handing it to `wcscmp`/`wcsdup`; `EL_GETENV` filters the hook to `None`, which is the core's "no application hook", so a NULL leaves the built-in `secure_getenv` in force rather than arming an indirect call through null (`crates/nshedit/src/el.rs`); and `EL_SETFP` stores the stream and takes its descriptor through `crate::cstdio::fileno_of`, which answers -1 for NULL rather than dereferencing — defining the NULL case as "a stream with no descriptor" instead of rejecting it, which is the one arm where the C has a return value to lose.
 
 **ERR-core-api-09** — `el_set`'s `EL_EDITOR` and `EL_WORDCHARS` arms pass `ct_decode_string(...)`'s result to `el_wset` **unchecked**, and it is checked on neither side, so `el_set(el, EL_EDITOR, NULL)` — or a string invalid in the current locale — dereferences NULL inside `wcscmp`/`wcsdup`.
 - rule: `[spec:libedit:sem:eln.el-set-fn]` · C: `src/eln.c` `el_set`
@@ -2154,7 +2179,7 @@ wrappers.
 - rule: `[spec:libedit:sem:prompt.prompt-get-fn]` (BUG), `[spec:libedit:sem:el.el-wget-fn]`, `[spec:libedit:sem:eln.el-get-fn]`, `[spec:libedit:sem:histedit.el-wget-fn]` · C: `src/prompt.c` `prompt_get`
 - class: logic · reach: hot — the op most likely to be used for reading an escape character back is the one that reads the wrong record.
 - disposition: reproduce — all four rules agree the behaviour is frozen ABI and the port reproduces it rather than fixing it.
-- status: partial — the core reproduces it: `crates/nshedit/src/prompt.rs` `prompt_get` selects the left prompt only for `op == EL_PROMPT`. Not yet observable, because no getter reaches it: `el_wget(EL_PROMPT_ESC)` is a `core_gap(...)` panic and the narrow `el_get` is a blanket -1 stub.
+- status: reproduced — end to end, and observable. The core keeps the selection (`crates/nshedit/src/prompt.rs` `prompt_get` takes the left prompt only for `op == EL_PROMPT`) and `crates/nshedit-abi/src/histedit.rs` `el_wget` passes `op` through unchanged, so `el_wget(EL_PROMPT_ESC, ...)` reads the *right* prompt's function and escape character. The other half is reproduced at the same site: the `EL_PROMPT`/`EL_RPROMPT` arm passes `None` for the escape-character out-parameter, which is the C's NULL, so `el_prompt.p_ignore` still has no route out of the library. The narrow `el_get` remains a blanket -1 stub, which is a second, separate reason its half is unobservable.
 
 **ERR-core-api-15** — `el_wget(EL_SIGNAL)` stores the raw `el_flags & HANDLE_SIGNALS` (0 or 0x001) and `el_wget(EL_SAFEREAD)` stores the raw `el_flags & FIXIO` (0 or **0x100**, i.e. 256), neither normalised — unlike `EL_UNBUFFERED` and `EL_EDITMODE`, which are. A caller comparing `EL_SAFEREAD`'s result against 1 gets the wrong answer.
 - rule: `[spec:libedit:sem:el.el-wget-fn]`, `[spec:libedit:sem:histedit.el-wget-fn]` · C: `src/el.c` `el_wget`
@@ -2166,13 +2191,13 @@ wrappers.
 - rule: `[spec:libedit:sem:el.el-wset-fn]` (`EL_HIST`), `[spec:libedit:sem:eln.el-set-fn]`, `[spec:libedit:sem:histedit.el-wset-fn]`, `[spec:libedit:sem:hist.hist-convert-fn]` · C: `src/el.c`, `src/eln.c`
 - class: logic · reach: cold — needs both entry points used on one `EditLine`.
 - disposition: reproduce the flag manipulation as written; the rule says the port should carry the hazard in its own notes.
-- status: open — not carried out. `el_wset(EL_HIST, ...)` is a `core_gap(...)` panic in `crates/nshedit-abi/src/histedit.rs` and the narrow `el_set` is a stub that never sets `NARROW_HISTORY`, so the flag manipulation exists only as prose. This is what makes ERR-history-18's narrow arm unreachable.
+- status: partial — the wide half is carried out and the guard is reproduced as written: `crates/nshedit-abi/src/histedit.rs` `el_wset`'s `EL_HIST` arm calls `hist_set` and then clears `NARROW_HISTORY` only when `nshedit::el::mb_cur_max() == 1`, unconditionally on the result as in the C. Two things are still missing, one of them a divergence rather than a gap. (a) The narrow `el_set(EL_HIST)` — the flag's only *set* site — is a blanket -1 stub in `crates/nshedit-abi/src/eln.rs`, so nothing ever sets `NARROW_HISTORY` and the hazard cannot be reached; this is what makes ERR-history-18's narrow arm unreachable. (b) **The predicate is not the C's.** The C's `MB_CUR_MAX` follows `setlocale`, so a program that never calls it reads 1 whatever `LANG` says; `crates/nshedit/src/el.rs` `mb_cur_max` answers from `crate::locale`, which reads `LC_ALL`/`LC_CTYPE`/`LANG` because `[dec:libedit:no-c-ffi]` leaves it no `setlocale` to consult, i.e. as if `setlocale(LC_ALL, "")` had run. A C application that skips `setlocale` under a UTF-8 `LANG` therefore has this arm clear the flag in the C and leave it set here. That is a port-side divergence, not a second C defect, so it is recorded here rather than given an id of its own; it is named at the divergence's own site in `crates/nshedit/src/el.rs` and in `crates/nshedit/src/locale.rs`'s module header.
 
 **ERR-core-api-17** — `el_get`'s `EL_PREP_TERM` arm forwards to `el_wget`, which has no such case, so the call consumes the caller's `int *`, stores nothing and always returns -1. It is a set-only op the narrow wrapper pretends to forward.
 - rule: `[spec:libedit:sem:eln.el-get-fn]`, `[spec:libedit:sem:histedit.el-get-fn]` · C: `src/eln.c` `el_get`
 - class: logic · reach: any caller that believes the header.
 - disposition: reproduce.
-- status: reproduced — `crates/nshedit-abi/src/eln.rs` `el_get` returns -1 for `EL_PREP_TERM` and `el_wget`'s catch-all covers it, which is the C's observable answer (though the surrounding dispatch is still stubbed).
+- status: reproduced — `crates/nshedit-abi/src/eln.rs` `el_get` returns -1 for `EL_PREP_TERM`, and `crates/nshedit-abi/src/histedit.rs` `el_wget`'s catch-all — which now stands behind a live dispatch rather than a stub — answers -1 for it too, writing nothing through the caller's `int *`.
 
 **ERR-core-api-18** — `el_get(EL_PROMPT_ESC)` stores `*c = (char)wc` **unconditionally**, including when `prompt_get` returned -1 (writing `'\0'`), never checks `c` for NULL, and *truncates* the `wchar_t` to its low byte rather than encoding it — which is not the inverse of any multibyte conversion, and is implementation-defined above `CHAR_MAX`. `el_wget` hands back the full `wchar_t`.
 - rule: `[spec:libedit:sem:eln.el-get-fn]`, `[spec:libedit:sem:histedit.el-get-fn]` · C: `src/eln.c` `el_get`
@@ -2184,7 +2209,7 @@ wrappers.
 - rule: `[spec:libedit:sem:el.el-editmode-fn]`, `[spec:libedit:sem:el.el-wset-fn]` · C: `src/el.c`
 - class: logic · reach: hot.
 - disposition: reproduce.
-- status: partial — `crates/nshedit/src/el.rs` `el_editmode` discards both tty results as the C does. The `EL_PREP_TERM` and `EL_UNBUFFERED` halves are `core_gap(...)` panics in `crates/nshedit-abi/src/histedit.rs`.
+- status: reproduced — `crates/nshedit/src/el.rs` `el_editmode` discards both tty results as the C does, and so do the two `el_wset` arms now that they exist: `crates/nshedit-abi/src/histedit.rs` `EL_PREP_TERM` binds `tty_rawmode`/`tty_cookedmode`'s result to `_` and returns 0, and `EL_UNBUFFERED` sets the flag before running `read_prepare`/`read_finish` and returns 0 regardless.
 
 **ERR-core-api-20** — a line in an `.editrc` containing **only spaces or tabs** survives `el_source`'s checks (its first byte is not `'\n'`, it decodes, it is not a comment), tokenises to zero words, and `el_wparse` rejects that with -1 — which breaks the read loop, so the rest of the file is silently discarded and `el_source` returns -1. Only a literally empty line is safe.
 - rule: `[spec:libedit:sem:el.el-source-fn]`, `[spec:libedit:sem:parse.parse-line-fn]`, `[spec:libedit:sem:histedit.el-source-fn]` · C: `src/el.c` `el_source`
@@ -2244,7 +2269,7 @@ wrappers.
 - rule: `[spec:libedit:sem:el.el-wget-fn]` (`EL_GETTC`), `[spec:libedit:sem:terminal.terminal-gettc-fn]`, `[spec:libedit:sem:eln.el-get-fn]`, `[spec:libedit:sem:histedit.el-get-fn]` · C: `src/el.c`, `src/terminal.c`
 - class: logic · reach: hot — `rl_get_screen_size` uses it.
 - disposition: reproduce the dispatch; the static buffer can be made immutable without observable effect.
-- status: open — not carried out. `el_wget(EL_GETTC)` is a `core_gap(...)` panic and the narrow `el_get`'s argv-of-three construction is a comment only, so neither the three-way dispatch nor the shared static name is settled.
+- status: partial — the wide half is carried out. `crates/nshedit-abi/src/histedit.rs` `el_wget`'s `EL_GETTC` arm reads exactly two arguments, builds the C's `{"gettc", name, out}` and calls `terminal_gettc(el, 3, &argv)`, so the three-way pointer dispatch is reproduced with no sentinel consumed; the shared mutable `static char name[]` becomes the immutable `static GETTC`, which the entry's disposition allows. The narrow `el_get`'s half is still a comment only — that dispatch is a blanket -1 stub.
 
 **ERR-core-api-30** — `map_get_wordchars` reports success while storing NULL: between `map_init` and the mode initialisation that follows it the field is NULL, and `map_set_wordchars` leaves it NULL when its `wcsdup` fails while still returning 0. Callers get `0` with a NULL pointer, which means "the built-in defaults are in use", not "empty".
 - rule: `[spec:libedit:sem:map.map-get-wordchars-fn]`, `[spec:libedit:sem:map.map-set-wordchars-fn]`, `[spec:libedit:sem:el.el-wget-fn]` · C: `src/map.c`
@@ -2262,7 +2287,7 @@ wrappers.
 - rule: `[spec:libedit:sem:eln.el-set-fn]`, `[spec:libedit:sem:el.el-wset-fn]`, `[spec:libedit:sem:histedit.el-set-fn]`, `[spec:libedit:sem:histedit.el-wset-fn]` · C: `src/eln.c`, `src/el.c`
 - class: divergence · reach: hot for anyone passing many `EL_BIND` arguments.
 - disposition: reproduce both caps.
-- status: open — not carried out. Neither cap exists: the wide list ops are `core_gap(...)` panics and the narrow `el_set` is a stub, so the 19-versus-18 asymmetry is prose in `crates/nshedit-abi/src/eln.rs`.
+- status: partial — the wide cap exists and is structural: `crates/nshedit-abi/src/histedit.rs` `el_wset` declares nineteen argument slots and `list_args` reads at most those nineteen, which is the C's `i < 20` bound. It is *not* the C's unsafe half, because the port always terminates (ERR-core-api-07). The narrow cap of 18 does not exist — `crates/nshedit-abi/src/eln.rs` `el_set` is a blanket -1 stub — so the asymmetry itself is still prose there.
 
 **ERR-core-api-33** — `histedit.h` documents `el_source` as sourcing "$PWD/.editrc or $HOME/.editrc". There is no `$PWD` lookup and no attempt at `./.editrc`; the fallback chain is `$EDITRC` then `$HOME/.editrc`. The vestige of the removed attempt is still visible as a `fp = NULL;` initialisation followed by a redundant `if (fp == NULL)` before the only `fopen`. The manual page matches the implementation.
 - rule: `[spec:libedit:sem:el.el-source-fn]`, `[spec:libedit:sem:histedit.el-source-fn]` · C: `src/histedit.h`, `src/el.c`
@@ -2280,7 +2305,7 @@ wrappers.
 - rule: `[spec:libedit:sem:el.el-wset-fn]`, `[spec:libedit:sem:el.el-source-fn]` · C: `src/el.c`
 - class: dead · reach: unreachable.
 - disposition: fix — express it as an unreachable branch rather than a runtime abort.
-- status: partial — `el_source`'s `fp = NULL` vestige is explicitly not ported (`crates/nshedit/src/el.rs`). `el_wset`'s inner `default`/`EL_ABORT` is merely absent rather than expressed as an unreachable branch, because the whole arm is a `core_gap(...)` panic.
+- status: fixed — both. `el_source`'s `fp = NULL` vestige is explicitly not ported (`crates/nshedit/src/el.rs`), and `el_wset`'s inner `default`/`EL_ABORT` is now expressed rather than absent: the list-op arm in `crates/nshedit-abi/src/histedit.rs` ends its command-name match with `_ => &SETTY`, unreachable-by-construction because the outer match already restricted `op`, and says so in place instead of calling `abort(3)`.
 
 **ERR-core-api-36** — `prompt_set` silently erases a previously installed prompt escape character. `p->p_ignore = c` is unconditional, and `el_wset`/`el_set`'s `EL_PROMPT`/`EL_RPROMPT` arms call `prompt_set(el, p, 0, op, 1)` with `c = 0`. Re-installing a prompt function after `el_set(EL_PROMPT_ESC, f, esc)` therefore drops `esc` back to "no literal marker" — and by ERR-core-api-14 there is no route through the public API to notice.
 - rule: `[spec:libedit:sem:prompt.prompt-set-fn]` (step 3), `[spec:libedit:sem:el.el-wset-fn]` · C: `src/prompt.c` `prompt_set`, `src/el.c` `el_wset`
@@ -2293,6 +2318,12 @@ wrappers.
 - class: logic · reach: OOM only.
 - disposition: reproduce — both out-parameters cross the ABI, and there is no third value to report.
 - status: reproduced — `crates/nshedit-abi/src/eln.rs` `el_gets` keeps the order and records that a NULL return does not imply a non-positive count.
+
+**ERR-core-api-38** — the two bundled libc gap-fillers guarded themselves on a macro that was not defined yet. `src/wcsdup.c` tested `#ifndef HAVE_WCSDUP` *before* `#include "config.h"`, and `src/reallocarr.c` tested `#if !HAVE_REALLOCARR` above its own include; both guards were therefore unconditionally true and both bodies always compiled, because `src/Makefile.am` lists both files in `libedit_la_SOURCES` unconditionally. `histedit.h:323` guards the *declaration* with the same macro — which bites only inside libedit's own translation units, since they include `config.h` first and a consumer never does — so on a host whose libc has `wcsdup` the library saw no prototype while its own definition stayed, and `libedit.so` exported a default-visibility `T wcsdup` that interposes on libc's for every caller in a process linking libedit ahead of libc. `src/strlcpy.c` is the control: `config.h` at :20, guard at :36, right way round, and correspondingly never exported.
+- rule: `[spec:libedit:sem:histedit.wcsdup-fn]` · C: `src/wcsdup.c`, `src/reallocarr.c`, `src/Makefile.am`, `src/histedit.h`
+- class: divergence (build) · reach: hot and not latent for `wcsdup` — every glibc host, every process. Latent for `reallocarr`, whose guard was accidentally right: glibc has no `reallocarr`, so the file is compiled and exported either way and nothing is shadowed. No `sem` rule covers `reallocarr` at all, which is a spec gap this entry does not close.
+- disposition: fix — in the C itself, not in the port. `[dec:libedit:posix-only-scope]` already puts a libc gap-filler outside the port's scope, so there was never anything here to reproduce; and a replacement library that exported `wcsdup` would inherit the interposition.
+- status: fixed — corrected in the reference tree itself at commit b367875, which moves `#include "config.h"` above the guard in both files; the two deliberate departures from byte-faithful upstream are listed in `.config/nplan/config.styx` to be carried forward at the next merge or upstreamed. Measured on the oracle rather than read: before the fix, per b367875 and the note that records it, `config.h` said `#define HAVE_WCSDUP 1` and `nm -D` on the `.so` showed `T wcsdup` anyway; after it — re-measured for this reconciliation — the same build imports `U wcsdup@GLIBC_2.2.5`, `src/.libs/wcsdup.o` holds no symbols at all, and `T reallocarr` is still exported because glibc has none. `crates/nshedit-abi/src/histedit.rs` claims the two `wcsdup` rules to record the omission and exports neither symbol, which is now what the C does too.
 
 ---
 
@@ -2371,7 +2402,7 @@ layer, its history-expansion machinery and its exported globals.
 - rule: `[spec:libedit:sem:readline.rl-parse-and-bind-fn]`, `[spec:libedit:sem:tokenizer.fun-tok-str-fn]` · C: `src/readline.c` `rl_parse_and_bind`
 - class: UB · reach: hot — one mismatched quote in a configuration line.
 - disposition: define — check both.
-- status: defined — `crates/nshedit-abi/src/readline.rs` `rl_parse_and_bind` returns 1 for a NULL tokenizer and pre-sets and tests `argv`, covering every failure. Note both tokenizer entry points are still `core_gap(...)` panics in `crates/nshedit-abi/src/histedit.rs`, so the guard is code-level rather than exercised.
+- status: defined — `crates/nshedit-abi/src/readline.rs` `rl_parse_and_bind` returns 1 for a NULL tokenizer and pre-sets and tests `argv`, covering every failure. Both tokenizer entry points behind it are live now (`crates/nshedit-abi/src/histedit.rs` `tok_init`, `tok_str`), so the guard sits on a real path rather than an aborting one.
 
 **ERR-readline-13** — `history_expand`'s `ADD_STRING` growth-failure path frees `*output` and the fragment and returns 0, leaving the caller's `*output` pointing at **freed memory** (not NULL) and leaking the `result` accumulator.
 - rule: `[spec:libedit:sem:readline.history-expand-fn]` (step 4) · C: `src/readline.c` `history_expand`
@@ -2505,11 +2536,11 @@ layer, its history-expansion machinery and its exported globals.
 - disposition: reproduce.
 - status: reproduced — `crates/nshedit-abi/src/readline.rs` `rl_bind_wrapper` propagates the globals inbound only, discards the callback's return, and writes nothing back into the wide line.
 
-**ERR-readline-35** — `rl_delete_text` forwards to `el_deletestr1`, which works in **wide characters** against `el_line`, while `rl_point`/`rl_end` are byte offsets into the encoded line — so in a multibyte locale the offsets a readline application computes from `rl_line_buffer` do not correspond to what is deleted. `rl_insert_text` mirrors it: it returns `(int)strlen(text)`, a byte count, not the number of characters added. Neither refreshes `rl_point`/`rl_end`.
-- rule: `[spec:libedit:sem:readline.rl-delete-text-fn]`, `[spec:libedit:sem:readline.rl-insert-text-fn]`, `[spec:libedit:sem:chared.el-deletestr1-fn]` · C: `src/readline.c`
+**ERR-readline-35** — `rl_delete_text` forwards to `el_deletestr1`, which works in **wide characters** against `el_line`, while the `rl_point`/`rl_end` a readline application has in hand are byte offsets — so in a multibyte locale the offsets it computes from `rl_line_buffer` do not correspond to what is deleted. `rl_insert_text` mirrors it: it returns `(int)strlen(text)`, a byte count, not the number of characters added. Neither refreshes `rl_point`/`rl_end`. **Qualified:** the two globals are byte offsets only when `_rl_update_pos` last wrote them, which computes from `el_line(e)` — the *narrow* `LineInfo`, so `li->cursor - li->buffer` counts bytes. `fn_complete2` also writes them, through the `&rl_point, &rl_end` that `rl_complete` hands it, and it declares `const LineInfoW *li` and counts `wchar_t` — so a completion callback sees a *character* offset in the same variables (ERR-completion-13, which records the wide producer). The unit therefore depends on which of the two wrote last, and neither converts.
+- rule: `[spec:libedit:sem:readline.rl-delete-text-fn]`, `[spec:libedit:sem:readline.rl-insert-text-fn]`, `[spec:libedit:sem:readline.rl-update-pos-fn]`, `[spec:libedit:sem:chared.el-deletestr1-fn]`, `[spec:libedit:sem:filecomplete.fn-complete2-fn]` (step 5) · C: `src/readline.c`
 - class: logic · reach: hot in a UTF-8 locale.
 - disposition: reproduce.
-- status: reproduced — `crates/nshedit-abi/src/readline.rs` `rl_delete_text` forwards byte offsets to the wide-character `el_deletestr1`, `rl_insert_text` returns a byte length, and neither refreshes the globals.
+- status: reproduced — `crates/nshedit-abi/src/readline.rs` `rl_delete_text` forwards the globals to the wide-character `el_deletestr1` unconverted, `rl_insert_text` returns a byte length, and neither refreshes them; `_rl_update_pos` writes byte offsets from the narrow line and `fn_complete2` writes wide counts into the same two variables, as in the C.
 
 **ERR-readline-36** — `rl_message` formats into a 160-byte stack buffer with `vsnprintf`, silently truncating at 159 characters, and installs the result *as* `rl_prompt`, overwriting whatever was there — so an application that does not call `rl_save_prompt` first loses the original prompt for good. The 160-byte limit has no readline counterpart.
 - rule: `[spec:libedit:sem:readline.rl-message-fn]` · C: `src/readline.c` `rl_message`
@@ -2623,7 +2654,7 @@ layer, its history-expansion machinery and its exported globals.
 - rule: `[spec:libedit:sem:readline.rl-get-keymap-fn]`, `[spec:libedit:sem:readline.rl-make-bare-keymap-fn]`, `[spec:libedit:sem:readline.rl-set-keymap-fn]`, `[spec:libedit:sem:readline.rl-generic-bind-fn]`, `[spec:libedit:sem:readline.rl-bind-key-in-map-fn]`, `[spec:libedit:sem:readline.rl-set-key-fn]`, `[spec:libedit:sem:readline.rl-set-keymap-name-fn]`, `[spec:libedit:sem:readline.rl-abort-fn]`, `[spec:libedit:sem:readline.rl-kill-text-fn]`, `[spec:libedit:sem:readline.rl-on-new-line-fn]`, `[spec:libedit:sem:readline.rl-erase-entire-line-fn]`, `[spec:libedit:sem:readline.rl-cleanup-after-signal-fn]`, `[spec:libedit:sem:readline.rl-free-line-state-fn]`, `[spec:libedit:sem:readline.rl-set-keyboard-input-timeout-fn]`, `[spec:libedit:sem:readline.rl-forced-update-display-fn]`, `[spec:libedit:sem:readline.rl-display-match-list-fn]`, `[spec:libedit:sem:readline.rl-resize-terminal-fn]`, `[spec:libedit:sem:readline.rl-complete-fn]`, `[spec:libedit:sem:readline.history-expand-fn]`, `[spec:libedit:sem:readline.getfrom-fn]`, `[spec:libedit:sem:readline.rl-qsort-string-compare-fn]` · C: `src/readline.c`, `src/editline/readline.h`
 - class: dead · reach: the symbols must resolve; the behaviour is nil.
 - disposition: reproduce the symbols and their return values (applications link against them and check them); do not port the dead bodies.
-- status: reproduced — every stub is present in `crates/nshedit-abi/src/readline.rs` with the C's return value and the keymap globals are exported, so applications still link and still see the same answers. The `TAB` macro and the `GDB_411_HACK` block are not ported.
+- status: reproduced — every stub is present in `crates/nshedit-abi/src/readline.rs` with the C's return value and the keymap globals are exported, so applications still link and still see the same answers. The `TAB` macro and the `GDB_411_HACK` block are not ported. This list is not the whole of the inertness: seventeen further exported globals are read by no code path either, and they are ERR-readline-59.
 
 **ERR-readline-55** — `history_expand` edits the caller's string in place. In the non-`^` branch `str` is never repointed at the `strdup` copy it just made, so the `\!` backslash-removal `memmove` writes through the caller's `char *`; the copy is then only freed, never used. GNU readline's `history_expand` does not modify its argument.
 - rule: `[spec:libedit:sem:readline.history-expand-fn]` (steps 2, 3) · C: `src/readline.c` `history_expand`
@@ -2642,3 +2673,27 @@ layer, its history-expansion machinery and its exported globals.
 - class: logic · reach: cold — needs an application that reassigns `history_expansion_char`, which the global exists to permit.
 - disposition: reproduce — the failure is observable and defined.
 - status: reproduced — `crates/nshedit-abi/src/readline.rs` builds the same literal shorthand.
+
+**ERR-readline-58** — `rl_initialize` writes `rl_terminal_name` with a pointer libedit does not own. When the application left the global NULL, the else-arm calls `el_get(e, EL_TERMINAL, &rl_terminal_name)`, which hands back `el->el_terminal.t_name` — a pointer `terminal_set` assigned **without copying** from one of three places: the string the caller passed to `el_set(EL_TERMINAL, ...)`, whatever `getenv("TERM")` returned, or the string literal `"dumb"`. The declared type is `char *`, which invites a write; two of those three make a write undefined and all three make `free(rl_terminal_name)` a corruption. libedit neither copies it nor frees it, and nothing documents that. The same two lines also pass a `char **` where `el_get`'s `EL_TERMINAL` case reads a `const char **` — incompatible types with identical representation, so it is a diagnostic-free defect of a piece with ERR-readline-53.
+- rule: `[spec:libedit:sem:readline.rl-terminal-name]`, `[spec:libedit:sem:readline.rl-initialize-fn]` (step 13) · C: `src/readline.c` `rl_initialize`
+- class: UB (divergence) · reach: hot — the write-back happens on every `readline()` consumer that does not set the terminal type itself, which is nearly all of them. GNU readline additionally re-consults the global from `rl_reset_terminal(NULL)` and never substitutes `"dumb"`, so a consumer that keeps the pointer is holding something else there.
+- disposition: reproduce — the borrowed pointer *is* the ABI; copying it here would leak, and freeing it would change what a consumer may do with it.
+- status: reproduced — `crates/nshedit-abi/src/readline.rs` `rl_initialize` tests `rl_terminal_name.is_null()` and, in the else-arm, writes the global from `el_get_va(E, EL_TERMINAL, ...)` with no copy, exporting it as a `*mut c_char`. One divergence, and it is on the lending side rather than here: what the port lends is the per-editor `CString` that `crates/nshedit-abi/src/histedit.rs` `el_wget`'s `EL_TERMINAL` arm materialises, which the *next* `el_wget(EL_TERMINAL)` on that editor replaces — where the C's `t_name` survives until the terminal type is reloaded. That is recorded at that arm, not carried as a second entry.
+
+**ERR-readline-59** — seventeen more exported globals that no code path reads, beyond the ones ERR-readline-54 lists: `history_max_entries`, `readline_echoing_p`, `_rl_echoing_p`, `rl_basic_quote_characters`, `rl_completer_quote_characters`, `_rl_complete_mark_directories`, `_rl_completion_prefix_display_length`, `rl_completion_suppress_append`, `rl_directory_completion_hook`, `rl_display_prompt`, `rl_erase_empty_line`, `rl_filename_completion_desired`, `rl_ignore_completion_duplicates`, `_rl_print_completions_horizontally`, `rl_sort_completion_matches`, `rl_startup1_hook` and `rl_deprep_term_function`. Each is writable, none is consulted, and nothing reports that the assignment did nothing. Four of them additionally *default* differently from GNU readline's — `_rl_complete_mark_directories`, `_rl_echoing_p`, `rl_ignore_completion_duplicates` and `rl_sort_completion_matches` are 0 here and 1 there — so a consumer that never touches them still starts from a different state. Two are worse than plainly inert: `rl_startup1_hook` is declared *above* the header's "not implemented" banner, among the entries a reader is entitled to assume work, and `rl_deprep_term_function` holds a real function address that no libedit path ever calls through, so it reads as a live hook.
+- rule: `[spec:libedit:sem:readline.history-max-entries]`, `[spec:libedit:sem:readline.readline-echoing-p]`, `[spec:libedit:sem:readline.rl-echoing-p]`, `[spec:libedit:sem:readline.rl-basic-quote-characters]`, `[spec:libedit:sem:readline.rl-completer-quote-characters]`, `[spec:libedit:sem:readline.rl-complete-mark-directories]`, `[spec:libedit:sem:readline.rl-completion-prefix-display-length]`, `[spec:libedit:sem:readline.rl-completion-suppress-append]`, `[spec:libedit:sem:readline.rl-directory-completion-hook]`, `[spec:libedit:sem:readline.rl-display-prompt]`, `[spec:libedit:sem:readline.rl-erase-empty-line]`, `[spec:libedit:sem:readline.rl-filename-completion-desired]`, `[spec:libedit:sem:readline.rl-ignore-completion-duplicates]`, `[spec:libedit:sem:readline.rl-print-completions-horizontally]`, `[spec:libedit:sem:readline.rl-sort-completion-matches]`, `[spec:libedit:sem:readline.rl-startup1-hook]`, `[spec:libedit:sem:readline.rl-deprep-term-function]` · C: `src/readline.c`, `src/editline/readline.h`
+- class: dead (divergence) · reach: hot for the four whose defaults disagree, and for `rl_completer_quote_characters` and `rl_completion_suppress_append`, which are documented GNU idioms a shell reaches for first. `rl_completer_word_break_characters` and `rl_special_prefixes` are the same shape and are already ERR-readline-50, which is why they are not repeated here.
+- disposition: reproduce the symbols, their initial values and their inertness. Wiring any of them up would tell an application something the C never tells it, and the rules say so one by one.
+- status: reproduced — all seventeen are exported as writable statics from `crates/nshedit-abi/src/readline.rs` with the C's initialiser and no reader: `readline_echoing_p` at 1, `rl_basic_quote_characters` at `"\"'"`, `rl_deprep_term_function` at `Some(rl_deprep_terminal)` (the exported function's own address, which a consumer may read and call), and the other fourteen at 0 or NULL.
+
+**ERR-readline-60** — `rl_already_prompted` runs backwards relative to GNU readline. There it is an *input*: the application sets it to say it has displayed the prompt itself so readline should not redisplay. Here libedit writes it and reads it nowhere — `_get_prompt` sets it to 1 as its first statement every time EditLine asks for the prompt text, and `readline()` clears it to 0 immediately before `el_gets` — so a consumer using the GNU idiom is ignored and gets a duplicated prompt. Because `_get_prompt` fires on every refresh rather than only the first, the flag does not even mean "the prompt has been written"; and in callback mode nothing clears it at all, `rl_callback_read_char` not going through `readline()`, so it stays 1 for the rest of the session once the prompt has been asked for.
+- rule: `[spec:libedit:sem:readline.rl-already-prompted]`, `[spec:libedit:sem:readline.get-prompt-fn]`, `[spec:libedit:sem:readline.readline-fn]` (step 11) · C: `src/readline.c` `_get_prompt`, `readline`
+- class: divergence · reach: hot for any consumer that has ever suppressed a readline redisplay this way; silent, because the write is accepted and discarded.
+- disposition: reproduce — both writes and the absence of any read. Honouring the GNU meaning would be a new feature, not a fix, and would change what `readline()` puts on the terminal.
+- status: reproduced — `crates/nshedit-abi/src/readline.rs` exports `rl_already_prompted` as a writable `c_int` at 0, sets it to 1 inside `_get_prompt` and clears it in `readline` just before the `el_gets` call, and reads it nowhere; the callback path does not touch it.
+
+**ERR-readline-61** — `emacs_meta_keymap` is defined **twice** in one translation unit: once at `readline.c:93`, in the `KEYMAP_ENTRY_ARRAY emacs_standard_keymap, emacs_meta_keymap, emacs_ctlx_keymap;` run, and again at `readline.c:137`, alone. Both are tentative definitions with no initialiser, so C merges them into one object and nothing observable changes — but it is a duplicate that only the tentative-definition rule makes legal, and a translation that emits one definition per declaration produces two symbols and fails to link.
+- rule: `[spec:libedit:sem:readline.emacs-meta-keymap]` · C: `src/readline.c`
+- class: dead · reach: source-level only; no consumer can observe it.
+- disposition: fix — emit one definition. There is nothing to reproduce: the C's own observable result is a single object.
+- status: fixed — `crates/nshedit-abi/src/readline.rs` defines `emacs_meta_keymap` once, as a zero-initialised `[KeymapEntry; 256]` alongside `emacs_standard_keymap` and `emacs_ctlx_keymap`, which is the one object the C ends up with. The arrays' inertness is ERR-readline-54's.

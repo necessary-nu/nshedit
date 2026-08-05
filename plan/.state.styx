@@ -80,5 +80,6 @@ assertions (
     {id abi-narrow, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:15:35.415139873Z}
     {id c-defect-fixes, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:33:07.841894287Z}
     {id nshterm-padding, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:33:59.883734777Z}
-    {id abi-missing-exports, kind @doing, author "brendan@necessary.nu", at 2026-08-05T13:45:19.223368593Z}
+    {id abi-missing-exports, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:46:02.259730161Z}
+    {id errata-reconcile-2, kind @doing, author "brendan@necessary.nu", at 2026-08-05T13:53:36.871034218Z}
 )
