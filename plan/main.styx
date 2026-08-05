@@ -610,12 +610,20 @@ children (
             {
                 id readline-globals-rules
                 title "Write rules for the sixty exported readline globals, which have none"
+                sealed true
                 log (
                     {
                         at 2026-08-05T09:54:38.184379111Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-05T10:09:42.20856709Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
