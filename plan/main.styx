@@ -645,6 +645,14 @@ children (
             {
                 id conformance-oracle
                 title "Build the in-tree C as the reference artifact, at the version we actually ported"
+                log (
+                    {
+                        at 2026-08-05T10:41:06.425370151Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

@@ -71,4 +71,5 @@ assertions (
     {id errata-reconcile, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:51:00.451626035Z}
     {id abi-visibility, kind @complete, author "brendan@necessary.nu", at 2026-08-05T09:46:48.367481715Z}
     {id readline-globals-rules, kind @complete, author "brendan@necessary.nu", at 2026-08-05T10:09:42.20856709Z}
+    {id conformance-oracle, kind @doing, author "brendan@necessary.nu", at 2026-08-05T10:41:06.425370151Z}
 )
