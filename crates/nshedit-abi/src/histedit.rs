@@ -14,29 +14,39 @@
 //! # The varargs entry points
 //!
 //! `el_set`, `el_get`, `el_wset`, `el_wget`, `history` and `history_w` are
-//! `...` functions in C. Rust cannot *define* one on stable (`c_variadic`,
-//! rust-lang/rust#44930), so the four defined here are declared with **fixed
-//! arity**: enough trailing `*mut c_void` parameters for the widest op, read
-//! positionally by the dispatch. Every op code has a known argument shape —
-//! that enumeration is `el_wset`/`el_wget`/`history_w` below — so nothing is
-//! lost, and the exported symbol is still the C one.
+//! `...` functions in C, and the four defined here are `...` functions in
+//! Rust. Each declares exactly the leading parameters `histedit.h` declares
+//! and walks its tail through a [`core::ffi::VaList`], reading the arguments
+//! its `sem` rule enumerates for the selected op — in order, and no others.
+//! That is what the C's `va_arg` chain does, so an op that reads two
+//! arguments reads two here and one that reads none reads none.
 //!
-//! This is correct on **x86-64 System V** and on **AArch64 AAPCS**, where a
-//! variadic call places its arguments in exactly the registers and stack
-//! slots a fixed-arity call of the same shape would: the first six (x86-64)
-//! or eight (AArch64) integer/pointer arguments in registers, the rest on the
-//! stack, with `al`/nothing carrying the vector-register count that no op
-//! here uses.
+//! The exported function only forwards. The per-op work lives in an ordinary
+//! function taking the `VaList` by value — `el_wset_va`, `el_wget_va`,
+//! [`history_dispatch`] — which is what lets the narrow and wide halves of
+//! `history` share one dispatch, and keeps the arm bodies out of a variadic
+//! frame.
 //!
-//! It is **wrong on AArch64 Apple** (`arm64-apple-darwin`), whose calling
-//! convention passes *every* variadic argument on the stack, one 8-byte slot
-//! each, immediately after the named parameters. A fixed-arity callee there
-//! would read the caller's `a1..a19` out of x2..x7 and never look at the
-//! stack. Supporting that target needs a different body for these four
-//! functions: either a hand-written naked-function trampoline that spills
-//! x0..x7 into a frame the dispatch then reads from the stack, or a
-//! `#[cfg(target_vendor = "apple")]` module built with `c_variadic` once it
-//! stabilises. Nothing here is gated on a nightly feature.
+//! This replaces a fixed-arity shim: enough trailing `*mut c_void` parameters
+//! for the widest op, read positionally. That shim was correct on **x86-64
+//! System V** and **AArch64 AAPCS**, where a variadic call places its
+//! arguments in the same registers and stack slots a fixed-arity call of the
+//! same shape would, and **wrong on AArch64 Apple**
+//! (`arm64-apple-darwin`), whose convention passes *every* variadic argument
+//! on the stack, one 8-byte slot each, immediately after the named
+//! parameters — so the callee read the caller's `a1..a19` out of x2..x7 and
+//! never looked at the stack. Silent corruption rather than a link error.
+//! Real variadics leave no target where caller and callee disagree about
+//! where an argument lives.
+//!
+//! One consequence is a defect coming back rather than going away, and it is
+//! deliberate. A caller that omits the NULL sentinel from `EL_BIND` and its
+//! four neighbours makes the collection loop read past the end of its own
+//! argument list — undefined behaviour, ERR-core-api-07's other half, which
+//! the fixed arity had defined away by construction.
+//! `plan/decisions/conformance-policy.md` reproduces the C's defined defects
+//! rather than repairing them, and a genuine `...` reproduces this one for
+//! free — the shim had been accidentally safer than what it imitates.
 //!
 //! # The narrow and wide halves
 //!
@@ -54,7 +64,7 @@
 //! `el_wset(EL_SETFP)`'s facility over a caller's opaque `FILE *` is
 //! [`crate::cstdio`], the third site `plan/decisions/no-c-ffi.md` enumerates.
 
-use core::ffi::{c_char, c_int, c_uchar, c_void};
+use core::ffi::{VaList, c_char, c_int, c_uchar, c_void};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -166,19 +176,21 @@ static EDITOR_VI: [u32; 3] = wide(b"vi\0");
 // Helpers: the C-shaped plumbing this crate exists to own.
 // ---------------------------------------------------------------------------
 
-/// One varargs slot read back as the C function pointer it carries.
+/// C: `va_arg(ap, <some function pointer type>)`.
 ///
 /// `Option<F>` for a function-pointer `F` has the same size and the same
-/// null representation as a data pointer, so this is a reinterpretation and
-/// not a conversion: a NULL slot becomes `None`, which is how every op here
-/// spells "the caller passed no function".
+/// null representation as a data pointer, so the read is a reinterpretation
+/// and not a conversion: a NULL slot becomes `None`, which is how every op
+/// here spells "the caller passed no function".
 ///
 /// # Safety
 /// `F` must be a function-pointer type, and the slot must really hold a
 /// function of that exact signature — which is the op's own contract with the
 /// caller, and undefined in the C too when it is broken.
-unsafe fn fn_slot<F: Copy>(p: *mut c_void) -> Option<F> {
+unsafe fn fn_arg<F: Copy>(ap: &mut VaList<'_>) -> Option<F> {
     assert_eq!(size_of::<Option<F>>(), size_of::<*mut c_void>());
+    // SAFETY: the caller's contract, above.
+    let p = unsafe { ap.next_arg::<*mut c_void>() };
     // SAFETY: the size is checked above and the caller guarantees `F` is a
     // function-pointer type, whose `Option` is null-niche optimised.
     unsafe { core::mem::transmute_copy::<*mut c_void, Option<F>>(&p) }
@@ -289,33 +301,38 @@ thread_local! {
 }
 
 /// The C's `const wchar_t *argv[20]` for `EL_BIND`, `EL_TELLTC`, `EL_SETTC`,
-/// `EL_ECHOTC` and `EL_SETTY`, built from the varargs slots.
+/// `EL_ECHOTC` and `EL_SETTY`, collected out of the varargs tail.
 ///
-/// `cmd` becomes `argv[0]` and the slots become `argv[1..]`, the scan stopping
-/// at the first NULL — so the returned length *is* the C's `i`, the `argc` it
-/// passes on. That count is what every one of the five handlers ignores;
-/// `sem:map.map-bind-fn` records that `map_bind` overwrites it with 1 and
-/// iterates to the terminator instead (ERR-modes-27), which is why the vector
-/// is cut at the NULL rather than at the caller's count.
+/// C: `for (i = 1; i < 20; i++) if ((argv[i] = va_arg(ap, wchar_t *)) == NULL)
+/// break;` — so at most nineteen arguments are read, `cmd` becomes `argv[0]`,
+/// and the returned length *is* the C's `i`, the `argc` it passes on. That
+/// count is what every one of the five handlers ignores; `sem:map.map-bind-fn`
+/// records that `map_bind` overwrites it with 1 and iterates to the terminator
+/// instead (ERR-modes-27), which is why the vector is cut at the NULL rather
+/// than at the caller's count.
 ///
 /// ERR-core-api-07, disposition `define — always terminate`: with all
 /// nineteen slots non-NULL the C's array is full, unterminated, and passed
 /// with `argc == 20`, and a handler scanning for the terminator then reads a
 /// twenty-first element that does not exist. A `Vec` ends where it ends, so
-/// the over-read cannot arise; the definition is that the list is always
-/// terminated. Note the C's *other* half of that defect — reading past the
-/// end of the caller's argument list when the sentinel is missing entirely —
-/// cannot arise either, because [`el_wset`] is declared with nineteen fixed
-/// parameters rather than varargs.
+/// that over-read cannot arise; the definition is that the list is always
+/// terminated. The *other* half of the same defect is reproduced and not
+/// defined away: a caller that omits the sentinel with fewer than nineteen
+/// arguments makes this loop read past the end of its own argument list,
+/// exactly as the C does.
 ///
 /// # Safety
-/// Each slot is null or a NUL-terminated wide string that outlives the call,
-/// which is the op's contract with the caller.
-unsafe fn list_args<'a>(cmd: &'a [u32], slots: &[*mut c_void]) -> Vec<&'a [u32]> {
-    let mut argv: Vec<&[u32]> = Vec::with_capacity(slots.len() + 1);
+/// The tail holds a NULL-terminated list of wide strings, each of which
+/// outlives the call — the op's contract with the caller, and undefined in the
+/// C too when it is broken.
+unsafe fn list_args<'a>(cmd: &'a [u32], ap: &mut VaList<'_>) -> Vec<&'a [u32]> {
+    const ARGV_LEN: usize = 20;
+    let mut argv: Vec<&[u32]> = Vec::with_capacity(ARGV_LEN);
     argv.push(cmd);
-    for &p in slots {
+    for _ in 1..ARGV_LEN {
         // SAFETY: the caller's contract, above.
+        let p = unsafe { ap.next_arg::<*mut c_void>() };
+        // SAFETY: a non-NULL slot is a NUL-terminated wide string.
         let Some(s) = (unsafe { wstr(p.cast::<u32>()) }) else {
             break;
         };
@@ -619,28 +636,12 @@ pub unsafe extern "C" fn history_end(h: *mut History) {
 
 /// C: `int history(History *, HistEvent *, int, ...);`
 ///
-/// Declared with fixed arity and read positionally; see [`history_dispatch`],
-/// which is the same table `history_w` uses with `Char` set to `char`.
+/// The tail is walked by [`history_dispatch`], which is the same table
+/// `history_w` uses with `Char` set to `char`.
 // [spec:libedit:def:histedit.history-fn]
 // [spec:libedit:sem:histedit.history-fn]
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn history(
-    h: *mut History,
-    ev: *mut HistEvent,
-    op: c_int,
-    a1: *mut c_void,
-    a2: *mut c_void,
-    a3: *mut c_void,
-    a4: *mut c_void,
-    a5: *mut c_void,
-    a6: *mut c_void,
-    a7: *mut c_void,
-    a8: *mut c_void,
-    a9: *mut c_void,
-    a10: *mut c_void,
-    a11: *mut c_void,
-) -> c_int {
+pub unsafe extern "C" fn history(h: *mut History, ev: *mut HistEvent, op: c_int, ap: ...) -> c_int {
     // Same op codes, argument shapes, error codes and ownership rules as
     // `history_w` — `sem:histedit.history-fn` is the rule `history_w`'s is
     // written against — but over a byte store, so `H_ADD`, `H_ENTER`,
@@ -649,7 +650,7 @@ pub unsafe extern "C" fn history(
     // unchanged: the path was already narrow in both instantiations, and so
     // was the file.
     // SAFETY: this function's own contract, forwarded unchanged.
-    unsafe { history_dispatch::<c_char>(h, ev, op, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11) }
+    unsafe { history_dispatch::<c_char>(h, ev, op, ap) }
 }
 
 // [spec:libedit:def:histedit.tok-init-fn]
@@ -850,53 +851,30 @@ pub unsafe extern "C" fn el_wparse(el: *mut EditLine, argc: c_int, argv: *mut *c
 
 /// C: `int el_wset(EditLine *, int, ...);`
 ///
-/// Declared with fixed arity — two named parameters plus nineteen, which is
-/// what the `EL_BIND` family reads (slots 1..19 of a 20-entry array) — and
-/// read positionally. See the module documentation for why that is correct on
-/// x86-64 SysV and AArch64 AAPCS and wrong on AArch64 Apple.
-///
-/// Only the arguments the selected op defines are ever touched; supplying
-/// fewer or differently typed arguments for an op stays the caller's
-/// undefined behaviour, as in the C.
+/// Only the arguments the selected op defines are ever read; supplying fewer
+/// or differently typed arguments for an op stays the caller's undefined
+/// behaviour, as in the C.
 // [spec:libedit:def:histedit.el-wset-fn]
 // [spec:libedit:sem:histedit.el-wset-fn]
 // [spec:libedit:def:el.el-wset-fn]
 // [spec:libedit:sem:el.el-wset-fn]
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn el_wset(
-    el: *mut EditLine,
-    op: c_int,
-    a1: *mut c_void,
-    a2: *mut c_void,
-    a3: *mut c_void,
-    a4: *mut c_void,
-    a5: *mut c_void,
-    a6: *mut c_void,
-    a7: *mut c_void,
-    a8: *mut c_void,
-    a9: *mut c_void,
-    a10: *mut c_void,
-    a11: *mut c_void,
-    a12: *mut c_void,
-    a13: *mut c_void,
-    a14: *mut c_void,
-    a15: *mut c_void,
-    a16: *mut c_void,
-    a17: *mut c_void,
-    a18: *mut c_void,
-    a19: *mut c_void,
-) -> c_int {
-    // A NULL editor is rejected before any argument is read.
+pub unsafe extern "C" fn el_wset(el: *mut EditLine, op: c_int, ap: ...) -> c_int {
+    // A NULL editor is rejected before the tail is started, as in the C: the
+    // check sits above `va_start`.
     if el.is_null() {
         return -1;
     }
-    // SAFETY: `el` is non-null and is the caller's live handle.
-    let el = unsafe { &mut *el };
+    // SAFETY: `el` is non-null and is the caller's live handle, and the tail
+    // carries what `op` says it carries.
+    unsafe { el_wset_va(&mut *el, op, ap) }
+}
 
-    // An `int` vararg arrives in the low half of an argument slot.
-    let int_arg = |p: *mut c_void| p as usize as u32 as c_int;
-
+/// [`el_wset`]'s dispatch, out of the variadic frame.
+///
+/// # Safety
+/// The tail must carry the arguments the selected `op` defines, in order.
+unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
     match op {
         // One `el_pfunc_t`. `prompt_set(el, p, 0, op, 1)`: installs the left
         // prompt for EL_PROMPT and the right otherwise, marks it wide, resets
@@ -908,7 +886,7 @@ pub unsafe extern "C" fn el_wset(
         // (ERR-core-api-36, reproduced in `prompt_set` itself).
         EL_PROMPT | EL_RPROMPT => {
             // SAFETY: the op's argument is an `el_pfunc_t`, per the header.
-            let p = unsafe { fn_slot::<ElPfuncT>(a1) };
+            let p = unsafe { fn_arg::<ElPfuncT>(&mut ap) };
             nshedit::prompt::prompt_set(el, p, 0, op, 1)
         }
 
@@ -918,10 +896,12 @@ pub unsafe extern "C" fn el_wset(
         // the half of the asymmetry `prompt_get` gets wrong.
         EL_PROMPT_ESC | EL_RPROMPT_ESC => {
             // SAFETY: as above.
-            let p = unsafe { fn_slot::<ElPfuncT>(a1) };
+            let p = unsafe { fn_arg::<ElPfuncT>(&mut ap) };
             // C: `(wchar_t)c` on an `int` vararg — the low 32 bits kept and
             // reinterpreted, which is what the core's `u32` holds.
-            nshedit::prompt::prompt_set(el, p, int_arg(a2) as u32, op, 1)
+            // SAFETY: the op's second argument is an `int`.
+            let c = unsafe { ap.next_arg::<c_int>() };
+            nshedit::prompt::prompt_set(el, p, c as u32, op, 1)
         }
 
         // An `el_zfunc_t` then a `void *`: the resize callback and its
@@ -930,28 +910,33 @@ pub unsafe extern "C" fn el_wset(
         EL_RESIZE => {
             // SAFETY: the op's first argument is an `el_zfunc_t`, per the
             // header; the second is an opaque cookie stored verbatim.
-            let p = unsafe { fn_slot::<ElZfuncT>(a1) };
-            nshedit::chared::ch_resizefun(el, p, a2)
+            let p = unsafe { fn_arg::<ElZfuncT>(&mut ap) };
+            let arg = unsafe { ap.next_arg::<*mut c_void>() };
+            nshedit::chared::ch_resizefun(el, p, arg)
         }
 
         // An `el_afunc_t` then a `void *`: the alias-expansion callback and
         // its cookie — narrow `char` even in the wide API. Always 0.
         EL_ALIAS_TEXT => {
-            // SAFETY: the op's first argument is an `el_afunc_t`.
-            let p = unsafe { fn_slot::<ElAfuncT>(a1) };
-            nshedit::chared::ch_aliasfun(el, p, a2)
+            // SAFETY: the op's first argument is an `el_afunc_t`; the second
+            // is an opaque cookie stored verbatim.
+            let p = unsafe { fn_arg::<ElAfuncT>(&mut ap) };
+            let arg = unsafe { ap.next_arg::<*mut c_void>() };
+            nshedit::chared::ch_aliasfun(el, p, arg)
         }
 
         // One `char *` terminal type, bytes even here. NULL means `$TERM`
         // through the environment hook; `"emacs"` additionally sets
         // EDIT_DISABLED. 0, or -1 if the display arrays could not be grown —
-        // and also -1, which `sem:histedit.el-wset-fn` does not say, whenever
-        // the capability lookup failed, however usable the dumb-terminal
-        // fallback it then installed is (ERR-terminal-22, reproduced by
-        // `terminal_set` and propagated here).
+        // and also -1 whenever the capability lookup failed, however usable
+        // the dumb-terminal fallback it then installed is (ERR-terminal-22,
+        // reproduced by `terminal_set` and propagated here; both
+        // `sem:histedit.el-wset-fn` and `sem:el.el-wset-fn` say so).
         EL_TERMINAL => {
-            // SAFETY: `a1` is null or a NUL-terminated byte string.
-            let bytes = unsafe { cbytes(a1.cast::<c_char>()) };
+            // SAFETY: the op's argument is null or a NUL-terminated byte
+            // string.
+            let p = unsafe { ap.next_arg::<*mut c_void>() };
+            let bytes = unsafe { cbytes(p.cast::<c_char>()) };
             // The core takes `&str`. A type name that is not UTF-8 is passed
             // on lossily rather than rejected — unlike `el_init`'s program
             // name and `H_LOAD`'s filename, which fail the call. The reason
@@ -968,8 +953,10 @@ pub unsafe extern "C" fn el_wset(
         EL_EDITOR => {
             // ERR-core-api-08, disposition `define — reject NULL`: the C
             // hands the argument straight to `wcscmp`, which dereferences it.
-            // SAFETY: `a1` is null or a NUL-terminated wide string.
-            match unsafe { wstr(a1.cast::<u32>()) } {
+            // SAFETY: the op's argument is null or a NUL-terminated wide
+            // string.
+            let p = unsafe { ap.next_arg::<*mut c_void>() };
+            match unsafe { wstr(p.cast::<u32>()) } {
                 Some(e) => nshedit::map::map_set_editor(el, e),
                 None => -1,
             }
@@ -977,7 +964,8 @@ pub unsafe extern "C" fn el_wset(
 
         // One `int`. Inline in the C's own dispatch, so inline here.
         EL_SIGNAL => {
-            if int_arg(a1) != 0 {
+            // SAFETY: the op's argument is an `int`.
+            if unsafe { ap.next_arg::<c_int>() } != 0 {
                 el.el_flags |= HANDLE_SIGNALS;
             } else {
                 el.el_flags &= !HANDLE_SIGNALS;
@@ -1004,13 +992,9 @@ pub unsafe extern "C" fn el_wset(
                 // makes unreachable; this arm is EL_SETTY.
                 _ => &SETTY,
             };
-            let slots = [
-                a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18,
-                a19,
-            ];
-            // SAFETY: each slot is null or a NUL-terminated wide string the
+            // SAFETY: the tail is a NULL-terminated list of wide strings the
             // caller keeps alive across the call.
-            let argv = unsafe { list_args(cmd, &slots) };
+            let argv = unsafe { list_args(cmd, &mut ap) };
             // The C's `i`: where the scan stopped, not how many strings the
             // caller passed. Every handler ignores it.
             let argc = argv.len() as c_int;
@@ -1028,12 +1012,13 @@ pub unsafe extern "C" fn el_wset(
         // duplicated, so the caller keeps its own.
         EL_ADDFN => {
             // The C's three NULL checks, which `map_addfunc` cannot make: a
-            // `&[u32]` is never null and `ElFuncT` is not nullable.
-            // SAFETY: `a1` and `a2` are null or NUL-terminated wide strings;
-            // `a3` is an `el_func_t`, per the header.
-            let name = unsafe { wstr(a1.cast::<u32>()) };
-            let help = unsafe { wstr(a2.cast::<u32>()) };
-            let func = unsafe { fn_slot::<ElFuncT>(a3) };
+            // `&[u32]` is never null and `ElFuncT` is not nullable. All three
+            // arguments are read before any is checked, as in the C.
+            // SAFETY: the first two are null or NUL-terminated wide strings;
+            // the third is an `el_func_t`, per the header.
+            let name = unsafe { wstr(ap.next_arg::<*mut c_void>().cast::<u32>()) };
+            let help = unsafe { wstr(ap.next_arg::<*mut c_void>().cast::<u32>()) };
+            let func = unsafe { fn_arg::<ElFuncT>(&mut ap) };
             let (Some(name), Some(help), Some(func)) = (name, help, func) else {
                 return -1;
             };
@@ -1047,11 +1032,12 @@ pub unsafe extern "C" fn el_wset(
         EL_HIST => {
             // SAFETY: the op's first argument is a `hist_fun_t`, per the
             // header; the second is the opaque handle it is called with.
-            let f = unsafe { fn_slot::<HistFunT>(a1) };
+            let f = unsafe { fn_arg::<HistFunT>(&mut ap) };
+            let ptr = unsafe { ap.next_arg::<*mut c_void>() };
             // ERR-history-04, defined by the core: a NULL function with a
             // non-NULL handle is -1 here rather than the C's armed NULL
             // indirect call. Every other combination is the C's 0.
-            let rv = nshedit::hist::hist_set(el, f, a2);
+            let rv = nshedit::hist::hist_set(el, f, ptr);
             // The flag clear is not conditional on `rv` in the C either.
             if nshedit::el::mb_cur_max() == 1 {
                 el.el_flags &= !NARROW_HISTORY;
@@ -1061,7 +1047,8 @@ pub unsafe extern "C" fn el_wset(
 
         // One `int`, the EINTR-recovery flag. Inline in the C.
         EL_SAFEREAD => {
-            if int_arg(a1) != 0 {
+            // SAFETY: the op's argument is an `int`.
+            if unsafe { ap.next_arg::<c_int>() } != 0 {
                 el.el_flags |= FIXIO;
             } else {
                 el.el_flags &= !FIXIO;
@@ -1071,7 +1058,8 @@ pub unsafe extern "C" fn el_wset(
 
         // One `int`, inverted: non-zero enables editing. Inline in the C.
         EL_EDITMODE => {
-            if int_arg(a1) != 0 {
+            // SAFETY: the op's argument is an `int`.
+            if unsafe { ap.next_arg::<c_int>() } != 0 {
                 el.el_flags &= !EDIT_DISABLED;
             } else {
                 el.el_flags |= EDIT_DISABLED;
@@ -1083,7 +1071,7 @@ pub unsafe extern "C" fn el_wset(
         // Always 0.
         EL_GETCFN => {
             // SAFETY: the op's argument is an `el_rfunc_t`, per the header.
-            let rc = unsafe { fn_slot::<ElRfuncT>(a1) };
+            let rc = unsafe { fn_arg::<ElRfuncT>(&mut ap) };
             // The C dereferences `el->el_read` unchecked. `Option` makes the
             // uninitialised case representable (ERR-input-16), and there is
             // nothing to install into: 0 is what the op always returns.
@@ -1095,7 +1083,8 @@ pub unsafe extern "C" fn el_wset(
         // One `void *`, stored verbatim and never dereferenced. Inline in the
         // C, and this arm leaves `rv` at 0.
         EL_CLIENTDATA => {
-            el.el_data = a1;
+            // SAFETY: the op's argument is a `void *`.
+            el.el_data = unsafe { ap.next_arg::<*mut c_void>() };
             0
         }
 
@@ -1103,7 +1092,8 @@ pub unsafe extern "C" fn el_wset(
         // read-prepare sequence; the reverse clears it and runs read-finish;
         // setting it to the value it already holds does nothing. Always 0.
         EL_UNBUFFERED => {
-            let on = int_arg(a1) != 0;
+            // SAFETY: the op's argument is an `int`.
+            let on = unsafe { ap.next_arg::<c_int>() } != 0;
             let was = el.el_flags & UNBUFFERED != 0;
             // The flag is written *before* the sequence runs, and both
             // sequences read it: `read_prepare` enters raw mode only when
@@ -1125,7 +1115,8 @@ pub unsafe extern "C" fn el_wset(
         EL_PREP_TERM => {
             // Both results are discarded, so a terminal that refused the mode
             // change is indistinguishable from one that took it.
-            let _ = if int_arg(a1) != 0 {
+            // SAFETY: the op's argument is an `int`.
+            let _ = if unsafe { ap.next_arg::<c_int>() } != 0 {
                 nshedit::tty::tty_rawmode(el)
             } else {
                 nshedit::tty::tty_cookedmode(el)
@@ -1139,12 +1130,15 @@ pub unsafe extern "C" fn el_wset(
         // answers -1 for a NULL stream instead, which is the descriptor the
         // C stores for a stream that has none.
         //
-        // Both varargs are consumed before `what` is validated, which a fixed
-        // arity makes moot. The previously installed stream is neither
-        // flushed nor closed — the caller owns the old one and the new.
+        // Both varargs are consumed before `what` is validated, so a rejected
+        // `what` still leaves the tail walked past the stream. The previously
+        // installed stream is neither flushed nor closed — the caller owns the
+        // old one and the new.
         EL_SETFP => {
-            let fp = a2;
-            match int_arg(a1) {
+            // SAFETY: the op's arguments are an `int` then a `FILE *`.
+            let what = unsafe { ap.next_arg::<c_int>() };
+            let fp = unsafe { ap.next_arg::<*mut c_void>() };
+            match what {
                 0 => {
                     el.el_infile = fp;
                     el.el_infd = cstdio::fileno_of(fp);
@@ -1184,8 +1178,10 @@ pub unsafe extern "C" fn el_wset(
             // the only failure this op has to report it with; every
             // well-formed call still returns 0, the duplication failing
             // included (ERR-core-api-30).
-            // SAFETY: `a1` is null or a NUL-terminated wide string.
-            match unsafe { wstr(a1.cast::<u32>()) } {
+            // SAFETY: the op's argument is null or a NUL-terminated wide
+            // string.
+            let p = unsafe { ap.next_arg::<*mut c_void>() };
+            match unsafe { wstr(p.cast::<u32>()) } {
                 Some(w) => nshedit::map::map_set_wordchars(el, w),
                 None => -1,
             }
@@ -1201,7 +1197,7 @@ pub unsafe extern "C" fn el_wset(
         // fresh handle — round-trips onto that same state.
         EL_GETENV => {
             // SAFETY: the op's argument is a `func_t`, per the header.
-            let f = unsafe { fn_slot::<FuncT>(a1) };
+            let f = unsafe { fn_arg::<FuncT>(&mut ap) };
             el.el_getenv = f.filter(|f| !core::ptr::fn_addr_eq(*f, default_getenv as FuncT));
             0
         }
@@ -1213,26 +1209,30 @@ pub unsafe extern "C" fn el_wset(
 
 /// C: `int el_wget(EditLine *, int, ...);`
 ///
-/// Declared with fixed arity — two named parameters plus two, which is what
-/// the widest get op (`EL_PROMPT_ESC`, `EL_GETTC`, `EL_GETFP`) reads — and
-/// read positionally. See the module documentation for the Apple-ABI caveat.
+/// The read side of [`el_wset`]: every argument is a pointer to the type the
+/// corresponding set op takes by value, and the result is stored through it.
+/// The widest get op reads two (`EL_PROMPT_ESC`, `EL_GETTC`, `EL_GETFP`);
+/// most read one and the set-only ops read none.
 // [spec:libedit:def:histedit.el-wget-fn]
 // [spec:libedit:sem:histedit.el-wget-fn]
 // [spec:libedit:def:el.el-wget-fn]
 // [spec:libedit:sem:el.el-wget-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn el_wget(
-    el: *mut EditLine,
-    op: c_int,
-    a1: *mut c_void,
-    a2: *mut c_void,
-) -> c_int {
+pub unsafe extern "C" fn el_wget(el: *mut EditLine, op: c_int, ap: ...) -> c_int {
+    // As `el_wset`: the NULL check sits above `va_start` in the C.
     if el.is_null() {
         return -1;
     }
-    // SAFETY: `el` is non-null and is the caller's live handle.
-    let el = unsafe { &mut *el };
+    // SAFETY: `el` is non-null and is the caller's live handle, and the tail
+    // carries what `op` says it carries.
+    unsafe { el_wget_va(&mut *el, op, ap) }
+}
 
+/// [`el_wget`]'s dispatch, out of the variadic frame.
+///
+/// # Safety
+/// The tail must carry the out-pointers the selected `op` defines, in order.
+unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
     match op {
         // One `el_pfunc_t *`. -1 if NULL, else 0. The value may be the
         // internal default rather than anything the application installed.
@@ -1240,8 +1240,9 @@ pub unsafe extern "C" fn el_wget(
             // SAFETY: the op's argument is an `el_pfunc_t *`. A slot holding
             // a possibly-NULL function pointer and an `Option<ElPfuncT>` are
             // the same object: `Option` of a function pointer is null-niche
-            // optimised, which [`fn_slot`] asserts for the reverse direction.
-            let prf = unsafe { a1.cast::<Option<ElPfuncT>>().as_mut() };
+            // optimised, which [`fn_arg`] asserts for the reverse direction.
+            let p = unsafe { ap.next_arg::<*mut c_void>() };
+            let prf = unsafe { p.cast::<Option<ElPfuncT>>().as_mut() };
             // The C passes a NULL escape-character pointer here, which is why
             // `el_prompt.p_ignore` has no route out of the library at all
             // (the other half of ERR-core-api-14).
@@ -1256,17 +1257,22 @@ pub unsafe extern "C" fn el_wget(
         // so the core's own reproduction of the defect is what decides.
         EL_PROMPT_ESC | EL_RPROMPT_ESC => {
             // SAFETY: as above.
-            let prf = unsafe { a1.cast::<Option<ElPfuncT>>().as_mut() };
+            let p = unsafe { ap.next_arg::<*mut c_void>() };
+            let prf = unsafe { p.cast::<Option<ElPfuncT>>().as_mut() };
             // SAFETY: the op's second argument is a `wchar_t *`, which the
-            // rule allows to be NULL; the store is then skipped.
-            let c = unsafe { a2.cast::<u32>().as_mut() };
+            // rule allows to be NULL; the store is then skipped. It is read
+            // before `prompt_get` runs, as in the C.
+            let c = unsafe { ap.next_arg::<*mut c_void>() };
+            let c = unsafe { c.cast::<u32>().as_mut() };
             nshedit::prompt::prompt_get(el, prf, c, op)
         }
 
         // One `const wchar_t **`, set to the static `L\"emacs\"`/`L\"vi\"`.
         EL_EDITOR => {
+            // SAFETY: the op's argument is a `const wchar_t **`.
+            let out = unsafe { ap.next_arg::<*mut c_void>() };
             // `map_get_editor`'s NULL check, which its `&mut` cannot make.
-            if a1.is_null() {
+            if out.is_null() {
                 return -1;
             }
             let mut editor: &'static [u32] = &[];
@@ -1286,7 +1292,7 @@ pub unsafe extern "C" fn el_wget(
                 return -1;
             };
             // SAFETY: the op's argument is a `const wchar_t **`.
-            unsafe { *a1.cast::<*const u32>() = p };
+            unsafe { *out.cast::<*const u32>() = p };
             0
         }
 
@@ -1294,7 +1300,8 @@ pub unsafe extern "C" fn el_wget(
         // it reads as 1 only because that bit happens to be 0x001.
         EL_SIGNAL => {
             // SAFETY: the op's argument is an `int *` the caller supplied.
-            unsafe { *a1.cast::<c_int>() = el.el_flags & HANDLE_SIGNALS };
+            let out = unsafe { ap.next_arg::<*mut c_void>() };
+            unsafe { *out.cast::<c_int>() = el.el_flags & HANDLE_SIGNALS };
             0
         }
 
@@ -1302,7 +1309,8 @@ pub unsafe extern "C" fn el_wget(
         // genuinely 0 or 1 and inverted to match the setter's polarity.
         EL_EDITMODE => {
             // SAFETY: the op's argument is an `int *` the caller supplied.
-            unsafe { *a1.cast::<c_int>() = c_int::from(el.el_flags & EDIT_DISABLED == 0) };
+            let out = unsafe { ap.next_arg::<*mut c_void>() };
+            unsafe { *out.cast::<c_int>() = c_int::from(el.el_flags & EDIT_DISABLED == 0) };
             0
         }
 
@@ -1311,13 +1319,16 @@ pub unsafe extern "C" fn el_wget(
         // deliberately not normalised here.
         EL_SAFEREAD => {
             // SAFETY: the op's argument is an `int *` the caller supplied.
-            unsafe { *a1.cast::<c_int>() = el.el_flags & FIXIO };
+            let out = unsafe { ap.next_arg::<*mut c_void>() };
+            unsafe { *out.cast::<c_int>() = el.el_flags & FIXIO };
             0
         }
 
         // One `const char **`, set to the loaded terminal type name — narrow
         // bytes even in the wide API. Always 0.
         EL_TERMINAL => {
+            // SAFETY: the op's argument is a `const char **`.
+            let out = unsafe { ap.next_arg::<*mut c_void>() };
             let key = core::ptr::from_mut(el) as usize;
             let mut name: Option<&str> = None;
             nshedit::terminal::terminal_get(el, &mut name);
@@ -1343,9 +1354,9 @@ pub unsafe extern "C" fn el_wget(
                     }
                 }
             });
-            // SAFETY: the op's argument is a `const char **`. The C has no
-            // NULL check here and neither has this.
-            unsafe { *a1.cast::<*const c_char>() = p };
+            // The C has no NULL check here and neither has this.
+            // SAFETY: the out-pointer read above.
+            unsafe { *out.cast::<*const c_char>() = p };
             0
         }
 
@@ -1358,11 +1369,16 @@ pub unsafe extern "C" fn el_wget(
         EL_GETTC => {
             // C: `argv[0] = name; argv[1] = va_arg(char *); argv[2] =
             // va_arg(void *)`, then `terminal_gettc(el, 3, argv)`. The count
-            // is the literal 3 and the handler ignores it.
+            // is the literal 3 and the handler ignores it. Exactly two
+            // arguments are read: no sentinel is consumed, despite the
+            // header's `..., NULL` (ERR-core-api-29).
+            // SAFETY: the op's arguments are a `char *` then a `void *`.
+            let name = unsafe { ap.next_arg::<*mut c_void>() };
+            let out = unsafe { ap.next_arg::<*mut c_void>() };
             let argv = [
                 GETTC.as_ptr().cast::<c_char>().cast_mut(),
-                a1.cast::<c_char>(),
-                a2.cast::<c_char>(),
+                name.cast::<c_char>(),
+                out.cast::<c_char>(),
             ];
             nshedit::terminal::terminal_gettc(el, 3, &argv)
         }
@@ -1380,14 +1396,16 @@ pub unsafe extern "C" fn el_wget(
                 .and_then(nshedit::read::el_read_getfn);
             // SAFETY: the op's argument is an `el_rfunc_t *`, and an
             // `Option<ElRfuncT>` is that slot's exact representation.
-            unsafe { *a1.cast::<Option<ElRfuncT>>() = f };
+            let out = unsafe { ap.next_arg::<*mut c_void>() };
+            unsafe { *out.cast::<Option<ElRfuncT>>() = f };
             0
         }
 
         // One `void **`, set to the registered client pointer.
         EL_CLIENTDATA => {
             // SAFETY: the op's argument is a `void **` the caller supplied.
-            unsafe { *a1.cast::<*mut c_void>() = el.el_data };
+            let out = unsafe { ap.next_arg::<*mut c_void>() };
+            unsafe { *out.cast::<*mut c_void>() = el.el_data };
             0
         }
 
@@ -1395,30 +1413,37 @@ pub unsafe extern "C" fn el_wget(
         // EL_SAFEREAD.
         EL_UNBUFFERED => {
             // SAFETY: the op's argument is an `int *` the caller supplied.
-            unsafe { *a1.cast::<c_int>() = c_int::from(el.el_flags & UNBUFFERED != 0) };
+            let out = unsafe { ap.next_arg::<*mut c_void>() };
+            unsafe { *out.cast::<c_int>() = c_int::from(el.el_flags & UNBUFFERED != 0) };
             0
         }
 
         // An `int what` then a `FILE **`: input 0, output 1, error 2. Any
-        // other `what` returns -1 with the caller's storage untouched. The
-        // descriptors cannot be read back, only the streams.
+        // other `what` returns -1 with the caller's storage untouched. Both
+        // are read before `what` is validated, as in the C. The descriptors
+        // cannot be read back, only the streams.
         EL_GETFP => {
-            let fp = match a1 as usize as u32 as c_int {
+            // SAFETY: the op's arguments are an `int` then a `FILE **`.
+            let what = unsafe { ap.next_arg::<c_int>() };
+            let out = unsafe { ap.next_arg::<*mut c_void>() };
+            let fp = match what {
                 0 => el.el_infile,
                 1 => el.el_outfile,
                 2 => el.el_errfile,
                 _ => return -1,
             };
-            // SAFETY: the op's second argument is a `FILE **`.
-            unsafe { *a2.cast::<CFile>() = fp };
+            // SAFETY: the out-pointer read above.
+            unsafe { *out.cast::<CFile>() = fp };
             0
         }
 
         // One `const wchar_t **`, set to the word-character set. NULL means
         // "the built-in defaults are in use", not "empty".
         EL_WORDCHARS => {
+            // SAFETY: the op's argument is a `const wchar_t **`.
+            let out = unsafe { ap.next_arg::<*mut c_void>() };
             // `map_get_wordchars`'s NULL check, which its `&mut` cannot make.
-            if a1.is_null() {
+            if out.is_null() {
                 return -1;
             }
             let key = core::ptr::from_mut(el) as usize;
@@ -1446,8 +1471,8 @@ pub unsafe extern "C" fn el_wget(
                     core::ptr::null()
                 }
             });
-            // SAFETY: the op's argument is a `const wchar_t **`.
-            unsafe { *a1.cast::<*const u32>() = p };
+            // SAFETY: the out-pointer read above.
+            unsafe { *out.cast::<*const u32>() = p };
             0
         }
 
@@ -1458,7 +1483,8 @@ pub unsafe extern "C" fn el_wget(
         EL_GETENV => {
             let f: FuncT = el.el_getenv.unwrap_or(default_getenv);
             // SAFETY: the op's argument is a `func_t *` the caller supplied.
-            unsafe { *a1.cast::<FuncT>() = f };
+            let out = unsafe { ap.next_arg::<*mut c_void>() };
+            unsafe { *out.cast::<FuncT>() = f };
             0
         }
 
@@ -1568,41 +1594,26 @@ pub unsafe extern "C" fn history_wend(h: *mut HistoryW) {
     nshedit::history::history_wend(h);
 }
 
-/// The varargs tail of `history_w`/`history`, read positionally and handed to
-/// the core as a `HistoryArg`.
-///
-/// Both entry points are declared with fixed arity — three named parameters
-/// plus the eleven `H_FUNC` takes, the widest op. See the module documentation
-/// for why that is correct on x86-64 SysV and AArch64 AAPCS and wrong on
-/// AArch64 Apple.
+/// The varargs tail of `history_w`/`history`, walked and handed to the core as
+/// a `HistoryArg`.
 ///
 /// The op enumeration below is the whole of this function: each code names how
 /// many trailing arguments it has and what they are, which is what the core's
-/// `HistoryArg` is a closed form of. Only one entry in that table depends on
-/// the instantiation — the five string ops, whose argument is `const wchar_t
-/// *` wide and `const char *` narrow — so the table is written once and `C`
-/// picks the spelling. `H_LOAD` and `H_SAVE` take a `const char *` path in
-/// *both*, because the on-disk format is bytes and is frozen.
+/// `HistoryArg` is a closed form of, and it is also exactly how many `va_arg`
+/// reads the C makes. Only one entry in that table depends on the
+/// instantiation — the five string ops, whose argument is `const wchar_t *`
+/// wide and `const char *` narrow — so the table is written once and `C` picks
+/// the spelling. `H_LOAD` and `H_SAVE` take a `const char *` path in *both*,
+/// because the on-disk format is bytes and is frozen.
 ///
 /// # Safety
 /// `h` and `ev` must be a live handle and a writable event of this
-/// instantiation, and each varargs slot must carry what its op code says.
-#[allow(clippy::too_many_arguments)]
+/// instantiation, and the tail must carry what the op code says.
 unsafe fn history_dispatch<C: nshedit::history::HistChar>(
     h: *mut nshedit::history::HistoryGen<C>,
     ev: *mut nshedit::histedit::HistEventGen<C>,
     op: c_int,
-    a1: *mut c_void,
-    a2: *mut c_void,
-    a3: *mut c_void,
-    a4: *mut c_void,
-    a5: *mut c_void,
-    a6: *mut c_void,
-    a7: *mut c_void,
-    a8: *mut c_void,
-    a9: *mut c_void,
-    a10: *mut c_void,
-    a11: *mut c_void,
+    mut ap: VaList<'_>,
 ) -> c_int {
     use nshedit::histedit::{
         H_ADD, H_APPEND, H_CLEAR, H_CURR, H_DEL, H_DELDATA, H_END, H_ENTER, H_FIRST, H_FUNC,
@@ -1615,17 +1626,6 @@ unsafe fn history_dispatch<C: nshedit::history::HistChar>(
     // in the C.
     // SAFETY: `ev` is the caller's out-parameter.
     let ev = unsafe { &mut *ev };
-
-    // An `int` vararg arrives in the low half of an argument slot; a `size_t`
-    // fills one.
-    let int_arg = |p: *mut c_void| p as usize as u32 as c_int;
-
-    // Filenames are `const char *` in both instantiations. The core takes
-    // `&str`, so a path that is not UTF-8 cannot be passed on; it is reported
-    // as the op's failure rather than opened under a different name. See the
-    // crate report — `history_load`/`history_save` want `&Path`.
-    // SAFETY: `a1` is a NUL-terminated path for the two ops that use it.
-    let path = || unsafe { cbytes(a1.cast::<c_char>()) }.and_then(|b| core::str::from_utf8(b).ok());
 
     // `H_FUNC`'s assembled vtable. C: `TYPE(History) hf`, a stack local in
     // `FUNW(history)`; hoisted out of the arm below only so the borrow the
@@ -1644,37 +1644,35 @@ unsafe fn history_dispatch<C: nshedit::history::HistChar>(
         // stores it, so the installed functions are called with libedit's own
         // builtin state pointer (ERR-history-04, frozen).
         H_FUNC => {
+            // SAFETY: for this op the eleven slots carry the state pointer and
+            // then the ten vtable functions in exactly this order, per the
+            // header and `sem:histedit.history-w-fn`.
             hf = nshedit::history::HistoryGen::<C> {
-                h_ref: a1,
+                h_ref: unsafe { ap.next_arg::<*mut c_void>() },
                 // Not read by anything this op reaches: the C's `hf` is an
                 // uninitialised stack local except for the eleven fields it
                 // fills, and `history_set_fun` copies only the ten callbacks.
                 // The dispatch's own `h->h_ent = -1` is the core's.
                 h_ent: 0,
-                // SAFETY: for this op the ten slots carry the ten vtable
-                // functions in exactly this order, per the header and
-                // `sem:histedit.history-w-fn`.
-                h_first: unsafe { fn_slot::<HistoryGfunT<C>>(a2) },
-                h_next: unsafe { fn_slot::<HistoryGfunT<C>>(a3) },
-                h_last: unsafe { fn_slot::<HistoryGfunT<C>>(a4) },
-                h_prev: unsafe { fn_slot::<HistoryGfunT<C>>(a5) },
-                h_curr: unsafe { fn_slot::<HistoryGfunT<C>>(a6) },
-                h_set: unsafe { fn_slot::<HistorySfunT<C>>(a7) },
-                h_clear: unsafe { fn_slot::<HistoryVfunT<C>>(a8) },
-                h_enter: unsafe { fn_slot::<HistoryEfunT<C>>(a9) },
-                h_add: unsafe { fn_slot::<HistoryEfunT<C>>(a10) },
-                h_del: unsafe { fn_slot::<HistorySfunT<C>>(a11) },
+                h_first: unsafe { fn_arg::<HistoryGfunT<C>>(&mut ap) },
+                h_next: unsafe { fn_arg::<HistoryGfunT<C>>(&mut ap) },
+                h_last: unsafe { fn_arg::<HistoryGfunT<C>>(&mut ap) },
+                h_prev: unsafe { fn_arg::<HistoryGfunT<C>>(&mut ap) },
+                h_curr: unsafe { fn_arg::<HistoryGfunT<C>>(&mut ap) },
+                h_set: unsafe { fn_arg::<HistorySfunT<C>>(&mut ap) },
+                h_clear: unsafe { fn_arg::<HistoryVfunT<C>>(&mut ap) },
+                h_enter: unsafe { fn_arg::<HistoryEfunT<C>>(&mut ap) },
+                h_add: unsafe { fn_arg::<HistoryEfunT<C>>(&mut ap) },
+                h_del: unsafe { fn_arg::<HistorySfunT<C>>(&mut ap) },
             };
             HistoryArg::Funcs(&hf)
         }
 
         // One `int`.
-        H_SETSIZE => HistoryArg::Num(int_arg(a1)),
-        H_SET => HistoryArg::Num(int_arg(a1)),
-        H_SETUNIQUE => HistoryArg::Num(int_arg(a1)),
-        H_DEL => HistoryArg::Num(int_arg(a1)),
-        H_NEXT_EVENT => HistoryArg::Num(int_arg(a1)),
-        H_PREV_EVENT => HistoryArg::Num(int_arg(a1)),
+        // SAFETY: the op's argument is an `int`.
+        H_SETSIZE | H_SET | H_SETUNIQUE | H_DEL | H_NEXT_EVENT | H_PREV_EVENT => {
+            HistoryArg::Num(unsafe { ap.next_arg::<c_int>() })
+        }
 
         // No trailing argument. `H_CURR` included: the header comment's
         // `, const int)` is wrong.
@@ -1683,48 +1681,82 @@ unsafe fn history_dispatch<C: nshedit::history::HistChar>(
         }
 
         // One `const wchar_t *`.
-        // SAFETY: `a1` is a NUL-terminated wide string for these ops.
-        H_ADD | H_ENTER | H_APPEND | H_NEXT_STR | H_PREV_STR => {
-            HistoryArg::Str(a1.cast::<C>().cast_const())
-        }
+        // SAFETY: the op's argument is a NUL-terminated string of this
+        // instantiation's character type.
+        H_ADD | H_ENTER | H_APPEND | H_NEXT_STR | H_PREV_STR => HistoryArg::Str(
+            unsafe { ap.next_arg::<*mut c_void>() }
+                .cast::<C>()
+                .cast_const(),
+        ),
 
         // One `const char *` filename — narrow in both instantiations,
         // because the on-disk format is bytes and is frozen.
-        H_LOAD | H_SAVE => match path() {
-            Some(p) => HistoryArg::Path(p),
-            None => return -1,
-        },
+        //
+        // The core takes `&str`, so a path that is not UTF-8 cannot be passed
+        // on; it is reported as the op's failure rather than opened under a
+        // different name. See the crate report — `history_load`/`history_save`
+        // want `&Path`.
+        H_LOAD | H_SAVE => {
+            // SAFETY: the op's argument is a NUL-terminated path.
+            let p = unsafe { ap.next_arg::<*mut c_void>() };
+            let path =
+                unsafe { cbytes(p.cast::<c_char>()) }.and_then(|b| core::str::from_utf8(b).ok());
+            match path {
+                Some(p) => HistoryArg::Path(p),
+                None => return -1,
+            }
+        }
 
         // One `FILE *`, which the caller keeps and must close. The stream is
         // read and written here rather than in the core: see
         // [`crate::cstdio`] for why the descriptor behind it is not a
         // substitute.
-        H_SAVE_FP => HistoryArg::Fp(SaveStream {
-            at_start: cstdio::at_start(a1),
-            out: fp_out.insert(CFileWriter::new(a1)),
-        }),
+        H_SAVE_FP => {
+            // SAFETY: the op's argument is the caller's `FILE *`.
+            let fp = unsafe { ap.next_arg::<*mut c_void>() };
+            HistoryArg::Fp(SaveStream {
+                at_start: cstdio::at_start(fp),
+                out: fp_out.insert(CFileWriter::new(fp)),
+            })
+        }
 
         // `size_t n` then `FILE *`. `n` is passed through unchanged: the walk
         // takes `n` steps back from the newest and then writes forward, so it
-        // emits **n + 1** entries and `n == 0` writes one (ERR-history-15).
+        // emits **n + 1** entries and `n == 0` writes one (ERR-history-19).
         // Not corrected here.
-        H_NSAVE_FP => HistoryArg::NSaveFp(
-            a1 as usize,
-            SaveStream {
-                at_start: cstdio::at_start(a2),
-                out: fp_out.insert(CFileWriter::new(a2)),
-            },
-        ),
+        H_NSAVE_FP => {
+            // SAFETY: the op's arguments are a `size_t` then a `FILE *`.
+            let n = unsafe { ap.next_arg::<usize>() };
+            let fp = unsafe { ap.next_arg::<*mut c_void>() };
+            HistoryArg::NSaveFp(
+                n,
+                SaveStream {
+                    at_start: cstdio::at_start(fp),
+                    out: fp_out.insert(CFileWriter::new(fp)),
+                },
+            )
+        }
 
         // `int` then `void **`. The pointer stays raw: `H_DELDATA` accepts
         // the magic `(void **)-1` meaning "position the cursor only".
-        H_NEXT_EVDATA | H_DELDATA => HistoryArg::EvData(int_arg(a1), a2.cast::<*mut c_void>()),
+        H_NEXT_EVDATA | H_DELDATA => {
+            // SAFETY: the op's arguments are an `int` then a `void **`.
+            let num = unsafe { ap.next_arg::<c_int>() };
+            let d = unsafe { ap.next_arg::<*mut c_void>() };
+            HistoryArg::EvData(num, d.cast::<*mut c_void>())
+        }
 
         // `const wchar_t *line` then `void *data`. It does not free the
         // string it overwrites, so every call leaks one (ERR-history-08),
         // and it reaches into the builtin state without checking that one is
         // installed. Both reproduced.
-        H_REPLACE => HistoryArg::Replace(a1.cast::<C>().cast_const(), a2),
+        H_REPLACE => {
+            // SAFETY: the op's arguments are a NUL-terminated string of this
+            // instantiation's character type then an opaque cookie.
+            let line = unsafe { ap.next_arg::<*mut c_void>() };
+            let d = unsafe { ap.next_arg::<*mut c_void>() };
+            HistoryArg::Replace(line.cast::<C>().cast_const(), d)
+        }
 
         // Anything else reads no argument and comes back -1 with `ev` set to
         // code 1, "unknown error" — which the core's default arm does, so it
@@ -1744,22 +1776,11 @@ unsafe fn history_dispatch<C: nshedit::history::HistChar>(
 // [spec:libedit:def:histedit.history-w-fn]
 // [spec:libedit:sem:histedit.history-w-fn]
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn history_w(
     h: *mut HistoryW,
     ev: *mut HistEventW,
     op: c_int,
-    a1: *mut c_void,
-    a2: *mut c_void,
-    a3: *mut c_void,
-    a4: *mut c_void,
-    a5: *mut c_void,
-    a6: *mut c_void,
-    a7: *mut c_void,
-    a8: *mut c_void,
-    a9: *mut c_void,
-    a10: *mut c_void,
-    a11: *mut c_void,
+    ap: ...
 ) -> c_int {
     // Ownership on the way out, reproduced by the core and not touched here:
     // `H_DEL` and `H_DELDATA` hand the caller a string it owns and must free
@@ -1767,7 +1788,7 @@ pub unsafe extern "C" fn history_w(
     // points into libedit's storage or at a static message and must not be
     // freed.
     // SAFETY: this function's own contract, forwarded unchanged.
-    unsafe { history_dispatch::<u32>(h, ev, op, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11) }
+    unsafe { history_dispatch::<u32>(h, ev, op, ap) }
 }
 
 // [spec:libedit:def:histedit.tok-winit-fn]

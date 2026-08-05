@@ -65,9 +65,12 @@
 //!   neighbouring field (`keymacro_value_t`, tagged by `type`). A C *integer
 //!   flag* stays an integer.
 //! - **A POSIX kernel type with no Rust counterpart (`struct termios`,
-//!   `struct sigaction`, `sigset_t`) → a placeholder declared in the module
-//!   that owns it.** `plan/decisions/no-c-ffi.md` bars linking libc, so the
-//!   concrete carrier is a decision for that module's function translation.
+//!   `struct sigaction`, `sigset_t`) → a transcription in `nshedit-plat`,
+//!   the one crate in the workspace that issues a syscall
+//!   (`plan/decisions/platform-layer.md`).** `struct termios` keeps a shape
+//!   of its own here, `tty::Termios`, because `def:tty.el-tty-t` freezes
+//!   libedit's; the other two are used as the platform crate declares them.
+//!   The core still names no libc symbol.
 //!
 //! - **A C `(int argc, const wchar_t **argv)` pair → `&[&[u32]]`.** The slice
 //!   carries the count, so the separate `argc` goes away. Used by

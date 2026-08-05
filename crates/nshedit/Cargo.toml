@@ -9,4 +9,5 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+nshedit-plat.workspace = true
 nshterm.workspace = true

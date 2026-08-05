@@ -31,12 +31,11 @@
 //!   allocation-failure `None`. Both built-in append strings are ASCII, so
 //!   this is reachable only from an application's own `app_func`.
 //!
-//! # What the port cannot reach
+//! # The passwd database
 //!
-//! `fn_tilde_expand` needs the passwd database. `plan/decisions/no-c-ffi.md`
-//! bars the libc that would supply `getpwnam_r`/`getpwuid_r`/`getuid`, so
-//! [`passwd`] reimplements the POSIX `files` backend directly; read its
-//! documentation before relying on a tilde expansion.
+//! `fn_tilde_expand` needs it, and reaches NSS through `nshedit-plat` — so a
+//! user that exists only in a directory resolves as it does for the C, and a
+//! lookup can block on a network name service. See [`passwd`].
 
 use std::io::{Read, Write};
 use std::mem::ManuallyDrop;
@@ -136,71 +135,43 @@ fn getc_stdin() -> Option<u8> {
     }
 }
 
-/// The passwd-database lookups [`fn_tilde_expand`] is written against — and
-/// the one place this module cannot reach the system the way the C does.
+/// The passwd-database lookups [`fn_tilde_expand`] is written against.
 ///
-/// `plan/decisions/no-c-ffi.md` bars linking libc, so there is no
-/// `getpwnam_r`, no `getpwuid_r` and no `getuid`, and the standard library
-/// exposes none of the three. `sem:filecomplete.fn-tilde-expand-fn` asks the
-/// port to behave as the POSIX `getpw*_r` pair, "treating ANY non-zero return
-/// as *no such user*" — and *no such user* is not an error in this file, it
-/// is the ordinary path that hands the caller back its input unexpanded.
-/// That is what makes the gap survivable: everything below degrades into a
-/// state the C already defines.
+/// `plan/decisions/platform-layer.md` put `getpwnam_r`, `getpwuid_r` and
+/// `getuid` in `nshedit-plat`, so the `/etc/passwd` parser that used to stand
+/// here is **deleted rather than demoted to a fallback**. The reason is in the
+/// rule: `sem:filecomplete.fn-tilde-expand-fn` step 3 requires the POSIX
+/// `getpw*_r` shape with a fixed 1024-byte scratch buffer, "treating ANY
+/// non-zero return as *no such user*" — which deliberately conflates `ERANGE`
+/// with absence. A hand parser has no 1024-byte limit and expands names the C
+/// does not, so a parse sitting behind the syscall would disagree in exactly
+/// the case the rule pins.
 ///
-/// What is implemented is the POSIX `files` backend, `/etc/passwd`, parsed
-/// directly. Two consequences, both deliberate:
-///
-/// - **NSS is not consulted.** A user that exists only in LDAP, NIS or
-///   systemd-homed reads as absent. The C would find them, so `~alice`
-///   expands there and does not here. In exchange this never blocks on a
-///   network name service, which the rule warns the C can.
-/// - **The current user is found through `/proc/self/status`**, whose `Uid:`
-///   line's first field is `getuid()`'s real uid. `plan/decisions/posix-only-scope.md`
-///   targets Linux, which is where that file exists; elsewhere the bare `~`
-///   and `~/…` forms read as *no such user* and stay unexpanded.
-///
-/// What has to arrive to close this: a `getuid` syscall wrapper, and an NSS
-/// client or a crate that is one.
+/// What that buys, and what it costs, both named by the rule: a user that
+/// exists only in LDAP, SSSD, AD, NIS or systemd-homed now resolves exactly as
+/// it does for the C — and, because the invoking user on such a host is
+/// usually one of them, bare `~` and `~/…` resolve for the person at the
+/// keyboard too. The price is that the lookup can block on a network name
+/// service, inside a completion keystroke. `nshedit_plat::passwd::PasswdOps`
+/// is the seam for a caller that must not pay it.
 mod passwd {
     /// C: `getpwnam_r(name, …)->pw_dir`, or `getpwuid_r(getuid(), …)->pw_dir`
     /// when `name` is empty — `sem:filecomplete.fn-tilde-expand-fn` step 3.
-    /// `None` is that rule's "the lookup produced nothing".
+    /// `None` is that rule's "the lookup produced nothing", which covers a
+    /// genuine absence, a NULL result with a zero return, and `ERANGE` alike.
     pub(super) fn home_dir(name: &str) -> Option<String> {
-        let db = std::fs::read("/etc/passwd").ok()?;
-        let key = if name.is_empty() {
-            real_uid()?
+        let dir = if name.is_empty() {
+            // The *real* uid, not the effective one: the C calls `getuid()`.
+            nshedit_plat::passwd::home_dir_by_uid(nshedit_plat::getuid())
         } else {
-            name.as_bytes().to_vec()
-        };
-        // Field 0 is the login name, field 2 the uid, field 5 the home
-        // directory. A line with fewer than seven fields is not an entry.
-        let field = if name.is_empty() { 2 } else { 0 };
-        for line in db.split(|&b| b == b'\n') {
-            let fields: Vec<&[u8]> = line.split(|&b| b == b':').collect();
-            if fields.len() < 7 || fields[field] != key.as_slice() {
-                continue;
-            }
-            return String::from_utf8(fields[5].to_vec()).ok();
-        }
-        None
-    }
-
-    /// C: `getuid()`, as the decimal text `/etc/passwd` stores it in.
-    ///
-    /// The real uid, not the effective one: `/proc/self/status`'s `Uid:` line
-    /// is `real effective saved fs` and the C calls `getuid()`.
-    fn real_uid() -> Option<Vec<u8>> {
-        let status = std::fs::read("/proc/self/status").ok()?;
-        for line in status.split(|&b| b == b'\n') {
-            if let Some(rest) = line.strip_prefix(b"Uid:".as_slice()) {
-                return rest
-                    .split(|b: &u8| b.is_ascii_whitespace())
-                    .find(|f| !f.is_empty())
-                    .map(<[u8]>::to_vec);
-            }
-        }
-        None
+            nshedit_plat::passwd::home_dir_by_name(name)
+        }?;
+        // The C hands `pw_dir` straight to `strlcpy`, so a non-UTF-8 home
+        // directory is bytes there and would have to be bytes here to be
+        // reproduced exactly; the port's `fn_tilde_expand` returns a `String`
+        // because `def:filecomplete.fn-tilde-expand-fn` fixes that, so an
+        // undecodable one reads as no such user rather than being mangled.
+        String::from_utf8(dir).ok()
     }
 }
 
@@ -1131,28 +1102,28 @@ pub fn fn_complete2(
     // *reproduce*: with `over == NULL` and a NULL attempted result there is
     // NO fallback and completion simply does nothing.
     let over_permits_fallback = over.as_deref().is_some_and(|v| *v == 0);
-    if attempted_completion_function.is_none() || (over_permits_fallback && matches.is_none()) {
-        if let Some(word) = encoded.as_deref() {
-            matches = match complete_func {
-                Some(f) => completion_matches(word, f),
-                None => {
-                    // The C's default generator reads one process-wide set of
-                    // statics (ERR-completion-17). The core has no globals,
-                    // so the scan state is created here and lives exactly as
-                    // long as this one drive-to-exhaustion — which is what
-                    // makes a nested or concurrent completion safe, the
-                    // hazard the rule asks the port to decide about
-                    // explicitly.
-                    // `move` because [`CompleteFunc`] is an unparameterised
-                    // `dyn`, hence `'static`: the state has to live inside
-                    // the closure rather than beside it.
-                    let mut scan = FilenameCompletionState::default();
-                    let mut default_gen =
-                        move |t: &str, s: i32| fn_filename_completion_function(&mut scan, t, s);
-                    completion_matches(word, &mut default_gen)
-                }
-            };
-        }
+    if (attempted_completion_function.is_none() || (over_permits_fallback && matches.is_none()))
+        && let Some(word) = encoded.as_deref()
+    {
+        matches = match complete_func {
+            Some(f) => completion_matches(word, f),
+            None => {
+                // The C's default generator reads one process-wide set of
+                // statics (ERR-completion-17). The core has no globals,
+                // so the scan state is created here and lives exactly as
+                // long as this one drive-to-exhaustion — which is what
+                // makes a nested or concurrent completion safe, the
+                // hazard the rule asks the port to decide about
+                // explicitly.
+                // `move` because [`CompleteFunc`] is an unparameterised
+                // `dyn`, hence `'static`: the state has to live inside
+                // the closure rather than beside it.
+                let mut scan = FilenameCompletionState::default();
+                let mut default_gen =
+                    move |t: &str, s: i32| fn_filename_completion_function(&mut scan, t, s);
+                completion_matches(word, &mut default_gen)
+            }
+        };
     }
 
     // Step 8.

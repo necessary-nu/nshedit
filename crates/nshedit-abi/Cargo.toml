@@ -24,3 +24,4 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 nshedit.workspace = true
+nshedit-plat.workspace = true

@@ -26,20 +26,23 @@
 //! decoding calls (`el_push`, `el_parse`, `el_insertstr`, `el_replacestr`)
 //! touch only the wide half, so a string handed out earlier survives them.
 //!
-//! # What the C does that this cannot yet do
+//! # What the C does that this does not yet do
 //!
-//! Two blockers, both outside this file:
+//! **`el_set` and `el_get` dispatch on no op.** Both carry the `...` the
+//! header declares and both walk no argument: every op falls to the C's
+//! `default` arm and comes back -1. That is the right answer for an
+//! unrecognised `op` and wrong for every recognised one, and the register
+//! carries it as ERR-core-api-09 and ERR-core-api-18.
 //!
-//! - **`el_set` and `el_get` cannot read their variadic tail.** Defining a
-//!   C-variadic function is unstable (`c_variadic`, rust-lang/rust#44930), so
-//!   the exported signatures carry no `...` and there is no `va_list` to walk.
-//!   Their bodies below reproduce only what the tail is not needed for.
-//! - **Most of what they would dispatch to is `pub(crate)` in the core.**
-//!   `prompt_set`, `prompt_get`, `ch_resizefun`, `ch_aliasfun`, `map_bind`,
-//!   `map_addfunc`, `terminal_settc`, `terminal_telltc`, `terminal_echotc`,
-//!   `terminal_gettc`, `terminal__flush`, `tty_stty`, `hist_set`,
-//!   `re_clear_display`, `re_refresh`, `ct_decode_argv` and `ct_enc_width` are
-//!   all invisible from this crate.
+//! Neither of the two reasons that was written down still holds. Defining a
+//! C-variadic function is no longer unstable — `c_variadic` is stable in 1.99,
+//! which is what `plan/main.styx`'s `abi-varargs` settled, and the signatures
+//! below say so. And the core items the arms need are public now: everything
+//! [`crate::histedit::el_wset`]'s own dispatch calls, which is all of them bar
+//! `ct_decode_argv` — whose job is done here one string at a time through
+//! [`ct_decode_string`], exactly as [`el_parse`] already does it. What is left
+//! is the dispatch itself, and each arm's obligations are enumerated on the
+//! two functions below.
 
 use core::ffi::{CStr, c_char, c_int};
 use core::ptr;
@@ -418,29 +421,27 @@ pub unsafe extern "C" fn el_parse(
 
 /// C: `int el_set(EditLine *el, int op, ...);`
 ///
-/// Rust cannot yet *define* a C-variadic function on stable (`c_variadic`,
-/// rust-lang/rust#44930), so the trailing `...` is absent from the Rust
-/// signature. The exported symbol is still the C one and the fixed arguments
-/// are passed identically; reading the variadic tail is left to the body.
+/// Genuinely variadic, as `histedit.h` declares it — and reading nothing out
+/// of the tail, because the dispatch is not written. See the module header.
 // [spec:libedit:def:eln.el-set-fn]
 // [spec:libedit:sem:eln.el-set-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn el_set(el: *mut EditLine, op: c_int) -> c_int {
-    // Step 1: a NULL editor is -1 without touching the varargs. This one arm
-    // needs no tail, so it is reproduced exactly.
+pub unsafe extern "C" fn el_set(el: *mut EditLine, op: c_int, ap: ...) -> c_int {
+    // Step 1: a NULL editor is -1 without touching the varargs, the check
+    // sitting above `va_start` in the C. Reproduced exactly.
     if el.is_null() {
         return -1;
     }
 
-    // Step 2 and the whole dispatch need the variadic tail, and this signature
-    // does not carry one — see the module header. Every op therefore takes the
-    // C's `default` arm, which is also the correct answer for an unsupported
+    // Step 2 and the whole dispatch are unwritten, so every op takes the C's
+    // `default` arm. That is already the correct answer for an unsupported
     // `op` and for `EL_GETENV` (ERR-core-api-31: the narrow API can neither
     // set nor read the environment hook, even though the hook is narrow in
     // both APIs, and the rule's disposition is to reproduce the omission).
     //
-    // What the arms owe, for whoever lands the tail. Beyond `va_list` support
-    // they need core items that are `pub(crate)` today, named in brackets:
+    // What the arms owe, for whoever writes them. The core items in brackets
+    // are all public now; the reads are `ap.next_arg::<T>()`, in the order
+    // listed:
     //
     // - `EL_PROMPT` / `EL_RPROMPT`, `EL_PROMPT_ESC` / `EL_RPROMPT_ESC`
     //   [`prompt_set`] — with the trailing `wide` flag 0 where `el_wset`
@@ -459,7 +460,7 @@ pub unsafe extern "C" fn el_set(el: *mut EditLine, op: c_int) -> c_int {
     //   C dereferences NULL in `wcscmp`/`wcsdup` for a NULL or undecodable
     //   argument; ERR-core-api-09 says define, so reject with -1.
     // - `EL_BIND`, `EL_TELLTC`, `EL_SETTC`, `EL_ECHOTC`, `EL_SETTY`
-    //   [`ct_decode_argv`, `map_bind`, `terminal_telltc`, `terminal_settc`,
+    //   [`map_bind`, `terminal_telltc`, `terminal_settc`,
     //   `terminal_echotc`, `tty_stty`] — collect `argv[1..]` while `i < 19`,
     //   stopping at the first NULL, so at most 18 caller arguments; then
     //   `argv[0] = argv[i] = NULL`, decode `i + 1` entries, overwrite
@@ -467,7 +468,7 @@ pub unsafe extern "C" fn el_set(el: *mut EditLine, op: c_int) -> c_int {
     //   with argc `i`. The cap is 18 here and 19 in `el_wset`, which also
     //   stores no terminator (ERR-core-api-32 and -07): the wide side is the
     //   unsafe one, and both caps are reproduced.
-    // - `EL_ADDFN` [`ct_decode_argv`, `map_addfunc`] — decode name and help
+    // - `EL_ADDFN` [`map_addfunc`] — decode name and help
     //   together; `el_func_t` is `el_action_t (*)(EditLine *, wint_t)` in both
     //   APIs and passes through unconverted, so a function installed through
     //   the narrow API is invoked with a wide character. The C carries an
@@ -477,8 +478,7 @@ pub unsafe extern "C" fn el_set(el: *mut EditLine, op: c_int) -> c_int {
     //   and *clears* it when `MB_CUR_MAX == 1`; this is the flag's only set
     //   site (ERR-core-api-16, disposition reproduce).
     // - `EL_REFRESH` [`re_clear_display`, `re_refresh`, `terminal__flush`] —
-    //   takes no argument at all and would be implementable today if those
-    //   three were reachable.
+    //   takes no argument at all.
     //
     // Cross-cutting: every conversion uses the *wide* half of `el_lgcyconv`,
     // so no `el_set` invalidates a `const char *` handed out by `el_gets`,
@@ -488,28 +488,26 @@ pub unsafe extern "C" fn el_set(el: *mut EditLine, op: c_int) -> c_int {
 
 /// C: `int el_get(EditLine *el, int op, ...);`
 ///
-/// Rust cannot yet *define* a C-variadic function on stable (`c_variadic`,
-/// rust-lang/rust#44930), so the trailing `...` is absent from the Rust
-/// signature. The exported symbol is still the C one and the fixed arguments
-/// are passed identically; reading the variadic tail is left to the body.
+/// Genuinely variadic, as `histedit.h` declares it — and reading nothing out
+/// of the tail, because the dispatch is not written. See the module header.
 // [spec:libedit:def:eln.el-get-fn]
 // [spec:libedit:sem:eln.el-get-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn el_get(el: *mut EditLine, op: c_int) -> c_int {
+pub unsafe extern "C" fn el_get(el: *mut EditLine, op: c_int, ap: ...) -> c_int {
     // Step 1, reproduced exactly: a NULL editor is -1 without touching the
     // varargs.
     if el.is_null() {
         return -1;
     }
 
-    // As in `el_set`, the dispatch needs a variadic tail this signature does
-    // not carry, so every op takes the C's `default` arm. That is already the
-    // right answer for an unsupported `op`, for `EL_GETENV` (ERR-core-api-31),
-    // and for the eleven set-only ops — `EL_RESIZE`, `EL_ALIAS_TEXT`,
-    // `EL_ADDFN`, `EL_HIST`, `EL_BIND`, `EL_TELLTC`, `EL_SETTC`, `EL_ECHOTC`,
-    // `EL_SETTY`, `EL_SETFP`, `EL_REFRESH` — which have no `el_get` arm.
+    // As in `el_set`, the dispatch is unwritten, so every op takes the C's
+    // `default` arm. That is already the right answer for an unsupported
+    // `op`, for `EL_GETENV` (ERR-core-api-31), and for the eleven set-only
+    // ops — `EL_RESIZE`, `EL_ALIAS_TEXT`, `EL_ADDFN`, `EL_HIST`, `EL_BIND`,
+    // `EL_TELLTC`, `EL_SETTC`, `EL_ECHOTC`, `EL_SETTY`, `EL_SETFP`,
+    // `EL_REFRESH` — which have no `el_get` arm.
     //
-    // What the arms owe, with the `pub(crate)` core items in brackets:
+    // What the arms owe, with the core items in brackets:
     //
     // - `EL_PROMPT` / `EL_RPROMPT` [`prompt_get`] — nothing is converted, and
     //   the caller is not told whether the installed function was registered

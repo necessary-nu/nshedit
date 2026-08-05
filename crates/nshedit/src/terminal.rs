@@ -370,52 +370,29 @@ pub struct ElTerminalT {
 }
 
 // ---------------------------------------------------------------------------
-// Host facilities this layer needs and cannot reach.
+// Host facilities this layer reaches through the platform crate.
 // ---------------------------------------------------------------------------
 
-/// The two kernel operations `terminal.c` performs, named one function each.
-///
-/// `plan/decisions/no-c-ffi.md` bars libc and the standard library exposes
-/// neither `ioctl` nor `sigprocmask`, so both report failure today — exactly
-/// as `sig.rs`'s `plat` module does for the signal calls, and for the same
-/// reason. Neither is a silent no-op: "the ioctl failed" and "the mask call
-/// failed" are states the C itself defines and swallows
-/// (`sem:terminal.terminal-get-size-fn` says an ioctl failure is silently
-/// ignored and the seeded values kept; `terminal_set` discards every
-/// `sigprocmask` result), so the translation degrades to *the recorded size
-/// is the answer, and SIGWINCH is never blocked*.
-///
-/// What has to arrive: a syscall layer issued without libc. `sig.rs` has a
-/// parallel `plat` for the signal side and the two should merge into one
-/// module rather than grow a third copy.
-mod plat {
-    /// A saved signal mask — POSIX `sigset_t`. Carries no state because
-    /// nothing can fill it yet.
-    pub(super) struct SigMask {
-        _placeholder: (),
-    }
+// The two kernel operations `terminal.c` performs.
+//
+// `plan/decisions/platform-layer.md` put both in `nshedit-plat`, so the stub
+// module that used to stand here — with `ioctl` and `sigprocmask` reporting a
+// permanent failure, and its own third copy of `sigset_t` — is gone. The
+// `ioctl` is rustix's; the mask calls are libc's, because rustix declines the
+// signal family on principle.
+use nshedit_plat::signal::{self, SigSet, signo};
+use nshedit_plat::termios::window_size;
 
-    /// `sigemptyset(&nset)`, `sigaddset(&nset, SIGWINCH)`,
-    /// `sigprocmask(SIG_BLOCK, &nset, &oset)`. `None` is the C's -1.
-    pub(super) fn block_sigwinch() -> Option<SigMask> {
-        None
-    }
+/// `sigemptyset(&nset)`, `sigaddset(&nset, SIGWINCH)`,
+/// `sigprocmask(SIG_BLOCK, &nset, &oset)`. `None` is the C's -1.
+pub(crate) fn block_sigwinch() -> Option<SigSet> {
+    signal::sigmask_block_one(signo::SIGWINCH)
+}
 
-    /// `sigprocmask(SIG_SETMASK, oset, NULL)`. `false` is the C's -1.
-    pub(super) fn set_sigmask(_oset: &SigMask) -> bool {
-        false
-    }
-
-    /// `ioctl(fd, TIOCGWINSZ, &ws)`, returning `(ws_row, ws_col)`. `None` is
-    /// the C's -1, which `terminal_get_size` ignores.
-    ///
-    /// The C also tries `TIOCGSIZE`, the older BSD `struct ttysize` ioctl.
-    /// Linux does not define it — `plan/decisions/posix-only-scope.md` makes
-    /// Linux the whole target — so that block does not compile there and has
-    /// no counterpart here.
-    pub(super) fn window_size(_fd: i32) -> Option<(u16, u16)> {
-        None
-    }
+/// `sigprocmask(SIG_SETMASK, oset, NULL)`. `false` is the C's -1, which every
+/// caller here discards, as the C does.
+pub(crate) fn set_sigmask(oset: &SigSet) -> bool {
+    signal::sigmask_set(oset)
 }
 
 /// C: `fputs(s, el->el_outfile)` / `fprintf(el->el_outfile, …)`.
@@ -1538,7 +1515,7 @@ pub fn terminal_set(el: &mut EditLine, term: Option<&str>) -> i32 {
     // Step 1: block SIGWINCH so a resize cannot arrive while the capability
     // tables and the screen images are inconsistent. See `plat` for why this
     // reports failure today.
-    let oset = plat::block_sigwinch();
+    let oset = block_sigwinch();
 
     // Step 2.
     let resolved = match term {
@@ -1639,13 +1616,13 @@ pub fn terminal_set(el: &mut EditLine, term: Option<&str>) -> i32 {
         // restoring the mask, leaving SIGWINCH blocked for the rest of the
         // process. Restored on every exit path.
         if let Some(o) = oset.as_ref() {
-            let _ = plat::set_sigmask(o);
+            let _ = set_sigmask(o);
         }
         return -1;
     }
     // Step 11.
     if let Some(o) = oset.as_ref() {
-        let _ = plat::set_sigmask(o);
+        let _ = set_sigmask(o);
     }
     // Step 12.
     terminal_bind_arrow(el);
@@ -1704,7 +1681,7 @@ pub(crate) fn terminal_get_size(el: &mut EditLine, lins: &mut i32, cols: &mut i3
     // (ERR-terminal-35, disposition `reproduce`). A zero field means "the
     // kernel does not know" and leaves the seeded value in place; an ioctl
     // failure is silently ignored and errno is not inspected.
-    if let Some((rows, columns)) = plat::window_size(el.el_infd) {
+    if let Some((rows, columns)) = window_size(el.el_infd) {
         if columns != 0 {
             *cols = i32::from(columns);
         }

@@ -848,10 +848,10 @@ fn istrsenvisx_engine(
         // The in/out flag is useless as designed: it is read only when
         // VIS_NOLOCALE is clear and written only when it is set, so a caller
         // can seed it or read it, never both. Reproduced.
-        if flags & VIS_NOLOCALE != 0 {
-            if let Some(p) = cerr_ptr {
-                *p = cerr;
-            }
+        if flags & VIS_NOLOCALE != 0
+            && let Some(p) = cerr_ptr
+        {
+            *p = cerr;
         }
 
         // Truncates for outputs beyond INT_MAX, as the C's `(int)olen` does.

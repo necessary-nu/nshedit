@@ -67,11 +67,12 @@ use crate::refresh::ElRefreshT;
 use crate::search::{ElSearchT, search_end, search_init};
 use crate::sig::{ElSignalT, sig_end, sig_init};
 use crate::terminal::{
-    ElTerminalT, terminal_beep, terminal_change_size, terminal_end, terminal_get_size,
-    terminal_init,
+    ElTerminalT, block_sigwinch, set_sigmask, terminal_beep, terminal_change_size, terminal_end,
+    terminal_get_size, terminal_init,
 };
 use crate::tty::{
-    C_NCC, ElTtyT, NN_IO, Termios, TtypermEntry, tty_cookedmode, tty_end, tty_init, tty_rawmode,
+    C_NCC, ElTtyT, NN_IO, Termios, TtypermEntry, termios_zeroed, tty_cookedmode, tty_end, tty_init,
+    tty_rawmode,
 };
 
 /// C: `TCSAFLUSH`, the `tcsetattr` action [`el_end`] hands `tty_end`: restore
@@ -328,18 +329,23 @@ pub fn secure_getenv(name: &str) -> Option<OsString> {
 /// - the real uid differs from the effective uid, or
 /// - the real gid differs from the effective gid.
 ///
-/// `plan/decisions/no-c-ffi.md` bars `getauxval`, `getuid` and friends, so
-/// both answers come from `/proc/self`, which is where Linux publishes them.
-/// The answer is cached: glibc computes `__libc_enable_secure` once during
-/// startup and `secure_getenv` reads that cached value, so a later
+/// The id comparisons are `getuid`/`geteuid`/`getgid`/`getegid` through
+/// `nshedit-plat`, which reaches them without a libc. `AT_SECURE` still comes
+/// out of `/proc/self/auxv`: rustix exposes the auxiliary vector only through
+/// the same `runtime` module the signal family is barred from, so the read
+/// stays (`plan/decisions/platform-layer.md`, group 11). The answer is
+/// cached, because glibc computes `__libc_enable_secure` once during startup
+/// and `secure_getenv` reads that cached value — so a later
 /// `setuid()`/`setgid()` does not change what it reports, and neither does
 /// this.
 ///
-/// When neither source can be read — no `/proc` — the process cannot be shown
-/// to be unprivileged and this answers `true`, denying every lookup. That is
-/// *not* the always-deny branch above: that one denies on hosts that could
-/// have answered, this one only where the platform genuinely cannot, and the
-/// default hook exists precisely so that the unknown case fails closed.
+/// The two thirds of the old exposure that a missing `/proc` cost are gone:
+/// the ids are now always answerable, so a host with `hidepid` or no `/proc`
+/// loses only `AT_SECURE` and this reports whatever the ids say. Only if the
+/// ids *and* the auxv were both unavailable would it answer `true` and deny
+/// every lookup, which is unreachable on any target this builds for — and
+/// would in any case be the default hook failing closed on a platform that
+/// genuinely cannot answer, not the C's degenerate always-deny branch.
 fn process_is_secure() -> bool {
     static SECURE: OnceLock<bool> = OnceLock::new();
     *SECURE.get_or_init(|| match (auxv_at_secure(), ids_differ()) {
@@ -384,31 +390,15 @@ fn native_word(bytes: &[u8]) -> usize {
 }
 
 /// Whether real and effective uid, or real and effective gid, differ.
-/// `None` if `/proc/self/status` could not be read or parsed.
+///
+/// `Option` only because [`process_is_secure`] pairs it with a source that
+/// can genuinely be unavailable; four syscalls that cannot fail always answer
+/// `Some`.
 fn ids_differ() -> Option<bool> {
-    let status = std::fs::read_to_string("/proc/self/status").ok()?;
-    let mut uids = None;
-    let mut gids = None;
-    for line in status.lines() {
-        // Both lines are `real effective saved filesystem`; only the first
-        // two fields matter.
-        if let Some(rest) = line.strip_prefix("Uid:") {
-            uids = first_two_ids(rest);
-        } else if let Some(rest) = line.strip_prefix("Gid:") {
-            gids = first_two_ids(rest);
-        }
-    }
-    let (ruid, euid) = uids?;
-    let (rgid, egid) = gids?;
-    Some(ruid != euid || rgid != egid)
-}
-
-/// The real and effective id from one `/proc/self/status` id line.
-fn first_two_ids(rest: &str) -> Option<(u32, u32)> {
-    let mut fields = rest.split_ascii_whitespace();
-    let real = fields.next()?.parse().ok()?;
-    let effective = fields.next()?.parse().ok()?;
-    Some((real, effective))
+    Some(
+        nshedit_plat::getuid() != nshedit_plat::geteuid()
+            || nshedit_plat::getgid() != nshedit_plat::getegid(),
+    )
 }
 
 // [spec:libedit:sem:el.editline.el-getenv-fn]
@@ -858,14 +848,18 @@ fn blank_editline() -> EditLine {
 }
 
 /// The zeroed `struct termios` `calloc` leaves in an `el_tty` slot.
+///
+/// `c_cc` has to be `NCCS` long, not empty: the C's `calloc` gives a
+/// `cc_t c_cc[NCCS]` of zeros, and `tty.rs` reads and writes that row by `V*`
+/// subscript through `cc_get`/`cc_set`, which are bounds-safe and therefore
+/// *silent* — a short row reads every subscript as 0 and swallows every
+/// write. That was invisible while `tcgetattr` was a stub, because nothing
+/// ever filled a `c_cc` or pushed one; with the platform layer in place it
+/// zeroes the terminal's whole control-character column, including `VMIN`,
+/// so a raw-mode `read` returns immediately instead of blocking. Hence
+/// `termios_zeroed`, which exists for exactly this call site.
 fn blank_termios() -> Termios {
-    Termios {
-        c_iflag: 0,
-        c_oflag: 0,
-        c_cflag: 0,
-        c_lflag: 0,
-        c_cc: Vec::new(),
-    }
+    termios_zeroed()
 }
 
 /// The zeroed `el_prompt_t` `calloc` leaves in `el_prompt` and `el_rprompt`.
@@ -1221,32 +1215,20 @@ pub fn el_source(el: &mut EditLine, fname: Option<&Path>) -> i32 {
 /// the mask calls, and `terminal_change_size`'s -1 — is discarded, so an
 /// out-of-memory during a resize is silent.
 pub fn el_resize(el: &mut EditLine) {
-    // Steps 1 and 3, the `sigprocmask(SIG_BLOCK)` / `sigprocmask(SIG_SETMASK)`
-    // pair around the body, have no counterpart here, and this is the one
-    // place in the function where the port departs from the rule.
+    // Step 1. `sigemptyset`/`sigaddset(SIGWINCH)`/`sigprocmask(SIG_BLOCK)`.
     //
-    // Two reasons, both structural:
-    //  - There is no signal-mask primitive in this crate to call.
-    //    `plan/decisions/no-c-ffi.md` bars libc, and `sig.rs`'s own masking
-    //    lives in a private `plat` module that is itself still a stub;
-    //    re-declaring a second copy of `sigset_t` here to hold a call that
-    //    does nothing would buy nothing and split the platform layer in two.
-    //  - The critical section it protects cannot be entered twice.
-    //    `sem:sig.sig-handler-fn`'s translation makes the handler body
-    //    deferred work run from the read loop on the editing thread — that is
-    //    what the `&mut EditLine` in `sig_handler`'s signature commits to —
-    //    and `sig_handler` reaches this function through exactly that path.
-    //    So the thing the mask exists to prevent, libedit's own `SIGWINCH`
-    //    handler re-entering the terminal layer while the display buffers are
-    //    being reallocated underneath it, is ruled out by the exclusive
-    //    borrow rather than by the mask.
-    //
-    // What is lost is only the ordering the mask bought against a *pending*
-    // signal, and the rule already notes that blocking never discarded one: a
-    // `SIGWINCH` arriving during the section was delivered as soon as step 3
-    // unblocked it. ERR-terminal-55 (libedit using `sigprocmask` rather than
-    // `pthread_sigmask`, unspecified in a multi-threaded process) is moot for
-    // the same reason.
+    // The port's own `sig_handler` cannot re-enter this — it is deferred work
+    // run from the read loop on the editing thread, which is what the
+    // `&mut EditLine` in its signature commits to — so the reallocation below
+    // is already safe from libedit's handler by the exclusive borrow. The
+    // block is kept anyway, because it is not only libedit's handler that the
+    // rule is written against: the mask is process-wide state a caller can
+    // observe, an application's own `SIGWINCH` handler runs inside this
+    // window too, and `sem:el.el-resize-fn` names the pair as the behaviour.
+    // ERR-terminal-55 stands as it does in the C — this is `sigprocmask`, not
+    // `pthread_sigmask`, so in a multi-threaded process the effect is
+    // unspecified.
+    let oset = block_sigwinch();
 
     // Step 2.
     let mut lins = 0;
@@ -1265,6 +1247,14 @@ pub fn el_resize(el: &mut EditLine) {
         // leaving the display state inconsistent afterwards is that
         // function's obligation, not this one's.
         terminal_change_size(el, lins, cols);
+    }
+
+    // Step 3. `SIG_SETMASK` to the mask captured at step 1, not
+    // `SIG_UNBLOCK`, so a `SIGWINCH` the caller had already blocked stays
+    // blocked. Blocking never discarded anything, so a resize that arrived
+    // inside the window is delivered here.
+    if let Some(oset) = oset.as_ref() {
+        let _ = set_sigmask(oset);
     }
 }
 

@@ -118,14 +118,18 @@ const fn c_sh(a: usize) -> u32 {
     1u32 << a
 }
 
-/// Stand-in for POSIX `struct termios`.
+/// libedit's own `struct termios`.
 ///
-/// `plan/decisions/no-c-ffi.md` bars linking libc, so there is no
-/// `struct termios` to borrow and no `tcgetattr`/`tcsetattr` to call. The
-/// POSIX field set is spelled out here because the `sem` rules address it by
-/// name — `tty_bind_char` reads `t_ed.c_cc` by `V*` subscript and
-/// `tty_stty` masks the four flag words — but the syscall mechanism is a
-/// decision for the `tty.c` translation, and `NCCS` is platform-dependent.
+/// Not `nshedit_plat::termios::Termios`, which is what crosses the syscall
+/// boundary: `def:tty.el-tty-t` freezes the four rows of `el_tty` to *this*
+/// shape, the `sem` rules address it by name — `tty_bind_char` reads
+/// `t_ed.c_cc` by `V*` subscript and `tty_stty` masks the four flag words —
+/// and `c_cc` is a `Vec` where the platform crate's is a fixed array.
+/// [`tty_getty`] and [`tty_setty`] are the only two places the two meet.
+///
+/// `c_cc` must be [`NCCS`] long; build one with [`termios_zeroed`] rather
+/// than by hand, because [`cc_get`] and [`cc_set`] are bounds-safe and
+/// therefore silent about a short row.
 pub struct Termios {
     pub c_iflag: u32,
     pub c_oflag: u32,
@@ -235,285 +239,63 @@ pub struct ElTtyT {
     pub t_initialized: u8,
 }
 
-/// The POSIX termios primitives this module is written against, the numeric
-/// ABI it is written against — and the one place the port cannot reach.
+// The Linux/glibc termios ABI and the two syscalls this module performs.
+//
+// `plan/decisions/platform-layer.md` moved both into `nshedit-plat`, the one
+// crate in the workspace that issues a syscall, so the module that used to
+// stand here — with `tcgetattr` and `tcsetattr` reporting a permanent -1 — is
+// gone and the name is an import. Everything it transcribed is transcribed
+// there instead, for the same reason and with the same scope note: the `V*`
+// subscripts, `NCCS`, the four flag-word bit sets, the `TCSA*` actions,
+// `_POSIX_VDISABLE` and the `<sys/ttydefaults.h>` defaults are Linux/glibc's,
+// and the BSDs' differ throughout.
+//
+// The four `cf*` speed accessors stay here, because they are pure functions
+// over [`Termios`] — a `def`-rule type this crate owns — rather than
+// syscalls, and the platform crate has no reason to know its shape.
+use nshedit_plat::termios as plat;
+// The three signal numbers `tty_get_signal_character` switches on, from the
+// same place `sig.rs` takes its seven.
+use nshedit_plat::signal::signo;
+
+/// `isatty(fd)`.
+fn isatty(fd: i32) -> bool {
+    plat::isatty(fd)
+}
+
+/// `cfgetospeed(t)` — the encoded `B*` value in the `CBAUD` bits of
+/// `c_cflag`, which is where Linux keeps it.
+fn cfgetospeed(t: &Termios) -> u32 {
+    t.c_cflag & (plat::CBAUD | plat::CBAUDEX)
+}
+
+/// `cfgetispeed(t)`.
 ///
-/// `plan/decisions/no-c-ffi.md` bars the `libc` crate and Rust's standard
-/// library exposes no termios API, so `tcgetattr` and `tcsetattr` have no
-/// caller available here. `sig.rs` hit the same wall and answered it the same
-/// way: the operations are named exactly, one function each, and the two that
-/// need a syscall report failure today rather than pretending. That is not a
-/// silent no-op — "every `tcgetattr` failed" is a state the C itself defines
-/// and every caller in this file already handles, so the module degrades to
-/// *nothing captured, nothing pushed, nothing restored*, exactly as the C
-/// does against a descriptor that is not a terminal. `tty_init` therefore
-/// returns -1 and `el_init` raises `NO_TTY`, which is the same outcome
-/// libedit reaches today when its input is a pipe.
-///
-/// Three things here are **not** stubs, and it matters which:
-///
-/// - [`isatty`] is real. `std::io::IsTerminal` answers it without libc, so
-///   the guard `tty_setup` opens with is the C's guard, and the failure moves
-///   to the syscall that is genuinely missing rather than being masked by a
-///   fake "not a terminal".
-/// - The four `cf*` speed accessors are real, because they are pure functions
-///   over the struct rather than syscalls. They are implemented against the
-///   Linux/glibc encoding, where the line speed lives in the `CBAUD` bits of
-///   `c_cflag`; see [`cfgetispeed`] for what that costs.
-/// - The constants are real, and they are this platform's.
-///
-/// **Scope of the numbers.** Everything below is the Linux/glibc termios ABI:
-/// the `V*` subscripts, `NCCS`, the four flag-word bit sets, the `TCSA*`
-/// actions and the set of names `ttymodes[]` carries. The BSDs use a
-/// different termios ABI throughout — different `V*` numbering, different
-/// flag bits, a `struct termios` with separate `c_ispeed`/`c_ospeed` — and
-/// this module does not carry it. `plan/decisions/posix-only-scope.md` puts
-/// POSIX on the target and the numbers are not POSIX's to give, so following
-/// `sig.rs`'s precedent the platform ABI is transcribed rather than guessed.
-/// The one place the split is reproduced is [`VDISABLE`], because
-/// `sem:tty.tty-bind-char-fn` requires it: the disable byte reaches the key
-/// map, and it is 0 on glibc and 0xff on the BSDs.
-///
-/// What has to arrive for the module to function is `tcgetattr` and
-/// `tcsetattr`, issued without libc. Nothing else in this file is waiting on
-/// anything.
-mod plat {
-    use std::io::IsTerminal;
-    use std::os::fd::BorrowedFd;
+/// **A known divergence, and the reason it is spelled out rather than
+/// hidden.** [`Termios`] is a `def`-rule type this translation may not change,
+/// and it has no `c_ispeed`/`c_ospeed` members — so the port can carry only
+/// one speed. glibc encodes "input speed 0" in a private `c_iflag` bit and the
+/// BSDs keep a separate `c_ispeed` field; neither is expressible here. The
+/// consequence is confined and stated: `tty__getspeed`'s `spd == 0` branch,
+/// which exists to spell POSIX's "an input speed of `B0` means the input speed
+/// equals the output speed", can never be taken, because this always answers
+/// the output speed already. The value `tty__getspeed` returns is the same
+/// either way.
+fn cfgetispeed(t: &Termios) -> u32 {
+    cfgetospeed(t)
+}
 
-    use super::Termios;
+/// `cfsetospeed(t, speed)`. The C discards the return; so does every caller
+/// here.
+fn cfsetospeed(t: &mut Termios, speed: u32) {
+    t.c_cflag =
+        (t.c_cflag & !(plat::CBAUD | plat::CBAUDEX)) | (speed & (plat::CBAUD | plat::CBAUDEX));
+}
 
-    /// `_POSIX_VDISABLE`. POSIX defines the constant but not its value;
-    /// glibc/Linux uses 0 and the BSDs and macOS use 0xff. `tty.h` falls back
-    /// to `(unsigned char)-1` where the platform defines neither
-    /// `_POSIX_VDISABLE` nor `VDISABLE`, which is the 0xff arm.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(super) const VDISABLE: u8 = 0;
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    pub(super) const VDISABLE: u8 = 0xff;
-
-    /// `NCCS` — the length of `c_cc`.
-    pub(super) const NCCS: usize = 32;
-
-    /// `TCSANOW` — apply immediately.
-    pub(super) const TCSANOW: i32 = 0;
-    /// `TCSADRAIN` — apply after queued output has drained, keeping queued
-    /// input. Every call in this file but `tty_end`'s passes this.
-    pub(super) const TCSADRAIN: i32 = 1;
-    /// `TCSAFLUSH` — drain output, then discard unread input.
-    pub(super) const TCSAFLUSH: i32 = 2;
-
-    // `c_iflag` bits.
-    pub(super) const IGNBRK: u32 = 0o0000001;
-    pub(super) const BRKINT: u32 = 0o0000002;
-    pub(super) const IGNPAR: u32 = 0o0000004;
-    pub(super) const PARMRK: u32 = 0o0000010;
-    pub(super) const INPCK: u32 = 0o0000020;
-    pub(super) const ISTRIP: u32 = 0o0000040;
-    pub(super) const INLCR: u32 = 0o0000100;
-    pub(super) const IGNCR: u32 = 0o0000200;
-    pub(super) const ICRNL: u32 = 0o0000400;
-    /// Legacy SysV, Linux only. Note it is the *same bit* as [`ECHOCTL`],
-    /// which is what makes ERR-terminal-36 the silent no-op it is.
-    pub(super) const IUCLC: u32 = 0o0001000;
-    pub(super) const IXON: u32 = 0o0002000;
-    pub(super) const IXANY: u32 = 0o0004000;
-    pub(super) const IXOFF: u32 = 0o0010000;
-    pub(super) const IMAXBEL: u32 = 0o0020000;
-
-    // `c_oflag` bits.
-    pub(super) const OPOST: u32 = 0o0000001;
-    pub(super) const OLCUC: u32 = 0o0000002;
-    pub(super) const ONLCR: u32 = 0o0000004;
-    pub(super) const OCRNL: u32 = 0o0000010;
-    pub(super) const ONOCR: u32 = 0o0000020;
-    pub(super) const ONLRET: u32 = 0o0000040;
-    pub(super) const OFILL: u32 = 0o0000100;
-    pub(super) const OFDEL: u32 = 0o0000200;
-    pub(super) const NLDLY: u32 = 0o0000400;
-    pub(super) const CRDLY: u32 = 0o0003000;
-    pub(super) const TABDLY: u32 = 0o0014000;
-    /// The XSI `TABDLY` value meaning "expand tabs to spaces". `tty.h`
-    /// aliases it to `OXTABS` on the BSDs and to 0 where neither exists — the
-    /// degenerate case `sem:tty.tty-rawmode-fn` warns about, in which
-    /// `(x & 0) == 0` is always true and `t_tabs` is forced to 0. It is
-    /// **not** degenerate here: glibc defines `TAB3`, so the `EL_CAN_TAB`
-    /// branch of `tty_rawmode` is live.
-    pub(super) const TAB3: u32 = 0o0014000;
-    /// `XTABS`, which glibc gives the same value as [`TAB3`]. `ttymodes[]`
-    /// carries both names, so `+xtabs` and `+tabdly` interact.
-    pub(super) const XTABS: u32 = 0o0014000;
-    pub(super) const BSDLY: u32 = 0o0020000;
-    pub(super) const VTDLY: u32 = 0o0040000;
-    pub(super) const FFDLY: u32 = 0o0100000;
-
-    // `c_cflag` bits.
-    pub(super) const CBAUD: u32 = 0o0010017;
-    pub(super) const CBAUDEX: u32 = 0o0010000;
-    pub(super) const CSIZE: u32 = 0o0000060;
-    pub(super) const CS8: u32 = 0o0000060;
-    pub(super) const CSTOPB: u32 = 0o0000100;
-    pub(super) const CREAD: u32 = 0o0000200;
-    pub(super) const PARENB: u32 = 0o0000400;
-    pub(super) const PARODD: u32 = 0o0001000;
-    pub(super) const HUPCL: u32 = 0o0002000;
-    pub(super) const CLOCAL: u32 = 0o0004000;
-    pub(super) const CIBAUD: u32 = 0o02003600000;
-    pub(super) const CRTSCTS: u32 = 0o020000000000;
-
-    // `c_lflag` bits.
-    pub(super) const ISIG: u32 = 0o0000001;
-    pub(super) const ICANON: u32 = 0o0000002;
-    pub(super) const XCASE: u32 = 0o0000004;
-    pub(super) const ECHO: u32 = 0o0000010;
-    pub(super) const ECHOE: u32 = 0o0000020;
-    pub(super) const ECHOK: u32 = 0o0000040;
-    pub(super) const ECHONL: u32 = 0o0000100;
-    pub(super) const NOFLSH: u32 = 0o0000200;
-    pub(super) const TOSTOP: u32 = 0o0000400;
-    /// Echo control characters as `^X`. A `c_lflag` bit, and on glibc the
-    /// same value as the `c_iflag` bit [`IUCLC`] — the coincidence
-    /// ERR-terminal-36 turns into a permanent -1.
-    pub(super) const ECHOCTL: u32 = 0o0001000;
-    pub(super) const ECHOPRT: u32 = 0o0002000;
-    pub(super) const ECHOKE: u32 = 0o0004000;
-    pub(super) const FLUSHO: u32 = 0o0010000;
-    pub(super) const PENDIN: u32 = 0o0040000;
-    pub(super) const IEXTEN: u32 = 0o0100000;
-    pub(super) const EXTPROC: u32 = 0o0200000;
-
-    // The termios `V*` subscripts this platform defines, as the C sees them
-    // after `tty.h`'s aliasing. glibc has no `VSWTCH` (only `VSWTC`, which
-    // `tty.c` never names), no `VDSWTCH`, `VERASE2`, `VDSUSP`, `VSTATUS`,
-    // `VPAGE`, `VPGOFF`, `VKILL2` or `VBRK`, so those rows of every table in
-    // this file are simply absent — which is what `#ifdef`ing them out means.
-    pub(super) const VINTR: usize = 0;
-    pub(super) const VQUIT: usize = 1;
-    pub(super) const VERASE: usize = 2;
-    pub(super) const VKILL: usize = 3;
-    pub(super) const VEOF: usize = 4;
-    pub(super) const VTIME: usize = 5;
-    pub(super) const VMIN: usize = 6;
-    pub(super) const VSTART: usize = 8;
-    pub(super) const VSTOP: usize = 9;
-    pub(super) const VSUSP: usize = 10;
-    pub(super) const VEOL: usize = 11;
-    pub(super) const VREPRINT: usize = 12;
-    pub(super) const VDISCARD: usize = 13;
-    pub(super) const VWERASE: usize = 14;
-    pub(super) const VLNEXT: usize = 15;
-    pub(super) const VEOL2: usize = 16;
-
-    // The `C_*` control-character defaults, in `C_*` order. These come from
-    // `<sys/ttydefaults.h>`, which glibc copied verbatim from BSD, so unlike
-    // the numbering above they *are* portable — parameterised only by
-    // [`VDISABLE`]. `tty.h`'s own fallbacks supply the six the header does
-    // not define. Note `CMIN`/`CTIME` are 1 and 0 here, not the nonsense
-    // `CEOF`/`CEOL` of `tty.h`'s fallback (ERR-terminal-43), which is
-    // therefore unreachable on any platform that ships the header.
-    const fn ctrl(c: u8) -> u8 {
-        c & 0o37
-    }
-    pub(super) const CINTR: u8 = ctrl(b'c');
-    pub(super) const CQUIT: u8 = 0o34;
-    pub(super) const CERASE: u8 = 0o177;
-    pub(super) const CKILL: u8 = ctrl(b'u');
-    pub(super) const CEOF: u8 = ctrl(b'd');
-    pub(super) const CEOL: u8 = VDISABLE;
-    pub(super) const CEOL2: u8 = VDISABLE;
-    pub(super) const CSWTCH: u8 = VDISABLE;
-    pub(super) const CDSWTCH: u8 = VDISABLE;
-    pub(super) const CERASE2: u8 = VDISABLE;
-    pub(super) const CSTART: u8 = ctrl(b'q');
-    pub(super) const CSTOP: u8 = ctrl(b's');
-    pub(super) const CWERASE: u8 = ctrl(b'w');
-    pub(super) const CSUSP: u8 = ctrl(b'z');
-    pub(super) const CDSUSP: u8 = ctrl(b'y');
-    pub(super) const CREPRINT: u8 = ctrl(b'r');
-    pub(super) const CDISCARD: u8 = ctrl(b'o');
-    pub(super) const CLNEXT: u8 = ctrl(b'v');
-    pub(super) const CSTATUS: u8 = VDISABLE;
-    pub(super) const CPAGE: u8 = b' ';
-    pub(super) const CPGOFF: u8 = ctrl(b'm');
-    pub(super) const CKILL2: u8 = VDISABLE;
-    pub(super) const CBRK: u8 = VDISABLE;
-    pub(super) const CMIN: u8 = 1;
-    pub(super) const CTIME: u8 = 0;
-
-    /// The three signal numbers `tty_get_signal_character` switches on.
-    ///
-    /// `sig.rs` carries the same numbers in its own private `signo` module
-    /// for the same reason — POSIX names signals without fixing their
-    /// numbers, and the libc that would define them is barred. Idiomatization
-    /// should hoist one copy somewhere both modules can see it. `SIGINFO`,
-    /// the fourth arm, is BSD-only and is not compiled here; neither is
-    /// `VSTATUS`, so the arm needs both halves it does not have.
-    pub(super) const SIGINT: i32 = 2;
-    pub(super) const SIGQUIT: i32 = 3;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(super) const SIGTSTP: i32 = 20;
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    pub(super) const SIGTSTP: i32 = 18;
-
-    /// `isatty(fd)`. Real: `std::io::IsTerminal` answers it without libc.
-    pub(super) fn isatty(fd: i32) -> bool {
-        if fd < 0 {
-            return false;
-        }
-        // SAFETY: the descriptor is the application's and stays open for the
-        // life of the `EditLine`; `BorrowedFd` does not own or close it.
-        unsafe { BorrowedFd::borrow_raw(fd) }.is_terminal()
-    }
-
-    /// `tcgetattr(fd, t)`. Returns the C's 0 or -1.
-    ///
-    /// **Unreachable.** This is the gap: there is no libc to call and no
-    /// std equivalent. It reports the C's -1, which every caller in this file
-    /// already handles as "the terminal would not answer".
-    pub(super) fn tcgetattr(_fd: i32, _t: &mut Termios) -> i32 {
-        -1
-    }
-
-    /// `tcsetattr(fd, action, t)`. Returns the C's 0 or -1. Unreachable for
-    /// the same reason as [`tcgetattr`], and reporting failure for the same
-    /// reason.
-    pub(super) fn tcsetattr(_fd: i32, _action: i32, _t: &Termios) -> i32 {
-        -1
-    }
-
-    /// `cfgetospeed(t)` — the encoded `B*` value in the `CBAUD` bits of
-    /// `c_cflag`, which is where Linux keeps it.
-    pub(super) fn cfgetospeed(t: &Termios) -> u32 {
-        t.c_cflag & (CBAUD | CBAUDEX)
-    }
-
-    /// `cfgetispeed(t)`.
-    ///
-    /// **A known divergence, and the reason it is here rather than hidden.**
-    /// [`Termios`] is a `def`-rule type this translation may not change, and
-    /// it has no `c_ispeed`/`c_ospeed` members — so the port can carry only
-    /// one speed. glibc encodes "input speed 0" in a private `c_iflag` bit
-    /// and the BSDs keep a separate `c_ispeed` field; neither is expressible
-    /// here. The consequence is confined and stated: `tty__getspeed`'s
-    /// `spd == 0` branch, which exists to spell POSIX's "an input speed of
-    /// `B0` means the input speed equals the output speed", can never be
-    /// taken, because this always answers the output speed already. The value
-    /// `tty__getspeed` returns is the same either way.
-    pub(super) fn cfgetispeed(t: &Termios) -> u32 {
-        cfgetospeed(t)
-    }
-
-    /// `cfsetospeed(t, speed)`. The C discards the return; so does every
-    /// caller here.
-    pub(super) fn cfsetospeed(t: &mut Termios, speed: u32) {
-        t.c_cflag = (t.c_cflag & !(CBAUD | CBAUDEX)) | (speed & (CBAUD | CBAUDEX));
-    }
-
-    /// `cfsetispeed(t, speed)`. With one stored speed this is
-    /// [`cfsetospeed`]; see [`cfgetispeed`].
-    pub(super) fn cfsetispeed(t: &mut Termios, speed: u32) {
-        cfsetospeed(t, speed);
-    }
+/// `cfsetispeed(t, speed)`. With one stored speed this is [`cfsetospeed`]; see
+/// [`cfgetispeed`].
+fn cfsetispeed(t: &mut Termios, speed: u32) {
+    cfsetospeed(t, speed);
 }
 
 /// C: `#define TERM_CAN_TAB 0x008` and `#define EL_CAN_TAB (EL_FLAGS &
@@ -1026,11 +808,25 @@ fn tty_getty(el: &mut EditLine, t: &mut Termios) -> i32 {
     // though `tty_setup`'s `isatty` guard tests `el_outfd` (ERR-terminal-35,
     // disposition `reproduce`).
     //
-    // The C's `while (rv == -1 && errno == EINTR) continue;` has no loop to
-    // run here: `plat::tcgetattr` is not a syscall and cannot be interrupted,
-    // so it either succeeds or fails once. The retry returns with the
-    // primitive.
-    plat::tcgetattr(el.el_infd, t)
+    // The C's `while (rv == -1 && errno == EINTR) continue;` loop lives in
+    // `plat::tcgetattr`, which is where the `EINTR` is visible; this sees only
+    // the settled answer. The conversion is the whole rest of the body: the
+    // platform crate answers in a fixed-size `c_cc` and [`Termios`] carries a
+    // `Vec`, because `def:tty.el-tty-t` fixes its shape and `NCCS` is not the
+    // kernel's. Rows shorter than `NCCS` — which only a caller who built a
+    // `Termios` by hand can produce — are filled to what they can hold, as
+    // [`cc_set`] already does for a single write.
+    let Some(raw) = plat::tcgetattr(el.el_infd) else {
+        return -1;
+    };
+    t.c_iflag = raw.c_iflag;
+    t.c_oflag = raw.c_oflag;
+    t.c_cflag = raw.c_cflag;
+    t.c_lflag = raw.c_lflag;
+    for (slot, b) in t.c_cc.iter_mut().zip(raw.c_cc) {
+        *slot = b;
+    }
+    0
 }
 
 // [spec:libedit:def:tty.tty-setty-fn]
@@ -1047,8 +843,24 @@ fn tty_setty(el: &mut EditLine, action: i32, t: &Termios) -> i32 {
     // successful `tcsetattr` means *some* of the requested changes were
     // applied, not all, and libedit never reads the settings back to check.
     //
-    // Same note on the EINTR loop as `tty_getty`.
-    plat::tcsetattr(el.el_infd, action, t)
+    // Same note on the EINTR loop and on the `c_cc` conversion as
+    // `tty_getty`. A row shorter than `NCCS` leaves the tail of the platform
+    // struct zeroed, which on Linux is `_POSIX_VDISABLE`.
+    let mut raw = plat::Termios {
+        c_iflag: t.c_iflag,
+        c_oflag: t.c_oflag,
+        c_cflag: t.c_cflag,
+        c_lflag: t.c_lflag,
+        c_cc: [0; plat::NCCS],
+    };
+    for (slot, &b) in raw.c_cc.iter_mut().zip(t.c_cc.iter()) {
+        *slot = b;
+    }
+    if plat::tcsetattr(el.el_infd, action, &raw) {
+        0
+    } else {
+        -1
+    }
 }
 
 // [spec:libedit:def:tty.tty-setup-fn]
@@ -1074,7 +886,7 @@ fn tty_setup(el: &mut EditLine) -> i32 {
     // termios call below uses the **input** fd. When they differ and input is
     // not a terminal, step 5 fails and setup still returns -1, so the
     // asymmetry degrades safely. Reproduced, including the descriptor.
-    if !plat::isatty(el.el_outfd) {
+    if !isatty(el.el_outfd) {
         return -1;
     }
 
@@ -1242,8 +1054,8 @@ fn tty__getspeed(td: &Termios) -> SpeedT {
     // carries one speed rather than two, so the branch cannot be taken — see
     // `plat::cfgetispeed`, which is where that limitation is stated. The
     // value returned is the same either way.
-    let spd = plat::cfgetispeed(td);
-    if spd == 0 { plat::cfgetospeed(td) } else { spd }
+    let spd = cfgetispeed(td);
+    if spd == 0 { cfgetospeed(td) } else { spd }
 }
 
 // [spec:libedit:def:tty.tty-getcharindex-fn]
@@ -1518,10 +1330,10 @@ pub fn tty_rawmode(el: &mut EditLine) -> i32 {
     // structures even if only one of them was stale. Return values ignored.
     let speed = el.el_tty.t_speed;
     if tty__getspeed(&el.el_tty.t_ex) != speed || tty__getspeed(&el.el_tty.t_ed) != speed {
-        plat::cfsetispeed(&mut el.el_tty.t_ex, speed);
-        plat::cfsetospeed(&mut el.el_tty.t_ex, speed);
-        plat::cfsetispeed(&mut el.el_tty.t_ed, speed);
-        plat::cfsetospeed(&mut el.el_tty.t_ed, speed);
+        cfsetispeed(&mut el.el_tty.t_ex, speed);
+        cfsetospeed(&mut el.el_tty.t_ex, speed);
+        cfsetispeed(&mut el.el_tty.t_ed, speed);
+        cfsetospeed(&mut el.el_tty.t_ed, speed);
     }
 
     // Step 6. "The terminal is in cooked mode, so believe what we see."
@@ -2070,9 +1882,9 @@ pub(crate) fn tty_get_signal_character(el: &mut EditLine, sig: i32) -> i32 {
     // row. The `SIGINFO`/`VSTATUS` arm is BSD-only and is not compiled here,
     // as it is not compiled on Linux in the C.
     let sub = match sig {
-        plat::SIGINT => plat::VINTR,
-        plat::SIGQUIT => plat::VQUIT,
-        plat::SIGTSTP => plat::VSUSP,
+        signo::SIGINT => plat::VINTR,
+        signo::SIGQUIT => plat::VQUIT,
+        signo::SIGTSTP => plat::VSUSP,
         _ => return -1,
     };
 

@@ -29,21 +29,24 @@
 //!
 //! Blockers, all of them outside this file, each marked at the site:
 //!
-//! - **`el_set`/`el_get`/`history` cannot read their variadic tail.**
-//!   Defining a C-variadic function is unstable (`c_variadic`,
-//!   rust-lang/rust#44930). This file calls those three exported symbols the
-//!   way `readline.c` does — through a variadic declaration — so the call
-//!   sites are already right; they start working when the crate grows a way
-//!   to carry the tail. See [`el_set_va`].
+//! - **The narrow `el_set`/`el_get` dispatch is unwritten.** This file calls
+//!   `el_set`, `el_get` and `history` the way `readline.c` does — through a
+//!   variadic declaration of the exported symbol — so the call sites are
+//!   right and `history`'s tail is read. `el_set` and `el_get` are variadic
+//!   now too (`abi-varargs`) but still dispatch on no op, so the calls to
+//!   them are accepted and ignored; see [`crate::eln::el_set`]. This was
+//!   `c_variadic` being unstable and is not any more.
 //! - **`libedit_private` entry points `readline.c` calls directly are
 //!   `pub(crate)` in the core**: `tty_init`, `tty_end`,
 //!   `tty_get_signal_character`, `re_putc`, `em_kill_line` and
 //!   `el_init_internal` (which is the only way to ask for `NO_RESET`). The
 //!   stand-ins are gathered under "Core gaps" below.
-//! - **No syscall facility.** `tcgetattr` (the `ECHO` test in
-//!   `rl_initialize`), `ioctl(FIONREAD)` (the poll in `_rl_event_read_char`)
-//!   and `raise(SIGTSTP)` (`_el_rl_tstp`) have no route that
-//!   `plan/decisions/no-c-ffi.md` allows, and no core module offers one yet.
+//! - **`ioctl(FIONREAD)`**, the poll in `_rl_event_read_char`.
+//!   `plan/decisions/platform-layer.md` defers whether to supply it: two
+//!   rules want it and the other does not compile in the C on glibc, so this
+//!   is the only real obligation and it is still open. `tcgetattr` (the
+//!   `ECHO` test in `rl_initialize`) and `raise(SIGTSTP)` (`_el_rl_tstp`) are
+//!   no longer gaps — both go through `nshedit-plat`.
 //! - **No `stdin`/`stdout`/`stderr`.** `fileno` is available now — see
 //!   [`crate::cstdio`], the third site on `plan/decisions/no-c-ffi.md`'s
 //!   enumeration — so an application's own `rl_instream`/`rl_outstream`
@@ -51,9 +54,9 @@
 //!   rather than functions and are not on that enumeration, so a `NULL`
 //!   `rl_instream`/`rl_outstream` still means "the standard descriptor" here
 //!   rather than being rewritten to the C stream object.
-//! - **No passwd database.** `getpwuid`/`getpwent` are read out of
-//!   `/etc/passwd` by [`passwd_entries`]; the core needs this too, for
-//!   `fn_tilde_expand`.
+//! - **The passwd database** is NSS through `nshedit-plat`, shared with the
+//!   core's `fn_tilde_expand`. The `/etc/passwd` parser this file used to
+//!   carry is deleted.
 
 use core::cmp::Ordering;
 use core::ffi::{CStr, c_char, c_int, c_uchar, c_ulong, c_void};
@@ -696,9 +699,11 @@ thread_local! {
     /// process-wide scan is this crate's job.
     static FILENAME_SCAN: RefCell<Option<FilenameCompletionState>> = const { RefCell::new(None) };
 
-    /// The `<pwd.h>` enumeration cursor `username_completion_function`
-    /// drives with `setpwent`/`getpwent`/`endpwent`.
-    static PASSWD_SCAN: RefCell<Option<(Vec<PasswdEntry>, usize)>> = const { RefCell::new(None) };
+    /// Whether `username_completion_function` has a `<pwd.h>` enumeration
+    /// open. The cursor itself is the libc's, process-global, exactly as the
+    /// C's is; this only records whether `setpwent` has been issued, so that
+    /// a `state` of 0 rewinds and anything else continues.
+    static PASSWD_SCAN_OPEN: Cell<bool> = const { Cell::new(false) };
 
     /// C: `static ct_buffer_t wbreak_conv, sprefix_conv;` inside
     /// `rl_complete` — the wide forms of the two break-character strings,
@@ -747,12 +752,11 @@ static ABORT_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 //
 // `readline.c` reaches `el_set`, `el_get` and `history` through the same
 // public symbols an application would, so the port does too rather than
-// reaching around them into the core — which could not work anyway, since
-// everything they dispatch to is `pub(crate)` there. Declaring them variadic
-// is what lets a Rust call site pass the tail; *reading* that tail is the
-// callee's problem and is blocked on `c_variadic` (see the module docs), so
-// today these calls carry their arguments correctly and the callee ignores
-// them.
+// reaching around them into the core. Declaring them variadic is what lets a
+// Rust call site pass the tail; *reading* that tail is the callee's problem.
+// `history` reads it. `el_set` and `el_get` are variadic and read nothing —
+// the narrow dispatch is unwritten, see the module docs — so those calls
+// carry their arguments correctly and the callee ignores them.
 // ---------------------------------------------------------------------------
 
 // `EditLine` and `History` are opaque handles the C only ever passes by
@@ -1008,65 +1012,18 @@ const NO_TTY: i32 = 0x002;
 // The passwd database
 //
 // `readline.c` uses `getpwuid(getuid())` and the
-// `setpwent`/`getpwent`/`endpwent` cursor. `plan/decisions/no-c-ffi.md` bars
-// libc, and no core module offers a passwd facility yet — `fn_tilde_expand`
-// needs the same one — so `/etc/passwd` is read directly here. NSS sources
-// beyond the file are not visible, which is the one divergence.
+// `setpwent`/`getpwent`/`endpwent` cursor. Both go through `nshedit-plat`,
+// which reaches NSS — so the `/etc/passwd` parser that used to stand here,
+// the second of the two the port carried, is deleted rather than kept as a
+// fallback. See `plan/decisions/platform-layer.md`, group 10.
 // ---------------------------------------------------------------------------
 
-/// One `/etc/passwd` line, reduced to the two fields this file reads.
-struct PasswdEntry {
-    /// `pw_name`.
-    name: Vec<u8>,
-    /// `pw_uid`.
-    uid: u32,
-    /// `pw_dir`.
-    dir: Vec<u8>,
-}
-
-/// The whole password file, in file order — the order `getpwent` walks.
-fn passwd_entries() -> Vec<PasswdEntry> {
-    let mut out = Vec::new();
-    let Ok(text) = std::fs::read("/etc/passwd") else {
-        return out;
-    };
-    for line in text.split(|&b| b == b'\n') {
-        if line.is_empty() || line[0] == b'#' {
-            continue;
-        }
-        let mut f = line.split(|&b| b == b':');
-        let (Some(name), Some(_passwd), Some(uid), Some(_gid), Some(_gecos), Some(dir)) =
-            (f.next(), f.next(), f.next(), f.next(), f.next(), f.next())
-        else {
-            continue;
-        };
-        let Ok(uid) = std::str::from_utf8(uid).unwrap_or("x").parse::<u32>() else {
-            continue;
-        };
-        out.push(PasswdEntry {
-            name: name.to_vec(),
-            uid,
-            dir: dir.to_vec(),
-        });
-    }
-    out
-}
-
-/// `getuid()` — the *real* uid, read out of `/proc/self/status`, whose `Uid:`
-/// line is real, effective, saved and filesystem in that order.
-fn real_uid() -> Option<u32> {
-    let text = std::fs::read_to_string("/proc/self/status").ok()?;
-    let line = text.lines().find(|l| l.starts_with("Uid:"))?;
-    line.split_whitespace().nth(1)?.parse().ok()
-}
-
-/// `getpwuid(getuid())`, reduced to the home directory `pw_dir`.
+/// `getpwuid(getuid())->pw_dir`.
+///
+/// The *real* uid, as the C's `getuid()` is. `None` where the C's `getpwuid`
+/// returns NULL.
 fn passwd_home_dir() -> Option<Vec<u8>> {
-    let uid = real_uid()?;
-    passwd_entries()
-        .into_iter()
-        .find(|p| p.uid == uid)
-        .map(|p| p.dir)
+    nshedit_plat::passwd::home_dir_by_uid(nshedit_plat::getuid())
 }
 
 // ---------------------------------------------------------------------------
@@ -1413,14 +1370,17 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
         };
         let fderr = 2;
 
-        // Gap: step 4's `tcgetattr(fileno(rl_instream))` test for a clear
-        // `ECHO`. The `fileno` half is answered now; the `tcgetattr` half has
-        // no route until the platform layer lands (group 4 of the register in
-        // `plan/decisions/platform-layer.md`), so `editmode` keeps the value
-        // the C leaves it with when `tcgetattr` fails. This is the one
-        // divergence that fails *open*: we edit on a non-echoing input where
-        // the C would not.
-        let editmode = 1;
+        // Step 4's `tcgetattr(fileno(rl_instream))` test for a clear `ECHO`,
+        // both halves of which are answerable now — `fileno` through
+        // `crate::cstdio` and `tcgetattr` through `nshedit-plat`. A terminal
+        // that is not echoing is one something else is driving, so readline
+        // declines to edit on it. A failing `tcgetattr` leaves `editmode` at
+        // 1, which is what the C does with its uninitialised `t`: the branch
+        // is only entered on success.
+        let editmode = match nshedit_plat::termios::tcgetattr(fdin) {
+            Some(t) => c_int::from(t.c_lflag & nshedit_plat::termios::ECHO != 0),
+            None => 1,
+        };
 
         E = crate::histedit::el_init_fd(
             rl_readline_name,
@@ -2450,13 +2410,13 @@ pub unsafe extern "C" fn history_expand(str_: *mut c_char, output: *mut *mut c_c
         }
 
         /* ret is 2 for "print only" option */
-        if ret == 2 {
-            if let Some(r) = result.as_deref() {
-                let line = c_dup(r);
-                if !line.is_null() {
-                    add_history(line);
-                    c_free_str(line);
-                }
+        if ret == 2
+            && let Some(r) = result.as_deref()
+        {
+            let line = c_dup(r);
+            if !line.is_null() {
+                add_history(line);
+                c_free_str(line);
             }
         }
         c_free_str(work);
@@ -3575,42 +3535,39 @@ pub unsafe extern "C" fn username_completion_function(
             t = &t[1..];
         }
 
-        PASSWD_SCAN.with_borrow_mut(|scan| {
-            // `state == 0` rewinds the database, as the generator protocol
-            // requires; a scan started without it continues from wherever the
-            // previous one stopped.
-            if state == 0 || scan.is_none() {
-                *scan = Some((passwd_entries(), 0));
-            }
-            let (entries, cursor) = scan.as_mut().expect("rewound above");
+        // `state == 0` rewinds the database, as the generator protocol
+        // requires; a scan started without it continues from wherever the
+        // previous one stopped.
+        if state == 0 || !PASSWD_SCAN_OPEN.get() {
+            nshedit_plat::passwd::setpwent();
+            PASSWD_SCAN_OPEN.set(true);
+        }
 
-            // The loop condition is inverted: it *continues* while the entry
-            // is exactly equal to `text` and stops at the first entry that
-            // differs, so it exits after a single `getpwent()` and returns the
-            // next database entry regardless of whether it starts with `text`.
-            // No prefix matching happens at all (ERR-readline-24, reproduced).
-            let mut found = None;
-            while *cursor < entries.len() {
-                let entry = &entries[*cursor];
-                *cursor += 1;
-                if entry.name.first() == t.first() && entry.name == t {
-                    continue;
-                }
-                found = Some(entry.name.clone());
-                break;
+        // The loop condition is inverted: it *continues* while the entry is
+        // exactly equal to `text` and stops at the first entry that differs,
+        // so it exits after a single `getpwent()` and returns the next
+        // database entry regardless of whether it starts with `text`. No
+        // prefix matching happens at all (ERR-readline-24, reproduced).
+        let mut found = None;
+        while let Some(name) = nshedit_plat::passwd::getpwent_name() {
+            if name.first() == t.first() && name == t {
+                continue;
             }
-            match found {
-                // Unchecked in the C, so NULL is also an allocation failure.
-                Some(name) => c_dup(&name),
-                None => {
-                    // `endpwent()` is only reached when the database is
-                    // exhausted, so an abandoned scan leaks the handle in the
-                    // C; the port drops its cursor either way.
-                    *scan = None;
-                    ptr::null_mut()
-                }
+            found = Some(name);
+            break;
+        }
+        match found {
+            // Unchecked in the C, so NULL is also an allocation failure.
+            Some(name) => c_dup(&name),
+            None => {
+                // `endpwent()` is only reached when the database is
+                // exhausted, so an abandoned scan leaks the handle in the C;
+                // the port inherits that, since the cursor is the libc's.
+                nshedit_plat::passwd::endpwent();
+                PASSWD_SCAN_OPEN.set(false);
+                ptr::null_mut()
             }
-        })
+        }
     }
 }
 
@@ -3620,9 +3577,12 @@ pub unsafe extern "C" fn username_completion_function(
 // [spec:libedit:sem:readline.el-rl-tstp-fn]
 fn _el_rl_tstp(el: *mut EditLine, ch: c_int) -> c_uchar {
     let _ = (el, ch);
-    // Gap: `raise(SIGTSTP)` has no route under `plan/decisions/no-c-ffi.md`
-    // and no core module offers one, so ^Z does not suspend the process yet.
-    // Terminal state around the stop is EditLine's business either way.
+    // The whole body. Terminal state around the stop is EditLine's business:
+    // `EL_SIGNAL`'s own `SIGTSTP` handler is what puts the tty back into
+    // cooked mode before the process actually stops, and if the application
+    // did not turn `EL_SIGNAL` on, nothing does — which is the C's behaviour
+    // too. The result is discarded, as the C discards `raise`'s.
+    let _ = nshedit_plat::signal::raise(nshedit_plat::signal::signo::SIGTSTP);
     CC_NORM
 }
 
@@ -4455,22 +4415,23 @@ pub unsafe extern "C" fn rl_get_screen_size(rows: *mut c_int, cols: *mut c_int) 
 
 /// C: `void rl_message(const char *format, ...);`
 ///
-/// Rust cannot yet *define* a C-variadic function on stable (`c_variadic`,
-/// rust-lang/rust#44930), so the trailing `...` is absent from the Rust
-/// signature. The exported symbol is still the C one and the fixed arguments
-/// are passed identically; reading the variadic tail is left to the body.
+/// The one genuinely variadic entry point in this file, and the only one whose
+/// tail is a `printf` argument list rather than an enumerated per-op shape.
 //
-// UNIMPLEMENTABLE ON STABLE, AND THE ONE FUNCTION IN THIS FILE THAT IS: with
-// no `va_list` there is no way to run the `vsnprintf`, so the format string is
-// installed as the message *unexpanded*. Everything around it is faithful —
-// the 160-byte truncation, the prompt being overwritten rather than saved, and
-// the forced redisplay (ERR-readline-36) — so an application whose message
-// carries no conversions sees the C's behaviour exactly. Restore the
-// `vsnprintf` when `c_variadic` stabilizes.
+// THE FORMAT STRING IS INSTALLED UNEXPANDED. `c_variadic` is stable, so the
+// tail is now reachable — `abi-varargs` — but running the C's
+// `vsnprintf(msg, sizeof msg, format, args)` over it needs a `printf`
+// implementation, and `plan/decisions/no-c-ffi.md` enumerates the three sites
+// where a libc symbol may be named: `vsnprintf` is at none of them, and a
+// fourth site amends that decision before it is written. So the remaining
+// blocker is the formatter, not the `va_list`. Everything around it
+// is faithful — the 160-byte truncation, the prompt being overwritten rather
+// than saved, and the forced redisplay (ERR-readline-36) — so an application
+// whose message carries no conversions sees the C's behaviour exactly.
 // [spec:libedit:def:readline.rl-message-fn]
 // [spec:libedit:sem:readline.rl-message-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rl_message(format: *const c_char) {
+pub unsafe extern "C" fn rl_message(format: *const c_char, ap: ...) {
     // SAFETY: `format` is a NUL-terminated string owned by the caller.
     unsafe {
         let mut msg = [0u8; MAX_MESSAGE];

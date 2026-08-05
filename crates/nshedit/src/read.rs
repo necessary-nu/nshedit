@@ -13,8 +13,8 @@
 //!   raw mode is left to [`el_wgetc`]'s lazy `tty_rawmode`. Porting it would
 //!   *add* an exit path a C caller cannot currently observe, so it is not
 //!   ported and [`el_wgets`] has no `*nread == 0`-with-NULL return.
-//! - `read__fixio`'s `FIONBIO` sub-block, for the same header reason. See
-//!   [`plat`] for what the surviving `fcntl` half needs.
+//! - `read__fixio`'s `FIONBIO` sub-block, for the same header reason. The
+//!   surviving `fcntl` half is live; see [`read__fixio`].
 
 use core::ffi::c_int;
 use core::ptr;
@@ -198,41 +198,21 @@ pub fn el_read_getfn(el_read: &mut ElReadT) -> Option<ElRfuncT> {
     }
 }
 
-/// The POSIX descriptor-flag calls [`read__fixio`]'s would-block arm is
-/// written against, and the one place this module cannot reach.
-///
-/// `plan/decisions/no-c-ffi.md` bars the `libc` crate, and Rust's standard
-/// library exposes `fcntl` for no file descriptor and `O_NONBLOCK` control
-/// only through the socket types. So the two calls are named exactly, one
-/// function each, and both report failure today — which lands this arm on an
-/// outcome the rule already spells out: "Because `e` was seeded to 0, a build
-/// where neither sub-block compiles returns -1 from this arm
-/// unconditionally." That is a configuration of the C itself, not an invented
-/// behaviour, and it is reached here through `F_GETFL` failing rather than
-/// through the sub-block being preprocessed away.
-///
-/// What has to arrive is one thing: `fcntl(2)` issued without libc. With it,
-/// the arm recovers and — this is the point, not an accident —
-/// **permanently clears `O_NONBLOCK`/`O_NDELAY` on the caller's input
-/// descriptor**, normally the process's shared standard input, saving and
-/// restoring nothing (ERR-input-21). The structure below is written so that
-/// dropping in the syscall reproduces that side effect rather than diverging
-/// from it; today the recovery simply does not happen and a would-block error
-/// reaches the caller as -1, which is also what `EL_SAFEREAD` being off — the
-/// default — produces.
-mod plat {
-    /// `fcntl(fd, F_GETFL, 0)`. `None` is the C's -1.
-    pub(super) fn fcntl_getfl(_fd: i32) -> Option<i32> {
-        None
-    }
-
-    /// `fcntl(fd, F_SETFL, fl & ~O_NDELAY)` — the call that clears the
-    /// caller's non-blocking bit and never puts it back. `false` is the C's
-    /// -1.
-    pub(super) fn fcntl_setfl_clearing_ndelay(_fd: i32, _fl: i32) -> bool {
-        false
-    }
-}
+// The POSIX descriptor-flag calls [`read__fixio`]'s would-block arm is
+// written against.
+//
+// `plan/decisions/platform-layer.md` put `fcntl` in `nshedit-plat`, through
+// rustix, so the stub module that used to stand here — with both calls
+// reporting a permanent failure, which landed this arm on the C's
+// both-sub-blocks-absent -1 — is gone and the name is an import.
+//
+// With the syscall present the arm recovers and — this is the point, not an
+// accident — **permanently clears `O_NONBLOCK`/`O_NDELAY` on the caller's
+// input descriptor**, normally the process's shared standard input, saving
+// and restoring nothing (ERR-input-21). `sem:read.read-fixio-fn` says a port
+// must either reproduce that side effect or register it as a divergence; it
+// is reproduced.
+use nshedit_plat as plat;
 
 // [spec:libedit:def:read.read-fixio-fn]
 // [spec:libedit:sem:read.read-fixio-fn]
@@ -259,7 +239,7 @@ fn read__fixio(fd: i32, e: i32) -> i32 {
             let Some(fl) = plat::fcntl_getfl(fd) else {
                 return -1;
             };
-            if !plat::fcntl_setfl_clearing_ndelay(fd, fl) {
+            if !plat::fcntl_setfl(fd, fl & !plat::O_NDELAY) {
                 return -1;
             }
             // The `FIONBIO` sub-block would go here; it does not compile on
@@ -815,10 +795,10 @@ pub fn el_wgetc(el: &mut EditLine, cp: &mut u32) -> i32 {
     // can restore it after cleanup (`terminal__flush`, `tty_cookedmode`,
     // `sig_clr`) that may clobber `errno`. Never cleared here; `el_wgets`
     // zeroes it on entry and nothing else writes it.
-    if num_read < 0 {
-        if let Some(rd) = el.el_read.as_deref_mut() {
-            rd.read_errno = errno::errno();
-        }
+    if num_read < 0
+        && let Some(rd) = el.el_read.as_deref_mut()
+    {
+        rd.read_errno = errno::errno();
     }
 
     // Step 6, unchanged. `*cp` holds whatever the callback left; the builtin

@@ -10,23 +10,19 @@ use crate::tty::{tty_cookedmode, tty_rawmode};
 /// `SIGTERM`, `SIGCONT`, `SIGWINCH`, in that fixed table order.
 pub const ALLSIGSNO: usize = 7;
 
-/// Stand-in for the C's `struct sigaction`: one saved previous disposition.
+/// The C's `struct sigaction`: one saved previous disposition.
 ///
-/// `plan/decisions/no-c-ffi.md` bars linking libc, so there is no
-/// `struct sigaction` to borrow and no `sigaction()` to call. libedit only
-/// ever stores and restores these wholesale, so the concrete carrier — a
-/// libc-free syscall wrapper, or a crate — is a decision for the `sig.c`
-/// translation. This placeholder holds the field's place and its
-/// cardinality.
-pub struct SigAction {
-    _placeholder: (),
-}
+/// Transcribed in `nshedit-plat` alongside the termios ABI, because
+/// `plan/decisions/platform-layer.md` puts the syscall that fills it there
+/// and the layout is the platform's rather than this port's. libedit only
+/// ever stores one of these wholesale and puts it back, so nothing in this
+/// crate reads a field.
+pub type SigAction = nshedit_plat::signal::SigAction;
 
-/// Stand-in for the C's `sigset_t`: the cached mask of the seven trapped
-/// signals. Same reasoning as [`SigAction`].
-pub struct SigSet {
-    _placeholder: (),
-}
+/// The C's `sigset_t`: the cached mask of the seven trapped signals. Same
+/// reasoning as [`SigAction`]; `sigemptyset` and `sigaddset` are bit
+/// operations on it rather than linked symbols.
+pub type SigSet = nshedit_plat::signal::SigSet;
 
 // [spec:libedit:def:sig.el-signal-t]
 /// The per-`EditLine` signal state.
@@ -60,31 +56,11 @@ pub type ElSignalT = Option<Box<ElSignal>>;
 
 /// The seven signal numbers.
 ///
-/// POSIX names these signals; it does not fix their numbers, and
-/// `plan/decisions/no-c-ffi.md` bars the libc that would define them, so the
-/// port carries the platform ABI's numbering itself. This is the only part of
-/// the module that is not portable POSIX. Five of the seven agree everywhere
-/// in scope; only `SIGCONT` and `SIGTSTP` differ. Linux's alpha, mips, sparc
-/// and parisc ports renumber more widely and are not covered — that belongs
-/// with the syscall layer described on [`plat`] when it lands.
-pub(crate) mod signo {
-    pub(crate) const SIGHUP: i32 = 1;
-    pub(crate) const SIGINT: i32 = 2;
-    pub(crate) const SIGQUIT: i32 = 3;
-    pub(crate) const SIGTERM: i32 = 15;
-    pub(crate) const SIGWINCH: i32 = 28;
-
-    /// Linux's generic ABI numbers `SIGCONT` 18 and `SIGTSTP` 20; the BSDs
-    /// and Darwin swap them to 19 and 18.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) const SIGCONT: i32 = 18;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) const SIGTSTP: i32 = 20;
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    pub(crate) const SIGCONT: i32 = 19;
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    pub(crate) const SIGTSTP: i32 = 18;
-}
+/// POSIX names these signals; it does not fix their numbers, so the port
+/// carries the platform ABI's numbering itself — in `nshedit-plat`, next to
+/// the `sigaction` that consumes them, since `tty.rs` needs three of the same
+/// constants and two copies is how the divergences got lost the first time.
+pub(crate) use nshedit_plat::signal::signo;
 
 /// C: `static const int sighdl[]` — the trapped signals in the fixed table
 /// order that indexes `ElSignal::sig_action` throughout this module. The set
@@ -116,104 +92,28 @@ fn sighdl_index(signo: i32) -> Option<usize> {
     SIGHDL.iter().position(|&s| s == signo)
 }
 
-/// The POSIX signal primitives this module is written against — and the one
-/// place the port cannot reach.
-///
-/// `plan/decisions/no-c-ffi.md` bars the `libc` crate and Rust's standard
-/// library exposes no signal API, so `sigaction`, `sigprocmask` (properly
-/// `pthread_sigmask`, ERR-terminal-55), `raise` and the
-/// `sigemptyset`/`sigaddset` pair have no caller available here. The gap is
-/// wider than the calls: [`SigAction`] and [`SigSet`] are `def`-rule types
-/// this translation may not change, and both are declared as placeholders
-/// carrying no state, so even with a syscall layer in hand there is nowhere
-/// to put a displaced `struct sigaction` or the bits of a `sigset_t`.
-///
-/// So the operations are named exactly, one function each, and every one of
-/// them reports failure today. That is not a silent no-op: "every `sigaction`
-/// and every `sigprocmask` failed" is a state the C itself defines and
-/// swallows — `sem:sig.sig-set-fn` step 4 keeps the slot as it is on failure
-/// and `sem:sig.sig-clr-fn` step 2 then skips it — so the translation above
-/// degrades to *nothing armed, nothing saved, nothing restored, nothing
-/// reported*, exactly as the C does on a platform that refuses every call.
-/// No path here panics and none pretends to have installed anything.
-///
-/// What has to arrive for the module to function is listed once, here:
-///
-/// 1. Real bodies for [`SigAction`] and [`SigSet`] (a `def`-rule change), or
-///    an ABI-crate-owned table these hand out handles into.
-/// 2. The three syscalls, issued without libc.
-/// 3. The async-signal-safe C handler that [`install_handler`] installs, and
-///    the process-global instance registration it reaches its `EditLine`
-///    through. Both belong to the ABI crate — see the note on [`sig_handler`]
-///    and on [`sig_set`].
-mod plat {
-    use super::{SigAction, SigSet};
-
-    /// What POSIX `sigaction(signo, &nsa, &osa)` says about the disposition
-    /// it displaced. The C spells this as
-    /// `sigaction(...) != -1 && osa.sa_handler != sig_handler`; only the
-    /// platform layer can compare handler identity, so the whole test is
-    /// answered here.
-    pub(super) enum Installed {
-        /// Installed, and what it displaced was somebody else's disposition.
-        /// This is the case that fills a `sig_action[]` slot.
-        Displaced(SigAction),
-        /// Installed, but what it displaced was already our own handler. The
-        /// idempotence guard of `sem:sig.sig-set-fn` step 4: the slot must be
-        /// left alone, or `sig_clr` would later install libedit's own handler
-        /// permanently.
-        AlreadyOurs,
-        /// The call failed — the C's -1. The slot keeps whatever it held.
-        Failed,
-    }
-
-    /// `sigemptyset` plus one `sigaddset` per trapped signal, in table order:
-    /// the cached mask `sig_init` builds and `sig_set`/`sig_clr` block with.
-    pub(super) fn trapped_sigset() -> SigSet {
-        SigSet { _placeholder: () }
-    }
-
-    /// `sigprocmask(SIG_BLOCK, set, &oset)`. `None` is the C's -1.
-    pub(super) fn sigmask_block(_set: &SigSet) -> Option<SigSet> {
-        None
-    }
-
-    /// `sigemptyset(&nset)`, `sigaddset(&nset, signo)`,
-    /// `sigprocmask(SIG_BLOCK, &nset, &oset)` — the handler's step 2.
-    pub(super) fn sigmask_block_one(_signo: i32) -> Option<SigSet> {
-        None
-    }
-
-    /// `sigprocmask(SIG_SETMASK, oset, NULL)`. `false` is the C's -1.
-    pub(super) fn sigmask_set(_oset: &SigSet) -> bool {
-        false
-    }
-
-    /// `sigaction(signo, &nsa, &osa)` where `nsa` is the fully initialised
-    /// action for the ABI crate's handler: `SA_ONSTACK`, no `SA_RESTART` (an
-    /// interrupted `read` must fail with `EINTR`, which is how the read loop
-    /// learns a signal arrived), and — departing from the C, whose empty
-    /// `sa_mask` lets the other six nest and re-enter everything — an
-    /// `sa_mask` holding all seven trapped signals. Every member is
-    /// initialised, not just the three the C assigns (ERR-terminal-15).
-    pub(super) fn install_handler(_signo: i32) -> Installed {
-        Installed::Failed
-    }
-
-    /// `sigaction(signo, osa, NULL)`, putting a saved disposition back. Takes
-    /// the disposition by value because the callers consume the slot in the
-    /// same breath. `false` is the C's -1.
-    pub(super) fn restore_handler(_signo: i32, _osa: SigAction) -> bool {
-        false
-    }
-
-    /// `raise(signo)` — POSIX defines it as
-    /// `pthread_kill(pthread_self(), signo)`, so the re-raised signal is
-    /// delivered to this same thread. `false` is the C's non-zero return.
-    pub(super) fn raise(_signo: i32) -> bool {
-        false
-    }
-}
+// The POSIX signal primitives this module is written against.
+//
+// `plan/decisions/platform-layer.md` moved them into `nshedit-plat`, so the
+// module that used to stand here — with every call reporting a permanent
+// failure, and [`SigAction`]/[`SigSet`] carrying no state — is gone and the
+// name is an import. rustix declines the signal family on principle, so
+// those three are libc symbols there, under the second site on
+// `plan/decisions/no-c-ffi.md`'s enumeration; nothing in *this* crate names
+// one.
+//
+// Two things the platform crate owns that this module used to describe as
+// missing:
+//
+// - The installed handler. `plat::install_handler` arms
+//   `nshedit_plat::signal`'s own async-signal-safe trampoline, which does
+//   nothing but record the signal number; [`sig_handler`] below is the
+//   *body*, run deferred from the read loop.
+// - The registration that carries the instance to it. `plat::set_signal_slot`
+//   is the port's counterpart of the C's file-static `sel`, and [`sig_set`]
+//   publishes into it inside the blocked window rather than before it, which
+//   is what the rule asks for.
+use nshedit_plat::signal as plat;
 
 // [spec:libedit:def:sig.sig-handler-fn]
 // [spec:libedit:sem:sig.sig-handler-fn]
@@ -222,10 +122,9 @@ mod plat {
 ///
 /// The C's handler takes only `signo`, because a C signal handler carries no
 /// user data, and reaches its `EditLine` through the file-static `sel` that
-/// `sig_set` assigns. That global is a C-shaped compatibility artifact and
-/// belongs in the ABI crate, not here (`plan/decisions/idiomatic-core.md`),
-/// so the instance is a parameter: whatever registration mechanism the ABI
-/// crate uses to find it is what supplies this argument.
+/// `sig_set` assigns. Here the instance is a parameter, and what the installed
+/// trampoline reaches through the process-global slot is one atomic rather
+/// than the whole editor — see [`sig_set`].
 pub(crate) fn sig_handler(el: &mut EditLine, signo: i32) {
     // ERR-terminal-14, disposition `define`: the C runs every step below in
     // async-signal context, where `el_resize` reaches `calloc`/`free` and
@@ -241,10 +140,11 @@ pub(crate) fn sig_handler(el: &mut EditLine, signo: i32) {
     // admits exactly one design and this is it.
     //
     // The division of labour that makes it observably equivalent:
-    //   - The ABI crate's installed handler does only async-signal-safe work:
-    //     store `signo` into `sig_no` (a `sig_atomic_t`-shaped atomic) and
-    //     optionally `write()` one byte to a self-pipe. No allocation, no
-    //     lock, no buffered writer.
+    //   - `nshedit_plat::signal`'s installed trampoline does only
+    //     async-signal-safe work: store `signo` into `sig_no` (a
+    //     `sig_atomic_t`-shaped atomic) reached through the process-global
+    //     slot `sig_set` published. No allocation, no lock, no buffered
+    //     writer.
     //   - The read loop, which already polls `sig_no` after a `read` that
     //     failed with `EINTR` (`sem:read.read-char-fn`), calls this. Every
     //     unsafe thing the C did in the handler happens here instead, where
@@ -279,7 +179,7 @@ pub(crate) fn sig_handler(el: &mut EditLine, signo: i32) {
     let oset = plat::sigmask_block_one(signo);
 
     // Step 3. The handler's only channel to the read loop. The installed
-    // handler has already stored this; storing it again is idempotent and
+    // trampoline has already stored this; storing it again is idempotent and
     // keeps the channel correct if a future caller pumps from elsewhere.
     if let Some(sig) = el.el_signal.as_deref() {
         sig.sig_no.store(signo, Ordering::Relaxed);
@@ -328,7 +228,8 @@ pub(crate) fn sig_handler(el: &mut EditLine, signo: i32) {
             .and_then(|sig| sig.sig_action[i].take())
     });
     if let Some(osa) = saved {
-        plat::restore_handler(signo, osa);
+        // The C discards this, as it discards every result in the family.
+        let _ = plat::restore_handler(signo, osa);
     }
 
     // Steps 7 and 8, in the order the C fixes and the one the rule calls the
@@ -342,7 +243,7 @@ pub(crate) fn sig_handler(el: &mut EditLine, signo: i32) {
     // this body nothing between step 2 and here touches the mask, so the mask
     // in force is already "the entry mask, with `signo` still blocked" — the
     // exact state the C's `SIG_SETMASK oset` produces.
-    plat::raise(signo);
+    let _ = plat::raise(signo);
 
     // The C's delivery point is the kernel's return from the handler, which
     // unblocks `signo` and lets the pending signal through. Deferred, the
@@ -350,7 +251,7 @@ pub(crate) fn sig_handler(el: &mut EditLine, signo: i32) {
     // 2 is what delivers the re-raised signal to the disposition just put
     // back. Nothing may be added between the raise and this line.
     if let Some(oset) = oset {
-        plat::sigmask_set(&oset);
+        let _ = plat::sigmask_set(&oset);
     }
 }
 
@@ -373,7 +274,7 @@ pub(crate) fn sig_init(el: &mut EditLine) -> i32 {
         // which the rule asks for explicitly: an option, consumed on restore.
         sig_action: [const { None }; ALLSIGSNO],
         // Step 2. Exactly the seven, in table order.
-        sig_set: plat::trapped_sigset(),
+        sig_set: SigSet::of(&SIGHDL),
         // The C leaves `sig_no` holding whatever `malloc` returned
         // (ERR-terminal-15); zeroed here, as that entry's definition
         // requires.
@@ -414,11 +315,11 @@ pub(crate) fn sig_end(el: &mut EditLine) {
     // mid-read (ERR-input-22).
     sig_clr(el);
 
-    // Step 2 belongs to the ABI crate: it owns the process-global instance
-    // registration that stands in for the C's file-static `sel`, and must
-    // clear it here. The C never does, so after `el_end` that pointer dangles
-    // for the rest of the process. Nothing in this crate holds it, which is
-    // why there is nothing to clear at this line.
+    // Step 2 is `sig_clr`'s doing, one line above: it clears the
+    // process-global registration that stands in for the C's file-static
+    // `sel`, so the trampoline has nowhere to write by the time the box goes.
+    // The C never clears `sel` at all, so after `el_end` that pointer dangles
+    // for the rest of the process (ERR-terminal-18).
 
     // Step 3. Dropping the `Box` is the C's `el_free` plus its NULL
     // assignment, and the type makes the C's dangling `el_signal`
@@ -444,24 +345,38 @@ pub(crate) fn sig_set(el: &mut EditLine) {
     // seven rather than being empty, so a second trapped signal cannot nest
     // inside the first — see the note on `install_handler`.
     //
-    // Step 2 is the C's `sel = el`. It has no counterpart in this crate: the
-    // instance reaches `sig_handler` as a parameter, and the registration
-    // that supplies it is the ABI crate's (`plan/decisions/idiomatic-core.md`).
-    // Two requirements land on that crate here. It must publish the instance
-    // *inside* the blocked window below, not before it as the C does — the
-    // rule names the race a signal in that gap opens, and says publishing
-    // under the block closes it. And it must serialise arming: dispositions
-    // are process-wide while this call comes from whichever thread happens to
-    // be editing (ERR-terminal-55).
+    // Step 3, hoisted above step 2 deliberately. Block all seven for the
+    // duration of the loop so that a delivery cannot land between two
+    // installs and rewrite a slot underneath us.
+    let mask = sig.sig_set;
+    let oset = plat::sigmask_block(&mask);
 
-    // Step 3. Block all seven for the duration of the loop so that a
-    // delivery cannot land between two installs and rewrite a slot
-    // underneath us.
-    let oset = plat::sigmask_block(&sig.sig_set);
+    // Step 2, the C's `sel = el`. What the handler needs to reach is the one
+    // field it writes, `el_signal->sig_no`, so that address is what gets
+    // published rather than the `EditLine`. It is published *inside* the
+    // blocked window rather than before it as the C does, which is what the
+    // rule asks for: it names the race a signal in that gap opens, and says
+    // publishing under the block closes it.
+    //
+    // Not closed, and the C's too: dispositions are process-wide while this
+    // call comes from whichever thread happens to be editing, so two
+    // `EditLine`s arming concurrently leave the second one's slot published
+    // (ERR-terminal-55). Serialising that is the caller's, exactly as it is
+    // in the C.
+    //
+    // SAFETY: `sig` is the boxed `ElSignal`, so `sig_no`'s address is stable
+    // for as long as the box lives, and the box is dropped only by `sig_end`
+    // — which calls `sig_clr` first, and `sig_clr` clears the registration.
+    unsafe { plat::set_signal_slot(&raw const sig.sig_no) };
 
-    // Step 4. Fixed table order, one slot per signal.
+    // Step 4. Fixed table order, one slot per signal. Step 1, the new action,
+    // is built inside `plat::install_handler`: only the platform layer knows
+    // the handler's identity, and folding the construction in with the call
+    // is what keeps every member initialised rather than the C's three
+    // (ERR-terminal-15). Its `sa_mask` is the cached seven rather than the
+    // C's empty set, so a second trapped signal cannot nest inside the first.
     for (slot, signo) in sig.sig_action.iter_mut().zip(SIGHDL) {
-        match plat::install_handler(signo) {
+        match plat::install_handler(signo, &mask) {
             // Installed, and we displaced somebody else: save it.
             plat::Installed::Displaced(osa) => *slot = Some(osa),
             // The idempotence guard. `sig_set` is legitimately re-issued
@@ -485,7 +400,7 @@ pub(crate) fn sig_set(el: &mut EditLine) {
     // freshly installed handler, and POSIX signal merging applies: a burst of
     // SIGWINCH inside the window collapses to one delivery.
     if let Some(oset) = oset {
-        plat::sigmask_set(&oset);
+        let _ = plat::sigmask_set(&oset);
     }
 }
 
@@ -516,13 +431,22 @@ pub(crate) fn sig_clr(el: &mut EditLine) {
     // way the current disposition is the right one and is left alone.
     for (slot, signo) in sig.sig_action.iter_mut().zip(SIGHDL) {
         if let Some(osa) = slot.take() {
-            plat::restore_handler(signo, osa);
+            let _ = plat::restore_handler(signo, osa);
         }
     }
+
+    // The counterpart of `sig_set`'s step 2, which the C has no counterpart
+    // for at all: nothing of ours is installed any more, so the trampoline
+    // has nothing to record into and the registration comes off. This is what
+    // `sem:sig.sig-end-fn` requires happen before the state is freed, and
+    // doing it here rather than only in `sig_end` also covers the paths that
+    // reach `sig_clr` and never reach `sig_end`. Still inside the block, so a
+    // delivery cannot arrive between the last restore and this line.
+    plat::clear_signal_slot();
 
     // Step 3. Any of the seven that arrived during the loop is delivered
     // here, now going to the application's own disposition rather than ours.
     if let Some(oset) = oset {
-        plat::sigmask_set(&oset);
+        let _ = plat::sigmask_set(&oset);
     }
 }

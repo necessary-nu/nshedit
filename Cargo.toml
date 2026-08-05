@@ -1,17 +1,23 @@
 [workspace]
 resolver = "3"
-members = ["crates/nshedit", "crates/nshedit-abi", "crates/nshterm"]
+members = ["crates/nshedit", "crates/nshedit-abi", "crates/nshedit-plat", "crates/nshterm"]
 
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.85"
+# 1.99 is where `c_variadic` stabilises, which `crates/nshedit-abi` needs to
+# declare `el_set`, `el_get`, `el_wset`, `el_wget`, `history` and `history_w`
+# the way `histedit.h` declares them. Until 1.99 ships, `rust-toolchain.toml`
+# pins a dated nightly; delete that file when it does. See `abi-varargs`.
+rust-version = "1.99"
 license = "BSD-3-Clause"
 repository = "https://github.com/necessary-nu/libedit"
 authors = ["Brendan Molloy <brendan@necessary.nu>"]
 
 [workspace.dependencies]
 nshedit = { path = "crates/nshedit", version = "0.0.0" }
+# The only crate that issues a syscall. See plan/decisions/platform-layer.md.
+nshedit-plat = { path = "crates/nshedit-plat", version = "0.0.0" }
 # See plan/decisions/terminal-caps-via-term-crate.md.
 nshterm = { path = "crates/nshterm", version = "0.1.0" }
 
