@@ -11,9 +11,9 @@
  * code is also granted without any restrictions.
  */
 
-#ifndef HAVE_WCSDUP
-
 #include "config.h"
+
+#ifndef HAVE_WCSDUP
 
 #if defined(LIBC_SCCS) && !defined(lint) 
 __RCSID("$NetBSD: wcsdup.c,v 1.6 2022/03/12 17:31:40 christos Exp $"); 

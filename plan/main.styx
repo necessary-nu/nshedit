@@ -761,6 +761,19 @@ children (
                     }
                 )
             }
+
+            {
+                id c-defect-fixes
+                title "Fix defects in the reference C itself, and keep the divergence list short enough to upstream"
+                log (
+                    {
+                        at 2026-08-05T13:32:29.876187813Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
+            }
         )
         log (
             {

@@ -29,9 +29,9 @@
  * SUCH DAMAGE.
  */
 
-#if !HAVE_REALLOCARR
-
 #include "config.h"
+
+#if !HAVE_REALLOCARR
 
 #if HAVE_NBTOOL_CONFIG_H
 #include "nbtool_config.h"
