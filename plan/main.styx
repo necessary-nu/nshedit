@@ -71,6 +71,14 @@ children (
                 title "Translate the terminal layer to Rust over terminfo"
                 deps (terminal-markup)
                 sealed true
+                log (
+                    {
+                        at 2026-08-05T11:39:15.708180493Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Unfinished consequence of the capname substitution. Correcting my own earlier framing: I first called this a port defect outright, and half of it is not.\n\nThe tables moved from the C's termcap two-letter codes to terminfo capnames -- TSTR holds il1/bel/ed/el/hpa/clear/dch1 where tstr[] holds al/bl/cd/ce/ch/cl/dc. That is required by dec:libedit:terminal-caps-via-term-crate, since the term crate's maps are keyed by capname, and both tables are 39 entries in the same T_* index order.\n\nOUTPUT SIDE: already decided, not a defect. sem:terminal.terminal-telltc-fn explicitly raised it -- \"Changing the parenthesised token changes user-visible output, so it is a deliberate compatibility decision rather than a free choice\" -- the translation decided to substitute, and terminal.rs's TSTR doc comment records it. Leave it alone.\n\nINPUT SIDE: never addressed, and this is the actual gap. sem:terminal.terminal-settc-fn says only \"search the 39-entry string-capability table for an exact name match\" and never states which namespace the caller supplies. So changing the name column silently changed what a caller's string matches against. The rule prompted a decision about printing and nobody asked the same question about accepting.\n\nConsequence: `settc cl <value>` in a user's ~/.editrc, or el_set(el, EL_SETTC, \"cl\", value, NULL) from a program, resolves in the C and misses against us. Same for echotc and gettc, and for every capability rather than a few. It fails by silent lookup miss.\n\nThe functions are NOT exported -- terminal_settc, terminal_gettc, terminal_telltc and terminal_echotc are all libedit_private -- but the capability NAME crosses the public boundary through two doors: the histedit.h opcodes EL_TELLTC 5, EL_SETTC 6, EL_ECHOTC 7 and EL_GETTC 17, all documented as taking `const Char *`; and the editrc builtins at src/parse.c:70,73,74, reached from any ~/.editrc through el_source/el_parse. src/el.c:304-314 and src/eln.c:201-209 synthesize argv[0] and land on the same handlers.\n\nCalibration, since I overstated it first time: real, silent, affects every capability, but COLD. Hand-setting terminal capabilities from editrc or EL_SETTC is rare, and doc/editline.3 does not document settc or echotc at all.\n\nFIX: accept termcap names on input, keep capnames for the term crate lookup. The mapping needs no derivation -- it already exists three times over: the C's tstr[]/tval[] carry the termcap column at identical indices, our tables carry the capname at the same indices, and the sem rules spell out all three names per capability (\"terminfo clr_eol, capname el; termcap ce\"). A second field on Termcapstr/Termcapval, not a subsystem.\n\nWatch the buffer while doing it: settc copies the name into an 8-byte buffer with a truncating bounded copy, sized in the C for two-letter codes. Capnames fit -- clear, smdc, kcuu1 are all under 8 -- but the margin dropped from 6 spare bytes to 3, and sem:terminal.terminal-settc-fn describes that buffer as \"sized for two-letter capability names\", which is now only true of what it accepts and not of what it stores.\n\nBelongs here rather than in a new leaf: the terminal concern is sealed at four waves and this is translation that is not finished. nplan_add refused a fifth child, correctly."
+                    }
+                )
             }
 
             {
@@ -88,6 +96,14 @@ children (
             }
         )
         sealed true
+        log (
+            {
+                at 2026-08-05T11:34:22.552572706Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "PORT DEFECT, found 2026-08-05 by asking what libtinfo was for. Not a C defect, so not an errata entry. Needs fixing before the terminal concern can be called translated.\n\nDebian's libedit.so.2 imports six symbols from libtinfo: tgetent, tgetflag, tgetnum, tgetstr, tgoto, tputs. That is the termcap client API, and ncurses' libtinfo provides it as an emulation layer over its terminfo database. Dropping the library therefore means taking on the emulation ourselves, and one half of that has been done in a way that breaks the other.\n\nTHE CAPABILITY NAMES DIVERGED, AND THEY ARE USER-VISIBLE ON INPUT.\n\nsrc/terminal.c's tstr[] holds termcap two-letter names -- \"al\", \"bl\", \"cd\", \"ce\", \"ch\", \"cl\", \"dc\" -- because that is what tgetstr takes. crates/nshedit/src/terminal.rs's TSTR holds terminfo capnames -- \"il1\", \"bel\", \"ed\", \"el\", \"hpa\", \"clear\", \"dch1\" -- because that is what the term crate's maps are keyed by. Reading the database that way is correct. The problem is that the same table is what user input is matched against:\n\n    port:  TSTR.iter().position(|t| t.name.as_bytes() == what)\n    C:     for (ts = tstr; ts->name; ts++) if (strcmp(ts->name, what) == 0)\n\nBoth are a linear match of the caller's string against the table's name field. So `settc cl <value>` in an existing .editrc, or el_set(EL_SETTC, \"cl\", ...) from a program, resolves in the C and finds NOTHING against us. Same for echotc and for every capability, not a handful. It fails silently -- the lookup just misses -- which is the worst shape for a drop-in break.\n\nThere is no alias layer today. The doc comment at terminal.rs:210 acknowledges the difference (\"(`\\\"al\\\"`, `\\\"bl\\\"`, ...), terminfo long name here\") and is itself doubly wrong: it is a capname, not a long name, and noting the divergence is not the same as handling it.\n\nFix: a termcap-to-terminfo alias at the lookup boundary. Keep the tables keyed by capname, since that is what the database needs, and accept the C's two-letter names from users and from editrc. That is exactly what ncurses' emulation does, and the mapping is well defined -- terminfo's own tables carry the termcap name for each capability.\n\nRelated and already noted on errata-reconcile-2, but that entry only covers the OUTPUT side: EL_TELLTC prints al/bl/cd/ce/ch where we print il1/bel/ed/el/hpa. Cosmetic next to this. conformance-driver-el will surface both.\n\nSecond inherited piece, separate and smaller: tputs padding. The term crate's parm::expand discards $<...> delays, and t_speed is 0 anyway while tcgetattr is stubbed, so no padding is emitted at all. Conformant under the rule's zero-speed clause, but unreachable rather than correct -- see platform-layer divergence group 3.\n\nAlso worth knowing for packaging: dropping libtinfo drops the LIBRARY, not the terminfo DATABASE. /usr/share/terminfo is still required at runtime and ncurses is still what ships it."
+            }
+        )
     }
 
     {
@@ -833,6 +849,64 @@ children (
                 author "brendan@necessary.nu"
                 kind @note
                 text "Why this concern exists, and why the nine per-concern *-tests leaves are mis-scoped.\n\nlibedit ships NO test suite. Measured: Makefile.am line 9 is `SUBDIRS = src $(EXAMPLES_DIR) doc`, and there is no check_PROGRAMS, no TESTS, no test directory anywhere in the tarball. Every *-tests leaf in this plan is titled \"Port and extend tests for X\", and the port-wave-3-tests playbook describes porting a test set and using the literal port as an oracle for translation bugs. Neither is available. Those tests must be WRITTEN from the sem rules, not translated, which is a substantially larger job than the titles imply. Retitle them.\n\nThat matters because of what the evidence currently rests on. 711 rules are specified and 711 are covered, but `tested` is 0 for every one of them, and the workspace has 29 tests against roughly 35,000 lines of translated Rust. Every claim made so far -- 357 errata dispositions \"carried out\", defects \"reproduced faithfully\", rules \"verified against the C\" -- comes from reading code, not running it. The cross-checks caught real errors, so it is not worthless, but it is not the same class of evidence as an execution.\n\nTHE ORACLE IS THE IN-TREE C, NOT THE SYSTEM LIBRARY. This is the load-bearing decision.\n\nDebian ships libedit 3.1-20250104 as libedit.so.2.0.75. Our source is libedit-20260512-3.1, LT_VERSION 0:78:0 -- roughly sixteen months and three libtool revisions newer. Diffing against the system library would attribute upstream changes to the port. The tree has a working configure/Makefile.am, confirmed to build, so building src/*.c ourselves gives a reference at exactly the version we translated, from the same code, with the spec annotations being comments that change nothing. Zero version skew.\n\nThe system libraries stay useful for a narrower job: /usr/lib/x86_64-linux-gnu/libedit.so.2 says what a deployed consumer actually links against, libreadline.so.8 is the reference for the GNU divergences the register logs, and libbsd.so.0 answers the open question of whether our NetBSD-derived vis matches the libbsd vis that wrote every history file already on a Debian user's disk.\n\nTiering, ordered by what is reachable today:\n\n- conformance-oracle and conformance-abi-shape and conformance-differential all run NOW. None of them need a terminal.\n- conformance-pty is blocked on platform-build and says so in its deps: without tcgetattr there is no raw mode, without TIOCGWINSZ there is no size, so the interactive path cannot be driven at all yet.\n\nDeterminism is the hard part of the differential tiers and must be designed in, not retrofitted: pin TERM and the TERMINFO database, pin LC_ALL, pin the window size, control HOME so no real ~/.editrc is read, and control every path the history file touches. libedit reads the environment in more places than is obvious -- see the secure_getenv divergence group.\n"
+            }
+        )
+    }
+
+    {
+        id nterminfo
+        title "Our terminfo crate, because the one we depended on has been unmaintained since 2018"
+        children (
+            {
+                id nterminfo-extract
+                title "Carve the terminfo half out of term 1.2.1 and drop the colour half termcolor supersedes"
+            }
+
+            {
+                id nterminfo-env-guard
+                title "Guard TERMINFO, TERMINFO_DIRS and HOME, which a set-uid consumer must not honour"
+                deps (nterminfo-extract)
+            }
+
+            {
+                id nterminfo-padding
+                title "Preserve the padding delays parm::expand discards, which go live when t_speed becomes real"
+                deps (nterminfo-extract)
+            }
+
+            {
+                id nterminfo-hashed-db
+                title "Read the hashed terminfo.db, which upstream refuses and which decides whether a terminal resolves at all"
+                deps (nterminfo-extract)
+                log (
+                    {
+                        at 2026-08-05T11:53:53.861057785Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Upstream refuses this outright. term-1.2.1's searcher.rs opens with its own module doc: \"ncurses-compatible database discovery — Does not support hashed database, only filesystem!\" So every consumer of that crate silently fails on a hashed system, and nobody was going to fix it because the crate has been looking for a maintainer since November 2018 (Stebalien/term#93).\n\nWhy it matters here rather than being a nicety: the failure is total, not partial. get_dbpath_for_term walks TERMINFO, $HOME/.terminfo, TERMINFO_DIRS and the four compiled-in directories, then within each tries <dir>/<first-char>/<term> and <dir>/<hex>/<term>. On a system whose terminfo is a single terminfo.db, none of those paths exist, tgetent reports \"no entry\", and libedit falls back to dumb defaults — no cursor addressing, no clear-to-eol, no insert/delete line. The whole editor degrades, on a machine where the C works perfectly through ncurses.\n\nDebian uses the filesystem tree, which is why the port works here and why this has not bitten. That makes it a portability cliff rather than a visible bug: it is invisible until it is total.\n\nWhat it costs: ncurses' hashed database is a Berkeley DB 1.85 hash file. Reading it means implementing that format — bucket pages, the hash function, overflow chains — or finding a pure-Rust crate that already does and checking its licence, which is the same trap terminfo 0.9.0's WTFPL was. Do not assume a crate exists; check, and check the licence before designing around it. Writing it is bounded but it is not a weekend.\n\nCheck before building: which systems actually ship hashed. ncurses is configured with --with-hashed-db and the answer differs by distro and by BSD. That survey decides whether this is P1 or a later nicety, and it is cheap to do first.\n\nWorth knowing for the crate's own sake: this is the feature that makes nterminfo better than what we forked rather than merely unblocked. Combined with the termcap column (nterminfo-termcap-names), it is a terminfo reader that handles both database layouts and all three name columns, which is more than term or the WTFPL terminfo crate offer. If we publish, that is the argument for it existing."
+                    }
+
+                    {
+                        at 2026-08-05T12:04:08.758724786Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Candidate found and assessed: https://github.com/jperkin/db185 — a Berkeley DB 1.85 reader/writer in pure Rust, published on crates.io, written for pkgsrc-rs by a NetBSD/pkgsrc developer.\n\nPROBABLY THE WRONG ACCESS METHOD, and this needs checking before anyone designs around it. Its own documentation says \"Hash and recno access methods are out of scope\" — it implements btree only, building a new file from scratch with each key/value pair fitting in a single ~4 KiB page. ncurses' hashed terminfo database uses DB_HASH, which is what \"hashed database\" names. If that is right, db185 does not cover our case at all.\n\nFlagged as unverified rather than settled: the DB_HASH claim is from recollection of ncurses' hashed_db.c and could not be checked here — this host has no terminfo.db and no ncurses source. VERIFY IT FIRST. It is the difference between db185 being a dependency and being a curiosity.\n\nA second complication for the same survey. The on-disk format depends on which libdb ncurses was linked against: --with-hashed-db takes whatever is available and ncurses handles API generations from 1.85 up through DB 4 and 5. So \"hashed terminfo\" is not one format, and a FreeBSD box and a Linux box configured that way may not agree. db185 being 1.85-specific may therefore be doubly narrow — wrong access method AND one generation among several. Establish which generations actually appear in the wild as part of the survey this node already calls for.\n\nWhere it stays useful regardless: it is proof the format is tractable in pure Rust rather than a C-linking problem, and its page-level work — page structures, byte-order handling, the single-page constraint — is a genuine reference for the hash method too. Check its licence before lifting anything, for the reason terminfo 0.9.0's WTFPL already taught us once."
+                    }
+                )
+            }
+
+            {
+                id nterminfo-termcap-names
+                title "Carry the termcap column ncurses has and term dropped, so legacy two-letter names resolve"
+                deps (nterminfo-extract)
+            }
+        )
+        log (
+            {
+                at 2026-08-05T11:54:12.645154602Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "Why this crate exists, recorded because the reasoning changed twice and the final answer is not the obvious one.\n\ndec:libedit:terminal-caps-via-term-crate chose term 1.2.1 to replace the libtinfo dependency, and that direction stands -- terminal capabilities come from terminfo, never from a linked C library. What changed is the vehicle.\n\nterm is abandoned. Stebalien/term#93, \"[LFM] Looking For Maintainer\", has been open since November 2018; the author took a job and said he had little time or motivation left for it. So the three changes we need have no path upstream, and \"fork it, PR it, un-fork later\" -- which I recommended -- was never available.\n\ntermcolor is the ecosystem's answer for term's users and is NOT ours. Measured against docs.rs: it provides StandardStream, Buffer/BufferWriter, Ansi/NoColor, ColorSpec, HyperlinkSpec, and explicitly does not read the terminfo database, move the cursor, clear to end of line, insert or delete lines, or query dimensions. We never used term for colour. We use exactly two things from it -- term::terminfo::TermInfo and term::terminfo::parm::{Param, Variables, expand} -- and libedit needs 39 string capabilities plus 8 numeric and boolean ones. termcolor supplies none of them and has no API that could. The advice is right for the majority of term's users and does not transfer to us.\n\nThat is what makes the split clean rather than arbitrary: the half termcolor legitimately supersedes is exactly the half we drop. TerminfoTerminal, the Terminal trait, Attr, color and win.rs go; TermInfo, parm, the compiled parser, the name tables and the searcher stay. Verified before extracting: TerminfoTerminal is the only thing in terminfo/* reaching for crate::{Attr, color, Terminal, win}.\n\nThe alternative was writing a terminfo reader from scratch -- the compiled format is documented in term(5) and is maybe 300 lines. Rejected because the fork gives a working parser today and the name tables are 553 lines of data nobody should retype. The third option, the terminfo crate at 0.9.0, is WTFPL and was already rejected on that ground.\n\nFour leaves follow. Extraction first, then the three changes upstream could not take -- the set-uid env guard, the discarded padding delays, the hashed database -- plus the termcap name column ncurses carries in Caps and term dropped. The last two are the ones that make this crate worth publishing rather than merely worth having.\n\nLicence: MIT OR Apache-2.0, copyright The Rust Project Developers, carried forward. The workspace root says BSD-3-Clause, which is wrong for this crate and must not be inherited."
             }
         )
     }
