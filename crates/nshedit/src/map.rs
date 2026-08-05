@@ -53,9 +53,47 @@ const CONTROL_X: u32 = 0x18;
 // [spec:libedit:def:map.el-func-t-edit-line-wint-t]
 /// C: `typedef el_action_t (*el_func_t)(EditLine *, wint_t);`
 ///
-/// An editor command. The `wint_t` is the character that invoked it, so it
-/// is `u32`: `(wint_t)-1` reaches these functions.
-pub type ElFuncT = fn(&mut EditLine, u32) -> ElActionT;
+/// An editor command, as stored in [`ElMapT::func`] and dispatched by
+/// `el_wgets`. It is the C ABI's shape because `el_set(EL_ADDFN, name, help,
+/// func)` lets an application add one: what arrives there is an `extern "C"`
+/// function pointer, `EditLine *` is `*mut EditLine` rather than
+/// `&mut EditLine`, and the call is `unsafe` because the command may be the
+/// caller's code. The `wint_t` is the character that invoked it and stays
+/// `u32` — the crate's uniform carrier for `wchar_t`/`wint_t` — and
+/// `(wint_t)-1` does reach these functions.
+///
+/// The port's own 96 commands are ordinary Rust functions taking
+/// `&mut EditLine` (`plan/decisions/idiomatic-core.md`), so they are not
+/// values of this type. [`el_func!`] is the one-line trampoline that makes
+/// each one into a value of it, and `crate::fcns::EL_FUNC` is the table it
+/// builds. Nothing observable depends on the identity of a stored pointer —
+/// no rule compares `el_map.func[n]` against anything — so the indirection is
+/// invisible across the ABI.
+pub type ElFuncT = unsafe extern "C" fn(*mut EditLine, u32) -> ElActionT;
+
+/// Wraps one of the port's own editor commands as an [`ElFuncT`].
+///
+/// In C there is one ABI, so `el_func[]` holds the command functions
+/// themselves. Here the table has to hold C-callable pointers while the
+/// commands stay idiomatic, and this is the join: one `extern "C"` shim per
+/// table row, generated at the use site so each row still names its command
+/// exactly once.
+macro_rules! el_func {
+    ($cmd:path) => {{
+        /// # Safety
+        ///
+        /// `el` must be the live `EditLine` libedit is dispatching for, which
+        /// is what `sem:map.map-init-fn` installs this table against and what
+        /// `sem:read.el-wgets-fn` passes at every dispatch.
+        unsafe extern "C" fn shim(el: *mut $crate::el::EditLine, c: u32) -> $crate::el::ElActionT {
+            // SAFETY: the caller's obligation above; the command borrows the
+            // handle only for the duration of this call.
+            $cmd(unsafe { &mut *el }, c)
+        }
+        shim as $crate::map::ElFuncT
+    }};
+}
+pub(crate) use el_func;
 
 // [spec:libedit:def:map.el-bindings-t]
 /// One row of the help table, for the `bind` shell command.

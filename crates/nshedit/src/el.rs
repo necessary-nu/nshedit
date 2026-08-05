@@ -101,7 +101,13 @@ pub type CFile = *mut c_void;
 /// The type `el_set`/`el_get` cast `EL_GETENV`'s argument through. Same
 /// shape as the `el_getenv` member of [`EditLine`]; `el.c` declares it
 /// separately only because the member is spelled out inline there.
-pub type FuncT = fn(*const c_char) -> *mut c_char;
+///
+/// This is `getenv(3)`'s own signature and the value crosses the C ABI in
+/// both directions — the application installs one and `el_get(EL_GETENV)`
+/// hands it back — so it is `unsafe extern "C"` rather than a Rust `fn`.
+/// Both strings stay raw pointers: the argument is a borrowed NUL-terminated
+/// name, and the result is borrowed from storage the hook owns.
+pub type FuncT = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 
 // [spec:libedit:def:el.el-action-t]
 /// C: `typedef unsigned char el_action_t;` — index into the command array.
@@ -394,9 +400,9 @@ fn first_two_ids(rest: &str) -> Option<(u32, u32)> {
 /// value of the hook type. That does not survive translation:
 /// `sem:el.secure-getenv-fn` has [`secure_getenv`] return an owned
 /// `Option<OsString>`, while [`FuncT`] is the C ABI shape
-/// `fn(*const c_char) -> *mut c_char`, whose result is borrowed from storage
-/// the hook owns. Neither side may change — the rule fixes the Rust
-/// signature, the ABI fixes the pointer one.
+/// `unsafe extern "C" fn(*const c_char) -> *mut c_char`, whose result is
+/// borrowed from storage the hook owns. Neither side may change — the rule
+/// fixes the Rust signature, the ABI fixes the pointer one.
 ///
 /// So the field carries only what a C *application* installed, and `None`
 /// means "no application hook — the built-in default is in force". That is
@@ -426,7 +432,11 @@ pub(crate) fn el_getenv(el: &EditLine, name: &str) -> Option<OsString> {
     // The four names are compile-time ASCII literals, so this never fails;
     // the C passes them as string literals for the same reason.
     let cname = CString::new(name).ok()?;
-    let value = hook(cname.as_ptr());
+    // SAFETY: `hook` is what an application installed through
+    // `el_set(EL_GETENV, ...)`; `def:el.editline.el-getenv-fn` makes it a C
+    // function taking one NUL-terminated name, and `cname` is exactly that
+    // and outlives the call.
+    let value = unsafe { hook(cname.as_ptr()) };
     if value.is_null() {
         // The hook's "unset, or I decline to answer".
         return None;

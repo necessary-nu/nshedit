@@ -42,11 +42,25 @@
 //!   crosses the C ABI borrowed → a raw pointer.** These are values the
 //!   library stores and hands back untouched; the ABI freezes them, so there
 //!   is nothing here to own. See `plan/decisions/no-c-ffi.md`.
-//! - **A callback typedef → a Rust `fn` pointer whose parameters mirror the
-//!   C signature**, substituting our own types for libedit's own types
-//!   (`&mut EditLine` for `EditLine *`) and raw pointers for C strings. The
-//!   one exception is `hist_fun_t`, genuinely variadic in the C ABI and so
-//!   `unsafe extern "C" fn(..., ...)`.
+//! - **A callback typedef → `unsafe extern "C" fn` with the C's own
+//!   parameters.** Every one of libedit's callback typedefs names a slot an
+//!   application fills through `el_set`, `el_wset` or `history`, so the value
+//!   that lands in it is a C function pointer and nothing else can be stored
+//!   there: `EditLine *` stays `*mut EditLine` and not `&mut EditLine`,
+//!   out-parameters stay raw pointers, and calling one is `unsafe`. That
+//!   covers `el_pfunc_t`, `el_rfunc_t`, `el_zfunc_t`, `el_afunc_t`,
+//!   `el_func_t`, `func_t`, the four `history` vtable types and the variadic
+//!   `hist_fun_t`.
+//!
+//!   The port's *own* implementations of those slots are not bound by it. Two
+//!   — `prompt_default`/`prompt_default_r` — and the builtin reader and the
+//!   ten `history_def_*` functions are written in the C shape directly,
+//!   because they are few and their bodies are already pointer work. The 96
+//!   editor commands are not: they stay ordinary Rust functions taking
+//!   `&mut EditLine`, and `map::el_func!` builds the one-line `extern "C"`
+//!   shim each table row needs. `plan/decisions/idiomatic-core.md` is what
+//!   makes that the right side of the trade — the C ABI is a property of the
+//!   boundary, not of the command set.
 //! - **A C `union` → a Rust `enum`** where the discriminant lives in a
 //!   neighbouring field (`keymacro_value_t`, tagged by `type`). A C *integer
 //!   flag* stays an integer.

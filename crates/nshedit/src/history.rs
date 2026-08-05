@@ -22,7 +22,7 @@
 // face, and this face is the C ABI's.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use core::ffi::{c_char, c_void};
+use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Seek, Write};
@@ -41,6 +41,13 @@ use crate::histedit::{
 use crate::unvis::strnunvis;
 use crate::vis::{VIS_WHITE, strnvis};
 
+// The four vtable typedefs. All of them are C ABI types and not Rust `fn`s:
+// `history(h, ev, H_FUNC, ptr, first, next, ...)` is how an application
+// installs its own ten, so the values that reach [`HistoryW`]'s slots are
+// `extern "C"` function pointers and every dispatch through one is `unsafe`.
+// The `TYPE(HistEvent) *` out-parameter stays a raw pointer for the same
+// reason — the callee is C code, which the borrow rules do not reach.
+
 // [spec:libedit:def:history.history-gfun-t-void-type-hist-event]
 /// C: `typedef int (*history_gfun_t)(void *, TYPE(HistEvent) *);`
 ///
@@ -48,26 +55,28 @@ use crate::vis::{VIS_WHITE, strnvis};
 /// the implementation's own cookie (`h_ref`), which is the `history_t` for
 /// the builtin implementation and anything at all for one installed through
 /// `H_FUNC`, so it stays opaque.
-pub type HistoryGfunT = fn(*mut c_void, &mut HistEventW) -> i32;
+pub type HistoryGfunT = unsafe extern "C" fn(*mut c_void, *mut HistEventW) -> c_int;
 
 // [spec:libedit:def:history.history-efun-t-void-type-hist-event-const-char]
 /// C: `typedef int (*history_efun_t)(void *, TYPE(HistEvent) *, const Char *);`
 ///
 /// An "enter this text" operation: enter/add. The string is borrowed for the
 /// duration of the call and NUL-terminated, as in the C.
-pub type HistoryEfunT = fn(*mut c_void, &mut HistEventW, *const u32) -> i32;
+pub type HistoryEfunT = unsafe extern "C" fn(*mut c_void, *mut HistEventW, *const u32) -> c_int;
 
 // [spec:libedit:def:history.history-vfun-t-void-type-hist-event]
 /// C: `typedef void (*history_vfun_t)(void *, TYPE(HistEvent) *);`
 ///
 /// The "clear the list" operation, which reports nothing.
-pub type HistoryVfunT = fn(*mut c_void, &mut HistEventW);
+pub type HistoryVfunT = unsafe extern "C" fn(*mut c_void, *mut HistEventW);
 
 // [spec:libedit:def:history.history-sfun-t-void-type-hist-event-const-int]
 /// C: `typedef int (*history_sfun_t)(void *, TYPE(HistEvent) *, const int);`
 ///
-/// An operation taking an event number: set/del.
-pub type HistorySfunT = fn(*mut c_void, &mut HistEventW, i32) -> i32;
+/// An operation taking an event number: set/del. The C's `const int` is a
+/// top-level qualifier on a by-value parameter, which does not survive into
+/// the ABI and has no Rust counterpart.
+pub type HistorySfunT = unsafe extern "C" fn(*mut c_void, *mut HistEventW, c_int) -> c_int;
 
 /// C: `struct TYPE(history)` — the wide history object, named `HistoryW` by
 /// `def:histedit.history-w`.
@@ -407,10 +416,23 @@ unsafe fn wcs_at(s: *const u32, i: usize) -> u32 {
 // installs all ten and `history_set_fun` rejects a set with any NULL), so the
 // `None` arms are defined as the C's generic failure rather than a panic.
 
+// Every call below is `unsafe` for the same reason, stated once here rather
+// than four times: the slot holds either one of this file's ten
+// `history_def_*` functions or ten an application installed through `H_FUNC`,
+// and in both cases `def:history.history-gfun-t-void-type-hist-event` and its
+// three siblings make the contract "a C function taking this store's cookie
+// and a writable event". `r` is `h_ref`, which `history_winit` and
+// `history_set_fun` are the only writers of and which is exactly the cookie
+// the slot was installed beside (ERR-history-17 notwithstanding — that defect
+// hands the *builtin* cookie to a caller's functions, which is a wrong value
+// of the right type, not an invalid pointer). `ev` is the caller's live
+// out-parameter, exclusively borrowed here and released for the call.
+
 /// C: `HFIRST`/`HNEXT`/`HLAST`/`HPREV`/`HCURR`.
 fn hg(f: Option<HistoryGfunT>, r: *mut c_void, ev: &mut HistEventW) -> i32 {
     match f {
-        Some(f) => f(r, ev),
+        // SAFETY: see the note above this function.
+        Some(f) => unsafe { f(r, ptr::from_mut(ev)) },
         None => {
             he_seterrev(ev, _HE_UNKNOWN);
             -1
@@ -421,7 +443,8 @@ fn hg(f: Option<HistoryGfunT>, r: *mut c_void, ev: &mut HistEventW) -> i32 {
 /// C: `HSET`/`HDEL`.
 fn hs(f: Option<HistorySfunT>, r: *mut c_void, ev: &mut HistEventW, n: i32) -> i32 {
     match f {
-        Some(f) => f(r, ev, n),
+        // SAFETY: see the note above `hg`.
+        Some(f) => unsafe { f(r, ptr::from_mut(ev), n) },
         None => {
             he_seterrev(ev, _HE_UNKNOWN);
             -1
@@ -432,7 +455,9 @@ fn hs(f: Option<HistorySfunT>, r: *mut c_void, ev: &mut HistEventW, n: i32) -> i
 /// C: `HENTER`/`HADD`.
 fn he(f: Option<HistoryEfunT>, r: *mut c_void, ev: &mut HistEventW, str: *const u32) -> i32 {
     match f {
-        Some(f) => f(r, ev, str),
+        // SAFETY: see the note above `hg`; `str` is the caller's
+        // NUL-terminated wide string, borrowed for the call only.
+        Some(f) => unsafe { f(r, ptr::from_mut(ev), str) },
         None => {
             he_seterrev(ev, _HE_UNKNOWN);
             -1
@@ -443,7 +468,8 @@ fn he(f: Option<HistoryEfunT>, r: *mut c_void, ev: &mut HistEventW, str: *const 
 /// C: `HCLEAR`. Returns nothing, which is why `H_CLEAR` can never fail.
 fn hv(f: Option<HistoryVfunT>, r: *mut c_void, ev: &mut HistEventW) {
     if let Some(f) = f {
-        f(r, ev);
+        // SAFETY: see the note above `hg`.
+        unsafe { f(r, ptr::from_mut(ev)) };
     }
 }
 
@@ -475,7 +501,16 @@ pub fn is_builtin(h: *mut HistoryW) -> bool {
 // [spec:libedit:def:history.history-def-first-fn]
 // [spec:libedit:sem:history.history-def-first-fn]
 /// C: `static int history_def_first(void *p, TYPE(HistEvent) *ev)`
-fn history_def_first(p: *mut c_void, ev: &mut HistEventW) -> i32 {
+///
+/// # Safety
+///
+/// `p` must be the `history_t` cookie this file's `history_def_init` produced
+/// and `ev` a writable event; that is the pairing `history_winit` installs and
+/// the precondition every `H_*` dispatch through [`HistoryW`] carries.
+unsafe extern "C" fn history_def_first(p: *mut c_void, ev: *mut HistEventW) -> c_int {
+    // SAFETY: `ev` is the caller's out-parameter, per this function's own
+    // contract; nothing in the body aliases it.
+    let ev = unsafe { &mut *ev };
     let h = p.cast::<HistoryT>();
     // SAFETY: `p` is the `h_ref` this module allocated in `history_def_init`
     // and installed alongside these ten callbacks; the C's own precondition.
@@ -498,7 +533,16 @@ fn history_def_first(p: *mut c_void, ev: &mut HistEventW) -> i32 {
 // [spec:libedit:def:history.history-def-last-fn]
 // [spec:libedit:sem:history.history-def-last-fn]
 /// C: `static int history_def_last(void *p, TYPE(HistEvent) *ev)`
-fn history_def_last(p: *mut c_void, ev: &mut HistEventW) -> i32 {
+///
+/// # Safety
+///
+/// `p` must be the `history_t` cookie this file's `history_def_init` produced
+/// and `ev` a writable event; that is the pairing `history_winit` installs and
+/// the precondition every `H_*` dispatch through [`HistoryW`] carries.
+unsafe extern "C" fn history_def_last(p: *mut c_void, ev: *mut HistEventW) -> c_int {
+    // SAFETY: `ev` is the caller's out-parameter, per this function's own
+    // contract; nothing in the body aliases it.
+    let ev = unsafe { &mut *ev };
     let h = p.cast::<HistoryT>();
     // SAFETY: as in `history_def_first`.
     unsafe {
@@ -517,7 +561,16 @@ fn history_def_last(p: *mut c_void, ev: &mut HistEventW) -> i32 {
 // [spec:libedit:def:history.history-def-next-fn]
 // [spec:libedit:sem:history.history-def-next-fn]
 /// C: `static int history_def_next(void *p, TYPE(HistEvent) *ev)`
-fn history_def_next(p: *mut c_void, ev: &mut HistEventW) -> i32 {
+///
+/// # Safety
+///
+/// `p` must be the `history_t` cookie this file's `history_def_init` produced
+/// and `ev` a writable event; that is the pairing `history_winit` installs and
+/// the precondition every `H_*` dispatch through [`HistoryW`] carries.
+unsafe extern "C" fn history_def_next(p: *mut c_void, ev: *mut HistEventW) -> c_int {
+    // SAFETY: `ev` is the caller's out-parameter, per this function's own
+    // contract; nothing in the body aliases it.
+    let ev = unsafe { &mut *ev };
     let h = p.cast::<HistoryT>();
     // SAFETY: as in `history_def_first`.
     unsafe {
@@ -544,7 +597,16 @@ fn history_def_next(p: *mut c_void, ev: &mut HistEventW) -> i32 {
 // [spec:libedit:def:history.history-def-prev-fn]
 // [spec:libedit:sem:history.history-def-prev-fn]
 /// C: `static int history_def_prev(void *p, TYPE(HistEvent) *ev)`
-fn history_def_prev(p: *mut c_void, ev: &mut HistEventW) -> i32 {
+///
+/// # Safety
+///
+/// `p` must be the `history_t` cookie this file's `history_def_init` produced
+/// and `ev` a writable event; that is the pairing `history_winit` installs and
+/// the precondition every `H_*` dispatch through [`HistoryW`] carries.
+unsafe extern "C" fn history_def_prev(p: *mut c_void, ev: *mut HistEventW) -> c_int {
+    // SAFETY: `ev` is the caller's out-parameter, per this function's own
+    // contract; nothing in the body aliases it.
+    let ev = unsafe { &mut *ev };
     let h = p.cast::<HistoryT>();
     // SAFETY: as in `history_def_first`.
     unsafe {
@@ -576,7 +638,16 @@ fn history_def_prev(p: *mut c_void, ev: &mut HistEventW) -> i32 {
 // [spec:libedit:def:history.history-def-curr-fn]
 // [spec:libedit:sem:history.history-def-curr-fn]
 /// C: `static int history_def_curr(void *p, TYPE(HistEvent) *ev)`
-fn history_def_curr(p: *mut c_void, ev: &mut HistEventW) -> i32 {
+///
+/// # Safety
+///
+/// `p` must be the `history_t` cookie this file's `history_def_init` produced
+/// and `ev` a writable event; that is the pairing `history_winit` installs and
+/// the precondition every `H_*` dispatch through [`HistoryW`] carries.
+unsafe extern "C" fn history_def_curr(p: *mut c_void, ev: *mut HistEventW) -> c_int {
+    // SAFETY: `ev` is the caller's out-parameter, per this function's own
+    // contract; nothing in the body aliases it.
+    let ev = unsafe { &mut *ev };
     let h = p.cast::<HistoryT>();
     // SAFETY: as in `history_def_first`. The cursor never moves here.
     unsafe {
@@ -602,7 +673,16 @@ fn history_def_curr(p: *mut c_void, ev: &mut HistEventW) -> i32 {
 // [spec:libedit:def:history.history-def-set-fn]
 // [spec:libedit:sem:history.history-def-set-fn]
 /// C: `static int history_def_set(void *p, TYPE(HistEvent) *ev, const int n)`
-fn history_def_set(p: *mut c_void, ev: &mut HistEventW, n: i32) -> i32 {
+///
+/// # Safety
+///
+/// `p` must be the `history_t` cookie this file's `history_def_init` produced
+/// and `ev` a writable event; that is the pairing `history_winit` installs and
+/// the precondition every `H_*` dispatch through [`HistoryW`] carries.
+unsafe extern "C" fn history_def_set(p: *mut c_void, ev: *mut HistEventW, n: c_int) -> c_int {
+    // SAFETY: `ev` is the caller's out-parameter, per this function's own
+    // contract; nothing in the body aliases it.
+    let ev = unsafe { &mut *ev };
     let h = p.cast::<HistoryT>();
     // SAFETY: as in `history_def_first`.
     unsafe {
@@ -669,7 +749,20 @@ fn history_set_nth(p: *mut c_void, ev: &mut HistEventW, n: i32) -> i32 {
 // [spec:libedit:def:history.history-def-add-fn]
 // [spec:libedit:sem:history.history-def-add-fn]
 /// C: `static int history_def_add(void *p, TYPE(HistEvent) *ev, const Char *str)`
-fn history_def_add(p: *mut c_void, ev: &mut HistEventW, str: *const u32) -> i32 {
+///
+/// # Safety
+///
+/// `p` must be the `history_t` cookie this file's `history_def_init` produced
+/// and `ev` a writable event; that is the pairing `history_winit` installs and
+/// the precondition every `H_*` dispatch through [`HistoryW`] carries.
+unsafe extern "C" fn history_def_add(
+    p: *mut c_void,
+    ev: *mut HistEventW,
+    str: *const u32,
+) -> c_int {
+    // SAFETY: `ev` is the caller's out-parameter, per this function's own
+    // contract; nothing in the body aliases it.
+    let ev = unsafe { &mut *ev };
     let h = p.cast::<HistoryT>();
     // SAFETY: as in `history_def_first`. `evp` in the C is the non-`const`
     // alias of the same event, which a raw pointer already is here.
@@ -677,7 +770,9 @@ fn history_def_add(p: *mut c_void, ev: &mut HistEventW, str: *const u32) -> i32 
         let list = &raw mut (*h).list;
         if (*h).cursor == list {
             // No current event: delegate entirely, so `H_ADD` on a fresh or
-            // invalidated history creates an event and returns 1, not 0.
+            // invalidated history creates an event and returns 1, not 0. Its
+            // preconditions are this function's own three parameters,
+            // forwarded unchanged, so they are already met.
             return history_def_enter(p, ev, str);
         }
         let cur = (*h).cursor;
@@ -754,11 +849,22 @@ fn history_deldata_nth(
 // [spec:libedit:def:history.history-def-del-fn]
 // [spec:libedit:sem:history.history-def-del-fn]
 /// C: `static int history_def_del(void *p, TYPE(HistEvent) *ev, const int num)`
-fn history_def_del(p: *mut c_void, ev: &mut HistEventW, num: i32) -> i32 {
+///
+/// # Safety
+///
+/// `p` must be the `history_t` cookie this file's `history_def_init` produced
+/// and `ev` a writable event; that is the pairing `history_winit` installs and
+/// the precondition every `H_*` dispatch through [`HistoryW`] carries.
+unsafe extern "C" fn history_def_del(p: *mut c_void, ev: *mut HistEventW, num: c_int) -> c_int {
+    // SAFETY: `ev` is the caller's out-parameter, per this function's own
+    // contract; nothing in the body aliases it.
+    let ev = unsafe { &mut *ev };
     let h = p.cast::<HistoryT>();
     // Position by event id. The C's `ev` parameter is annotated
     // `__attribute__((__unused__))` and the body uses it anyway.
-    if history_def_set(p, ev, num) != 0 {
+    // SAFETY: `p` and `ev` are this function's own parameters, forwarded
+    // unchanged, so `history_def_set`'s contract is the one already met here.
+    if unsafe { history_def_set(p, ev, num) } != 0 {
         return -1;
     }
     // SAFETY: `history_def_set` returned 0, so the cursor is on a real entry.
@@ -904,7 +1010,20 @@ unsafe fn history_def_insert_raw(h: *mut HistoryT, ev: &mut HistEventW, str: *co
 // [spec:libedit:def:history.history-def-enter-fn]
 // [spec:libedit:sem:history.history-def-enter-fn]
 /// C: `static int history_def_enter(void *p, TYPE(HistEvent) *ev, const Char *str)`
-fn history_def_enter(p: *mut c_void, ev: &mut HistEventW, str: *const u32) -> i32 {
+///
+/// # Safety
+///
+/// `p` must be the `history_t` cookie this file's `history_def_init` produced
+/// and `ev` a writable event; that is the pairing `history_winit` installs and
+/// the precondition every `H_*` dispatch through [`HistoryW`] carries.
+unsafe extern "C" fn history_def_enter(
+    p: *mut c_void,
+    ev: *mut HistEventW,
+    str: *const u32,
+) -> c_int {
+    // SAFETY: `ev` is the caller's out-parameter, per this function's own
+    // contract; nothing in the body aliases it.
+    let ev = unsafe { &mut *ev };
     let h = p.cast::<HistoryT>();
     // SAFETY: as in `history_def_first`.
     unsafe {
@@ -1010,7 +1129,16 @@ fn history_def_init(p: &mut *mut c_void, ev: &mut HistEventW, n: i32) -> i32 {
 // [spec:libedit:def:history.history-def-clear-fn]
 // [spec:libedit:sem:history.history-def-clear-fn]
 /// C: `static void history_def_clear(void *p, TYPE(HistEvent) *ev)`
-fn history_def_clear(p: *mut c_void, ev: &mut HistEventW) {
+///
+/// # Safety
+///
+/// `p` must be the `history_t` cookie this file's `history_def_init` produced
+/// and `ev` a writable event; that is the pairing `history_winit` installs and
+/// the precondition every `H_*` dispatch through [`HistoryW`] carries.
+unsafe extern "C" fn history_def_clear(p: *mut c_void, ev: *mut HistEventW) {
+    // SAFETY: `ev` is the caller's out-parameter, per this function's own
+    // contract; nothing in the body aliases it.
+    let ev = unsafe { &mut *ev };
     // Threaded through the deletes and never written by any of them.
     let _ = ev;
     let h = p.cast::<HistoryT>();
@@ -1109,6 +1237,8 @@ pub fn history_wend(h: *mut HistoryW) {
     let mut ev = scratch_ev();
     // SAFETY: a non-NULL `h` is one `history_winit` returned and this call
     // has not yet freed — the C's contract, and `h` is dangling afterwards.
+    // The `history_def_clear` inside is guarded by the identity test, which
+    // is what proves `h_ref` is this file's own builtin store.
     unsafe {
         if is_def_next((*h).h_next) {
             // Every entry is unlinked, its string freed and its node freed.
@@ -1269,7 +1399,10 @@ fn history_set_fun(h: &mut HistoryW, nh: &HistoryW) -> i32 {
     if is_def_next(h.h_next) {
         // Every stored entry is deleted and freed. The `history_t` itself is
         // not freed — see ERR-history-14 above.
-        history_def_clear(h.h_ref, &mut ev);
+        // SAFETY: the identity test above proves `h_ref` is this file's own
+        // builtin store, which is `history_def_clear`'s precondition; `ev` is
+        // the local scratch.
+        unsafe { history_def_clear(h.h_ref, &mut ev) };
     }
 
     h.h_ent = -1;

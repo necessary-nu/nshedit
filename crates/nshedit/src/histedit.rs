@@ -16,7 +16,7 @@
 //! `Char = char` — are left as opaque placeholders, because those narrow
 //! instantiations are not separate symbols in the port manifest.
 
-use core::ffi::c_char;
+use core::ffi::{c_char, c_int};
 
 use crate::el::ElActionT;
 
@@ -168,11 +168,15 @@ pub struct LineInfoW {
 // [spec:libedit:def:histedit.el-rfunc-t-edit-line-wchar-t]
 /// C: `typedef int (*el_rfunc_t)(EditLine *, wchar_t *);`
 ///
-/// The character-reading hook installed by `EL_GETCFN`. The second argument
-/// is a one-element out parameter, so it is `&mut u32` rather than a
-/// pointer. Returns 1 for a character read, 0 for end of input, -1 for an
-/// error.
-pub type ElRfuncT = fn(&mut EditLine, &mut u32) -> i32;
+/// The character-reading hook installed by `EL_GETCFN`, and part of the ABI:
+/// a C application hands one in through `el_set` and libedit calls it back,
+/// so this is `unsafe extern "C"` with the C's own parameter shapes. The
+/// second argument is a one-element out parameter — `wchar_t *`, hence
+/// `*mut u32` rather than `&mut u32`, since the callee is C code the borrow
+/// rules do not reach.
+///
+/// Returns 1 for a character read, 0 for end of input, -1 for an error.
+pub type ElRfuncT = unsafe extern "C" fn(*mut EditLine, *mut u32) -> c_int;
 
 // [spec:libedit:def:histedit.histevent-w]
 // [spec:libedit:def:histedit.hist-event-w]

@@ -450,6 +450,14 @@ children (
             {
                 id abi-callback-types
                 title "Give the nine core callback typedefs the C ABI a caller actually passes"
+                log (
+                    {
+                        at 2026-08-05T08:43:45.562171855Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

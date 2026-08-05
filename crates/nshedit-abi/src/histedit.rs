@@ -48,12 +48,14 @@
 use core::ffi::{c_char, c_int, c_uchar, c_void};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ffi::CString;
+use std::os::unix::ffi::OsStringExt;
 
-use nshedit::el::CFile;
+use nshedit::el::{CFile, FuncT};
 use nshedit::histedit::{
     EditLine, HistEvent, HistEventW, History, HistoryW, LineInfo, LineInfoW, Tokenizer, TokenizerW,
 };
-use nshedit::history::HistoryArg;
+use nshedit::history::{HistoryArg, HistoryEfunT, HistoryGfunT, HistorySfunT, HistoryVfunT};
 
 // ---------------------------------------------------------------------------
 // `el_set`/`el_get` operation codes. C: `histedit.h`, which defines them as
@@ -123,15 +125,7 @@ const FIXIO: i32 = 0x100;
 ///    `el_read_getfn`, `read_prepare`, `read_finish`, `re_clear_display` and
 ///    `re_refresh` are all `pub(crate)` in `nshedit`. Every one of them is
 ///    the whole body of an `el_wset`/`el_wget` arm in `el.c`.
-/// 2. **Callback types.** `ElPfuncT`, `ElZfuncT`, `ElAfuncT`, `ElFuncT`,
-///    `ElRfuncT`, `FuncT` and the four `history` vtable typedefs
-///    (`HistoryGfunT`, `HistoryEfunT`, `HistoryVfunT`, `HistorySfunT`) are
-///    plain Rust `fn` types in `nshedit`. A C caller hands us an
-///    `extern "C"` function pointer, and there is no way to turn one into a
-///    Rust-ABI `fn` value. These typedefs have to become
-///    `unsafe extern "C" fn(...)` — as `nshedit::hist::HistFunT` already is —
-///    before the ops that install them can be written.
-/// 3. **The narrow instantiations.** `historyn.c` and `tokenizern.c` are
+/// 2. **The narrow instantiations.** `historyn.c` and `tokenizern.c` are
 ///    `history.c`/`tokenizer.c` recompiled with `Char = char`. `nshedit`
 ///    declares `History` and `Tokenizer` as opaque placeholders and leaves
 ///    those bodies "to the history translation" / "to the tokenizer
@@ -143,6 +137,24 @@ const FIXIO: i32 = 0x100;
 #[cold]
 fn core_gap(needs: &str) -> ! {
     panic!("nshedit-abi: this entry point is blocked on `nshedit` — needs {needs}");
+}
+
+/// One varargs slot read back as the C function pointer it carries.
+///
+/// `Option<F>` for a function-pointer `F` has the same size and the same
+/// null representation as a data pointer, so this is a reinterpretation and
+/// not a conversion: a NULL slot becomes `None`, which is how every op here
+/// spells "the caller passed no function".
+///
+/// # Safety
+/// `F` must be a function-pointer type, and the slot must really hold a
+/// function of that exact signature — which is the op's own contract with the
+/// caller, and undefined in the C too when it is broken.
+unsafe fn fn_slot<F: Copy>(p: *mut c_void) -> Option<F> {
+    assert_eq!(size_of::<Option<F>>(), size_of::<*mut c_void>());
+    // SAFETY: the size is checked above and the caller guarantees `F` is a
+    // function-pointer type, whose `Option` is null-niche optimised.
+    unsafe { core::mem::transmute_copy::<*mut c_void, Option<F>>(&p) }
 }
 
 /// The C's `const wchar_t *`: a NUL-terminated wide string, or `NULL`.
@@ -213,6 +225,49 @@ thread_local! {
     // the pointer array is materialised here and replaced — invalidating the
     // previous one, exactly as the rule says — on every call.
     static TOKARGV: RefCell<HashMap<usize, Vec<*const u32>>> = RefCell::new(HashMap::new());
+    // [`default_getenv`]'s last answer, kept alive until the next call through
+    // it. That is `getenv(3)`'s own contract and is at least as strong as the
+    // one `def:el.editline.el-getenv-fn` puts on the hook.
+    static GETENV_VALUE: RefCell<Option<CString>> = const { RefCell::new(None) };
+}
+
+/// C: `el->el_getenv = secure_getenv` — the accessor `el_init` installs, and
+/// therefore the address `el_get(EL_GETENV)` reports for a handle nobody has
+/// called `el_set(EL_GETENV, ...)` on.
+///
+/// `sem:el.editline.el-getenv-fn` fixes both ends: `el_init_internal` sets
+/// the hook to `secure_getenv`, and `el_get(el, EL_GETENV, &fn)` reads it
+/// back. But `sem:el.secure-getenv-fn` has `nshedit::el::secure_getenv`
+/// return an owned `OsString`, which cannot itself be a `func_t`, so the core
+/// stores `None` for "no application hook" and calls it directly — and its
+/// note on `el_getenv` assigns the missing address to this crate. This is it:
+/// the C-callable face of the same lookup, for the one purpose of having
+/// something to hand out.
+///
+/// # Safety
+/// `name` must be NULL or a NUL-terminated byte string, as `getenv(3)`
+/// requires.
+unsafe extern "C" fn default_getenv(name: *const c_char) -> *mut c_char {
+    // SAFETY: the caller's contract, above.
+    let Some(bytes) = (unsafe { cbytes(name) }) else {
+        return core::ptr::null_mut();
+    };
+    // The core takes `&str`. A name that is not UTF-8 is none of the four
+    // libedit ever looks up, and is reported unset rather than guessed at.
+    let Ok(name) = core::str::from_utf8(bytes) else {
+        return core::ptr::null_mut();
+    };
+    let Some(value) = nshedit::el::secure_getenv(name) else {
+        return core::ptr::null_mut();
+    };
+    // An environment value cannot contain a NUL, so this cannot fail; a
+    // failure would be reported as unset regardless.
+    let Ok(value) = CString::new(value.into_vec()) else {
+        return core::ptr::null_mut();
+    };
+    // The previous answer is dropped here, which is exactly the invalidation
+    // point the contract names.
+    GETENV_VALUE.with_borrow_mut(|slot| slot.insert(value).as_ptr().cast_mut())
 }
 
 // [spec:libedit:def:histedit.el-init-fn]
@@ -651,22 +706,22 @@ pub unsafe extern "C" fn el_wset(
         // prompt for EL_PROMPT and the right otherwise, marks it wide, resets
         // the cached prompt position, and restores the built-in default for a
         // NULL function. Always 0.
-        EL_PROMPT | EL_RPROMPT => core_gap("`prompt::prompt_set` and a C-ABI `ElPfuncT`"),
+        EL_PROMPT | EL_RPROMPT => core_gap("`prompt::prompt_set`"),
 
         // An `el_wpfunc_t` then an `int` narrowed to `wchar_t`: the literal
         // escape character bracketing zero-width prompt runs. Always 0. Note
         // `prompt_set` does treat EL_PROMPT_ESC as the left prompt, which is
         // the half of the asymmetry `prompt_get` gets wrong.
-        EL_PROMPT_ESC | EL_RPROMPT_ESC => core_gap("`prompt::prompt_set` and a C-ABI `ElPfuncT`"),
+        EL_PROMPT_ESC | EL_RPROMPT_ESC => core_gap("`prompt::prompt_set`"),
 
         // An `el_zfunc_t` then a `void *`: the resize callback and its
         // cookie. Always 0. Invoked from `el_resize`, from buffer growth and
         // from `el_line`.
-        EL_RESIZE => core_gap("`chared::ch_resizefun` and a C-ABI `ElZfuncT`"),
+        EL_RESIZE => core_gap("`chared::ch_resizefun`"),
 
         // An `el_afunc_t` then a `void *`: the alias-expansion callback and
         // its cookie — narrow `char` even in the wide API. Always 0.
-        EL_ALIAS_TEXT => core_gap("`chared::ch_aliasfun` and a C-ABI `ElAfuncT`"),
+        EL_ALIAS_TEXT => core_gap("`chared::ch_aliasfun`"),
 
         // One `char *` terminal type, bytes even here. NULL means `$TERM`
         // through the environment hook; `"emacs"` additionally sets
@@ -703,7 +758,7 @@ pub unsafe extern "C" fn el_wset(
         // `wchar_t *name`, `wchar_t *help`, `el_func_t`. -1 if any is NULL or
         // either table reallocation fails, else 0. Both strings are
         // duplicated, so the caller keeps its own.
-        EL_ADDFN => core_gap("`map::map_addfunc` and a C-ABI `ElFuncT`"),
+        EL_ADDFN => core_gap("`map::map_addfunc`"),
 
         // A `hist_fun_t` then its `void *` handle. Then, and only when
         // `MB_CUR_MAX == 1`, clear NARROW_HISTORY — so a narrow
@@ -733,7 +788,7 @@ pub unsafe extern "C" fn el_wset(
 
         // One `el_rfunc_t`; `EL_BUILTIN_GETCFN` (NULL) restores the builtin.
         // Always 0.
-        EL_GETCFN => core_gap("`read::el_read_setfn` and a C-ABI `ElRfuncT`"),
+        EL_GETCFN => core_gap("`read::el_read_setfn`"),
 
         // One `void *`, stored verbatim and never dereferenced. Inline in the
         // C, and this arm leaves `rv` at 0.
@@ -769,8 +824,18 @@ pub unsafe extern "C" fn el_wset(
 
         // One `char *(*)(const char *)`. Always 0. A NULL accessor is
         // installed as-is and every later lookup calls through it, which the
-        // C leaves undefined.
-        EL_GETENV => core_gap("a C-ABI `el::FuncT`"),
+        // C leaves undefined. ERR-core-api-08, disposition `define — reject
+        // NULL`: `None` is the core's "no application hook", so a NULL
+        // argument leaves the built-in `secure_getenv` in force rather than
+        // arming an indirect call through null. Installing
+        // [`default_getenv`] — the address `el_get(EL_GETENV)` reports for a
+        // fresh handle — round-trips onto that same state.
+        EL_GETENV => {
+            // SAFETY: the op's argument is a `func_t`, per the header.
+            let f = unsafe { fn_slot::<FuncT>(a1) };
+            el.el_getenv = f.filter(|f| !core::ptr::fn_addr_eq(*f, default_getenv as FuncT));
+            0
+        }
 
         // Every other op, EL_GETTC and EL_GETFP included, reads no arguments.
         _ => -1,
@@ -800,14 +865,14 @@ pub unsafe extern "C" fn el_wget(
     match op {
         // One `el_wpfunc_t *`. -1 if NULL, else 0. The value may be the
         // internal default rather than anything the application installed.
-        EL_PROMPT | EL_RPROMPT => core_gap("`prompt::prompt_get` and a C-ABI `ElPfuncT`"),
+        EL_PROMPT | EL_RPROMPT => core_gap("`prompt::prompt_get`"),
 
         // An `el_wpfunc_t *` then a `wchar_t *`, the latter optional.
         // `prompt_get` selects the left prompt only for `op == EL_PROMPT`, so
         // EL_PROMPT_ESC reads the *right* prompt's function and escape
         // character — ERR-prompt-02, frozen, and the reason set/get through
         // EL_PROMPT_ESC does not round-trip.
-        EL_PROMPT_ESC | EL_RPROMPT_ESC => core_gap("`prompt::prompt_get` and a C-ABI `ElPfuncT`"),
+        EL_PROMPT_ESC | EL_RPROMPT_ESC => core_gap("`prompt::prompt_get`"),
 
         // One `const wchar_t **`, set to the static `L\"emacs\"`/`L\"vi\"`.
         EL_EDITOR => core_gap("`map::map_get_editor`"),
@@ -852,7 +917,7 @@ pub unsafe extern "C" fn el_wget(
         // One `el_rfunc_t *`, set to `EL_BUILTIN_GETCFN` (NULL) when the
         // builtin reader is installed — so a set/get round trip normalises
         // the builtin to NULL rather than reporting its address.
-        EL_GETCFN => core_gap("`read::el_read_getfn` and a C-ABI `ElRfuncT`"),
+        EL_GETCFN => core_gap("`read::el_read_getfn`"),
 
         // One `void **`, set to the registered client pointer.
         EL_CLIENTDATA => {
@@ -888,8 +953,16 @@ pub unsafe extern "C" fn el_wget(
         // "the built-in defaults are in use", not "empty".
         EL_WORDCHARS => core_gap("`map::map_get_wordchars`"),
 
-        // One `func_t *`, set to the installed environment accessor.
-        EL_GETENV => core_gap("a C-ABI `el::FuncT`"),
+        // One `func_t *`, set to the installed environment accessor. Always 0.
+        // The C stores `secure_getenv` itself at construction, so a fresh
+        // handle reports a non-NULL address here; the core keeps `None` for
+        // that state, which is why [`default_getenv`] exists.
+        EL_GETENV => {
+            let f: FuncT = el.el_getenv.unwrap_or(default_getenv);
+            // SAFETY: the op's argument is a `func_t *` the caller supplied.
+            unsafe { *a1.cast::<FuncT>() = f };
+            0
+        }
 
         // Everything else, which is every set-only op: EL_BIND, EL_TELLTC,
         // EL_SETTC, EL_ECHOTC, EL_SETTY, EL_ADDFN, EL_HIST, EL_PREP_TERM,
@@ -1048,13 +1121,41 @@ pub unsafe extern "C" fn history_w(
     // SAFETY: `a1` is a NUL-terminated path for the two ops that use it.
     let path = || unsafe { cbytes(a1.cast::<c_char>()) }.and_then(|b| core::str::from_utf8(b).ok());
 
+    // `H_FUNC`'s assembled vtable. C: `TYPE(History) hf`, a stack local in
+    // `FUNW(history)`; hoisted out of the arm below only so the borrow the
+    // `HistoryArg` takes outlives the match.
+    let hf;
+
     let arg = match op {
         // `void *ptr` then ten function pointers: first, next, last, prev,
         // curr, set, clear, enter, add, del — eleven arguments, one more than
         // the manual documents. The C reads `ptr`, validates it, and never
         // stores it, so the installed functions are called with libedit's own
         // builtin state pointer (ERR-history-04, frozen).
-        H_FUNC => core_gap("C-ABI `history` vtable typedefs (`HistoryGfunT` and friends)"),
+        H_FUNC => {
+            hf = HistoryW {
+                h_ref: a1,
+                // Not read by anything this op reaches: the C's `hf` is an
+                // uninitialised stack local except for the eleven fields it
+                // fills, and `history_set_fun` copies only the ten callbacks.
+                // The dispatch's own `h->h_ent = -1` is the core's.
+                h_ent: 0,
+                // SAFETY: for this op the ten slots carry the ten vtable
+                // functions in exactly this order, per the header and
+                // `sem:histedit.history-w-fn`.
+                h_first: unsafe { fn_slot::<HistoryGfunT>(a2) },
+                h_next: unsafe { fn_slot::<HistoryGfunT>(a3) },
+                h_last: unsafe { fn_slot::<HistoryGfunT>(a4) },
+                h_prev: unsafe { fn_slot::<HistoryGfunT>(a5) },
+                h_curr: unsafe { fn_slot::<HistoryGfunT>(a6) },
+                h_set: unsafe { fn_slot::<HistorySfunT>(a7) },
+                h_clear: unsafe { fn_slot::<HistoryVfunT>(a8) },
+                h_enter: unsafe { fn_slot::<HistoryEfunT>(a9) },
+                h_add: unsafe { fn_slot::<HistoryEfunT>(a10) },
+                h_del: unsafe { fn_slot::<HistorySfunT>(a11) },
+            };
+            HistoryArg::Funcs(&hf)
+        }
 
         // One `int`.
         H_SETSIZE => HistoryArg::Num(int_arg(a1)),

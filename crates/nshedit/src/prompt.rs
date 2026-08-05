@@ -1,5 +1,7 @@
 //! Ported from `src/prompt.c`; rules live in `docs/spec/port/src/prompt.md`.
 
+use core::ptr;
+
 use crate::chartype::ct_decode_string;
 use crate::el::{CoordT, EditLine};
 use crate::refresh::{re_putc, re_putliteral};
@@ -16,7 +18,9 @@ const EL_PROMPT_ESC: i32 = 21;
 ///
 /// Program lifetime, shared by every `EditLine`, never freed and never
 /// written to by libedit — which is why this is an immutable `static` where
-/// the C's is mutable.
+/// the C's is mutable. [`ElPfuncT`] hands back the C's `wchar_t *`, so the
+/// callback casts away the `const`; nothing in libedit or in a conforming
+/// application writes through it, and the C's own callers never do either.
 static PROMPT_DEFAULT: [u32; 3] = ['?' as u32, ' ' as u32, 0];
 
 /// C: `static wchar_t a[1] = L"";` inside [`prompt_default_r`]. Same
@@ -26,11 +30,20 @@ static PROMPT_DEFAULT_R: [u32; 1] = [0];
 // [spec:libedit:def:prompt.el-pfunc-t-edit-line]
 /// C: `typedef wchar_t *(*el_pfunc_t)(EditLine *);`
 ///
-/// The prompt hook installed by `EL_PROMPT`/`EL_RPROMPT`. It returns a
-/// NUL-terminated wide string libedit borrows and does not free — the
-/// application owns the storage — so the return stays a raw pointer, as in
-/// the C.
-pub type ElPfuncT = fn(&mut EditLine) -> *const u32;
+/// The prompt hook installed by `EL_PROMPT`/`EL_RPROMPT`. A C application
+/// hands this in through `el_set`, so it is the C ABI's shape and not a Rust
+/// `fn`: `EditLine *` is `*mut EditLine`, the `wchar_t *` result is
+/// `*mut u32`, and calling one is `unsafe` because the pointer came from
+/// outside. The parameter is not `&mut EditLine` for the same reason — the
+/// callee is C code, which has no `&mut` and is entitled to re-enter libedit
+/// through the handle it was given.
+///
+/// The returned string is NUL-terminated, borrowed and not freed by libedit
+/// — the application owns the storage, and
+/// `sem:prompt.prompt-default-fn` states that contract: it must
+/// stay valid and unchanged for the duration of the `prompt_print` call that
+/// asked for it.
+pub type ElPfuncT = unsafe extern "C" fn(*mut EditLine) -> *mut u32;
 
 // [spec:libedit:def:prompt.el-prompt-t]
 /// One prompt (left or right) and where it left the cursor.
@@ -49,20 +62,30 @@ pub struct ElPromptT {
 // [spec:libedit:def:prompt.prompt-default-fn]
 // [spec:libedit:sem:prompt.prompt-default-fn]
 /// Signature is fixed by [`ElPfuncT`]: this is installed as a prompt
-/// callback, so it returns the borrowed raw pointer that type demands.
-fn prompt_default(el: &mut EditLine) -> *const u32 {
-    // The C ignores its argument completely.
+/// callback and is reached by the same indirect call an application's own
+/// hook is, so it is `unsafe extern "C"` and takes the raw handle.
+///
+/// # Safety
+///
+/// Nothing is required of `el`: the C ignores its argument completely and so
+/// does this, including when it is NULL.
+unsafe extern "C" fn prompt_default(el: *mut EditLine) -> *mut u32 {
+    // The C ignores its argument completely, so it is never dereferenced.
     let _ = el;
-    PROMPT_DEFAULT.as_ptr()
+    PROMPT_DEFAULT.as_ptr().cast_mut()
 }
 
 // [spec:libedit:def:prompt.prompt-default-r-fn]
 // [spec:libedit:sem:prompt.prompt-default-r-fn]
-/// Signature is fixed by [`ElPfuncT`], as for [`prompt_default`].
-fn prompt_default_r(el: &mut EditLine) -> *const u32 {
+/// Signature and safety are as for [`prompt_default`].
+///
+/// # Safety
+///
+/// As [`prompt_default`]: `el` is never dereferenced.
+unsafe extern "C" fn prompt_default_r(el: *mut EditLine) -> *mut u32 {
     // Ignored, as in `prompt_default`.
     let _ = el;
-    PROMPT_DEFAULT_R.as_ptr()
+    PROMPT_DEFAULT_R.as_ptr().cast_mut()
 }
 
 // [spec:libedit:def:prompt.prompt-print-fn]
@@ -106,7 +129,13 @@ pub(crate) fn prompt_print(el: &mut EditLine, op: i32) {
         // same treatment a NULL return gets below.
         None => Vec::new(),
         Some(f) => {
-            let s = f(el);
+            // SAFETY: `f` is either one of this module's two defaults or a
+            // hook the application installed through `el_set(EL_PROMPT, ...)`,
+            // whose contract (`def:prompt.el-pfunc-t-edit-line`) is a C
+            // function taking the `EditLine *` libedit is currently driving.
+            // `el` is that handle, live and exclusively borrowed here, and
+            // the borrow is released for the duration of the call.
+            let s = unsafe { f(ptr::from_mut(el)) };
             if s.is_null() {
                 // Step 3: the C never checks, and dereferences NULL
                 // (ERR-terminal-16). Defined here as an empty string: render

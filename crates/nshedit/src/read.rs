@@ -16,6 +16,8 @@
 //! - `read__fixio`'s `FIONBIO` sub-block, for the same header reason. See
 //!   [`plat`] for what the surviving `fcntl` half needs.
 
+use core::ffi::c_int;
+use core::ptr;
 use core::sync::atomic::Ordering;
 use std::fs::File;
 use std::io::Read;
@@ -496,9 +498,23 @@ fn read_byte(fd: i32, out: &mut u8) -> Result<usize, i32> {
 // [spec:libedit:def:read.read-char-fn]
 // [spec:libedit:sem:read.read-char-fn]
 /// Read a character from the tty. This is the builtin [`ElRfuncT`], so its
-/// signature is that type's: 1 for a character, 0 for end of input, -1 for
-/// an error.
-fn read_char(el: &mut EditLine, cp: &mut u32) -> i32 {
+/// signature is that type's — `unsafe extern "C"` with the C's raw parameters,
+/// because it sits in the same slot an application's `EL_GETCFN` callback
+/// does and is reached by the same indirect call. 1 for a character, 0 for
+/// end of input, -1 for an error.
+///
+/// # Safety
+///
+/// `el` must be a live `EditLine` and `cp` a writable `wchar_t`, which is
+/// what `sem:read.el-wgetc-fn` passes and what any caller reaching this
+/// through `el_read.read_char` has.
+unsafe extern "C" fn read_char(el: *mut EditLine, cp: *mut u32) -> c_int {
+    // SAFETY: the caller's obligation above, plus the C's own requirement
+    // that the two do not alias — `el_wgetc` passes storage of its caller's,
+    // never a field of `*el`.
+    let el = unsafe { &mut *el };
+    // SAFETY: as above.
+    let cp = unsafe { &mut *cp };
     // Read the initialiser carefully — the sense is inverted from what the
     // name suggests. `FIXIO` (set by `el_set(EL_SAFEREAD, 1)`) makes `tried`
     // start false, which is what ENABLES the recovery path. With `FIXIO`
@@ -725,7 +741,14 @@ fn read_clearmacros(ma: &mut Macros) {
 fn read_char_cb(el: &mut EditLine, cp: &mut u32) -> i32 {
     let f = el.el_read.as_deref().and_then(|rd| rd.read_char);
     match f {
-        Some(f) => f(el, cp),
+        // SAFETY: `f` is [`read_char`] or a hook installed through
+        // `el_set(EL_GETCFN, ...)`, whose contract
+        // (`def:histedit.el-rfunc-t-edit-line-wchar-t`) is a C function taking
+        // the `EditLine *` it was registered against and a writable
+        // `wchar_t *`. `el` and `cp` are exactly those, live, exclusively
+        // borrowed here and non-aliasing; both borrows are released for the
+        // duration of the call, which the hook may use to re-enter libedit.
+        Some(f) => unsafe { f(ptr::from_mut(el), ptr::from_mut(cp)) },
         None => 0,
     }
 }
@@ -1039,7 +1062,14 @@ pub fn el_wgets<'a>(el: &'a mut EditLine, nread: Option<&mut i32>) -> Option<&'a
         // (e) `ch` is the character that resolved the binding, which for a
         // multi-key sequence is the LAST character of the sequence.
         let func = el.el_map.func[cmdnum as usize];
-        let retval = func(el, ch);
+        // SAFETY: `func` is either one of `EL_FUNC`'s shims — which want
+        // exactly this handle — or a command an application registered
+        // through `el_set(EL_ADDFN, ...)`, whose contract
+        // (`def:map.el-func-t-edit-line-wint-t`) is a C function taking the
+        // `EditLine *` it was registered against. `el` is that handle, live
+        // and exclusively borrowed here; the borrow is released for the call
+        // so the command may re-enter libedit, as every builtin one does.
+        let retval = unsafe { func(ptr::from_mut(el), ch) };
         // (f) AFTER the call, so a command function observes the PREVIOUS
         // command in `lastcmd` — yank-pop, vi repeat and the argument logic
         // all depend on that.

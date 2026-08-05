@@ -195,6 +195,14 @@ unsafe fn decode_through_lgcyconv(el: *mut EditLine, str_: *const c_char) -> *co
 // [spec:libedit:sem:eln.el-getc-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn el_getc(el: *mut EditLine, cp: *mut c_char) -> c_int {
+    // Everything the read records — the `EILSEQ` of `sem:read.read-char-fn`,
+    // the failing `read`'s own value — reaches the caller's `errno` through
+    // this sample, and so does the `ERANGE` step 4 sets. The publish is on
+    // every path because the C's writes are not all on failing ones: the
+    // retry path of `sem:read.read-char-fn` restores `errno` mid-call and
+    // returns a character.
+    let mark = crate::errno::mark();
+
     // Step 1. `el` is not checked for NULL here and is not dereferenced here
     // either; the contract for a NULL editor belongs to `el_wgetc`.
     let mut wc: u32 = 0;
@@ -212,31 +220,36 @@ pub unsafe extern "C" fn el_getc(el: *mut EditLine, cp: *mut c_char) -> c_int {
 
     // Step 3. 0 is "nothing available", negative is a read error, and `errno`
     // is left exactly as the underlying read set it.
-    if num_read <= 0 {
-        return num_read;
-    }
-
-    // Step 4. This is not a multibyte interface: in a UTF-8 locale every
-    // character outside US-ASCII fails here, and the character is consumed and
-    // lost, since `el_wgetc` has already popped it and there is no pushback
-    // (ERR-core-api-27, disposition reproduce).
-    match wctob(wc) {
-        // The C sets `errno = ERANGE` on this path. It is the only errno this
-        // file assigns, and it cannot be assigned yet: `plan/decisions/
-        // no-c-ffi.md` bars reaching the platform's `errno`, and the core's
-        // `errno::set_errno` is `pub(crate)`. The -1 is reproduced; the errno
-        // is a reported gap.
-        None => -1,
-        // Returns 1, not `num_read` — the same value, since `el_wgetc` only
-        // ever reports 1 on success. The sign of the stored `char` for byte
-        // values above 127 is the platform's, as in the C.
-        Some(b) => {
-            if !cp.is_null() {
-                unsafe { *cp = b as c_char };
+    let ret = if num_read <= 0 {
+        num_read
+    } else {
+        // Step 4. This is not a multibyte interface: in a UTF-8 locale every
+        // character outside US-ASCII fails here, and the character is consumed
+        // and lost, since `el_wgetc` has already popped it and there is no
+        // pushback (ERR-core-api-27, disposition reproduce).
+        match wctob(wc) {
+            // The C's `errno = ERANGE`, the only errno this file produces
+            // itself. It is written to the core's copy as well as the C's, so
+            // that a later core read cannot disagree with what the caller
+            // sees.
+            None => {
+                crate::errno::set(nshedit::errno::ERANGE);
+                -1
             }
-            1
+            // Returns 1, not `num_read` — the same value, since `el_wgetc`
+            // only ever reports 1 on success. The sign of the stored `char`
+            // for byte values above 127 is the platform's, as in the C.
+            Some(b) => {
+                if !cp.is_null() {
+                    unsafe { *cp = b as c_char };
+                }
+                1
+            }
         }
-    }
+    };
+
+    crate::errno::publish(mark);
+    ret
 }
 
 // [spec:libedit:def:eln.el-push-fn]
@@ -269,6 +282,12 @@ pub unsafe extern "C" fn el_gets(el: *mut EditLine, nread: *mut c_int) -> *const
     if el.is_null() {
         return ptr::null();
     }
+
+    // `sem:read.el-wgets-fn` step 14 restores the failing read's `errno` on
+    // the `*nread == -1` exit, and `sem:eln.el-gets-fn` step 1 states that
+    // contract for this entry point too, so whatever the read recorded is
+    // copied to the caller on the way out.
+    let mark = crate::errno::mark();
 
     // Step 1. The wide call sets `*nread` to a count of wide characters, or
     // returns NULL having set it to 0 or -1. It tolerates a NULL `nread` by
@@ -320,7 +339,10 @@ pub unsafe extern "C" fn el_gets(el: *mut EditLine, nread: *mut c_int) -> *const
         Some(unsafe { wide_upto_nul(tmp) })
     };
     let conv = unsafe { &mut (*el).el_lgcyconv };
-    ct_encode_string(s, conv).map_or(ptr::null(), |b| b.as_ptr().cast::<c_char>())
+    let out = ct_encode_string(s, conv).map_or(ptr::null(), |b| b.as_ptr().cast::<c_char>());
+
+    crate::errno::publish(mark);
+    out
 }
 
 // [spec:libedit:def:eln.el-parse-fn]
@@ -606,7 +628,11 @@ pub unsafe extern "C" fn el_line(el: *mut EditLine) -> *const LineInfo {
     let resizefun = unsafe { (*el).el_chared.c_resizefun };
     if let Some(f) = resizefun {
         let arg = unsafe { (*el).el_chared.c_resizearg };
-        f(unsafe { &mut *el }, arg);
+        // SAFETY: `f` and `arg` were installed together by
+        // `el_set(EL_RESIZE, f, arg)` against this very handle, and
+        // `def:chared.el-zfunc-t-edit-line-void` makes `f` a C function taking
+        // it. `el` is the caller's live `EditLine`.
+        unsafe { f(el, arg) };
     }
 
     // Step 6.

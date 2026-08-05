@@ -1672,7 +1672,11 @@ fn getenv(el: &EditLine, name: &str) -> Option<String> {
         Some(f) => {
             let mut key: Vec<u8> = name.as_bytes().to_vec();
             key.push(0);
-            let p = f(key.as_ptr().cast::<c_char>());
+            // SAFETY: `f` is what an application installed through
+            // `el_set(EL_GETENV, ...)`; `def:el.editline.el-getenv-fn` makes
+            // it a C function taking one NUL-terminated name, and `key` is
+            // exactly that and outlives the call.
+            let p = unsafe { f(key.as_ptr().cast::<c_char>()) };
             if p.is_null() {
                 return None;
             }

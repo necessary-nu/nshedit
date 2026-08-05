@@ -1,6 +1,7 @@
 //! Ported from `src/vi.c`; rules live in `docs/spec/port/src/vi.md`.
 
 use core::ffi::c_char;
+use core::ptr;
 use std::ffi::{CStr, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
@@ -19,6 +20,7 @@ use crate::chartype::ct_decode_string;
 use crate::common::{ed_argument_digit, ed_kill_line, ed_newline, ed_next_char};
 use crate::el::{EL_BUFSIZ, EditLine, ElActionT};
 use crate::emacs::em_kill_line;
+use crate::errno::{ERANGE, set_errno};
 use crate::fcns::{ED_SEARCH_NEXT_HISTORY, ED_SEARCH_PREV_HISTORY};
 use crate::hist::{hist_first, hist_get};
 use crate::histedit::{CC_ARGHACK, CC_CURSOR, CC_EOF, CC_ERROR, CC_NORM, CC_REFRESH};
@@ -49,12 +51,12 @@ const TMP_BUFSIZ: usize = EL_BUFSIZ * locale::MB_LEN_MAX;
 /// `LC_CTYPE` — `wctob`, expressed here through the one encoder
 /// [`locale::wcrtomb`] so it cannot disagree with the rest of the crate.
 ///
-/// One thing the rule asks for is missing: the `errno = ERANGE` write on the
-/// no-single-byte-form path. `crate::errno` publishes `EINVAL`, `ENOMEM` and
-/// `ENOSPC` only, and adding `ERANGE` belongs to that module rather than to
-/// this one. Nothing in the crate reads it, and [`vi_alias`] — the sole caller
-/// — folds -1 and 0 into the same `CC_ERROR`, so the omission is not
-/// observable here. It has to be restored when `eln` lands.
+/// The `errno = ERANGE` write on the no-single-byte-form path is recorded in
+/// [`crate::errno`] like every other errno the port sets. Nothing in this
+/// crate reads it and [`vi_alias`] — the sole caller — folds -1 and 0 into the
+/// same `CC_ERROR`, so it is unobservable here; it is written anyway so that
+/// this stand-in and the ABI crate's `el_getc`, which publishes the same value
+/// to a C caller, do not diverge.
 fn el_getc(el: &mut EditLine, cp: &mut u8) -> i32 {
     let mut wc: u32 = 0;
     let num_read = el_wgetc(el, &mut wc);
@@ -69,9 +71,12 @@ fn el_getc(el: &mut EditLine, cp: &mut u8) -> i32 {
             *cp = scratch[0];
             1
         }
-        // `wctob` returned `EOF`; the rule's `errno = ERANGE` is the gap noted
-        // above. The character has already been consumed and is lost.
-        _ => -1,
+        // `wctob` returned `EOF`. The character has already been consumed and
+        // is lost.
+        _ => {
+            set_errno(ERANGE);
+            -1
+        }
     }
 }
 
@@ -87,7 +92,11 @@ fn el_getc(el: &mut EditLine, cp: &mut u8) -> i32 {
 fn el_getenv(el: &EditLine, name: &CStr) -> Option<OsString> {
     match el.el_getenv {
         Some(f) => {
-            let value = f(name.as_ptr());
+            // SAFETY: `f` is what an application installed through
+            // `el_set(EL_GETENV, ...)`; `def:el.editline.el-getenv-fn` makes
+            // it a C function taking one NUL-terminated name, and `name` is
+            // exactly that and outlives the call.
+            let value = unsafe { f(name.as_ptr()) };
             if value.is_null() {
                 return None;
             }
@@ -1026,7 +1035,12 @@ pub(crate) fn vi_alias(el: &mut EditLine, c: u32) -> ElActionT {
 
     // 4.
     let aliasarg = el.el_chared.c_aliasarg;
-    let alias_text = aliasfun(aliasarg, alias_name.as_ptr());
+    // SAFETY: `aliasfun` and `aliasarg` were installed together by
+    // `ch_aliasfun` from `el_set(EL_ALIAS_TEXT, f, a)`, whose contract
+    // (`def:chared.el-afunc-t-void-const-char`) is a C function taking that
+    // cookie and a NUL-terminated narrow name. `alias_name` is the
+    // three-element local above, NUL-terminated and live across the call.
+    let alias_text = unsafe { aliasfun(aliasarg, alias_name.as_ptr()) };
 
     // 5. Decode from the locale's multibyte encoding and push onto the macro
     //    stack so the expansion is re-read as input. `ct_decode_string` yields
@@ -1431,7 +1445,12 @@ pub(crate) fn vi_redo(el: &mut EditLine, c: u32) -> ElActionT {
     let cmd = el.el_chared.c_redo.cmd;
     let ch = el.el_chared.c_redo.ch;
     match el.el_map.func.get(cmd as usize).copied() {
-        Some(f) => f(el, ch),
+        // SAFETY: as at the dispatch in `sem:read.el-wgets-fn` — `f` is one of
+        // `EL_FUNC`'s shims or a command registered through
+        // `el_set(EL_ADDFN, ...)`, and `def:map.el-func-t-edit-line-wint-t`
+        // makes it a C function taking the `EditLine *` it was registered
+        // against. `el` is that handle, live and exclusively borrowed here.
+        Some(f) => unsafe { f(ptr::from_mut(el), ch) },
         None => CC_ERROR,
     }
 }

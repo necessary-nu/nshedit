@@ -66,4 +66,5 @@ assertions (
     {id spec-rule-corrections, kind @doing, author "brendan@necessary.nu", at 2026-08-05T08:35:36.025455087Z}
     {id platform-decide, kind @doing, author "brendan@necessary.nu", at 2026-08-05T08:40:59.29931204Z}
     {id abi-errno, kind @doing, author "brendan@necessary.nu", at 2026-08-05T08:42:34.211250559Z}
+    {id abi-callback-types, kind @doing, author "brendan@necessary.nu", at 2026-08-05T08:43:45.562171855Z}
 )

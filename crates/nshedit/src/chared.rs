@@ -112,14 +112,21 @@ pub struct CKillT {
 /// The line-resize hook installed by `EL_RESIZE`, called once
 /// `ch_enlargebufs` has published the new capacity so the application can
 /// re-derive any pointers it holds into the line.
-pub type ElZfuncT = fn(&mut EditLine, *mut c_void);
+///
+/// The application supplies it through `el_set`, so it is the C ABI's shape:
+/// `unsafe extern "C"`, with `EditLine *` as `*mut EditLine` rather than
+/// `&mut EditLine`. The hook is entitled to call back into libedit through
+/// that handle — `el_line` is the documented reason to install one — which is
+/// precisely what a `&mut` would forbid.
+pub type ElZfuncT = unsafe extern "C" fn(*mut EditLine, *mut c_void);
 
 // [spec:libedit:def:chared.el-afunc-t-void-const-char]
 /// C: `typedef const char *(*el_afunc_t)(void *, const char *);`
 ///
-/// The alias-text hook installed by `EL_ALIAS_TEXT`. Both strings are narrow
-/// and borrowed across the C ABI, so they stay raw pointers.
-pub type ElAfuncT = fn(*mut c_void, *const c_char) -> *const c_char;
+/// The alias-text hook installed by `EL_ALIAS_TEXT`. Application-supplied and
+/// so `unsafe extern "C"`; both strings are narrow and borrowed across the C
+/// ABI, so they stay raw pointers.
+pub type ElAfuncT = unsafe extern "C" fn(*mut c_void, *const c_char) -> *const c_char;
 
 // [spec:libedit:def:chared.el-chared-t]
 /// Both the emacs and the vi state, because the user can bind commands from
@@ -972,7 +979,13 @@ pub(crate) fn ch_enlargebufs(el: &mut EditLine, addlen: usize) -> i32 {
     //     `sem:chared.ch-resizefun-fn` makes part of the hook's contract.
     if let Some(f) = el.el_chared.c_resizefun {
         let a = el.el_chared.c_resizearg;
-        f(el, a);
+        // SAFETY: `f` and `a` were installed together by `ch_resizefun` from
+        // `el_set(EL_RESIZE, f, a)`, whose contract
+        // (`def:chared.el-zfunc-t-edit-line-void`) is a C function taking the
+        // `EditLine *` it was registered against. `el` is that handle, live
+        // and exclusively borrowed here; the borrow is released for the call,
+        // which the rule requires because the hook may re-enter `el_line`.
+        unsafe { f(ptr::from_mut(el), a) };
     }
     1
 }
