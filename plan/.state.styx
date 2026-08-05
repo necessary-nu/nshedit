@@ -103,4 +103,5 @@ assertions (
     {id encoding-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-05T14:28:36.378870204Z}
     {id buffer-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-05T14:28:39.309482835Z}
     {id core-api-translate, kind @doing, author "brendan@necessary.nu", at 2026-08-05T14:52:33.767696735Z}
+    {id abi-varargs, kind @doing, author "brendan@necessary.nu", at 2026-08-05T16:01:34.76025224Z}
 )
