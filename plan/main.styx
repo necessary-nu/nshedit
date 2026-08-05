@@ -33,8 +33,8 @@ children (
 
             {
                 id encoding-tests
-                title "Port and extend tests for the encoding primitives"
-                deps (encoding-translate)
+                title "Write tests for the encoding primitives from their sem rules; there are none to port"
+                deps (encoding-translate conformance-differential)
                 sealed true
             }
 
@@ -75,7 +75,7 @@ children (
 
             {
                 id terminal-tests
-                title "Port and extend tests for the terminal layer"
+                title "Write tests for the terminal layer from its sem rules; there are none to port"
                 deps (terminal-translate platform-build)
                 sealed true
             }
@@ -117,7 +117,7 @@ children (
 
             {
                 id buffer-tests
-                title "Port and extend tests for the line buffer and refresh"
+                title "Write tests for the line buffer and refresh from their sem rules; there are none to port"
                 deps (buffer-translate platform-build)
                 sealed true
             }
@@ -159,7 +159,7 @@ children (
 
             {
                 id input-tests
-                title "Port and extend tests for input dispatch and binding"
+                title "Write tests for input dispatch and binding from their sem rules; there are none to port"
                 deps (input-translate platform-build)
                 sealed true
             }
@@ -201,8 +201,8 @@ children (
 
             {
                 id history-tests
-                title "Port and extend tests for history and search"
-                deps (history-translate history-regex)
+                title "Write tests for history and search from their sem rules; there are none to port"
+                deps (history-translate history-regex conformance-differential)
                 sealed true
             }
 
@@ -256,7 +256,7 @@ children (
 
             {
                 id modes-tests
-                title "Port and extend tests for the editor command sets"
+                title "Write tests for the editor command sets from their sem rules; there are none to port"
                 deps (modes-translate platform-build)
                 sealed true
             }
@@ -298,7 +298,7 @@ children (
 
             {
                 id completion-tests
-                title "Port and extend tests for completion and tokenization"
+                title "Write tests for completion and tokenization from their sem rules; there are none to port"
                 deps (completion-translate platform-build)
                 sealed true
             }
@@ -340,7 +340,7 @@ children (
 
             {
                 id core-api-tests
-                title "Port and extend tests for the EditLine lifecycle and public API"
+                title "Write tests for the EditLine lifecycle and public API from their sem rules; there are none to port"
                 deps (
                     core-api-translate
                     abi-callback-types
@@ -389,7 +389,7 @@ children (
 
             {
                 id readline-compat-tests
-                title "Port and extend tests for the readline compatibility surface"
+                title "Write tests for the readline compatibility surface from its sem rules; there are none to port"
                 deps (
                     readline-compat-translate
                     abi-callback-types
@@ -445,7 +445,7 @@ children (
 
             {
                 id platform-tests
-                title "Test the platform layer against the C's observable behaviour"
+                title "Write tests for the platform layer against the C's observable behaviour; there are none to port"
                 deps (platform-build)
             }
         )
@@ -634,6 +634,43 @@ children (
                 author "brendan@necessary.nu"
                 kind @note
                 text "An eleventh wrong rule, found by abi-callback-types after spec-rule-corrections had already committed. It needs a follow-up pass on that leaf.\n\nsem:histedit.el-wset-fn (histedit.md:913, 919) and sem:histedit.el-wget-fn (histedit.md:615, 618) give the argument type for the EL_PROMPT / EL_RPROMPT / EL_PROMPT_ESC / EL_RPROMPT_ESC arms as el_wpfunc_t. No such type exists in the C. Grepping src/ for el_wpfunc finds it only inside a comment at histedit.h:152, and that comment spells the pair el_pfunct_t / el_wpfunct_t, names nothing declares either. src/prompt.h:44 declares exactly one prompt typedef, el_pfunc_t, and src/el.c uses it in all four prompt arms of el_wset and el_wget (lines 240, 262, 471, 477) and on the narrow eln.c path.\n\nThe four bullets should read el_pfunc_t and el_pfunc_t pointer.\n\nHarmless in practice: the shape is identical, so it changed nothing in the implementation and no Rust is invalidated. The ten def rules for the callback typedefs themselves all match the C byte for byte. This is only the prose in the two el_wset/el_wget rules.\n\nWorth noting for whoever picks this up: the error is that the rule invented a wide/narrow pair by analogy. Prompt callbacks have no narrow variant, because the prompt is stored wide either way. Check whether the same false analogy reached any other rule describing a narrow entry point."
+            }
+        )
+    }
+
+    {
+        id conformance
+        title "Prove the port behaves like the C by executing both, not by reading either"
+        children (
+            {
+                id conformance-oracle
+                title "Build the in-tree C as the reference artifact, at the version we actually ported"
+            }
+
+            {
+                id conformance-abi-shape
+                title "Diff our exported symbols against the C's, which is the drop-in claim stated as a test"
+                deps (conformance-oracle)
+            }
+
+            {
+                id conformance-differential
+                title "Drive both libraries through the non-interactive API and diff the traces"
+                deps (conformance-oracle)
+            }
+
+            {
+                id conformance-pty
+                title "Drive both libraries through a real pty and diff the emitted byte streams"
+                deps (conformance-differential platform-build)
+            }
+        )
+        log (
+            {
+                at 2026-08-05T10:16:14.454770215Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Why this concern exists, and why the nine per-concern *-tests leaves are mis-scoped.\n\nlibedit ships NO test suite. Measured: Makefile.am line 9 is `SUBDIRS = src $(EXAMPLES_DIR) doc`, and there is no check_PROGRAMS, no TESTS, no test directory anywhere in the tarball. Every *-tests leaf in this plan is titled \"Port and extend tests for X\", and the port-wave-3-tests playbook describes porting a test set and using the literal port as an oracle for translation bugs. Neither is available. Those tests must be WRITTEN from the sem rules, not translated, which is a substantially larger job than the titles imply. Retitle them.\n\nThat matters because of what the evidence currently rests on. 711 rules are specified and 711 are covered, but `tested` is 0 for every one of them, and the workspace has 29 tests against roughly 35,000 lines of translated Rust. Every claim made so far -- 357 errata dispositions \"carried out\", defects \"reproduced faithfully\", rules \"verified against the C\" -- comes from reading code, not running it. The cross-checks caught real errors, so it is not worthless, but it is not the same class of evidence as an execution.\n\nTHE ORACLE IS THE IN-TREE C, NOT THE SYSTEM LIBRARY. This is the load-bearing decision.\n\nDebian ships libedit 3.1-20250104 as libedit.so.2.0.75. Our source is libedit-20260512-3.1, LT_VERSION 0:78:0 -- roughly sixteen months and three libtool revisions newer. Diffing against the system library would attribute upstream changes to the port. The tree has a working configure/Makefile.am, confirmed to build, so building src/*.c ourselves gives a reference at exactly the version we translated, from the same code, with the spec annotations being comments that change nothing. Zero version skew.\n\nThe system libraries stay useful for a narrower job: /usr/lib/x86_64-linux-gnu/libedit.so.2 says what a deployed consumer actually links against, libreadline.so.8 is the reference for the GNU divergences the register logs, and libbsd.so.0 answers the open question of whether our NetBSD-derived vis matches the libbsd vis that wrote every history file already on a Debian user's disk.\n\nTiering, ordered by what is reachable today:\n\n- conformance-oracle and conformance-abi-shape and conformance-differential all run NOW. None of them need a terminal.\n- conformance-pty is blocked on platform-build and says so in its deps: without tcgetattr there is no raw mode, without TIOCGWINSZ there is no size, so the interactive path cannot be driven at all yet.\n\nDeterminism is the hard part of the differential tiers and must be designed in, not retrofitted: pin TERM and the TERMINFO database, pin LC_ALL, pin the window size, control HOME so no real ~/.editrc is read, and control every path the history file touches. libedit reads the environment in more places than is obvious -- see the secure_getenv divergence group.\n"
             }
         )
     }
