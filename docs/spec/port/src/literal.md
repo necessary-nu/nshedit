@@ -94,12 +94,18 @@
 > Sentinel encoding. `EL_LITERAL` is `(wint_t)0x80000000` — bit 31 alone.
 > A successful return is that bit set, bitwise-ORed with the table index,
 > which therefore occupies bits 0..30. The representable index range is
-> 0..0x7FFFFFFF, so **at most 2^31 = 2147483648 literals** can be
-> addressed by one table. There is no bound check anywhere: beyond that
-> the index would alias the marker bit, and the `size_t` → `wint_t`
-> narrowing cast truncates on LP64. Reaching it requires 2^31 successful
-> `malloc`s so it is unreachable in practice, but a port should either
-> bound the index explicitly or fail rather than silently wrap. A return
+> 0..0x7FFFFFFF, but the top value of it is not *usable*: `EL_LITERAL |
+> 0x7FFFFFFF` is `0xFFFFFFFF`, which is `MB_FILL_CHAR`, and
+> `terminal__putc` tests that before it tests the marker bit (see below),
+> so a sentinel parked there prints nothing and never reaches
+> `literal_get`. The usable index range is 0..0x7FFFFFFE, so **at most
+> 2^31 - 1 = 2147483647 literals** can be addressed by one table. There is
+> no bound check anywhere: at 0x7FFFFFFF the sentinel collides with
+> `MB_FILL_CHAR`, beyond 0x7FFFFFFF the index aliases the marker bit
+> itself, and the `size_t` → `wint_t` narrowing cast truncates on LP64.
+> Reaching either requires 2^31 successful `malloc`s so it is unreachable
+> in practice, but a port should either bound the index explicitly at
+> 0x7FFFFFFE or fail rather than silently wrap. A return
 > of 0 is the sole error sentinel and is unambiguous, because every
 > success has bit 31 set and is therefore `>= 0x80000000`.
 >

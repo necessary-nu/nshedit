@@ -10,4 +10,5 @@ assertions (
     {id completion-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:58.919622846Z}
     {id core-api-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:37:01.58878447Z}
     {id readline-compat-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:37:04.692153774Z}
+    {id spec-rule-corrections, kind @doing, author "brendan@necessary.nu", at 2026-08-05T08:35:36.025455087Z}
 )

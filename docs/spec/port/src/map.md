@@ -337,8 +337,14 @@
 >    those rules. For the shipped emacs table this converts 34 meta
 >    bindings in `key[128..255]` into ESC-prefixed two-character keymacros
 >    and sets `key[27]` (ESC) to ED_SEQUENCE_LEAD_IN; `map_init_nls` then
->    overwrites the printable part of `key[128..255]` with ED_INSERT, so
->    the direct 8-bit meta bindings survive only as the ESC sequences.
+>    overwrites the printable part of `key[128..255]` with ED_INSERT. That
+>    printable part begins at 160: the C1 controls 128..159 are not
+>    `iswprint` in the C, Latin-1 or UTF-8 locales, so `map_init_nls`
+>    never touches them. Of the 34 converted bindings, the 31 at
+>    160..255 therefore survive only as the ESC sequences, while the three
+>    in the C1 range — `key[136]` ED_DELETE_PREV_WORD, `key[140]`
+>    ED_CLEAR_SCREEN and `key[159]` EM_COPY_PREV_WORD — keep their direct
+>    8-bit binding as well.
 > 6. Add the two-character macro ESC-independent `^X ^X` → EM_EXCHANGE_MARK
 >    as XK_CMD: `buf = { CONTROL('X'), CONTROL('X'), 0 }` where
 >    `CONTROL(c) == c & 037`, i.e. the sequence 0x18 0x18. The lead-in
@@ -564,11 +570,14 @@
 > the printable subset of U+00A0..U+00FF becomes ED_INSERT.
 >
 > The ordering matters: because this runs *after* `map_init_meta`, in
-> emacs mode it overwrites the direct 8-bit meta bindings the default
-> table supplied — but `map_init_meta` has already mirrored each of them
-> into an ESC-prefixed keymacro, so the commands remain reachable. In vi
-> mode the insert map's high half is already all ED_INSERT, so this is a
-> no-op there.
+> emacs mode it overwrites those direct 8-bit meta bindings the default
+> table supplied that sit at a printable index — but `map_init_meta` has
+> already mirrored each of them into an ESC-prefixed keymacro, so the
+> commands remain reachable. The bindings at 128..159 are left alone,
+> because the C1 controls are not `iswprint` in the C, Latin-1 or UTF-8
+> locales, so those keep their direct 8-bit form on top of the ESC form.
+> In vi mode the insert map's high half is already all ED_INSERT, so this
+> is a no-op there.
 >
 > Locale-dependence means the resulting keymap is not deterministic across
 > environments; the port must query the same locale-sensitive predicate

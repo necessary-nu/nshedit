@@ -655,22 +655,32 @@
 >      `c_ch = match_chars[delta ^ 1]` (pairing 0↔1, 2↔3, 4↔5). Set
 >      `count = 1` and then re-purpose `delta` as the scan direction:
 >      `delta = 1 - (delta & 1) * 2`, i.e. `+1` when `o_ch` is an opening
->      bracket (even index) and `-1` when it is a closing bracket.
+>      bracket (even index) and, for a closing bracket, the `size_t`
+>      wraparound of `-1` — `delta` is declared `size_t`, so the odd case
+>      yields `SIZE_MAX`, not a negative number. Pointer arithmetic still
+>      steps backward by one element, but the value itself never compares
+>      as negative; step 6 depends on this.
 >   4. Scan with proper nesting: starting from `cp = &cursor[i]`, while
 >      `count != 0` advance `cp += delta`; if `cp < buffer` or
 >      `cp >= lastchar`, return `CC_ERROR` (unbalanced — the cursor and
 >      the line are left untouched); if `*cp == o_ch` increment `count`;
 >      else if `*cp == c_ch` decrement `count`.
 >   5. `el_line.cursor = cp` — the matching bracket.
->   6. If a vi operator is pending (`c_vcmd.action != NOP`): if
->      `delta > 0` (forward match) advance the cursor by one so the
->      matched closing bracket is **included** in the operated range;
->      if `delta < 0` (backward match) leave the cursor on the matched
->      opening bracket, so the range is `[matched_open, original_cursor)`
->      and the character under the original cursor is **not** deleted.
->      Then `cv_delfini(el)` and return `CC_REFRESH`. The C carries an
->      explicit comment that the backward case follows POSIX and diverges
->      from NetBSD vi, which would delete that character.
+>   6. If a vi operator is pending (`c_vcmd.action != NOP`): advance the
+>      cursor by one **unconditionally**, then `cv_delfini(el)` and return
+>      `CC_REFRESH`. The C writes that advance under `if (delta > 0)`, but
+>      the `size_t` `delta` of step 3 is `SIZE_MAX` in the backward case,
+>      so the guard is true in both directions and never selects a second
+>      path. For a forward match the advance includes the matched closing
+>      bracket in the operated range. For a backward match it leaves the
+>      cursor one *past* the matched opening bracket, so the range is
+>      `[matched_open + 1, c_vcmd.pos)`: the matched opening bracket is
+>      **not** deleted, and neither is the character at the anchor. The C
+>      carries an explicit comment saying the backward case must not
+>      delete the character under the cursor, following POSIX and
+>      diverging from NetBSD vi — but the guard that comment annotates is
+>      dead, so a port must reproduce the unconditional advance, not the
+>      conditional the comment implies.
 >   7. Otherwise return `CC_CURSOR`.
 >
 > `el_state.argument` is ignored entirely — there is no `3%`. Note also

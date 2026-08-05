@@ -271,7 +271,7 @@
 > is unreachable because both loops stop at `high`. Return the pointer.
 >
 > Nothing is dereferenced at or beyond `high` and no `EditLine` state is
-> modified — the return value is the entire result. With `n <= 0` the
+> modified — the return value is the entire result. With `n == 0` the
 > caller's `p` comes back unchanged. The count is consumed as
 > `while (n--)`, so a negative `n` counts down toward `INT_MIN` rather
 > than stopping: an effectively unbounded loop. No caller passes one.
@@ -298,7 +298,7 @@
 > 4. If `p < low`, set `p = low`.
 > 5. Return `p`.
 >
-> No `EditLine` state is modified. With `n <= 0` steps 1 and 3 cancel
+> No `EditLine` state is modified. With `n == 0` steps 1 and 3 cancel
 > and the caller's `p` is returned unchanged (clamped to `low`). As in
 > `c__next_word`, a negative `n` makes `while (n--)` run essentially
 > forever; no caller passes one.
@@ -607,8 +607,12 @@
 > No `EditLine` state is modified. There is no clamp on the way out: if
 > the scan reaches `high` the result is `high - 1`, which is the
 > intended "last character of the line" answer when `high` is
-> `lastchar`. With `n <= 0` steps 1 and 3 cancel and the caller's `p`
-> comes back unchanged.
+> `lastchar`. With `n == 0` steps 1 and 3 cancel and the caller's `p`
+> comes back unchanged. The count is consumed as `while (n--)`, so a
+> negative `n` does not stop either: it counts down toward `INT_MIN`, an
+> effectively unbounded loop. No caller passes one — every call site
+> hands over `el_state.argument`, which only ever accumulates digits and
+> which `el_wgets` resets to 1 after each dispatched command.
 >
 > Step 2b dereferences `*p` without first testing `p < high`, so when
 > the scan has already reached `high` the character AT `high` is read —
@@ -679,10 +683,16 @@
 > Afterwards return `high` if `p > high`, otherwise `p`. No `EditLine`
 > state is modified — the pending vi action is read, never written.
 >
-> With `n <= 0` the body never runs, `p` comes back unchanged and `*p`
-> is not read. Step 1's unguarded dereference means that when `p` is
-> already `high` (cursor at end of line) the reserved slot at `lastchar`
-> is read; the value cannot change the result, since step 2's guard
+> With `n == 0` the body never runs, `p` comes back unchanged and `*p`
+> is not read. A negative `n` is not the same no-op: `while (n--)` counts
+> down toward `INT_MIN` rather than stopping, an effectively unbounded
+> loop, and step 1 does read `*p`. No caller passes one — every call site
+> hands over `el_state.argument`, which only ever accumulates digits and
+> which `el_wgets` resets to 1 after each dispatched command.
+>
+> Step 1's unguarded dereference means that when `p` is already `high`
+> (cursor at end of line) the reserved slot at `lastchar` is read; the
+> value cannot change the result, since step 2's guard
 > fails immediately, but it is a read of unspecified data that the port
 > should skip.
 
@@ -709,8 +719,12 @@
 > 4. Return `low` if `p < low`, otherwise `p`. (After step 2d this clamp
 >    is unreachable.)
 >
-> No `EditLine` state is modified. With `n <= 0` steps 1 and 3 cancel
-> and the caller's `p` is returned unchanged.
+> No `EditLine` state is modified. With `n == 0` steps 1 and 3 cancel
+> and the caller's `p` is returned unchanged. A negative `n` is not a
+> no-op: `while (n--)` counts down toward `INT_MIN` rather than stopping,
+> an effectively unbounded loop. No caller passes one — every call site
+> hands over `el_state.argument`, which only ever accumulates digits and
+> which `el_wgets` resets to 1 after each dispatched command.
 >
 > Step 2b is the hazard. If `p == low` on entry, step 1 has already
 > produced `low - 1` and step 2a's `p > low` guard does not fire, so
