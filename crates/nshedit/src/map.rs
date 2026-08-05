@@ -8,6 +8,13 @@ use std::borrow::Cow;
 
 use crate::el::{EditLine, ElActionT};
 
+/// C: `#define MAP_EMACS 0` — the value of `el_map.type`, an independent
+/// mode tag. Note this is *not* how "are we in vi command mode" is tested;
+/// that is `el_map.current == el_map.alt`, per `sem:map.map-init-fn`.
+pub(crate) const MAP_EMACS: i32 = 0;
+/// C: `#define MAP_VI 1`.
+pub(crate) const MAP_VI: i32 = 1;
+
 /// C: `#define N_KEYS 256` — the size of every key map.
 pub const N_KEYS: usize = 256;
 

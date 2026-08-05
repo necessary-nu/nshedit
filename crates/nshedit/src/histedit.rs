@@ -18,6 +18,69 @@
 
 use core::ffi::c_char;
 
+use crate::el::ElActionT;
+
+// The `el_action_t` an editor command returns. C: `histedit.h` defines these
+// as untyped `#define`s; here they carry the type the commands return, so a
+// mismatch is a compile error rather than a silent widening.
+//
+// These are ABI: a consumer's own command function returns one of them.
+/// C: `#define CC_NORM 0` — command completed, no redraw needed.
+pub const CC_NORM: ElActionT = 0;
+/// C: `#define CC_NEWLINE 1` — the line is complete.
+pub const CC_NEWLINE: ElActionT = 1;
+/// C: `#define CC_EOF 2` — end of input.
+pub const CC_EOF: ElActionT = 2;
+/// C: `#define CC_ARGHACK 3` — do not reset the pending argument or vi
+/// action; this is the mechanism by which counts and operators accumulate
+/// across keystrokes.
+pub const CC_ARGHACK: ElActionT = 3;
+/// C: `#define CC_REFRESH 4` — redraw the line.
+pub const CC_REFRESH: ElActionT = 4;
+/// C: `#define CC_CURSOR 5` — move the cursor only.
+pub const CC_CURSOR: ElActionT = 5;
+/// C: `#define CC_ERROR 6` — beep, no redraw.
+pub const CC_ERROR: ElActionT = 6;
+/// C: `#define CC_FATAL 7` — unrecoverable; the editor resets.
+pub const CC_FATAL: ElActionT = 7;
+/// C: `#define CC_REDISPLAY 8` — full redisplay.
+pub const CC_REDISPLAY: ElActionT = 8;
+/// C: `#define CC_REFRESH_BEEP 9` — redraw and beep.
+pub const CC_REFRESH_BEEP: ElActionT = 9;
+
+// The `history()` operation codes. C: `histedit.h`. The numbering is ABI —
+// a consumer passes these integers directly — so it is reproduced exactly,
+// including that `H_SET` is 7 and `H_CURR` is 8 despite being declared the
+// other way round in the header.
+pub const H_FUNC: i32 = 0;
+pub const H_SETSIZE: i32 = 1;
+pub const H_GETSIZE: i32 = 2;
+pub const H_FIRST: i32 = 3;
+pub const H_LAST: i32 = 4;
+pub const H_PREV: i32 = 5;
+pub const H_NEXT: i32 = 6;
+pub const H_SET: i32 = 7;
+pub const H_CURR: i32 = 8;
+pub const H_ADD: i32 = 9;
+pub const H_ENTER: i32 = 10;
+pub const H_APPEND: i32 = 11;
+pub const H_END: i32 = 12;
+pub const H_NEXT_STR: i32 = 13;
+pub const H_PREV_STR: i32 = 14;
+pub const H_NEXT_EVENT: i32 = 15;
+pub const H_PREV_EVENT: i32 = 16;
+pub const H_LOAD: i32 = 17;
+pub const H_SAVE: i32 = 18;
+pub const H_CLEAR: i32 = 19;
+pub const H_SETUNIQUE: i32 = 20;
+pub const H_GETUNIQUE: i32 = 21;
+pub const H_DEL: i32 = 22;
+pub const H_NEXT_EVDATA: i32 = 23;
+pub const H_DELDATA: i32 = 24;
+pub const H_REPLACE: i32 = 25;
+pub const H_SAVE_FP: i32 = 26;
+pub const H_NSAVE_FP: i32 = 27;
+
 // [spec:libedit:def:histedit.edit-line]
 /// C: `typedef struct editline EditLine;` — the editor handle. Its body is
 /// `def:el.editline`, in [`crate::el`].

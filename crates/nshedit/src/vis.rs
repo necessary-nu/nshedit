@@ -20,19 +20,47 @@ use crate::locale::{self, MB_LEN_MAX, Mb};
 // `vis.h` flag bits. Values from `src/vis.h`; the `sem` rules quote them.
 // ---------------------------------------------------------------------------
 
-const VIS_OCTAL: i32 = 0x0001;
-const VIS_CSTYLE: i32 = 0x0002;
-const VIS_SP: i32 = 0x0004;
-const VIS_TAB: i32 = 0x0008;
-const VIS_NL: i32 = 0x0010;
-const VIS_SAFE: i32 = 0x0020;
-const VIS_NOSLASH: i32 = 0x0040;
-const VIS_HTTPSTYLE: i32 = 0x0080;
-const VIS_MIMESTYLE: i32 = 0x0100;
-const VIS_GLOB: i32 = 0x1000;
-const VIS_SHELL: i32 = 0x2000;
-const VIS_NOLOCALE: i32 = 0x4000;
-const VIS_DQ: i32 = 0x8000;
+pub(crate) const VIS_OCTAL: i32 = 0x0001;
+pub(crate) const VIS_CSTYLE: i32 = 0x0002;
+pub(crate) const VIS_SP: i32 = 0x0004;
+pub(crate) const VIS_TAB: i32 = 0x0008;
+pub(crate) const VIS_NL: i32 = 0x0010;
+pub(crate) const VIS_SAFE: i32 = 0x0020;
+pub(crate) const VIS_NOSLASH: i32 = 0x0040;
+pub(crate) const VIS_HTTPSTYLE: i32 = 0x0080;
+pub(crate) const VIS_MIMESTYLE: i32 = 0x0100;
+pub(crate) const VIS_GLOB: i32 = 0x1000;
+pub(crate) const VIS_SHELL: i32 = 0x2000;
+pub(crate) const VIS_NOLOCALE: i32 = 0x4000;
+pub(crate) const VIS_DQ: i32 = 0x8000;
+
+/// C: `#define VIS_HTTP1808 0x0080` — the same bit as [`VIS_HTTPSTYLE`],
+/// which the header defines twice under two names.
+pub(crate) const VIS_HTTP1808: i32 = 0x0080;
+/// C: `#define VIS_HTTP1866 0x0200`. Decoder-only: `getvisfun` never
+/// dispatches on it, so setting it on an encode is a no-op
+/// (`sem:vis.getvisfun-fn`).
+pub(crate) const VIS_HTTP1866: i32 = 0x0200;
+/// C: `#define VIS_NOESCAPE 0x0400`. Decoder-only.
+pub(crate) const VIS_NOESCAPE: i32 = 0x0400;
+/// C: `#define VIS_WHITE (VIS_SP | VIS_TAB | VIS_NL)`. This is the flag the
+/// history file's encoder uses, so it is wire format
+/// (`sem:history.history-save-fp-fn`).
+pub(crate) const VIS_WHITE: i32 = VIS_SP | VIS_TAB | VIS_NL;
+/// C: `#define VIS_META (VIS_WHITE | VIS_GLOB | VIS_SHELL)`.
+pub(crate) const VIS_META: i32 = VIS_WHITE | VIS_GLOB | VIS_SHELL;
+
+// `unvis` return codes and its one flag. C: `vis.h` declares them alongside
+// the encoder's, so they live here and the decoder imports them.
+pub(crate) const UNVIS_VALID: i32 = 1;
+pub(crate) const UNVIS_VALIDPUSH: i32 = 2;
+pub(crate) const UNVIS_NOCHAR: i32 = 3;
+pub(crate) const UNVIS_SYNBAD: i32 = -1;
+/// C: `#define UNVIS_ERROR -2` — decoder in an unrecoverable state. The C
+/// never produces it; kept because it is ABI.
+pub(crate) const UNVIS_ERROR: i32 = -2;
+/// C: `#define UNVIS_END _VIS_END` — flush, no more input.
+pub(crate) const UNVIS_END: i32 = 0x0800;
 
 /// C: `#define MAXEXTRAS 30`.
 const MAXEXTRAS: usize = 30;

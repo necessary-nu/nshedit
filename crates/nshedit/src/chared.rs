@@ -11,6 +11,19 @@ use core::ffi::{c_char, c_void};
 
 use crate::el::{EditLine, ElActionT};
 
+// Pending vi operator, held in `c_vcmd.action`. C: `chared.h`. DELETE,
+// INSERT and YANK combine, and the exact combination DELETE|INSERT is what
+// makes `cw` behave like `ce` — see `sem:vi.cv-next-word-fn`.
+pub(crate) const NOP: i32 = 0x00;
+pub(crate) const DELETE: i32 = 0x01;
+pub(crate) const INSERT: i32 = 0x02;
+pub(crate) const YANK: i32 = 0x04;
+
+/// C: `#define CHAR_FWD (+1)` — search direction.
+pub(crate) const CHAR_FWD: i32 = 1;
+/// C: `#define CHAR_BACK (-1)`.
+pub(crate) const CHAR_BACK: i32 = -1;
+
 // [spec:libedit:def:chared.c-undo-t]
 /// Undo information for vi — there is no undo in emacs (yet).
 pub struct CUndoT {

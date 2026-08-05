@@ -3,15 +3,19 @@
 use core::cell::Cell;
 use core::ffi::c_char;
 
+use crate::chared::{CHAR_FWD, NOP};
 use crate::chared::{c__next_word, c_gets, ce__isword, cv_delfini};
 use crate::common::{ed_end_of_file, ed_newline, ed_search_next_history, ed_search_prev_history};
+use crate::el::EL_BUFSIZ;
 use crate::el::{EditLine, ElActionT};
 use crate::fcns::{
     ED_DELETE_PREV_CHAR, ED_DIGIT, ED_INSERT, ED_SEARCH_NEXT_HISTORY, ED_SEARCH_PREV_HISTORY,
     EM_DELETE_PREV_CHAR, EM_INC_SEARCH_NEXT, EM_INC_SEARCH_PREV,
 };
 use crate::hist::hist_get;
+use crate::histedit::{CC_CURSOR, CC_ERROR, CC_NORM, CC_REFRESH};
 use crate::map::ElMapCurrent;
+use crate::map::MAP_VI;
 use crate::read::{el_wgetc, el_wpush};
 use crate::refresh::re_refresh;
 use crate::terminal::terminal_beep;
@@ -31,24 +35,9 @@ use crate::terminal::terminal_beep;
 // `#define` is untyped and needs neither.
 // ---------------------------------------------------------------------------
 
-/// C: `el.h` — `#define EL_BUFSIZ ((size_t)1024)`, the fixed `patbuf` size.
-const EL_BUFSIZ: usize = 1024;
-
 /// C: `search.c` — `LEN` is 2, because `ANCHOR` is unconditionally defined in
 /// `el.h`, so `patbuf` always carries a two-character `".*"` prefix.
 const LEN: usize = 2;
-
-const CC_NORM: ElActionT = 0;
-const CC_REFRESH: ElActionT = 4;
-const CC_CURSOR: ElActionT = 5;
-const CC_ERROR: ElActionT = 6;
-
-/// C: `map.h` — `#define MAP_VI 1`.
-const MAP_VI: i32 = 1;
-/// C: `chared.h` — `#define NOP 0x00`.
-const NOP: i32 = 0;
-/// C: `chared.h` — `#define CHAR_FWD (+1)`.
-const CHAR_FWD: i32 = 1;
 
 // [spec:libedit:def:search.el-search-t]
 /// Incremental- and character-search state.

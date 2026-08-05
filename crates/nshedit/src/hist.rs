@@ -9,40 +9,21 @@ use std::ptr;
 
 use crate::chared::ch_enlargebufs;
 use crate::chartype::{ct_decode_string, ct_encode_string};
+use crate::el::{EL_BUFSIZ, NARROW_HISTORY};
 use crate::el::{EditLine, ElActionT};
+use crate::histedit::{
+    CC_ERROR, CC_REFRESH, H_FIRST, H_LAST, H_NEXT, H_PREV, H_SETSIZE, H_SETUNIQUE,
+};
 use crate::histedit::{HistEvent, HistEventW};
 use crate::history::{HistoryArg, HistoryW, history_w};
+use crate::map::MAP_VI;
+use crate::vis::VIS_NL;
 use crate::vis::strnvis;
 
 // Constants the C reaches through its headers. None of `el.h`, `map.h`,
 // `histedit.h` or `vis.h` has a Rust home that publishes these yet, so they
 // are private here; idiomatization should fold each into the module that ends
 // up owning its header.
-
-/// C: `el.h` — `#define NARROW_HISTORY 0x040`.
-const NARROW_HISTORY: i32 = 0x040;
-/// C: `el.h` — `#define EL_BUFSIZ ((size_t)1024)`.
-const EL_BUFSIZ: usize = 1024;
-/// C: `map.h` — `#define MAP_VI 1`.
-const MAP_VI: i32 = 1;
-/// C: `histedit.h` — `#define CC_REFRESH 4`.
-const CC_REFRESH: ElActionT = 4;
-/// C: `histedit.h` — `#define CC_ERROR 6`.
-const CC_ERROR: ElActionT = 6;
-/// C: `histedit.h` — `#define H_SETSIZE 1`.
-const H_SETSIZE: i32 = 1;
-/// C: `histedit.h` — `#define H_FIRST 3`.
-const H_FIRST: i32 = 3;
-/// C: `histedit.h` — `#define H_LAST 4`.
-const H_LAST: i32 = 4;
-/// C: `histedit.h` — `#define H_PREV 5`.
-const H_PREV: i32 = 5;
-/// C: `histedit.h` — `#define H_NEXT 6`.
-const H_NEXT: i32 = 6;
-/// C: `histedit.h` — `#define H_SETUNIQUE 20`.
-const H_SETUNIQUE: i32 = 20;
-/// C: `vis.h` — `#define VIS_NL 0x0010`, the newline half of `VIS_WHITE`.
-const VIS_NL: i32 = 0x0010;
 
 // [spec:libedit:def:hist.hist-fun-t-void-hist-event-w-int]
 /// C: `typedef int (*hist_fun_t)(void *, HistEventW *, int, ...);`

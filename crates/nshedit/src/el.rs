@@ -8,6 +8,28 @@ use core::ffi::{c_char, c_void};
 use std::ffi::OsString;
 use std::path::Path;
 
+/// C: `#define EL_BUFSIZ ((size_t)1024)` — the initial line-buffer size, and
+/// the bound several unrelated routines reuse as a scratch limit.
+pub(crate) const EL_BUFSIZ: usize = 1024;
+
+// `el_flags` bits. C: `el.h`. Kept an integer flag word rather than becoming
+// a bitflags type, so the literal port reads as the C does.
+pub(crate) const HANDLE_SIGNALS: i32 = 0x001;
+pub(crate) const NO_TTY: i32 = 0x002;
+pub(crate) const EDIT_DISABLED: i32 = 0x004;
+pub(crate) const UNBUFFERED: i32 = 0x008;
+/// Set by the narrow `el_set(EL_HIST)` and by the readline layer, and the
+/// reason the history bridge routes through its conversion path. Note the
+/// wide setter only clears it in a single-byte locale, which
+/// `sem:el.el-wset-fn` records as a defect.
+pub(crate) const NARROW_HISTORY: i32 = 0x040;
+pub(crate) const NO_RESET: i32 = 0x080;
+/// Selects the EINTR-recovery path in the read loop; `el_get` reports this
+/// bit raw rather than as a boolean, which `sem:histedit.el-get-fn` records.
+pub(crate) const FIXIO: i32 = 0x100;
+/// Guards `el_line`'s re-entrant call into the application's resize hook.
+pub(crate) const FROM_ELLINE: i32 = 0x200;
+
 use crate::chared::ElCharedT;
 use crate::chartype::CtBufferT;
 use crate::hist::ElHistoryT;

@@ -8,6 +8,10 @@ use core::ffi::c_char;
 // written only on this file's two failure paths and never cleared on success,
 // so it is meaningful only immediately after a -1 return.
 use crate::errno::{EINVAL, ENOSPC, set_errno};
+use crate::vis::{
+    UNVIS_END, UNVIS_NOCHAR, UNVIS_SYNBAD, UNVIS_VALID, UNVIS_VALIDPUSH, VIS_HTTP1808,
+    VIS_HTTP1866, VIS_MIMESTYLE, VIS_NOESCAPE,
+};
 
 // ---------------------------------------------------------------------------
 // State machine constants
@@ -32,17 +36,8 @@ const S_STRING: u8 = 15; // collecting string
 
 // `vis.h` return codes. `UNVIS_ERROR` (-2) is declared there but this decoder
 // never returns it, so it has no constant here.
-const UNVIS_VALID: i32 = 1;
-const UNVIS_VALIDPUSH: i32 = 2;
-const UNVIS_NOCHAR: i32 = 3;
-const UNVIS_SYNBAD: i32 = -1;
 
 // The `vis.h` flag bits `unvis` reads; every other bit of `flag` is ignored.
-const VIS_HTTP1808: i32 = 0x0080;
-const VIS_MIMESTYLE: i32 = 0x0100;
-const VIS_HTTP1866: i32 = 0x0200;
-const VIS_NOESCAPE: i32 = 0x0400;
-const UNVIS_END: i32 = 0x0800;
 
 /// `GS(a)`: the state-machine state, the low 8 bits of `*astate`.
 fn gs(a: i32) -> u8 {
