@@ -9,6 +9,7 @@ children (
     {
         id encoding
         title "Character encoding and escaping: chartype, literal, vis, unvis"
+        kind @feat
         children (
             {
                 id encoding-markup
@@ -59,6 +60,7 @@ children (
     {
         id terminal
         title "Terminal capability and tty control: terminal, tty"
+        kind @feat
         children (
             {
                 id terminal-markup
@@ -124,6 +126,7 @@ children (
     {
         id buffer
         title "Line buffer and screen refresh: chared, refresh, prompt"
+        kind @feat
         children (
             {
                 id buffer-markup
@@ -174,6 +177,7 @@ children (
     {
         id input
         title "Input dispatch and key binding: read, keymacro, map, parse, sig"
+        kind @feat
         children (
             {
                 id input-markup
@@ -216,6 +220,7 @@ children (
     {
         id history
         title "History storage and search: history, hist, search"
+        kind @feat
         children (
             {
                 id history-markup
@@ -271,6 +276,7 @@ children (
     {
         id modes
         title "Editor command sets: vi, emacs, common"
+        kind @feat
         children (
             {
                 id modes-markup
@@ -313,6 +319,7 @@ children (
     {
         id completion
         title "Completion and tokenization: filecomplete, tokenizer"
+        kind @feat
         children (
             {
                 id completion-markup
@@ -355,6 +362,7 @@ children (
     {
         id core-api
         title "EditLine lifecycle and the histedit public API: el, eln, histedit"
+        kind @feat
         children (
             {
                 id core-api-markup
@@ -412,6 +420,7 @@ children (
     {
         id readline-compat
         title "GNU readline compatibility surface: readline, editline/readline"
+        kind @feat
         children (
             {
                 id readline-compat-markup
@@ -462,6 +471,7 @@ children (
     {
         id platform
         title "System access the port needs because libc is barred: syscalls, terminal control, the user database"
+        kind @feat
         children (
             {
                 id platform-decide
@@ -501,6 +511,7 @@ children (
     {
         id abi-surface
         title "Make the exported C ABI reachable from the core"
+        kind @feat
         children (
             {
                 id abi-callback-types
@@ -694,6 +705,7 @@ children (
     {
         id spec-repair
         title "Correct the spec and the register against what translation measured"
+        kind @docs
         children (
             {
                 id spec-rule-corrections
@@ -871,6 +883,7 @@ children (
     {
         id conformance
         title "Prove the port behaves like the C by executing both, not by reading either"
+        kind @test
         children (
             {
                 id conformance-oracle
@@ -975,6 +988,7 @@ children (
     {
         id nshterm
         title "Our terminfo crate, because the one we depended on has been unmaintained since 2018"
+        kind @feat
         children (
             {
                 id nshterm-extract

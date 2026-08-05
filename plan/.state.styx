@@ -1,22 +1,33 @@
 schema_version 7
 
-last_sync_at 2026-08-05T10:07:53.701619846Z
+last_sync_at 2026-08-05T14:55:02.217492383Z
 
 derived_priorities (
     {id abi-callback-types, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
     {id abi-errno, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id abi-file-surface, priority 0, derived_at 2026-08-05T14:55:02.217492383Z}
     {id abi-headers, priority 0, derived_at 2026-08-05T10:07:53.701619846Z}
+    {id abi-missing-exports, priority 0, derived_at 2026-08-05T14:55:02.217492383Z}
     {id abi-narrow, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id abi-soname, priority 0, derived_at 2026-08-05T14:55:02.217492383Z}
     {id abi-varargs, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
     {id abi-visibility, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
     {id buffer-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
     {id buffer-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
     {id buffer-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
     {id buffer-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id c-defect-fixes, priority 0, derived_at 2026-08-05T14:55:02.217492383Z}
     {id completion-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
     {id completion-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
     {id completion-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
     {id completion-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id conformance-abi-shape, priority 1, derived_at 2026-08-05T14:55:02.217492383Z}
+    {id conformance-differential, priority 1, derived_at 2026-08-05T14:55:02.217492383Z}
+    {id conformance-driver-el, priority 2, derived_at 2026-08-05T14:55:02.217492383Z}
+    {id conformance-driver-readline, priority 2, derived_at 2026-08-05T14:55:02.217492383Z}
+    {id conformance-driver-ub, priority 2, derived_at 2026-08-05T14:55:02.217492383Z}
+    {id conformance-oracle, priority 0, derived_at 2026-08-05T14:55:02.217492383Z}
+    {id conformance-pty, priority 2, derived_at 2026-08-05T14:55:02.217492383Z}
     {id core-api-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
     {id core-api-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
     {id core-api-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
@@ -26,6 +37,7 @@ derived_priorities (
     {id encoding-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
     {id encoding-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
     {id errata-reconcile, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id errata-reconcile-2, priority 1, derived_at 2026-08-05T14:55:02.217492383Z}
     {id history-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
     {id history-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
     {id history-regex, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
@@ -39,6 +51,11 @@ derived_priorities (
     {id modes-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
     {id modes-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
     {id modes-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id nshterm-env-guard, priority 1, derived_at 2026-08-05T14:55:02.217492383Z}
+    {id nshterm-extract, priority 0, derived_at 2026-08-05T14:55:02.217492383Z}
+    {id nshterm-padding, priority 1, derived_at 2026-08-05T14:55:02.217492383Z}
+    {id nshterm-termcap-names, priority 1, derived_at 2026-08-05T14:55:02.217492383Z}
+    {id nshterm-tests, priority 1, derived_at 2026-08-05T14:55:02.217492383Z}
     {id platform-build, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
     {id platform-decide, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
     {id platform-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
@@ -47,6 +64,7 @@ derived_priorities (
     {id readline-compat-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
     {id readline-compat-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
     {id readline-globals-rules, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id spec-corrections-2, priority 0, derived_at 2026-08-05T14:55:02.217492383Z}
     {id spec-rule-corrections, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
     {id terminal-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
     {id terminal-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
