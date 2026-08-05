@@ -479,12 +479,20 @@ children (
             {
                 id abi-visibility
                 title "Publish the thirty core entry points the ABI crate has to call"
+                sealed true
                 log (
                     {
                         at 2026-08-05T09:46:11.904412561Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-05T09:46:48.367481715Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -588,12 +596,28 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-05T09:47:01.438080947Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Six status lines went stale the moment abi-visibility landed (commit e7ddcd7), plus one new divergence to register. This wants a short follow-up pass; the entries were accurate when written.\n\nStale because the entry point they describe is no longer a core_gap panic:\n\n- ERR-modes-27 and ERR-core-api-07 (map_bind's argc overwrite and el_wset's collection loop) — now defined as \"always terminate\", implemented through a new list_args helper in nshedit-abi/src/histedit.rs whose returned length is the C's i. Both halves of the C's over-read are now unreachable rather than reproduced: a Vec ends where it ends, and el_wset's fixed arity means there is no caller argument list to run off.\n- ERR-core-api-08 — the EL_EDITOR and EL_WORDCHARS halves now reject NULL with -1 instead of dereferencing. Only the EL_SETFP half is still open, and it stays open until abi-headers or the platform layer places a fileno for CFile.\n- ERR-core-api-14 — now observable through el_wget rather than blocked, and reproduced end to end: op passes through unmodified so EL_PROMPT_ESC reads the right prompt, and the EL_PROMPT arm passes None for the escape-character out-parameter, which is the other half (no route to el_prompt.p_ignore at all).\n- ERR-core-api-16 — reachable now.\n- The summary paragraph at roughly line 113.\n\nNew divergence to register, documented on the new el::mb_cur_max:\n\nThe C's MB_CUR_MAX follows setlocale; the port's follows the environment, because crate::locale cannot call setlocale and records why. This is the one place the difference is observable across the ABI: a C application that never calls setlocale, running under a UTF-8 LANG, gets NARROW_HISTORY cleared by el_wset(EL_HIST) where the port leaves it set. Rule: sem:histedit.el-wset-fn's EL_HIST arm. Class: divergence. Reach: any C consumer that skips setlocale, which is common in small programs.\n\nOne rule error found in the same pass, for spec-repair rather than here: sem:histedit.el-wset-fn's EL_TERMINAL arm says it \"Returns 0 on success, -1 if the display arrays could not be allocated\". It also returns -1 whenever the capability lookup failed, however usable the dumb-terminal fallback is. That is ERR-terminal-22, already registered against sem:terminal.terminal-set-fn but not against this rule.\n\nAlso fixed in passing, no register consequence: the EL_HIST arm cited ERR-history-19, which is H_NSAVE_FP's off-by-one. Corrected to ERR-core-api-16."
+                        after_done true
+                    }
                 )
             }
 
             {
                 id readline-globals-rules
                 title "Write rules for the sixty exported readline globals, which have none"
+                log (
+                    {
+                        at 2026-08-05T09:54:38.184379111Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
         )
         log (
