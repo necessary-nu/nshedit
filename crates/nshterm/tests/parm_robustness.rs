@@ -15,8 +15,9 @@
 //!
 //! The `defects` module at the bottom holds tests written to the behaviour
 //! `terminfo(5)` and `tparm(3)` specify but this crate does not yet produce.
-//! They are `#[ignore]`d rather than deleted or weakened, and none of them
-//! are fixed here.
+//! They are `#[ignore]`d rather than deleted or weakened. A test graduates out
+//! of that module, unchanged, when the defect it describes is fixed — the two
+//! padding tests above did.
 //!
 //! Expected values come from one of two places: a run of the real ncurses
 //! `tparm(3)` against the same capability and parameters, or the grammar as
@@ -191,6 +192,44 @@ fn a_non_tparm_capability_errors_rather_than_panicking() {
 }
 
 // ---------------------------------------------------------------------------
+// padding — timing, not text, so `expand` must leave it alone
+// ---------------------------------------------------------------------------
+
+#[test]
+fn padding_delays_survive_expansion() {
+    // sem:terminal.tgoto-fn is explicit: "`term`'s expander recognises
+    // `$<...>` delay markers and **discards them**, so a capability that
+    // carried padding loses it on expansion... the port's expansion
+    // routine must preserve the `$<...>` runs in its output". ncurses'
+    // tparm passes them through untouched, because realising the delay is
+    // tputs' job, not tparm's.
+    //
+    // These three are shipped capabilities from tests/data, covering
+    // padding at the end of a parameterised string, at the end of a plain
+    // one, and in the middle of one.
+    let cup = cap(&fixture("vt100"), "cup");
+    assert_eq!(ex(&cup, &nums(&[4, 12])), b"\x1b[5;13H$<5>");
+
+    let flash = cap(&fixture("linux"), "flash");
+    assert_eq!(ex(&flash, &[]), b"\x1b[?5h\x1b[?5l$<200/>");
+
+    let flash = cap(&fixture("xterm"), "flash");
+    assert_eq!(ex(&flash, &[]), b"\x1b[?5h$<100/>\x1b[?5l");
+}
+
+#[test]
+fn a_dollar_that_opens_no_delay_is_literal() {
+    // sem:terminal.tputs-fn: "A `$` not followed by `<`, and an
+    // unterminated `$<`, are emitted verbatim." `term`'s expander entered a
+    // Delay state on a bare `$` rather than on `$<`, so text between an
+    // incidental `$` and the next `>` disappeared — and a trailing `$`
+    // disappeared with it. ncurses leaves both alone.
+    assert_eq!(s(b"a$b>c", &[]), "a$b>c");
+    assert_eq!(s(b"cost: $", &[]), "cost: $");
+    assert_eq!(s(b"$<unterminated", &[]), "$<unterminated");
+}
+
+// ---------------------------------------------------------------------------
 // defects
 // ---------------------------------------------------------------------------
 
@@ -201,7 +240,8 @@ fn a_non_tparm_capability_errors_rather_than_panicking() {
 /// that states the contract is worth more than a passing one that pins the
 /// defect in place. Run them with `cargo test -p nshterm -- --ignored`.
 ///
-/// None of these are fixed here — this node writes tests only.
+/// Fixing one means moving its test up into the body of this file with its
+/// assertions untouched, not editing it in place.
 mod defects {
     use super::{cap, ex, ex_err, fixture, nums, s};
     use nshterm::parm::Error;
@@ -274,41 +314,5 @@ mod defects {
         // value that is already 0. `expand` special-cases `#` for hex by
         // testing `d != 0` but unconditionally prepends for octal.
         assert_eq!(s(b"%p1%#o", &nums(&[0])), "0");
-    }
-
-    #[test]
-    #[ignore = "expand discards $<...> padding; see plan node nshterm-padding"]
-    fn padding_delays_survive_expansion() {
-        // sem:terminal.tgoto-fn is explicit: "`term`'s expander recognises
-        // `$<...>` delay markers and **discards them**, so a capability that
-        // carried padding loses it on expansion... the port's expansion
-        // routine must preserve the `$<...>` runs in its output". ncurses'
-        // tparm passes them through untouched, because realising the delay is
-        // tputs' job, not tparm's.
-        //
-        // These three are shipped capabilities from tests/data, covering
-        // padding at the end of a parameterised string, at the end of a plain
-        // one, and in the middle of one.
-        let cup = cap(&fixture("vt100"), "cup");
-        assert_eq!(ex(&cup, &nums(&[4, 12])), b"\x1b[5;13H$<5>");
-
-        let flash = cap(&fixture("linux"), "flash");
-        assert_eq!(ex(&flash, &[]), b"\x1b[?5h\x1b[?5l$<200/>");
-
-        let flash = cap(&fixture("xterm"), "flash");
-        assert_eq!(ex(&flash, &[]), b"\x1b[?5h$<100/>\x1b[?5l");
-    }
-
-    #[test]
-    #[ignore = "expand treats any $ as the start of a delay, swallowing to the next >"]
-    fn a_dollar_that_opens_no_delay_is_literal() {
-        // sem:terminal.tputs-fn: "A `$` not followed by `<`, and an
-        // unterminated `$<`, are emitted verbatim." `expand` enters its Delay
-        // state on a bare `$` rather than on `$<`, so text between an
-        // incidental `$` and the next `>` disappears — and a trailing `$`
-        // disappears with it. ncurses leaves both alone.
-        assert_eq!(s(b"a$b>c", &[]), "a$b>c");
-        assert_eq!(s(b"cost: $", &[]), "cost: $");
-        assert_eq!(s(b"$<unterminated", &[]), "$<unterminated");
     }
 }

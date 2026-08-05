@@ -18,7 +18,6 @@ use std::iter::repeat_n;
 #[derive(Clone, Copy, PartialEq)]
 enum States {
     Nothing,
-    Delay,
     Percent,
     SetVar,
     GetVar,
@@ -127,6 +126,27 @@ impl Variables {
 ///
 /// To be compatible with ncurses, `vars` should be the same between calls to `expand` for
 /// multiple capabilities for the same terminal.
+///
+/// # Padding
+///
+/// A `$<...>` padding run is **passed through verbatim**, exactly as ncurses'
+/// `tparm(3)` does. Padding is timing, not text: realising it means emitting
+/// pad characters at the tty's output speed, which only the routine that owns
+/// the tty — `tputs(3)`, or its equivalent in the caller — can do. So this
+/// function's job is to leave the marker intact, not to interpret it.
+///
+/// Keeping it in the returned bytes rather than reporting it out of band is
+/// what makes the two kinds of capability interchangeable: a capability with
+/// no `%` sequences is used raw, straight from [`TermInfo::strings`], with its
+/// `$<...>` still in it. Were the delay returned alongside the output instead,
+/// a caller would have to know whether the string had been through `expand`
+/// before it knew where the padding lived.
+///
+/// This crate's ancestor, `term` 1.2.1, instead entered a delay state on a
+/// bare `$` and dropped everything up to the next `>`, which both destroyed
+/// the timing and swallowed any incidental `$`.
+///
+/// [`TermInfo::strings`]: crate::TermInfo::strings
 pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables) -> Result<Vec<u8>, Error> {
     let mut state = Nothing;
 
@@ -158,21 +178,12 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables) -> Result<Vec<
             Nothing => {
                 if cur == '%' {
                     state = Percent;
-                } else if cur == '$' {
-                    state = Delay;
                 } else {
+                    // `$` is an ordinary byte here: a `$<...>` padding run
+                    // contains no `%`, so copying it out bytewise preserves it
+                    // for the caller's `tputs` to consume. See the note on
+                    // `expand` for why the delay is not parsed here.
                     output.push(c);
-                }
-            }
-            // TODO(nshterm): this discards `$<...>` padding delays instead of
-            // reporting them, so a parameterised capability loses its timing.
-            // It also enters on a bare `$`, not on `$<`, so any `$` swallows
-            // text to the next `>`. Invisible only while libedit's `t_speed`
-            // is 0 for want of `tcgetattr`. See plan node `nshterm-padding`.
-            Delay => {
-                old_state = Nothing;
-                if cur == '>' {
-                    state = Nothing;
                 }
             }
             Percent => {

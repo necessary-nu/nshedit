@@ -62,6 +62,13 @@
 //! * **Merged**: `term` had two types named `Error`, one at the crate root
 //!   and one for parse failures under `terminfo`. Flattening collided them,
 //!   so this crate has a single [`Error`]; see its docs.
+//! * **Fixed**: `term`'s expander recognised `$<...>` padding delays and threw
+//!   them away, so every parameterised capability silently lost its timing —
+//!   and it entered that delay state on a bare `$` rather than on `$<`, so an
+//!   incidental `$` swallowed the text up to the next `>` and a trailing one
+//!   vanished. Padding now survives expansion verbatim, which is what ncurses'
+//!   `tparm(3)` does and what leaves it available to a `tputs(3)`; see
+//!   [`parm::expand`].
 //!
 //! [`term`]: https://crates.io/crates/term/1.2.1
 //! [Stebalien/term#93]: https://github.com/Stebalien/term/issues/93

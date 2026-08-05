@@ -765,12 +765,20 @@ children (
             {
                 id c-defect-fixes
                 title "Fix defects in the reference C itself, and keep the divergence list short enough to upstream"
+                sealed true
                 log (
                     {
                         at 2026-08-05T13:32:29.876187813Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-05T13:33:07.841894287Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -924,6 +932,14 @@ children (
                 id nshterm-padding
                 title "Preserve the padding delays parm::expand discards, which go live when t_speed becomes real"
                 deps (nshterm-extract)
+                log (
+                    {
+                        at 2026-08-05T13:33:10.972362651Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {
