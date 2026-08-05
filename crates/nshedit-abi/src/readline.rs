@@ -2589,7 +2589,9 @@ unsafe fn history_file_path(filename: *const c_char) -> Result<std::path::PathBu
         let name = if filename.is_null() {
             let d = _default_history_file();
             if d.is_null() {
-                return Err(nshedit::errno::errno());
+                // The C's "whatever `getpwuid` left", read from the C's own
+                // `errno` because that is where the failing lookup wrote.
+                return Err(crate::errno::get());
             }
             c_bytes(d)
         } else {
@@ -2717,17 +2719,24 @@ pub unsafe extern "C" fn read_history(filename: *const c_char) -> c_int {
         let name = if filename.is_null() {
             let d = _default_history_file();
             if d.is_null() {
-                return nshedit::errno::errno();
+                return crate::errno::get();
             }
             d
         } else {
             filename
         };
-        // Gap: the C clears `errno` here, and the core's `errno` has no public
-        // setter, so a stale value from an earlier failure can be reported in
-        // place of `EINVAL`.
+        // The C's `errno = 0`, cleared in both homes so that neither a stale
+        // platform value nor a stale core one can be mistaken for this call's
+        // failure. The sample is taken after it, or the clear itself would
+        // count as something to publish.
+        crate::errno::set(0);
+        let mark = crate::errno::mark();
         if history_va(H, &mut ev, H_LOAD, name) == -1 {
-            let e = nshedit::errno::errno();
+            // Whatever failed wrote one of the two homes — a decoder in the
+            // history layer writes the core's, a failing `open` or `read`
+            // writes the platform's — so they are reconciled before the read.
+            crate::errno::publish(mark);
+            let e = crate::errno::get();
             return if e != 0 { e } else { EINVAL };
         }
         if history_va(H, &mut ev, H_GETSIZE) == 0 {
@@ -2757,16 +2766,21 @@ pub unsafe extern "C" fn write_history(filename: *const c_char) -> c_int {
         let name = if filename.is_null() {
             let d = _default_history_file();
             if d.is_null() {
-                return nshedit::errno::errno();
+                return crate::errno::get();
             }
             d
         } else {
             filename
         };
+        // No `errno = 0` here — unlike `read_history` the C does not clear it,
+        // so a value left over from before the call is what a failure with no
+        // `errno` of its own reports. Reproduced by sampling without clearing.
+        let mark = crate::errno::mark();
         // H_SAVE truncates or creates the file and writes the signature line
         // and every event `strvis`-escaped — the frozen on-disk format.
         if history_va(H, &mut ev, H_SAVE, name) == -1 {
-            let e = nshedit::errno::errno();
+            crate::errno::publish(mark);
+            let e = crate::errno::get();
             if e != 0 { e } else { EINVAL }
         } else {
             0
@@ -2802,11 +2816,19 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
         // crate's own open file; the history layer needs a decision on what a
         // `CFile` is before it can write through it.
         let cookie: CFile = Box::into_raw(Box::new(fp)).cast();
+        // As `write_history`: sampled, not cleared.
+        let mark = crate::errno::mark();
         let rc = history_va(H, &mut ev, H_NSAVE_FP, n as usize, cookie);
+        // The C captures `errno` before `fclose`, which can overwrite it.
+        let e = if rc == -1 {
+            crate::errno::publish(mark);
+            crate::errno::get()
+        } else {
+            0
+        };
         // The FILE this function opened is the one it closes.
         drop(Box::from_raw(cookie.cast::<std::fs::File>()));
         if rc == -1 {
-            let e = nshedit::errno::errno();
             return if e != 0 { e } else { EINVAL };
         }
         0

@@ -472,6 +472,14 @@ children (
             {
                 id abi-errno
                 title "Give errno a writable home the ABI crate can publish to C callers"
+                log (
+                    {
+                        at 2026-08-05T08:42:34.211250559Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
         )
         log (
