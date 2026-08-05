@@ -67,23 +67,23 @@ pub type ElSignalT = Option<Box<ElSignal>>;
 /// in scope; only `SIGCONT` and `SIGTSTP` differ. Linux's alpha, mips, sparc
 /// and parisc ports renumber more widely and are not covered — that belongs
 /// with the syscall layer described on [`plat`] when it lands.
-mod signo {
-    pub(super) const SIGHUP: i32 = 1;
-    pub(super) const SIGINT: i32 = 2;
-    pub(super) const SIGQUIT: i32 = 3;
-    pub(super) const SIGTERM: i32 = 15;
-    pub(super) const SIGWINCH: i32 = 28;
+pub(crate) mod signo {
+    pub(crate) const SIGHUP: i32 = 1;
+    pub(crate) const SIGINT: i32 = 2;
+    pub(crate) const SIGQUIT: i32 = 3;
+    pub(crate) const SIGTERM: i32 = 15;
+    pub(crate) const SIGWINCH: i32 = 28;
 
     /// Linux's generic ABI numbers `SIGCONT` 18 and `SIGTSTP` 20; the BSDs
     /// and Darwin swap them to 19 and 18.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(super) const SIGCONT: i32 = 18;
+    pub(crate) const SIGCONT: i32 = 18;
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(super) const SIGTSTP: i32 = 20;
+    pub(crate) const SIGTSTP: i32 = 20;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    pub(super) const SIGCONT: i32 = 19;
+    pub(crate) const SIGCONT: i32 = 19;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    pub(super) const SIGTSTP: i32 = 18;
+    pub(crate) const SIGTSTP: i32 = 18;
 }
 
 /// C: `static const int sighdl[]` — the trapped signals in the fixed table
@@ -226,7 +226,7 @@ mod plat {
 /// belongs in the ABI crate, not here (`plan/decisions/idiomatic-core.md`),
 /// so the instance is a parameter: whatever registration mechanism the ABI
 /// crate uses to find it is what supplies this argument.
-fn sig_handler(el: &mut EditLine, signo: i32) {
+pub(crate) fn sig_handler(el: &mut EditLine, signo: i32) {
     // ERR-terminal-14, disposition `define`: the C runs every step below in
     // async-signal context, where `el_resize` reaches `calloc`/`free` and
     // `ioctl`, `terminal__flush` is `fflush` on a `FILE *`, `tty_rawmode` can
