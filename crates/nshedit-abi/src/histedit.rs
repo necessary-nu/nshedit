@@ -702,13 +702,13 @@ pub unsafe extern "C" fn el_wset(
     let int_arg = |p: *mut c_void| p as usize as u32 as c_int;
 
     match op {
-        // One `el_wpfunc_t`. `prompt_set(el, p, 0, op, 1)`: installs the left
+        // One `el_pfunc_t`. `prompt_set(el, p, 0, op, 1)`: installs the left
         // prompt for EL_PROMPT and the right otherwise, marks it wide, resets
         // the cached prompt position, and restores the built-in default for a
         // NULL function. Always 0.
         EL_PROMPT | EL_RPROMPT => core_gap("`prompt::prompt_set`"),
 
-        // An `el_wpfunc_t` then an `int` narrowed to `wchar_t`: the literal
+        // An `el_pfunc_t` then an `int` narrowed to `wchar_t`: the literal
         // escape character bracketing zero-width prompt runs. Always 0. Note
         // `prompt_set` does treat EL_PROMPT_ESC as the left prompt, which is
         // the half of the asymmetry `prompt_get` gets wrong.
@@ -748,7 +748,8 @@ pub unsafe extern "C" fn el_wset(
         // command name and `argc` the index the scan stopped at. Nineteen
         // non-NULL strings leave the array unterminated with `argc == 20`,
         // which handlers that scan for a terminator then read past
-        // (ERR-map-01). The handler's 0/-1 is the result.
+        // (ERR-modes-27, and ERR-core-api-07 for this collection loop's own
+        // half of it). The handler's 0/-1 is the result.
         EL_BIND => core_gap("`map::map_bind`"),
         EL_TELLTC => core_gap("`terminal::terminal_telltc`"),
         EL_SETTC => core_gap("`terminal::terminal_settc`"),
@@ -863,14 +864,14 @@ pub unsafe extern "C" fn el_wget(
     let el = unsafe { &mut *el };
 
     match op {
-        // One `el_wpfunc_t *`. -1 if NULL, else 0. The value may be the
+        // One `el_pfunc_t *`. -1 if NULL, else 0. The value may be the
         // internal default rather than anything the application installed.
         EL_PROMPT | EL_RPROMPT => core_gap("`prompt::prompt_get`"),
 
-        // An `el_wpfunc_t *` then a `wchar_t *`, the latter optional.
+        // An `el_pfunc_t *` then a `wchar_t *`, the latter optional.
         // `prompt_get` selects the left prompt only for `op == EL_PROMPT`, so
         // EL_PROMPT_ESC reads the *right* prompt's function and escape
-        // character — ERR-prompt-02, frozen, and the reason set/get through
+        // character — ERR-core-api-14, frozen, and the reason set/get through
         // EL_PROMPT_ESC does not round-trip.
         EL_PROMPT_ESC | EL_RPROMPT_ESC => core_gap("`prompt::prompt_get`"),
 

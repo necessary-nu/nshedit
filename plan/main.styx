@@ -419,12 +419,20 @@ children (
             {
                 id platform-decide
                 title "Decide the platform layer's scope, and record the divergences it forces"
+                sealed true
                 log (
                     {
                         at 2026-08-05T08:40:59.29931204Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-05T08:45:21.020322825Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -449,13 +457,21 @@ children (
         children (
             {
                 id abi-callback-types
-                title "Give the nine core callback typedefs the C ABI a caller actually passes"
+                title "Give the ten core callback typedefs the C ABI a caller actually passes"
+                sealed true
                 log (
                     {
                         at 2026-08-05T08:43:45.562171855Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-05T08:45:33.039930866Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -480,12 +496,20 @@ children (
             {
                 id abi-errno
                 title "Give errno a writable home the ABI crate can publish to C callers"
+                sealed true
                 log (
                     {
                         at 2026-08-05T08:42:34.211250559Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-05T08:45:28.947621308Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -507,9 +531,30 @@ children (
             {
                 id spec-rule-corrections
                 title "Fix the six rules translation proved wrong about the C"
+                sealed true
                 log (
                     {
                         at 2026-08-05T08:35:36.025455087Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-05T08:45:11.667104589Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id errata-reconcile
+                title "Reconcile the register with what translation resolved, defined, under-scoped and newly found"
+                log (
+                    {
+                        at 2026-08-05T08:50:25.895230151Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
@@ -518,13 +563,16 @@ children (
             }
 
             {
-                id errata-reconcile
-                title "Reconcile the register with what translation resolved, defined, under-scoped and newly found"
-            }
-
-            {
                 id readline-globals-rules
                 title "Write rules for the sixty exported readline globals, which have none"
+            }
+        )
+        log (
+            {
+                at 2026-08-05T08:46:11.185224139Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "An eleventh wrong rule, found by abi-callback-types after spec-rule-corrections had already committed. It needs a follow-up pass on that leaf.\n\nsem:histedit.el-wset-fn (histedit.md:913, 919) and sem:histedit.el-wget-fn (histedit.md:615, 618) give the argument type for the EL_PROMPT / EL_RPROMPT / EL_PROMPT_ESC / EL_RPROMPT_ESC arms as el_wpfunc_t. No such type exists in the C. Grepping src/ for el_wpfunc finds it only inside a comment at histedit.h:152, and that comment spells the pair el_pfunct_t / el_wpfunct_t, names nothing declares either. src/prompt.h:44 declares exactly one prompt typedef, el_pfunc_t, and src/el.c uses it in all four prompt arms of el_wset and el_wget (lines 240, 262, 471, 477) and on the narrow eln.c path.\n\nThe four bullets should read el_pfunc_t and el_pfunc_t pointer.\n\nHarmless in practice: the shape is identical, so it changed nothing in the implementation and no Rust is invalidated. The ten def rules for the callback typedefs themselves all match the C byte for byte. This is only the prose in the two el_wset/el_wget rules.\n\nWorth noting for whoever picks this up: the error is that the rule invented a wide/narrow pair by analogy. Prompt callbacks have no narrow variant, because the prompt is stored wide either way. Check whether the same false analogy reached any other rule describing a narrow entry point."
             }
         )
     }
