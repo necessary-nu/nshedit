@@ -657,6 +657,13 @@ children (
                 kind @note
                 text "The vis/unvis C surface must NOT be exported. This corrects a conclusion reached during abi-errno, which held that \"the real libedit.so on Linux compiles vis.c/unvis.c and exports the symbols\" and proposed a plan node to export them. Measured on this host, the opposite is true.\n\n`nm -D /usr/lib/x86_64-linux-gnu/libedit.so.2` defines 205 symbols, none of them vis-related, and carries three UNDEFINED imports:\n\n    U strunvis@LIBBSD_0.0\n    U strvis@LIBBSD_0.0\n    U vis@LIBBSD_0.0\n\nSo Debian's libedit gets vis from libbsd. `src/Makefile.in:97-98` gates the sources on `@HAVE_VIS_FALSE@`/`@HAVE_UNVIS_FALSE@`, and with libbsd present the configure probe succeeds, so vis.c and unvis.c are never compiled in. glibc itself has no strvis — its only 'vis' symbols are madvise/fadvise relatives.\n\nTwo consequences:\n\n1. No plan node is needed for exporting the vis family, and none should be added. The drop-in contract is what libedit.so.2 actually exports, which excludes them.\n\n2. Exporting them anyway would be actively harmful, not merely redundant. Our artifact is installed with libedit.so.0 symlinked onto it. A process that loads both it and libbsd would then have two definitions of strvis in scope, and ELF interposition binds by load order, so libbsd's own callers could silently start calling ours. That is the same interposition hazard ERR-readline-53 already records for `completion_matches`, arriving from the other direction.\n\nWhat remains true from the abi-errno finding: the core's vis/unvis engine records ENOSPC/ENOMEM/EINVAL faithfully, and no C caller can observe those through us because we export no entry point that would. That is correct rather than a gap — the values are observable only through our own history-file path, which is an internal caller.\n\nOne thing this does raise, and it is NOT resolved: our vis/unvis is translated from NetBSD's vis.c, but the history files a Debian user already has on disk were written by libedit calling *libbsd's* vis. If those two disagree on any encoding, we misread existing history files. libbsd's vis derives from NetBSD's so they are probably identical, but \"probably\" is not a basis for a format we must read. Worth a differential test against libbsd before the history file format is declared done."
             }
+
+            {
+                at 2026-08-05T14:00:59.621745347Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Four stale cross-file citations, found by errata-reconcile-2 and deliberately NOT repaired from the register — it is a C-defects register and a list of stale port-side citations sits outside that charter. Recorded here so they are attributable rather than quietly fixed. All four are prose; no behaviour is wrong.\n\n1. crates/nshedit-abi/src/histedit.rs, history_dispatch's H_NSAVE_FP arm, cites ERR-history-15 for the `n + 1` off-by-one. That is ERR-history-19. ERR-history-15 is history_def_del's ownership transfer — a different defect entirely, so the citation points a reader at the wrong thing rather than merely at nothing.\n\n2. Same file, el_wset's EL_TERMINAL arm around line 946: \"and also -1, which sem:histedit.el-wset-fn does not say\". The rule has said it since 55258de. This one was predicted when that commit landed and is now confirmed still present.\n\n3. conformance/driver/hist_tok.c, file header and section 0, still describe the eight narrow entry points as aborting through core_gap(), with line numbers into histedit.rs. The MEASUREMENT is right — both traces report `survived, exit=0` since abi-narrow landed in 8af6682 — so the harness is not lying, only its commentary is. Worth fixing before someone reads the header and believes the differential still has known divergences.\n\n4. crates/nshedit/src/terminal.rs, tgoto: its comment describes term's delay state as current behaviour, and the cut-at-every-$ segmentation it justifies is redundant since c146bb7. Already noted on terminal-translate with the wider point that collapsing tgoto to one expand call removes about 50 lines and a documented semantic caveat.\n\nItems 1 and 2 belong to whoever next opens nshedit-abi/src/histedit.rs — likely abi-varargs. Item 3 belongs with the next conformance driver, since that file gets edited then anyway. Item 4 is already on terminal-translate.\n\nWorth noting the general shape: all four are comments that were true when written and were falsified by a later commit, and none of them could be caught by a gate. The commit that invalidates a comment elsewhere in the tree is the one that should update it, and that is easier to say than to do when the invalidation is three files away."
+            }
         )
     }
 
@@ -767,6 +774,7 @@ children (
                 id errata-reconcile-2
                 title "Reconcile the register against the ABI pass, the first conformance run and the withdrawals"
                 deps (spec-corrections-2)
+                sealed true
                 log (
                     {
                         at 2026-08-05T10:58:55.169931851Z
@@ -794,6 +802,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-05T14:00:43.963091123Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

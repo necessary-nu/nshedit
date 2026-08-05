@@ -21,6 +21,7 @@ consequences {
     accepted (
         "Observable means observable to a C caller across the exported ABI. The core is not bound by it — see [dec:libedit:idiomatic-core]."
         "The six known behavioural forks default to reproduce: the physical-tabs capability, H_FUNC's dropped ref pointer, free_history_entry's empty body, the pointer-sorting completion comparator, tilde expansion of a bare tilde, and el_deletestr1's arithmetic."
+        "Five of those six are settled. The physical-tabs one is not, because its premise was measured and found false: it was taken as dead under ncurses, so reproducing it meant doing nothing. It is live — 262 of 2883 terminfo entries on a Debian host set OTpt, screen and tmux among them, and a program linked against libtinfo gets tgetflag(\"pt\") == 1 for both. So reproducing it means keying the terminfo capname OTpt, which the port does not do: TVAL keys the termcap literal \"pt\" and the lookup misses. The registered defect that recorded it as dead, ERR-terminal-61, is withdrawn. What remains is a port defect belonging to the termcap-to-terminfo name work on terminal-translate, and this fork is unsettled until that lands."
         "Where the port defines what the C left undefined, the choice is recorded in the rule rather than left to the implementation."
         "Conformance tests assert the reproduced behaviour, so a later fix has to change a test deliberately rather than drift."
         "Reproduction is a discipline for translation and test, not the shipped end state. Idiomatization fixes the defects, C consumers included, and docs/errata.md is that work list."
@@ -74,6 +75,20 @@ tokenizer's walk past its guard, the `\U+` escape running off the end of
 its string — are all undefined, and all get defined behaviour. The
 behavioural forks are defined and merely wrong, so they stand until
 someone decides otherwise.
+
+One of the six turned out to rest on a false premise, which is worth
+recording because of *how* it failed rather than that it did. The
+physical-tabs fork was written down as dead — terminfo was believed to
+have no boolean for the capability, so the C's `TERM_CAN_TAB` could never
+be set under ncurses and "reproduce" cost nothing. Measurement says
+otherwise: terminfo carries it as `OTpt`, 262 of 2883 entries on a Debian
+host set it, and `tgetflag("pt")` returns 1 for `screen` and `tmux`
+through libtinfo. Nobody had run it. The fork is therefore still open, and
+reproducing it now means a name translation the port does not perform —
+see [[terminal-caps-via-term-crate]], whose own count of "139 of the 1843
+entries" is from a different database and should not be quoted as an
+invariant either. A defect register entry recording the capability as
+dead, ERR-terminal-61, is withdrawn.
 
 One boundary condition matters more than it first appears: *observable*
 means observable to a C caller through the exported ABI. A defect that
