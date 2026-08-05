@@ -513,6 +513,19 @@ children (
                     }
                 )
             }
+
+            {
+                id abi-headers
+                title "Decide whether the port ships histedit.h, editline/readline.h and the man page"
+                log (
+                    {
+                        at 2026-08-05T08:51:34.552190783Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Raised by errata-reconcile, which could not adjudicate two register entries without it.\n\nERR-terminal-64 (doc/editline.3 lists SIGSTOP among the signals libedit handles, which it does not) and most of ERR-core-api-34 (annotation errors in histedit.h) both carry a \"fix the documentation\" disposition. The port ships no histedit.h and nobody has touched doc/editline.3, so neither can be resolved or honestly called reproduced. They sit at open/partial until this is settled.\n\nThe question is not cosmetic. A drop-in replacement is consumed at two layers:\n\n- Link time, which is the .so and its exported symbols. That part is decided and being built.\n- COMPILE time, which is the headers. A consumer that does `#include <histedit.h>` and builds against us needs a header from somewhere. If we do not ship one, we are drop-in only for already-compiled binaries, and any consumer rebuilding from source still needs libedit installed — which rather defeats the purpose for a distribution that wants to replace it outright.\n\nShipping headers pulls in consequences worth deciding deliberately rather than discovering:\n\n- The C's headers carry the annotation defects the register already logs. Shipping them verbatim reproduces those defects at compile time for every consumer; fixing them diverges from the artifact we are replacing. That is the same reproduce-versus-fix fork conformance-policy governs, arriving in a place the policy does not obviously reach, because a header is not runtime behaviour.\n- histedit.h declares el_set/el_get as variadic. Our ABI is fixed-arity per the varargs decision, which is correct on x86-64 SysV and aarch64 AAPCS and wrong on aarch64 Apple. A header we ship is where that would have to be stated.\n- editline/readline.h has the completion_matches const mismatch ERR-readline-53 records, which is only observable to a compiling consumer — so it is a header-only defect that shipping would either propagate or fix.\n\nNot blocking anything today. Worth settling before the register is called reconciled, since two entries are parked on it."
+                    }
+                )
+            }
         )
         log (
             {
@@ -552,12 +565,20 @@ children (
             {
                 id errata-reconcile
                 title "Reconcile the register with what translation resolved, defined, under-scoped and newly found"
+                sealed true
                 log (
                     {
                         at 2026-08-05T08:50:25.895230151Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-05T08:51:00.451626035Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
