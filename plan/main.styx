@@ -559,6 +559,7 @@ children (
             {
                 id abi-file-surface
                 title "Argue and build the FILE * surface, which blocks H_SAVE_FP, EL_SETFP and foreign streams"
+                sealed true
                 log (
                     {
                         at 2026-08-05T10:58:09.978302682Z
@@ -572,6 +573,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-05T11:30:04.410544231Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -711,6 +719,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Additions from spec-corrections-2, now committed as 55258de. These supplement the list already on this node.\n\n1. ERR-terminal-22 — extend the `rule:` line with [spec:libedit:sem:histedit.el-wset-fn] and [spec:libedit:sem:el.el-wset-fn]. Both now state the extra -1 return path in their EL_TERMINAL arms. Previously only sem:terminal.terminal-set-fn was registered, even though the entry's own prose already said \"el_wset(EL_TERMINAL, ...) propagates that\".\n\n2. The wcsdup entry this node already plans now has a rule to cite: [spec:libedit:sem:histedit.wcsdup-fn] describes it in full as of 55258de. Suggested class: divergence (build). Reach: HOT, not latent — on any glibc host libedit.so exports a `T wcsdup` with default visibility that shadows libc's for every caller in a process linking libedit ahead of libc, while histedit.h withholds the prototype on exactly those hosts. Disposition: not reproduced, under dec:libedit:posix-only-scope. Measured, not read: the built oracle's config.h has `#define HAVE_WCSDUP 1` and `nm -D` on its .so shows `T wcsdup` anyway.\n\n3. NEW, a sibling of the above: src/reallocarr.c:32 is `#if !HAVE_REALLOCARR` with `#include \"config.h\"` at :34 — the identical always-true guard, and the oracle exports `T reallocarr` too. Unobservable on hosts that lack reallocarr, which is why it has gone unnoticed, but it is the same C defect. src/strlcpy.c is the control: config.h at :20, guard at :36, correct ordering, and correspondingly NOT exported. Either a second clause on the wcsdup entry or its own id. No rule covers reallocarr at all, so if it gets an id it needs a rule too — that is a spec-corrections item, not just a register one.\n\n4. ERR-core-api-34 needs NO change for histdata_t. It was a false alarm: sem:histedit.history-fn (histedit.md:1261-1263) already documents that histedit.h names a type it never defines, and ERR-core-api-34 (errata.md:2273) already names it verbatim.\n\nAlso, one stale code comment for whoever next owns crates/nshedit-abi/src/histedit.rs — not for this node, and left alone deliberately because that file was held by another agent: lines 846-850 say the -1-on-lookup-failure path is something \"sem:histedit.el-wset-fn does not say\". As of 55258de the rule does say it, so that clause is now false."
+                    }
+
+                    {
+                        at 2026-08-05T11:29:56.55149255Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Further stale status lines, from abi-file-surface landing as 6912ead. Supplements the two lists already on this node.\n\n- ERR-history-19 and ERR-history-20 both say \"Not yet reachable across the ABI: history_save_fp returns -1\". Both are now reachable and reproduced end to end, byte-identical to the oracle in the differential. ERR-history-20's at_start now comes from a real ftell in nshedit-abi's cstdio module, which is the whole point of that entry -- on a pipe or socket ftell returns -1, so the file comes out headerless and history_load later rejects it. That is now genuinely exercised rather than unreachable.\n\n- ERR-core-api-08 says the EL_SETFP arm is a core_gap panic. It is implemented, with NULL defined as descriptor -1.\n\n- ERR-core-api-06's status says the -1-descriptor half is \"over-applied ... every el_init gets descriptor -1 ... blocked on the platform layer\". No longer true. Only NULL or descriptor-less streams get -1 now, so the C's outcome is genuinely reproduced rather than approximated. This one is worth reading carefully -- the status was describing a port limitation as if it were the C's behaviour.\n\nNot errata, recorded so it is not mistaken for one: plan/decisions/platform-layer.md group 12 (\"fileno is unreachable...\") is now stale except for its tcgetattr half. The file's statement that the surface \"is nshedit-abi's alone\" stays correct. Fixing that group belongs with platform-build, not here.\n\nOne measurement from the same run, for whoever owns the terminal concern rather than this node: EL_TELLTC output differs between oracle and port in the CAPABILITY NAMES ONLY -- al/bl/cd/ce/ch against il1/bel/ed/el/hpa. That is termcap spelling against terminfo spelling, i.e. dec:libedit:terminal-caps-via-term-crate, and it is a real observable difference for any consumer that parses telltc output. It did not show as a differential divergence because the current driver does not exercise EL_TELLTC; the next driver (conformance-driver-el) will, so expect it and do not treat it as new."
                     }
                 )
             }
