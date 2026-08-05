@@ -77,5 +77,5 @@ assertions (
     {id spec-corrections-2, kind @complete, author "brendan@necessary.nu", at 2026-08-05T11:16:30.244303886Z}
     {id abi-file-surface, kind @complete, author "brendan@necessary.nu", at 2026-08-05T11:30:04.410544231Z}
     {id nshterm-extract, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:13:29.434673323Z}
-    {id abi-narrow, kind @doing, author "brendan@necessary.nu", at 2026-08-05T13:14:08.738660746Z}
+    {id abi-narrow, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:15:35.415139873Z}
 )
