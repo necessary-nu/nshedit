@@ -1095,12 +1095,15 @@ fn map_init_nls(el: &mut EditLine) {
     // encoding: in the C locale nothing changes, in a UTF-8 locale the
     // printable part of U+00A0..U+00FF becomes ED_INSERT.
     //
-    // This runs after `map_init_meta`, so in emacs mode it overwrites the
-    // direct 8-bit meta bindings the default table supplied — they survive
-    // only as the ESC-prefixed keymacros `map_init_meta` just made. It is
-    // also what makes a non-ASCII keystroke self-inserting rather than
-    // unassigned, which `search`'s incremental search dispatches through
-    // (see the note on ERR-modes-32 there).
+    // This runs after `map_init_meta`, so in emacs mode it overwrites those
+    // direct 8-bit meta bindings the default table supplied that sit at a
+    // printable index; those commands stay reachable as the ESC-prefixed
+    // keymacros `map_init_meta` just made. Indices 128..=159 are left alone,
+    // the C1 controls not being `iswprint`, so they keep the direct 8-bit
+    // binding on top of the ESC one. It is also what makes a non-ASCII
+    // keystroke self-inserting rather than unassigned, which `search`'s
+    // incremental search dispatches through (see the note on ERR-modes-32
+    // there).
     let cs = locale::charset();
     for i in 0o200..=0o377usize {
         if locale::iswprint(cs, i as u32) {

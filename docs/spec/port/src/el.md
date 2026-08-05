@@ -776,7 +776,10 @@
 >   type; a NULL name means "re-read `TERM` through the `el_getenv`
 >   hook", an empty or unknown name falls back to `dumb`, and the name
 >   `emacs` additionally raises `EDIT_DISABLED`. Returns `terminal_set`'s
->   value: 0 on success, -1 on allocation failure.
+>   value: -1 on allocation failure, and -1 *also* whenever the capability
+>   lookup failed, even though the dumb-terminal fallback was installed
+>   successfully; 0 only when the lookup succeeded. See
+>   `[spec:libedit:sem:terminal.terminal-set-fn]` step 14.
 > - `EL_EDITOR` (2) — one `wchar_t *`. Calls `map_set_editor`: `L"emacs"`
 >   installs the emacs key map and returns 0, `L"vi"` installs the vi key
 >   map and returns 0, anything else returns -1 leaving the map

@@ -612,10 +612,10 @@
 > where the actual state lives — the narrow `el_get` marshals into this for
 > most ops. Returns 0 on success and -1 on failure.
 > If `el` is `NULL`, return -1 before touching the varargs. Then dispatch:
-> - `EL_PROMPT` (0), `EL_RPROMPT` (12), arg `el_wpfunc_t *`: store the
+> - `EL_PROMPT` (0), `EL_RPROMPT` (12), arg `el_pfunc_t *`: store the
 >   installed prompt function for that slot. Returns -1 if the pointer is
 >   `NULL`, else 0.
-> - `EL_PROMPT_ESC` (21), `EL_RPROMPT_ESC` (22), args `el_wpfunc_t *` and
+> - `EL_PROMPT_ESC` (21), `EL_RPROMPT_ESC` (22), args `el_pfunc_t *` and
 >   `wchar_t *`: store the function and the literal-escape character.
 >   Returns -1 if the function pointer is `NULL`; the `wchar_t *` may be
 >   `NULL`, in which case only the function is stored.
@@ -910,13 +910,13 @@
 > most ops. Returns 0 on success and -1 on failure; the result variable
 > starts at 0, so any op that falls through without assigning returns 0.
 > If `el` is `NULL`, return -1 before touching the varargs. Then dispatch:
-> - `EL_PROMPT` (0), `EL_RPROMPT` (12), arg `el_wpfunc_t`
+> - `EL_PROMPT` (0), `EL_RPROMPT` (12), arg `el_pfunc_t`
 >   (`wchar_t *(*)(EditLine *)`): install the left / right prompt function
 >   with escape character 0 and the prompt marked *wide*. A `NULL` function
 >   restores the built-in default for that slot (a fixed prompt for the
 >   left, an empty string for the right). The cached prompt position is
 >   reset to (0,0). Always returns 0.
-> - `EL_PROMPT_ESC` (21), `EL_RPROMPT_ESC` (22), args `el_wpfunc_t` and
+> - `EL_PROMPT_ESC` (21), `EL_RPROMPT_ESC` (22), args `el_pfunc_t` and
 >   `int` (received as `int` because of default argument promotion, then
 >   narrowed to `wchar_t`): as above but records the literal-escape
 >   character, which brackets runs of prompt text that occupy no columns
@@ -932,8 +932,11 @@
 >   `"emacs"` additionally sets the `EDIT_DISABLED` flag. `SIGWINCH` is
 >   blocked across the reload. If the capability database cannot be read or
 >   has no entry for the type, a diagnostic is printed to the error stream
->   and a hardcoded 80-column dumb terminal is configured. Returns 0 on
->   success, -1 if the display arrays could not be allocated.
+>   and a hardcoded 80-column dumb terminal is configured. Returns -1 if
+>   the display arrays could not be allocated, and -1 *also* whenever that
+>   capability lookup failed — the fallback terminal is fully usable and
+>   the call still reports failure. 0 is returned only when the lookup
+>   succeeded. See `[spec:libedit:sem:terminal.terminal-set-fn]` step 14.
 > - `EL_EDITOR` (2), arg `wchar_t *`: select the keymap. `L"emacs"` and
 >   `L"vi"` are the only accepted values and return 0; anything else
 >   returns -1 without changing the map. Switching maps also resets the
@@ -1632,9 +1635,18 @@
 > behaviour. The length is `wcslen(str) + 1` wide characters, and the copy
 > is made with `wmemcpy`, so embedded content is copied verbatim up to the
 > first `L'\0'`.
-> This declaration is conditional: `histedit.h` only declares it when the
-> build determined the platform's libc lacks it (`HAVE_WCSDUP` unset), and
-> the bundled implementation is only compiled in that case. It is a libc
+> The declaration is conditional; the definition is not, and the two
+> disagree. `histedit.h` guards the prototype with `#ifndef HAVE_WCSDUP`,
+> which is correct for a translation unit that has already seen
+> `config.h`: on a platform whose libc has `wcsdup` the prototype
+> disappears. `wcsdup.c` opens with the same `#ifndef HAVE_WCSDUP`
+> *before* its own `#include "config.h"`, so the macro does not exist yet
+> when the guard is evaluated and the guard is unconditionally true. The
+> bundled definition is therefore compiled into every build, with default
+> visibility (nothing here is `libedit_private`), and libedit exports
+> `wcsdup` even on platforms that already provide it — so any program
+> that links libedit ahead of libc resolves `wcsdup` to this copy rather
+> than the system's, for every caller in the process. It is still a libc
 > gap-filler with no libedit-specific behaviour, and under
 > `[dec:libedit:posix-only-scope]` it leaves the port's scope entirely —
 > the Rust port targets POSIX platforms whose libc provides `wcsdup`, so
