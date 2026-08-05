@@ -23,6 +23,19 @@ platforms (
     }
 )
 
+comment-smells {
+    // "Phase N" is this project's spec vocabulary, not a plan reference. The
+    // sem rules name the stages of an algorithm that way — refresh's
+    // line-differencing engine has four, and its rule heads them "Phase 1 —
+    // find the boundaries" and so on — so a code comment saying the same
+    // thing points the reader at the paragraph that specifies it. That is the
+    // opposite of a comment meaning nothing to the next reader.
+    //
+    // Deliberately bounded to the range the rules actually use, so a genuine
+    // transient reference to an adoption or wave phase still fires.
+    allow ("(?i)\\bphase [1-4]\\b")
+}
+
 commit {
     type-prefix "required"
 }
