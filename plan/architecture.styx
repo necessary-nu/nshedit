@@ -29,12 +29,14 @@ elements (
         lifecycle @provisional
         owns ()
         exposes ("crates/nshedit-abi/src/**")
-        depends_on ([arch:libedit:core])
+        depends_on ([arch:libedit:core] [arch:libedit:platform])
         composed_of ()
-        decisions ([dec:libedit:no-c-ffi] [dec:libedit:conformance-policy] [dec:libedit:idiomatic-core])
+        decisions ([dec:libedit:no-c-ffi] [dec:libedit:conformance-policy] [dec:libedit:idiomatic-core] [dec:libedit:platform-layer])
         log (
             {at "2026-08-04T16:27:13Z", kind @established, by "[dec:libedit:no-c-ffi]"}
             {at "2026-08-04T17:47:40Z", kind @modified, by "[dec:libedit:idiomatic-core]"}
+            {at "2026-08-05T08:32:17Z", kind @modified, by "[dec:libedit:no-c-ffi]"}
+            {at "2026-08-05T08:34:05Z", kind @modified, by "[dec:libedit:platform-layer]"}
         )
     }
     {
@@ -44,11 +46,26 @@ elements (
         lifecycle @provisional
         owns ()
         exposes ("crates/nshedit/src/**")
-        depends_on ([arch:libedit:terminal-caps])
+        depends_on ([arch:libedit:terminal-caps] [arch:libedit:platform])
         composed_of ()
-        decisions ([dec:libedit:idiomatic-core])
+        decisions ([dec:libedit:idiomatic-core] [dec:libedit:platform-layer])
         log (
             {at "2026-08-04T17:47:40Z", kind @established, by "[dec:libedit:idiomatic-core]"}
+            {at "2026-08-05T08:34:05Z", kind @modified, by "[dec:libedit:platform-layer]"}
+        )
+    }
+    {
+        id [arch:libedit:platform]
+        name "Platform layer"
+        kind @boundary
+        lifecycle @provisional
+        owns ()
+        exposes ("crates/nshedit-plat/src/**")
+        depends_on ()
+        composed_of ()
+        decisions ([dec:libedit:platform-layer])
+        log (
+            {at "2026-08-05T08:34:05Z", kind @established, by "[dec:libedit:platform-layer]"}
         )
     }
     {

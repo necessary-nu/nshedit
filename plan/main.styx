@@ -419,6 +419,14 @@ children (
             {
                 id platform-decide
                 title "Decide the platform layer's scope, and record the divergences it forces"
+                log (
+                    {
+                        at 2026-08-05T08:40:59.29931204Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {
@@ -464,6 +472,14 @@ children (
             {
                 id abi-errno
                 title "Give errno a writable home the ABI crate can publish to C callers"
+            }
+        )
+        log (
+            {
+                at 2026-08-05T08:39:16.111071698Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "The vis/unvis C surface must NOT be exported. This corrects a conclusion reached during abi-errno, which held that \"the real libedit.so on Linux compiles vis.c/unvis.c and exports the symbols\" and proposed a plan node to export them. Measured on this host, the opposite is true.\n\n`nm -D /usr/lib/x86_64-linux-gnu/libedit.so.2` defines 205 symbols, none of them vis-related, and carries three UNDEFINED imports:\n\n    U strunvis@LIBBSD_0.0\n    U strvis@LIBBSD_0.0\n    U vis@LIBBSD_0.0\n\nSo Debian's libedit gets vis from libbsd. `src/Makefile.in:97-98` gates the sources on `@HAVE_VIS_FALSE@`/`@HAVE_UNVIS_FALSE@`, and with libbsd present the configure probe succeeds, so vis.c and unvis.c are never compiled in. glibc itself has no strvis — its only 'vis' symbols are madvise/fadvise relatives.\n\nTwo consequences:\n\n1. No plan node is needed for exporting the vis family, and none should be added. The drop-in contract is what libedit.so.2 actually exports, which excludes them.\n\n2. Exporting them anyway would be actively harmful, not merely redundant. Our artifact is installed with libedit.so.0 symlinked onto it. A process that loads both it and libbsd would then have two definitions of strvis in scope, and ELF interposition binds by load order, so libbsd's own callers could silently start calling ours. That is the same interposition hazard ERR-readline-53 already records for `completion_matches`, arriving from the other direction.\n\nWhat remains true from the abi-errno finding: the core's vis/unvis engine records ENOSPC/ENOMEM/EINVAL faithfully, and no C caller can observe those through us because we export no entry point that would. That is correct rather than a gap — the values are observable only through our own history-file path, which is an internal caller.\n\nOne thing this does raise, and it is NOT resolved: our vis/unvis is translated from NetBSD's vis.c, but the history files a Debian user already has on disk were written by libedit calling *libbsd's* vis. If those two disagree on any encoding, we misread existing history files. libbsd's vis derives from NetBSD's so they are probably identical, but \"probably\" is not a basis for a format we must read. Worth a differential test against libbsd before the history file format is declared done."
             }
         )
     }

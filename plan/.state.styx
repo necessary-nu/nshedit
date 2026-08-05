@@ -1,5 +1,58 @@
 schema_version 7
 
+last_sync_at 2026-08-05T08:37:17.415060629Z
+
+derived_priorities (
+    {id abi-callback-types, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id abi-errno, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id abi-narrow, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id abi-varargs, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id abi-visibility, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id buffer-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id buffer-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id buffer-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id buffer-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id completion-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id completion-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id completion-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id completion-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id core-api-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id core-api-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id core-api-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id core-api-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id encoding-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id encoding-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id encoding-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id encoding-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id errata-reconcile, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id history-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id history-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id history-regex, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id history-tests, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id history-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id input-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id input-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id input-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id input-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id modes-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id modes-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id modes-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id modes-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id platform-build, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id platform-decide, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id platform-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id readline-compat-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id readline-compat-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id readline-compat-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id readline-compat-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id readline-globals-rules, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id spec-rule-corrections, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id terminal-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id terminal-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id terminal-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id terminal-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+)
+
 assertions (
     {id encoding-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:33.842493851Z}
     {id terminal-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:36.115234384Z}
@@ -11,4 +64,5 @@ assertions (
     {id core-api-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:37:01.58878447Z}
     {id readline-compat-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:37:04.692153774Z}
     {id spec-rule-corrections, kind @doing, author "brendan@necessary.nu", at 2026-08-05T08:35:36.025455087Z}
+    {id platform-decide, kind @doing, author "brendan@necessary.nu", at 2026-08-05T08:40:59.29931204Z}
 )
