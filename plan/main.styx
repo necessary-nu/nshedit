@@ -29,6 +29,14 @@ children (
                 title "Translate the encoding primitives to Rust"
                 deps (encoding-markup)
                 sealed true
+                log (
+                    {
+                        at 2026-08-05T14:28:36.378870204Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
 
             {
@@ -136,6 +144,14 @@ children (
                 title "Translate the line buffer and refresh to Rust"
                 deps (buffer-markup)
                 sealed true
+                log (
+                    {
+                        at 2026-08-05T14:28:39.309482835Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
 
             {
@@ -359,6 +375,14 @@ children (
                 title "Translate the EditLine lifecycle and public API to Rust"
                 deps (core-api-markup)
                 sealed true
+                log (
+                    {
+                        at 2026-08-05T14:52:33.767696735Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

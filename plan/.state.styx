@@ -82,4 +82,7 @@ assertions (
     {id nshterm-padding, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:33:59.883734777Z}
     {id abi-missing-exports, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:46:02.259730161Z}
     {id errata-reconcile-2, kind @complete, author "brendan@necessary.nu", at 2026-08-05T14:00:43.963091123Z}
+    {id encoding-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-05T14:28:36.378870204Z}
+    {id buffer-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-05T14:28:39.309482835Z}
+    {id core-api-translate, kind @doing, author "brendan@necessary.nu", at 2026-08-05T14:52:33.767696735Z}
 )

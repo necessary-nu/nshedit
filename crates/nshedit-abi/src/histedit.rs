@@ -860,6 +860,8 @@ pub unsafe extern "C" fn el_wparse(el: *mut EditLine, argc: c_int, argv: *mut *c
 /// undefined behaviour, as in the C.
 // [spec:libedit:def:histedit.el-wset-fn]
 // [spec:libedit:sem:histedit.el-wset-fn]
+// [spec:libedit:def:el.el-wset-fn]
+// [spec:libedit:sem:el.el-wset-fn]
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn el_wset(
@@ -1216,6 +1218,8 @@ pub unsafe extern "C" fn el_wset(
 /// read positionally. See the module documentation for the Apple-ABI caveat.
 // [spec:libedit:def:histedit.el-wget-fn]
 // [spec:libedit:sem:histedit.el-wget-fn]
+// [spec:libedit:def:el.el-wget-fn]
+// [spec:libedit:sem:el.el-wget-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn el_wget(
     el: *mut EditLine,
@@ -1480,6 +1484,8 @@ pub unsafe extern "C" fn el_cursor(el: *mut EditLine, n: c_int) -> c_int {
 
 // [spec:libedit:def:histedit.el-wline-fn]
 // [spec:libedit:sem:histedit.el-wline-fn]
+// [spec:libedit:def:el.el-wline-fn]
+// [spec:libedit:sem:el.el-wline-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn el_wline(el: *mut EditLine) -> *const LineInfoW {
     // The C's whole body is `(const LineInfoW *)(void *)&el->el_line`: a
