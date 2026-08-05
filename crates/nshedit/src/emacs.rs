@@ -7,7 +7,7 @@ use crate::chared::{
 use crate::el::{EditLine, ElActionT};
 use crate::fcns::{ED_SEARCH_NEXT_HISTORY, ED_SEARCH_PREV_HISTORY};
 use crate::histedit::{CC_ARGHACK, CC_CURSOR, CC_EOF, CC_ERROR, CC_NORM, CC_REFRESH};
-use crate::locale::{self, Charset};
+use crate::locale::{self, iswalpha, iswlower, iswupper, towlower, towupper};
 use crate::map::MAP_VI;
 use crate::search::ce_inc_search;
 use crate::terminal::{terminal_beep, terminal_writec};
@@ -22,84 +22,6 @@ const MODE_INSERT: i32 = 0;
 /// name here because [`em_toggle_overwrite`] never produces it — see its
 /// rule.
 const MODE_REPLACE: i32 = 1;
-
-// ---------------------------------------------------------------------------
-// Locale case mapping.
-//
-// `crate::locale` supplies `iswalnum` but not the `<wctype.h>` case queries
-// this file needs, so they are defined here in the same shape as the ones it
-// does export. They belong in `locale` — `vi_change_case` wants the same
-// four — and should move there rather than being copied a second time.
-// ---------------------------------------------------------------------------
-
-/// C: `iswalpha`.
-///
-/// glibc's `alpha` class is the Unicode Alphabetic property plus the
-/// non-ASCII decimal digits; the digits cannot change the outcome of the one
-/// test that uses this (`em_capitol_case` only asks so it can then ask
-/// `iswlower`), so plain Alphabetic is the right shape. The C locale is
-/// exact.
-fn iswalpha(cs: Charset, c: u32) -> bool {
-    match cs {
-        Charset::Ascii => c < 0x80 && (c as u8).is_ascii_alphabetic(),
-        Charset::Utf8 => char::from_u32(c).is_some_and(char::is_alphabetic),
-    }
-}
-
-/// C: `iswlower`. glibc's `lower` class is the Unicode Lowercase property.
-fn iswlower(cs: Charset, c: u32) -> bool {
-    match cs {
-        Charset::Ascii => c < 0x80 && (c as u8).is_ascii_lowercase(),
-        Charset::Utf8 => char::from_u32(c).is_some_and(char::is_lowercase),
-    }
-}
-
-/// C: `iswupper`. glibc's `upper` class is the Unicode Uppercase property,
-/// so the titlecase letters (`ǅ` and friends) answer false to both this and
-/// [`iswlower`], as they do in the C.
-fn iswupper(cs: Charset, c: u32) -> bool {
-    match cs {
-        Charset::Ascii => c < 0x80 && (c as u8).is_ascii_uppercase(),
-        Charset::Utf8 => char::from_u32(c).is_some_and(char::is_uppercase),
-    }
-}
-
-/// C: `towupper` — the **simple**, one-code-point-to-one-code-point mapping,
-/// which is all a `wchar_t` slot in the line buffer can hold.
-///
-/// Rust's `char::to_uppercase` is the *full* mapping, so it is taken only
-/// when it yields exactly one character; a multi-character expansion (`ß` to
-/// `SS`) leaves the character alone, which is what glibc's `towupper` does
-/// for the same input. Characters with no uppercase form are returned
-/// unchanged.
-fn towupper(cs: Charset, c: u32) -> u32 {
-    simple_case(cs, c, char::to_uppercase)
-}
-
-/// C: `towlower`, the simple mapping, as in [`towupper`].
-///
-/// The one measured divergence is `İ` (U+0130): glibc maps it to `i`, while
-/// Rust's full mapping expands it to two characters and this therefore
-/// leaves it alone. Nothing else below U+10FFFF differs.
-fn towlower(cs: Charset, c: u32) -> u32 {
-    simple_case(cs, c, char::to_lowercase)
-}
-
-/// The body shared by [`towupper`] and [`towlower`].
-fn simple_case<I: Iterator<Item = char>>(cs: Charset, c: u32, map: fn(char) -> I) -> u32 {
-    if cs == Charset::Ascii && c >= 0x80 {
-        // ANSI_X3.4-1968 has no case pairs above U+007F.
-        return c;
-    }
-    let Some(ch) = char::from_u32(c) else {
-        return c;
-    };
-    let mut it = map(ch);
-    match (it.next(), it.next()) {
-        (Some(one), None) => one as u32,
-        _ => c,
-    }
-}
 
 /// `while (cp < to) *kp++ = *cp++; el->el_chared.c_kill.last = kp;` — the
 /// one shape every kill and copy in this file uses.

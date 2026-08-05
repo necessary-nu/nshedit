@@ -421,6 +421,73 @@ pub(crate) fn iswalnum(cs: Charset, c: u32) -> bool {
     }
 }
 
+/// C: `iswalpha`.
+///
+/// glibc's `alpha` class is the Unicode Alphabetic property plus the non-ASCII
+/// decimal digits; its one caller (`em_capitol_case`, which only asks so it can
+/// then ask [`iswlower`]) cannot see the difference, so plain Alphabetic is the
+/// right shape. The C locale is exact.
+pub(crate) fn iswalpha(cs: Charset, c: u32) -> bool {
+    match cs {
+        Charset::Ascii => c < 0x80 && (c as u8).is_ascii_alphabetic(),
+        Charset::Utf8 => char::from_u32(c).is_some_and(char::is_alphabetic),
+    }
+}
+
+/// C: `iswlower`. glibc's `lower` class is the Unicode Lowercase property.
+pub(crate) fn iswlower(cs: Charset, c: u32) -> bool {
+    match cs {
+        Charset::Ascii => c < 0x80 && (c as u8).is_ascii_lowercase(),
+        Charset::Utf8 => char::from_u32(c).is_some_and(char::is_lowercase),
+    }
+}
+
+/// C: `iswupper`. glibc's `upper` class is the Unicode Uppercase property, so
+/// the titlecase letters (`ǅ` and friends) answer false to both this and
+/// [`iswlower`], as they do in the C.
+pub(crate) fn iswupper(cs: Charset, c: u32) -> bool {
+    match cs {
+        Charset::Ascii => c < 0x80 && (c as u8).is_ascii_uppercase(),
+        Charset::Utf8 => char::from_u32(c).is_some_and(char::is_uppercase),
+    }
+}
+
+/// C: `towupper` — the **simple**, one-code-point-to-one-code-point mapping,
+/// which is all a `wchar_t` slot in the line buffer can hold.
+///
+/// Rust's `char::to_uppercase` is the *full* mapping, so it is taken only when
+/// it yields exactly one character; a multi-character expansion (`ß` to `SS`)
+/// leaves the character alone, which is what glibc's `towupper` does for the
+/// same input. Characters with no uppercase form are returned unchanged.
+pub(crate) fn towupper(cs: Charset, c: u32) -> u32 {
+    simple_case(cs, c, char::to_uppercase)
+}
+
+/// C: `towlower`, the simple mapping, as in [`towupper`].
+///
+/// The one measured divergence is `İ` (U+0130): glibc maps it to `i`, while
+/// Rust's full mapping expands it to two characters and this therefore leaves
+/// it alone. Nothing else below U+10FFFF differs.
+pub(crate) fn towlower(cs: Charset, c: u32) -> u32 {
+    simple_case(cs, c, char::to_lowercase)
+}
+
+/// The body shared by [`towupper`] and [`towlower`].
+fn simple_case<I: Iterator<Item = char>>(cs: Charset, c: u32, map: fn(char) -> I) -> u32 {
+    if cs == Charset::Ascii && c >= 0x80 {
+        // ANSI_X3.4-1968 has no case pairs above U+007F.
+        return c;
+    }
+    let Some(ch) = char::from_u32(c) else {
+        return c;
+    };
+    let mut it = map(ch);
+    match (it.next(), it.next()) {
+        (Some(one), None) => one as u32,
+        _ => c,
+    }
+}
+
 /// C: `iswprint`.
 ///
 /// The C locale answer is exact: everything above U+007E is unprintable, so
