@@ -207,57 +207,81 @@ static BREAK_CHARS: [c_char; 18] = [
 ];
 
 /// C: `const char *rl_library_version = "EditLine wrapper";`
+// [spec:libedit:def:readline.rl-library-version]
+// [spec:libedit:sem:readline.rl-library-version]
 #[unsafe(no_mangle)]
 pub static mut rl_library_version: *const c_char = c"EditLine wrapper".as_ptr();
 
 /// C: `int rl_readline_version = RL_READLINE_VERSION;`
+// [spec:libedit:def:readline.rl-readline-version]
+// [spec:libedit:sem:readline.rl-readline-version]
 #[unsafe(no_mangle)]
 pub static mut rl_readline_version: c_int = RL_READLINE_VERSION;
 
 /// C: `const char *rl_readline_name = empty;` — the program name
 /// `rl_initialize` hands `el_init_internal`, so `prog:` conditionals in
 /// `.editrc` can select on it.
+// [spec:libedit:def:readline.rl-readline-name]
+// [spec:libedit:sem:readline.rl-readline-name]
 #[unsafe(no_mangle)]
 pub static mut rl_readline_name: *const c_char = EMPTY.as_ptr();
 
 /// C: `FILE *rl_instream = NULL;` — NULL means the process's standard
 /// input; see the module docs on the missing `FILE *` facility.
+// [spec:libedit:def:readline.rl-instream]
+// [spec:libedit:sem:readline.rl-instream]
 #[unsafe(no_mangle)]
 pub static mut rl_instream: CFile = ptr::null_mut();
 
 /// C: `FILE *rl_outstream = NULL;` — NULL means the process's standard
 /// output.
+// [spec:libedit:def:readline.rl-outstream]
+// [spec:libedit:sem:readline.rl-outstream]
 #[unsafe(no_mangle)]
 pub static mut rl_outstream: CFile = ptr::null_mut();
 
 /// C: `int rl_point = 0;` — the cursor position in *bytes*, republished by
 /// `_rl_update_pos`.
+// [spec:libedit:def:readline.rl-point]
+// [spec:libedit:sem:readline.rl-point]
 #[unsafe(no_mangle)]
 pub static mut rl_point: c_int = 0;
 
 /// C: `int rl_end = 0;` — the line length in bytes.
+// [spec:libedit:def:readline.rl-end]
+// [spec:libedit:sem:readline.rl-end]
 #[unsafe(no_mangle)]
 pub static mut rl_end: c_int = 0;
 
 /// C: `char *rl_line_buffer = NULL;` — borrowed; it points into EditLine's
 /// legacy conversion buffer and must never be freed or resized.
+// [spec:libedit:def:readline.rl-line-buffer]
+// [spec:libedit:sem:readline.rl-line-buffer]
 #[unsafe(no_mangle)]
 pub static mut rl_line_buffer: *mut c_char = ptr::null_mut();
 
 /// C: `rl_vcpfunc_t *rl_linefunc = NULL;` — the callback-mode line handler.
+// [spec:libedit:def:readline.rl-linefunc]
+// [spec:libedit:sem:readline.rl-linefunc]
 #[unsafe(no_mangle)]
 pub static mut rl_linefunc: Option<RlVcpfunc> = None;
 
 /// C: `int rl_done = 0;`
+// [spec:libedit:def:readline.rl-done]
+// [spec:libedit:sem:readline.rl-done]
 #[unsafe(no_mangle)]
 pub static mut rl_done: c_int = 0;
 
 /// C: `rl_hook_func_t *rl_event_hook = NULL;`
+// [spec:libedit:def:readline.rl-event-hook]
+// [spec:libedit:sem:readline.rl-event-hook]
 #[unsafe(no_mangle)]
 pub static mut rl_event_hook: Option<RlHookFuncT> = None;
 
 /// C: `KEYMAP_ENTRY_ARRAY emacs_standard_keymap;` — zero-initialized and
 /// never populated or consulted; it exists so programs referencing it link.
+// [spec:libedit:def:readline.emacs-standard-keymap]
+// [spec:libedit:sem:readline.emacs-standard-keymap]
 #[unsafe(no_mangle)]
 pub static mut emacs_standard_keymap: [KeymapEntry; 256] = [const {
     KeymapEntry {
@@ -267,6 +291,8 @@ pub static mut emacs_standard_keymap: [KeymapEntry; 256] = [const {
 }; 256];
 
 /// C: `KEYMAP_ENTRY_ARRAY emacs_meta_keymap;` — likewise inert.
+// [spec:libedit:def:readline.emacs-meta-keymap]
+// [spec:libedit:sem:readline.emacs-meta-keymap]
 #[unsafe(no_mangle)]
 pub static mut emacs_meta_keymap: [KeymapEntry; 256] = [const {
     KeymapEntry {
@@ -276,6 +302,8 @@ pub static mut emacs_meta_keymap: [KeymapEntry; 256] = [const {
 }; 256];
 
 /// C: `KEYMAP_ENTRY_ARRAY emacs_ctlx_keymap;` — likewise inert.
+// [spec:libedit:def:readline.emacs-ctlx-keymap]
+// [spec:libedit:sem:readline.emacs-ctlx-keymap]
 #[unsafe(no_mangle)]
 pub static mut emacs_ctlx_keymap: [KeymapEntry; 256] = [const {
     KeymapEntry {
@@ -286,73 +314,107 @@ pub static mut emacs_ctlx_keymap: [KeymapEntry; 256] = [const {
 
 /// C: `int rl_catch_signals = 1;` — read once, by `rl_initialize`, as the
 /// `EL_SIGNAL` argument.
+// [spec:libedit:def:readline.rl-catch-signals]
+// [spec:libedit:sem:readline.rl-catch-signals]
 #[unsafe(no_mangle)]
 pub static mut rl_catch_signals: c_int = 1;
 
 /// C: `int rl_catch_sigwinch = 1;` — exported but never consulted.
+// [spec:libedit:def:readline.rl-catch-sigwinch]
+// [spec:libedit:sem:readline.rl-catch-sigwinch]
 #[unsafe(no_mangle)]
 pub static mut rl_catch_sigwinch: c_int = 1;
 
 /// C: `int history_base = 1;`
+// [spec:libedit:def:readline.history-base]
+// [spec:libedit:sem:readline.history-base]
 #[unsafe(no_mangle)]
 pub static mut history_base: c_int = 1;
 
 /// C: `int history_length = 0;`
+// [spec:libedit:def:readline.history-length]
+// [spec:libedit:sem:readline.history-length]
 #[unsafe(no_mangle)]
 pub static mut history_length: c_int = 0;
 
 /// C: `int history_offset = 0;`
+// [spec:libedit:def:readline.history-offset]
+// [spec:libedit:sem:readline.history-offset]
 #[unsafe(no_mangle)]
 pub static mut history_offset: c_int = 0;
 
 /// C: `int max_input_history = 0;` — the mirror `history_is_stifled` reads;
 /// note the initializer is 0, not `INT_MAX`.
+// [spec:libedit:def:readline.max-input-history]
+// [spec:libedit:sem:readline.max-input-history]
 #[unsafe(no_mangle)]
 pub static mut max_input_history: c_int = 0;
 
 /// C: `char history_expansion_char = '!';`
+// [spec:libedit:def:readline.history-expansion-char]
+// [spec:libedit:sem:readline.history-expansion-char]
 #[unsafe(no_mangle)]
 pub static mut history_expansion_char: c_char = b'!' as c_char;
 
 /// C: `char history_subst_char = '^';`
+// [spec:libedit:def:readline.history-subst-char]
+// [spec:libedit:sem:readline.history-subst-char]
 #[unsafe(no_mangle)]
 pub static mut history_subst_char: c_char = b'^' as c_char;
 
 /// C: `char *history_no_expand_chars = expand_chars;`
+// [spec:libedit:def:readline.history-no-expand-chars]
+// [spec:libedit:sem:readline.history-no-expand-chars]
 #[unsafe(no_mangle)]
 pub static mut history_no_expand_chars: *mut c_char = EXPAND_CHARS.as_ptr().cast_mut();
 
 /// C: `rl_linebuf_func_t *history_inhibit_expansion_function = NULL;`
+// [spec:libedit:def:readline.history-inhibit-expansion-function]
+// [spec:libedit:sem:readline.history-inhibit-expansion-function]
 #[unsafe(no_mangle)]
 pub static mut history_inhibit_expansion_function: Option<RlLinebufFuncT> = None;
 
 /// C: `int rl_inhibit_completion = 0;`
+// [spec:libedit:def:readline.rl-inhibit-completion]
+// [spec:libedit:sem:readline.rl-inhibit-completion]
 #[unsafe(no_mangle)]
 pub static mut rl_inhibit_completion: c_int = 0;
 
 /// C: `int rl_attempted_completion_over = 0;`
+// [spec:libedit:def:readline.rl-attempted-completion-over]
+// [spec:libedit:sem:readline.rl-attempted-completion-over]
 #[unsafe(no_mangle)]
 pub static mut rl_attempted_completion_over: c_int = 0;
 
 /// C: `const char *rl_basic_word_break_characters = break_chars;` — the only
 /// word-break set `rl_complete` ever passes on.
+// [spec:libedit:def:readline.rl-basic-word-break-characters]
+// [spec:libedit:sem:readline.rl-basic-word-break-characters]
 #[unsafe(no_mangle)]
 pub static mut rl_basic_word_break_characters: *const c_char = BREAK_CHARS.as_ptr();
 
 /// C: `char *rl_completer_word_break_characters = NULL;` — declared, and
 /// read by no code path at all (ERR-readline-50).
+// [spec:libedit:def:readline.rl-completer-word-break-characters]
+// [spec:libedit:sem:readline.rl-completer-word-break-characters]
 #[unsafe(no_mangle)]
 pub static mut rl_completer_word_break_characters: *mut c_char = ptr::null_mut();
 
 /// C: `const char *rl_completer_quote_characters = NULL;` — likewise unread.
+// [spec:libedit:def:readline.rl-completer-quote-characters]
+// [spec:libedit:sem:readline.rl-completer-quote-characters]
 #[unsafe(no_mangle)]
 pub static mut rl_completer_quote_characters: *const c_char = ptr::null();
 
 /// C: `const char *rl_basic_quote_characters = "\"'";` — likewise unread.
+// [spec:libedit:def:readline.rl-basic-quote-characters]
+// [spec:libedit:sem:readline.rl-basic-quote-characters]
 #[unsafe(no_mangle)]
 pub static mut rl_basic_quote_characters: *const c_char = c"\"'".as_ptr();
 
 /// C: `rl_compentry_func_t *rl_completion_entry_function = NULL;`
+// [spec:libedit:def:readline.rl-completion-entry-function]
+// [spec:libedit:sem:readline.rl-completion-entry-function]
 #[unsafe(no_mangle)]
 pub static mut rl_completion_entry_function: Option<RlCompentryFunc> = None;
 
@@ -367,14 +429,20 @@ pub static mut rl_completion_entry_function: Option<RlCompentryFunc> = None;
 pub static mut rl_completion_word_break_hook: Option<unsafe extern "C" fn() -> *mut c_char> = None;
 
 /// C: `rl_completion_func_t *rl_attempted_completion_function = NULL;`
+// [spec:libedit:def:readline.rl-attempted-completion-function]
+// [spec:libedit:sem:readline.rl-attempted-completion-function]
 #[unsafe(no_mangle)]
 pub static mut rl_attempted_completion_function: Option<RlCompletionFuncT> = None;
 
 /// C: `rl_hook_func_t *rl_pre_input_hook = NULL;`
+// [spec:libedit:def:readline.rl-pre-input-hook]
+// [spec:libedit:sem:readline.rl-pre-input-hook]
 #[unsafe(no_mangle)]
 pub static mut rl_pre_input_hook: Option<RlHookFuncT> = None;
 
 /// C: `rl_hook_func_t *rl_startup1_hook = NULL;` — exported, never called.
+// [spec:libedit:def:readline.rl-startup1-hook]
+// [spec:libedit:sem:readline.rl-startup1-hook]
 #[unsafe(no_mangle)]
 pub static mut rl_startup1_hook: Option<RlHookFuncT> = None;
 
@@ -392,126 +460,180 @@ pub static mut rl_getc_function: Option<unsafe extern "C" fn(CFile) -> c_int> = 
 
 /// C: `char *rl_terminal_name = NULL;` — written by `rl_initialize` with a
 /// pointer into EditLine's own copy when the application left it NULL.
+// [spec:libedit:def:readline.rl-terminal-name]
+// [spec:libedit:sem:readline.rl-terminal-name]
 #[unsafe(no_mangle)]
 pub static mut rl_terminal_name: *mut c_char = ptr::null_mut();
 
 /// C: `int rl_already_prompted = 0;` — set by `_get_prompt`, cleared by
 /// `readline()`.
+// [spec:libedit:def:readline.rl-already-prompted]
+// [spec:libedit:sem:readline.rl-already-prompted]
 #[unsafe(no_mangle)]
 pub static mut rl_already_prompted: c_int = 0;
 
 /// C: `int rl_filename_completion_desired = 0;` — exported, never consulted.
+// [spec:libedit:def:readline.rl-filename-completion-desired]
+// [spec:libedit:sem:readline.rl-filename-completion-desired]
 #[unsafe(no_mangle)]
 pub static mut rl_filename_completion_desired: c_int = 0;
 
 /// C: `int rl_ignore_completion_duplicates = 0;` — exported, never consulted.
+// [spec:libedit:def:readline.rl-ignore-completion-duplicates]
+// [spec:libedit:sem:readline.rl-ignore-completion-duplicates]
 #[unsafe(no_mangle)]
 pub static mut rl_ignore_completion_duplicates: c_int = 0;
 
 /// C: `int readline_echoing_p = 1;` — exported, never consulted.
+// [spec:libedit:def:readline.readline-echoing-p]
+// [spec:libedit:sem:readline.readline-echoing-p]
 #[unsafe(no_mangle)]
 pub static mut readline_echoing_p: c_int = 1;
 
 /// C: `int _rl_print_completions_horizontally = 0;` — exported, never
 /// consulted.
+// [spec:libedit:def:readline.rl-print-completions-horizontally]
+// [spec:libedit:sem:readline.rl-print-completions-horizontally]
 #[unsafe(no_mangle)]
 pub static mut _rl_print_completions_horizontally: c_int = 0;
 
 /// C: `rl_voidfunc_t *rl_redisplay_function = NULL;` — readline's
 /// indirection point for a custom display routine, which nothing here calls
 /// through.
+// [spec:libedit:def:readline.rl-redisplay-function]
+// [spec:libedit:sem:readline.rl-redisplay-function]
 #[unsafe(no_mangle)]
 pub static mut rl_redisplay_function: Option<RlVoidfuncT> = None;
 
 /// C: `rl_hook_func_t *rl_startup_hook = NULL;` — called by `readline()`
 /// before the terminal is prepared.
+// [spec:libedit:def:readline.rl-startup-hook]
+// [spec:libedit:sem:readline.rl-startup-hook]
 #[unsafe(no_mangle)]
 pub static mut rl_startup_hook: Option<RlHookFuncT> = None;
 
 /// C: `rl_compdisp_func_t *rl_completion_display_matches_hook = NULL;` —
 /// exported, and bypassed entirely by `rl_display_match_list`.
+// [spec:libedit:def:readline.rl-completion-display-matches-hook]
+// [spec:libedit:sem:readline.rl-completion-display-matches-hook]
 #[unsafe(no_mangle)]
 pub static mut rl_completion_display_matches_hook: Option<RlCompdispFuncT> = None;
 
 /// C: `rl_vintfunc_t *rl_prep_term_function = (rl_vintfunc_t *)
 /// rl_prep_terminal;` — what `rl_reset_after_signal` calls through.
+// [spec:libedit:def:readline.rl-prep-term-function]
+// [spec:libedit:sem:readline.rl-prep-term-function]
 #[unsafe(no_mangle)]
 pub static mut rl_prep_term_function: Option<RlVintfuncT> = Some(rl_prep_terminal);
 
 /// C: `rl_voidfunc_t *rl_deprep_term_function = (rl_voidfunc_t *)
 /// rl_deprep_terminal;` — exported, and never called from this file.
+// [spec:libedit:def:readline.rl-deprep-term-function]
+// [spec:libedit:sem:readline.rl-deprep-term-function]
 #[unsafe(no_mangle)]
 pub static mut rl_deprep_term_function: Option<RlVoidfuncT> = Some(rl_deprep_terminal);
 
 /// C: `unsigned long rl_readline_state = RL_STATE_NONE;` — only
 /// `RL_STATE_DONE` is ever touched, set by `rl_callback_read_char` and
 /// cleared by `rl_initialize`.
+// [spec:libedit:def:readline.rl-readline-state]
+// [spec:libedit:sem:readline.rl-readline-state]
 #[unsafe(no_mangle)]
 pub static mut rl_readline_state: c_ulong = RL_STATE_NONE;
 
 /// C: `int _rl_complete_mark_directories;` — exported, never consulted.
+// [spec:libedit:def:readline.rl-complete-mark-directories]
+// [spec:libedit:sem:readline.rl-complete-mark-directories]
 #[unsafe(no_mangle)]
 pub static mut _rl_complete_mark_directories: c_int = 0;
 
 /// C: `rl_icppfunc_t *rl_directory_completion_hook;` — exported, never
 /// consulted.
+// [spec:libedit:def:readline.rl-directory-completion-hook]
+// [spec:libedit:sem:readline.rl-directory-completion-hook]
 #[unsafe(no_mangle)]
 pub static mut rl_directory_completion_hook: Option<RlIcppfuncT> = None;
 
 /// C: `int rl_completion_suppress_append;` — exported, never consulted.
+// [spec:libedit:def:readline.rl-completion-suppress-append]
+// [spec:libedit:sem:readline.rl-completion-suppress-append]
 #[unsafe(no_mangle)]
 pub static mut rl_completion_suppress_append: c_int = 0;
 
 /// C: `int rl_sort_completion_matches;` — exported, never consulted.
+// [spec:libedit:def:readline.rl-sort-completion-matches]
+// [spec:libedit:sem:readline.rl-sort-completion-matches]
 #[unsafe(no_mangle)]
 pub static mut rl_sort_completion_matches: c_int = 0;
 
 /// C: `int _rl_completion_prefix_display_length;` — exported, never
 /// consulted.
+// [spec:libedit:def:readline.rl-completion-prefix-display-length]
+// [spec:libedit:sem:readline.rl-completion-prefix-display-length]
 #[unsafe(no_mangle)]
 pub static mut _rl_completion_prefix_display_length: c_int = 0;
 
 /// C: `int _rl_echoing_p;` — exported, never consulted.
+// [spec:libedit:def:readline.rl-echoing-p]
+// [spec:libedit:sem:readline.rl-echoing-p]
 #[unsafe(no_mangle)]
 pub static mut _rl_echoing_p: c_int = 0;
 
 /// C: `int history_max_entries;` — exported, never consulted.
+// [spec:libedit:def:readline.history-max-entries]
+// [spec:libedit:sem:readline.history-max-entries]
 #[unsafe(no_mangle)]
 pub static mut history_max_entries: c_int = 0;
 
 /// C: `char *rl_display_prompt;` — exported, never consulted.
+// [spec:libedit:def:readline.rl-display-prompt]
+// [spec:libedit:sem:readline.rl-display-prompt]
 #[unsafe(no_mangle)]
 pub static mut rl_display_prompt: *mut c_char = ptr::null_mut();
 
 /// C: `int rl_erase_empty_line;` — exported, never consulted.
+// [spec:libedit:def:readline.rl-erase-empty-line]
+// [spec:libedit:sem:readline.rl-erase-empty-line]
 #[unsafe(no_mangle)]
 pub static mut rl_erase_empty_line: c_int = 0;
 
 /// C: `char *rl_prompt = NULL;` — the current prompt, owned by this module.
 /// NULL until `rl_set_prompt` has succeeded once.
+// [spec:libedit:def:readline.rl-prompt]
+// [spec:libedit:sem:readline.rl-prompt]
 #[unsafe(no_mangle)]
 pub static mut rl_prompt: *mut c_char = ptr::null_mut();
 
 /// C: `char *rl_prompt_saved = NULL;` — `rl_save_prompt`'s copy.
+// [spec:libedit:def:readline.rl-prompt-saved]
+// [spec:libedit:sem:readline.rl-prompt-saved]
 #[unsafe(no_mangle)]
 pub static mut rl_prompt_saved: *mut c_char = ptr::null_mut();
 
 /// C: `int rl_completion_type = 0;` — written by `fn_complete2`.
+// [spec:libedit:def:readline.rl-completion-type]
+// [spec:libedit:sem:readline.rl-completion-type]
 #[unsafe(no_mangle)]
 pub static mut rl_completion_type: c_int = 0;
 
 /// C: `int rl_completion_query_items = 100;` — the "ask before listing this
 /// many" threshold.
+// [spec:libedit:def:readline.rl-completion-query-items]
+// [spec:libedit:sem:readline.rl-completion-query-items]
 #[unsafe(no_mangle)]
 pub static mut rl_completion_query_items: c_int = 100;
 
 /// C: `const char *rl_special_prefixes = NULL;` — declared, and read by no
 /// code path at all; `rl_complete` puts the word-break hook's result in the
 /// special-prefixes slot instead (ERR-readline-50).
+// [spec:libedit:def:readline.rl-special-prefixes]
+// [spec:libedit:sem:readline.rl-special-prefixes]
 #[unsafe(no_mangle)]
 pub static mut rl_special_prefixes: *const c_char = ptr::null();
 
 /// C: `int rl_completion_append_character = ' ';`
+// [spec:libedit:def:readline.rl-completion-append-character]
+// [spec:libedit:sem:readline.rl-completion-append-character]
 #[unsafe(no_mangle)]
 pub static mut rl_completion_append_character: c_int = b' ' as c_int;
 

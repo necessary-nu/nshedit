@@ -122,74 +122,196 @@ typedef KEYMAP_ENTRY *Keymap;
 #ifdef __cplusplus
 extern "C" {
 #endif
+// [spec:libedit:def:readline.rl-library-version]
+// [spec:libedit:sem:readline.rl-library-version]
 extern const char	*rl_library_version;
+// [spec:libedit:def:readline.rl-readline-version]
+// [spec:libedit:sem:readline.rl-readline-version]
 extern int		rl_readline_version;
+// [spec:libedit:def:readline.rl-readline-name]
+// [spec:libedit:sem:readline.rl-readline-name]
 extern const char	*rl_readline_name;
+// [spec:libedit:def:readline.rl-instream]
+// [spec:libedit:sem:readline.rl-instream]
 extern FILE		*rl_instream;
+// [spec:libedit:def:readline.rl-outstream]
+// [spec:libedit:sem:readline.rl-outstream]
 extern FILE		*rl_outstream;
+// [spec:libedit:def:readline.rl-line-buffer]
+// [spec:libedit:sem:readline.rl-line-buffer]
 extern char		*rl_line_buffer;
+// [spec:libedit:def:readline.rl-point]
+// [spec:libedit:sem:readline.rl-point]
+// [spec:libedit:def:readline.rl-end]
+// [spec:libedit:sem:readline.rl-end]
 extern int		rl_point, rl_end;
+// [spec:libedit:def:readline.rl-basic-quote-characters]
+// [spec:libedit:sem:readline.rl-basic-quote-characters]
 extern const char	*rl_basic_quote_characters;
+// [spec:libedit:def:readline.rl-basic-word-break-characters]
+// [spec:libedit:sem:readline.rl-basic-word-break-characters]
 extern const char	*rl_basic_word_break_characters;
+// [spec:libedit:def:readline.rl-completer-word-break-characters]
+// [spec:libedit:sem:readline.rl-completer-word-break-characters]
 extern char		*rl_completer_word_break_characters;
+// [spec:libedit:def:readline.rl-completer-quote-characters]
+// [spec:libedit:sem:readline.rl-completer-quote-characters]
 extern const char	*rl_completer_quote_characters;
+// [spec:libedit:def:readline.rl-completion-entry-function]
+// [spec:libedit:sem:readline.rl-completion-entry-function]
 extern rl_compentry_func_t *rl_completion_entry_function;
 // [spec:libedit:def:readline.rl-completion-word-break-hook-fn]
 // [spec:libedit:sem:readline.rl-completion-word-break-hook-fn]
 extern char		*(*rl_completion_word_break_hook)(void);
+// [spec:libedit:def:readline.rl-attempted-completion-function]
+// [spec:libedit:sem:readline.rl-attempted-completion-function]
 extern rl_completion_func_t *rl_attempted_completion_function;
+// [spec:libedit:def:readline.rl-attempted-completion-over]
+// [spec:libedit:sem:readline.rl-attempted-completion-over]
 extern int		 rl_attempted_completion_over;
+// [spec:libedit:def:readline.rl-completion-type]
+// [spec:libedit:sem:readline.rl-completion-type]
 extern int		rl_completion_type;
+// [spec:libedit:def:readline.rl-completion-query-items]
+// [spec:libedit:sem:readline.rl-completion-query-items]
 extern int		rl_completion_query_items;
+// [spec:libedit:def:readline.rl-special-prefixes]
+// [spec:libedit:sem:readline.rl-special-prefixes]
 extern const char	*rl_special_prefixes;
+// [spec:libedit:def:readline.rl-completion-append-character]
+// [spec:libedit:sem:readline.rl-completion-append-character]
 extern int		rl_completion_append_character;
+// [spec:libedit:def:readline.rl-inhibit-completion]
+// [spec:libedit:sem:readline.rl-inhibit-completion]
 extern int		rl_inhibit_completion;
+// [spec:libedit:def:readline.rl-pre-input-hook]
+// [spec:libedit:sem:readline.rl-pre-input-hook]
 extern rl_hook_func_t	*rl_pre_input_hook;
+// [spec:libedit:def:readline.rl-startup-hook]
+// [spec:libedit:sem:readline.rl-startup-hook]
 extern rl_hook_func_t	*rl_startup_hook;
+// [spec:libedit:def:readline.rl-terminal-name]
+// [spec:libedit:sem:readline.rl-terminal-name]
 extern char		*rl_terminal_name;
+// [spec:libedit:def:readline.rl-already-prompted]
+// [spec:libedit:sem:readline.rl-already-prompted]
 extern int		rl_already_prompted;
+// [spec:libedit:def:readline.rl-prompt]
+// [spec:libedit:sem:readline.rl-prompt]
 extern char		*rl_prompt;
+// [spec:libedit:def:readline.rl-done]
+// [spec:libedit:sem:readline.rl-done]
 extern int		rl_done;
+// [spec:libedit:def:readline.rl-linefunc]
+// [spec:libedit:sem:readline.rl-linefunc]
 extern rl_vcpfunc_t	*rl_linefunc;
+// [spec:libedit:def:readline.rl-startup1-hook]
+// [spec:libedit:sem:readline.rl-startup1-hook]
 extern rl_hook_func_t   *rl_startup1_hook;
+// [spec:libedit:def:readline.rl-prompt-saved]
+// [spec:libedit:sem:readline.rl-prompt-saved]
 extern char             *rl_prompt_saved;
+// [spec:libedit:def:readline.history-base]
+// [spec:libedit:sem:readline.history-base]
+// [spec:libedit:def:readline.history-length]
+// [spec:libedit:sem:readline.history-length]
 extern int		history_base, history_length;
+// [spec:libedit:def:readline.history-offset]
+// [spec:libedit:sem:readline.history-offset]
 extern int		history_offset;
+// [spec:libedit:def:readline.history-expansion-char]
+// [spec:libedit:sem:readline.history-expansion-char]
 extern char		history_expansion_char;
+// [spec:libedit:def:readline.history-subst-char]
+// [spec:libedit:sem:readline.history-subst-char]
 extern char		history_subst_char;
+// [spec:libedit:def:readline.history-no-expand-chars]
+// [spec:libedit:sem:readline.history-no-expand-chars]
 extern char		*history_no_expand_chars;
+// [spec:libedit:def:readline.history-inhibit-expansion-function]
+// [spec:libedit:sem:readline.history-inhibit-expansion-function]
 extern rl_linebuf_func_t *history_inhibit_expansion_function;
+// [spec:libedit:def:readline.max-input-history]
+// [spec:libedit:sem:readline.max-input-history]
 extern int		max_input_history;
 
 /*
  * The following is not implemented
  */
+// [spec:libedit:def:readline.rl-readline-state]
+// [spec:libedit:sem:readline.rl-readline-state]
 extern unsigned long	rl_readline_state;
+// [spec:libedit:def:readline.rl-catch-signals]
+// [spec:libedit:sem:readline.rl-catch-signals]
 extern int		rl_catch_signals;
+// [spec:libedit:def:readline.rl-catch-sigwinch]
+// [spec:libedit:sem:readline.rl-catch-sigwinch]
 extern int		rl_catch_sigwinch;
+// [spec:libedit:def:readline.emacs-standard-keymap]
+// [spec:libedit:sem:readline.emacs-standard-keymap]
+// [spec:libedit:def:readline.emacs-meta-keymap]
+// [spec:libedit:sem:readline.emacs-meta-keymap]
+// [spec:libedit:def:readline.emacs-ctlx-keymap]
+// [spec:libedit:sem:readline.emacs-ctlx-keymap]
 extern KEYMAP_ENTRY_ARRAY emacs_standard_keymap,
 			emacs_meta_keymap,
 			emacs_ctlx_keymap;
+// [spec:libedit:def:readline.rl-filename-completion-desired]
+// [spec:libedit:sem:readline.rl-filename-completion-desired]
 extern int		rl_filename_completion_desired;
+// [spec:libedit:def:readline.rl-ignore-completion-duplicates]
+// [spec:libedit:sem:readline.rl-ignore-completion-duplicates]
 extern int		rl_ignore_completion_duplicates;
 // [spec:libedit:def:readline.rl-getc-function-fn]
 // [spec:libedit:sem:readline.rl-getc-function-fn]
 extern int		(*rl_getc_function)(FILE *);
+// [spec:libedit:def:readline.rl-redisplay-function]
+// [spec:libedit:sem:readline.rl-redisplay-function]
 extern rl_voidfunc_t	*rl_redisplay_function;
+// [spec:libedit:def:readline.rl-completion-display-matches-hook]
+// [spec:libedit:sem:readline.rl-completion-display-matches-hook]
 extern rl_compdisp_func_t *rl_completion_display_matches_hook;
+// [spec:libedit:def:readline.rl-prep-term-function]
+// [spec:libedit:sem:readline.rl-prep-term-function]
 extern rl_vintfunc_t	*rl_prep_term_function;
+// [spec:libedit:def:readline.rl-deprep-term-function]
+// [spec:libedit:sem:readline.rl-deprep-term-function]
 extern rl_voidfunc_t	*rl_deprep_term_function;
+// [spec:libedit:def:readline.rl-event-hook]
+// [spec:libedit:sem:readline.rl-event-hook]
 extern rl_hook_func_t	*rl_event_hook;
+// [spec:libedit:def:readline.readline-echoing-p]
+// [spec:libedit:sem:readline.readline-echoing-p]
 extern int		readline_echoing_p;
+// [spec:libedit:def:readline.rl-print-completions-horizontally]
+// [spec:libedit:sem:readline.rl-print-completions-horizontally]
 extern int		_rl_print_completions_horizontally;
+// [spec:libedit:def:readline.rl-complete-mark-directories]
+// [spec:libedit:sem:readline.rl-complete-mark-directories]
 extern int		_rl_complete_mark_directories;
+// [spec:libedit:def:readline.rl-directory-completion-hook]
+// [spec:libedit:sem:readline.rl-directory-completion-hook]
 extern rl_icppfunc_t	*rl_directory_completion_hook;
+// [spec:libedit:def:readline.rl-completion-suppress-append]
+// [spec:libedit:sem:readline.rl-completion-suppress-append]
 extern int		rl_completion_suppress_append;
+// [spec:libedit:def:readline.rl-sort-completion-matches]
+// [spec:libedit:sem:readline.rl-sort-completion-matches]
 extern int		rl_sort_completion_matches;
+// [spec:libedit:def:readline.rl-completion-prefix-display-length]
+// [spec:libedit:sem:readline.rl-completion-prefix-display-length]
 extern int		_rl_completion_prefix_display_length;
+// [spec:libedit:def:readline.rl-echoing-p]
+// [spec:libedit:sem:readline.rl-echoing-p]
 extern int		_rl_echoing_p;
+// [spec:libedit:def:readline.history-max-entries]
+// [spec:libedit:sem:readline.history-max-entries]
 extern int		history_max_entries;
+// [spec:libedit:def:readline.rl-display-prompt]
+// [spec:libedit:sem:readline.rl-display-prompt]
 extern char		*rl_display_prompt;
+// [spec:libedit:def:readline.rl-erase-empty-line]
+// [spec:libedit:sem:readline.rl-erase-empty-line]
 extern int		rl_erase_empty_line;
 
 /* supported functions */

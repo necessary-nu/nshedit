@@ -1093,7 +1093,8 @@
 >   installed. With no attempted-completion hook — the default filename
 >   completion — nothing is ever appended, however unique the match. GNU
 >   readline appends after any single match, so this is a visible divergence
->   for the most common consumer configuration of all.
+>   for the most common consumer configuration of all. ERR-completion-14
+>   records it and pins its disposition as reproduce.
 > - **After every entry in a displayed match list.**
 >   `fn_display_match_list` prints each match followed by
 >   `(*app_func)(match)`, so the listing shows a trailing space (or whatever
@@ -1274,7 +1275,8 @@
 >   standard input regardless, and an application whose `stdin` is not a
 >   terminal gets whatever byte happens to be there — or EOF, which is not
 >   `'y'`, so the list is suppressed. Only a single byte is consumed, so the
->   user's newline stays in the buffer.
+>   user's newline stays in the buffer. ERR-completion-12 records this and
+>   pins its disposition as reproduce.
 > - **The comparison is unsigned.** The cast to `size_t` means a negative
 >   `rl_completion_query_items` becomes an enormous threshold and the query
 >   never fires, so every list is shown unconditionally. That happens to
@@ -2226,9 +2228,10 @@
 > `rl_callback_read_char`, gets a byte offset — and `rl_line_buffer`, which
 > is what the offset is nominally an index into, is byte-addressed in both
 > cases. A port must reproduce both producers with their respective units
-> rather than normalising them; see the proposed errata entry accompanying
-> this rule set, and note that ERR-readline-35 describes `rl_point`/`rl_end`
-> as byte offsets, which holds only for producer 1.
+> rather than normalising them; ERR-completion-13 records the wide-offset
+> producer and pins its disposition as reproduce. Note that ERR-readline-35
+> describes `rl_point`/`rl_end` as byte offsets without qualification, which
+> holds only for producer 1.
 >
 > When it is valid: only immediately after one of the five moments above.
 > It is **stale** inside `rl_completion_word_break_hook`, which
