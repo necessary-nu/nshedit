@@ -84,7 +84,7 @@ per entry: for `reproduce` entries a test asserting the defective behaviour, for
 
 ## Summary
 
-410 entries — 380 from the markup pass, 25 added during translation and 5 during
+412 entries — 380 from the markup pass, 25 added during translation and 7 during
 the second reconciliation. A handful carry a secondary class in parentheses (for
 example "UB … / logic …"); the table counts the primary class only.
 
@@ -98,8 +98,8 @@ example "UB … / logic …"); the table counts the primary class only.
 | modes | 18 | 1 | 37 | 19 | 1 | **76** |
 | completion | 6 | 1 | 15 | 3 | 1 | **26** |
 | core-api | 11 | 2 | 19 | 5 | 1 | **38** |
-| readline-compat | 15 | 7 | 22 | 14 | 3 | **61** |
-| **total** | **119** | **27** | **199** | **54** | **11** | **410** |
+| readline-compat | 16 | 7 | 22 | 15 | 3 | **63** |
+| **total** | **120** | **27** | **199** | **55** | **11** | **412** |
 
 ### Status after the second reconciliation
 
@@ -110,7 +110,7 @@ descriptions of a world that no longer exists.
 
 | status | count | meaning |
 |---|---|---|
-| `reproduced` | 199 | the defect is in the Rust on purpose |
+| `reproduced` | 201 | the defect is in the Rust on purpose |
 | `defined` | 118 | undefined in C, given a defined behaviour here |
 | `fixed` | 43 | genuinely absent or corrected |
 | `partial` | 33 | one half carried out; the entry says which half is not |
@@ -2319,8 +2319,8 @@ wrappers, plus the libc gap-fillers `histedit.h` declares (`src/wcsdup.c`,
 - disposition: reproduce — both out-parameters cross the ABI, and there is no third value to report.
 - status: reproduced — `crates/nshedit-abi/src/eln.rs` `el_gets` keeps the order and records that a NULL return does not imply a non-positive count.
 
-**ERR-core-api-38** — the two bundled libc gap-fillers guarded themselves on a macro that was not defined yet. `src/wcsdup.c` tested `#ifndef HAVE_WCSDUP` *before* `#include "config.h"`, and `src/reallocarr.c` tested `#if !HAVE_REALLOCARR` above its own include; both guards were therefore unconditionally true and both bodies always compiled, because `src/Makefile.am` lists both files in `libedit_la_SOURCES` unconditionally. `histedit.h:323` guards the *declaration* with the same macro — which bites only inside libedit's own translation units, since they include `config.h` first and a consumer never does — so on a host whose libc has `wcsdup` the library saw no prototype while its own definition stayed, and `libedit.so` exported a default-visibility `T wcsdup` that interposes on libc's for every caller in a process linking libedit ahead of libc. `src/strlcpy.c` is the control: `config.h` at :20, guard at :36, right way round, and correspondingly never exported.
-- rule: `[spec:libedit:sem:histedit.wcsdup-fn]` · C: `src/wcsdup.c`, `src/reallocarr.c`, `src/Makefile.am`, `src/histedit.h`
+**ERR-core-api-38** — two bundled libc gap-fillers are the *only* files in `libedit_la_SOURCES` that both compile unconditionally and guard themselves with a preprocessor test, and in both the test was written above the include that defines what it tests. That pairing is the defect; neither half causes it alone. `src/Makefile.am:30` lists `reallocarr.c wcsdup.c` in the unconditional source list, where every other bundled gap-filler is added by a condition — `strlcpy.c`, `strlcat.c`, `getline.c`, `vis.c` and `unvis.c` at lines 38–52, each behind its own `if !HAVE_*` — so for these two the guard inside the file is the whole of the decision about whether a definition is emitted. And the guard could not answer: `src/wcsdup.c` tested `#ifndef HAVE_WCSDUP` *before* `#include "config.h"`, `src/reallocarr.c` tested `#if !HAVE_REALLOCARR` above its own include, so both were unconditionally true and both bodies always compiled. `histedit.h:323` guards the *declaration* with the same macro — which bites only inside libedit's own translation units, since they include `config.h` first and a consumer never does — so on a host whose libc has `wcsdup` the library saw no prototype while its own definition stayed, and `libedit.so` exported a default-visibility `T wcsdup` that interposes on libc's for every caller in a process linking libedit ahead of libc. `src/strlcpy.c` is the control on both axes: conditionally compiled *and* correctly ordered (`config.h` at :20, guard at :36), and correspondingly never exported — its guard could have been broken the same way with no consequence at all.
+- rule: `[spec:libedit:sem:histedit.wcsdup-fn]` · C: `src/Makefile.am`, `src/wcsdup.c`, `src/reallocarr.c`, `src/histedit.h`
 - class: divergence (build) · reach: hot and not latent for `wcsdup` — every glibc host, every process. Latent for `reallocarr`, whose guard was accidentally right: glibc has no `reallocarr`, so the file is compiled and exported either way and nothing is shadowed. No `sem` rule covers `reallocarr` at all, which is a spec gap this entry does not close.
 - disposition: fix — in the C itself, not in the port. `[dec:libedit:posix-only-scope]` already puts a libc gap-filler outside the port's scope, so there was never anything here to reproduce; and a replacement library that exported `wcsdup` would inherit the interposition.
 - status: fixed — corrected in the reference tree itself at commit b367875, which moves `#include "config.h"` above the guard in both files; the two deliberate departures from byte-faithful upstream are listed in `.config/nplan/config.styx` to be carried forward at the next merge or upstreamed. Measured on the oracle rather than read: before the fix, per b367875 and the note that records it, `config.h` said `#define HAVE_WCSDUP 1` and `nm -D` on the `.so` showed `T wcsdup` anyway; after it — re-measured for this reconciliation — the same build imports `U wcsdup@GLIBC_2.2.5`, `src/.libs/wcsdup.o` holds no symbols at all, and `T reallocarr` is still exported because glibc has none. `crates/nshedit-abi/src/histedit.rs` claims the two `wcsdup` rules to record the omission and exports neither symbol, which is now what the C does too.
@@ -2697,3 +2697,15 @@ layer, its history-expansion machinery and its exported globals.
 - class: dead · reach: source-level only; no consumer can observe it.
 - disposition: fix — emit one definition. There is nothing to reproduce: the C's own observable result is a single object.
 - status: fixed — `crates/nshedit-abi/src/readline.rs` defines `emacs_meta_keymap` once, as a zero-initialised `[KeymapEntry; 256]` alongside `emacs_standard_keymap` and `emacs_ctlx_keymap`, which is the one object the C ends up with. The arrays' inertness is ERR-readline-54's.
+
+**ERR-readline-62** — `rl_prompt` and `rl_prompt_saved` are exported, writable `char *` whose memory is the library's, and nothing says so or enforces it. `rl_set_prompt` releases the old `rl_prompt` with `el_free` (`#define el_free(a) free(a)`) and installs a `strdup` of the new text, so a consumer that assigns its own pointer — a string literal, a stack buffer, another allocator's block — has it freed by the next `rl_set_prompt`; and `readline(prompt)` calls `rl_set_prompt(prompt)` on **every line**, so "the next one" is immediate unless the text happens to compare equal, which is the one path that returns early without freeing. A consumer that frees `rl_prompt` itself leaves a pointer `_get_prompt` still hands to EditLine on the next refresh and `rl_set_prompt` still frees a second time. `rl_prompt_saved` carries the same hazard one hop back: `rl_restore_prompt` promotes it into `rl_prompt` unexamined, so a consumer's own pointer stored there reaches the same `el_free`, and one freed there is promoted dangling. This entry is the **ownership contract only** — `rl_restore_prompt`'s failure to free what it overwrites is ERR-readline-18's leak and is not repeated here, `rl_message`'s silent overwrite of the prompt is ERR-readline-36, and `rl_save_prompt`'s unchecked `strdup(NULL)` is ERR-readline-09.
+- rule: `[spec:libedit:sem:readline.rl-prompt]`, `[spec:libedit:sem:readline.rl-prompt-saved]`, `[spec:libedit:sem:readline.rl-set-prompt-fn]`, `[spec:libedit:sem:readline.rl-restore-prompt-fn]` · C: `src/readline.c` `rl_set_prompt`, `rl_restore_prompt`, `_get_prompt`
+- class: UB · reach: hot for any consumer that treats an exported `char *` as its own to assign, which the declared type invites and no header comment warns against. Reading the pointer is safe and is the supported use.
+- disposition: reproduce — the free-on-replace *is* the contract, and the equality fast-path is load-bearing rather than an optimisation: EditLine holds the pointer `_get_prompt` returned across refreshes, so re-setting identical text must not reallocate.
+- status: reproduced — `crates/nshedit-abi/src/readline.rs` `rl_set_prompt` keeps the shape exactly: the equality fast-path returns 0 without touching the buffer, `c_free_str(rl_prompt)` releases whatever the global points at, and `c_dup` installs the copy; `rl_restore_prompt` promotes `rl_prompt_saved` unexamined. The blocks come from Rust's `System` allocator rather than `strdup`, which on the platforms in scope is the same `malloc`/`free` pair, so a consumer's assigned pointer is corrupted here exactly as it is in the C.
+
+**ERR-readline-63** — the completion-listing threshold is an `int` the consumer may set to anything, converted with an unchecked `(size_t)` cast: `rl_complete` passes `(size_t)rl_completion_query_items` to `fn_complete2`, which tests `matches_num > query_items` unsigned. A negative value therefore becomes an enormous threshold, the query never fires, and every list is shown without asking. That coincides with GNU readline, where a negative value is *documented* to mean "never ask" — but here it is a consequence of the conversion rather than a decision, nothing in libedit states or tests it, and the coincidence is exact only where `size_t` is at least as wide as `int`. The `getc(stdin)` half of the same call is ERR-completion-12 and is not repeated here.
+- rule: `[spec:libedit:sem:readline.rl-completion-query-items]`, `[spec:libedit:sem:readline.rl-complete-fn]`, `[spec:libedit:sem:filecomplete.fn-complete2-fn]` (step 13c) · C: `src/readline.c` `rl_complete`, `src/filecomplete.c` `fn_complete2`
+- class: logic · reach: the cast runs on every completion; the negative half needs a consumer that sets such a value, which GNU's documentation actively invites. A value of 0 makes the query fire whenever there is anything to list, and nothing else validates the input.
+- disposition: reproduce **by the cast, not by a test**. Obtaining "never ask" from a `value < 0` check is the tempting repair and it is wrong: it changes the answer at `INT_MIN` on a platform where `size_t` is narrower than `int`, and it converts an accident into a promise the C never made. The rule already directs the port to take it the same way.
+- status: reproduced — `crates/nshedit-abi/src/readline.rs` `rl_complete` passes `rl_completion_query_items as usize`, a sign-extending conversion identical to the C's on every platform in scope, and `crates/nshedit/src/filecomplete.rs` `fn_complete2` compares `matches_num > query_items` over `usize`. No negativity test exists on either side.
