@@ -23,6 +23,7 @@
 //! ./conformance/build-oracle.sh [--clean]     # just the oracle
 //! ./conformance/abi-shape.sh                  # just the symbol comparison
 //! ./conformance/differential.sh [driver]      # just the trace diff
+//! ./conformance/header-diff.sh                # just the header comparison
 //! ```
 //!
 //! # Why `#[ignore]`
@@ -194,6 +195,38 @@ fn traces_are_deterministic() {
     require_port_cdylib();
     run_script("build-oracle.sh", &[]);
     run_script("determinism.sh", &[]);
+}
+
+/// `conformance-header-diff`: the COMPILE-time half of the drop-in claim.
+///
+/// `abi_shape` above compares exported symbol NAMES; nothing else in the
+/// harness checks a signature and nothing checks a struct LAYOUT. A field in
+/// the wrong order inside `LineInfo`, `LineInfoW`, `HistEvent` or
+/// `HistEventW` breaks every consumer that reads it and leaves the symbol
+/// table byte-identical.
+///
+/// The headers this compares are OURS: `crates/nshedit-abi/include/` is
+/// generated from this crate by cbindgen and committed, and libedit's own
+/// `src/histedit.h` and `src/editline/readline.h` are what it is diffed
+/// against — so a difference means our Rust is wrong, never that the header
+/// wants editing.
+///
+/// Passes. 238 type assertions, 19 record measurements and every declaration
+/// accounted for, against two decided divergences: `wcsdup`, which the
+/// original declares and we deliberately neither export nor declare, and
+/// `struct _history_state`, a tag on a record the original leaves anonymous.
+/// It also builds and runs a C consumer against the generated headers with
+/// `-Werror`, which is the claim itself rather than a proxy for it.
+///
+/// The staleness question — is the committed header what the generator
+/// produces — is `tests/headers.rs`, which needs no toolchain and is not
+/// ignored.
+#[test]
+#[ignore = "needs a C toolchain; run ./conformance/run.sh or cargo test -- --ignored"]
+fn header_diff() {
+    require_port_cdylib();
+    run_script("build-oracle.sh", &[]);
+    run_script("header-diff.sh", &[]);
 }
 
 /// Whether the history file format the port reproduces is the same one

@@ -1,0 +1,114 @@
+# cbindgen configuration for the shipped `histedit.h`.
+#
+# The generated header IS the shipped header; `src/histedit.h` is what
+# `conformance/header-diff.sh` diffs the result against, and that diff proves
+# the Rust is right rather than proving the header is. So a rendering
+# difference here is a bug in THIS FILE, not an entry on an allow-list: see
+# the correction on the `abi-headers` plan node.
+
+language = "C"
+
+# `struct lineinfo` + `typedef struct lineinfo LineInfo` — a tag and a
+# typedef, which is what the C writes. The alternative, "both", collapses the
+# two into one name, and `histedit.h` uses different ones for six of its nine
+# records (`lineinfo`/`LineInfo`, `lineinfow`/`LineInfoW`, `histeventW`/
+# `HistEventW`, `editline`/`EditLine`, `history`/`History`, ...). Under "tag"
+# the C's typedef comes from a Rust `pub type` and the C's tag from the Rust
+# struct, so both names are the C's and neither is invented here.
+style = "tag"
+sort_by = "None"
+
+include_guard = "_HISTEDIT_H_"
+# `#ifdef __cplusplus / extern "C" {`. C++ consumers of libedit are common
+# enough that the original carries it.
+cpp_compat = true
+
+# The C's own includes, plus `stdint.h`. That last one is ours: the core
+# spells `HistEventGen::num` as `i32`, which renders `int32_t` — the same
+# type as `int` on every target this library supports, and the same type in
+# Rust as `c_int`, so it is a spelling and not a difference. Spelling the
+# field `c_int` in the core would let this include go.
+no_includes = true
+sys_includes = ["sys/types.h", "stdio.h", "wchar.h", "wctype.h", "stdint.h"]
+
+# One line per item, from the Rust doc comment. `histedit.h` documents the
+# argument list of every `EL_*` and `H_*` opcode in a trailing comment, and a
+# header that dropped them would be a usability regression against the thing
+# it replaces. Short rather than full: the Rust docs run to paragraphs, and
+# the first line of each is the C declaration it stands for.
+#
+# `c99` rather than `c`, in both configs, because several of those lines quote
+# C that itself contains a comment — the `/* const */` in
+# `completion_matches`' prototype, for one — and a `/* */` wrapper would not
+# nest around it. `histedit.h` already uses `//` for its own annotations.
+documentation = true
+documentation_style = "c99"
+documentation_length = "short"
+
+# Two macros with no Rust counterpart and no ABI content of their own.
+# `EL_BUILTIN_GETCFN` is a spelling of NULL; `el_wdeletestr` is an alias onto
+# a function this header already declares, which the C uses instead of
+# exporting a second symbol — and `crates/nshedit-abi/src/histedit.rs` says
+# so at `el_deletestr`.
+after_includes = """
+
+/* Restore the built-in character reader after `EL_GETCFN`. */
+#define EL_BUILTIN_GETCFN (NULL)
+
+/* The wide name for `el_deletestr`, which takes no character type. There is
+   no second symbol: `libedit.so` exports `el_deletestr` only. */
+#define el_wdeletestr el_deletestr
+"""
+
+[export]
+# Items cbindgen would otherwise drop as unreachable.
+#
+# `el_rfunc_t` appears in no signature in this header — a consumer reaches it
+# only through the varargs of `el_set(EL_GETCFN, ...)`. The C declares it; so
+# do we.
+#
+# The two wide records are reached under the names the core gave them, which
+# are excluded below, so nothing refers to these two by the name they carry
+# here; they are named explicitly instead. Emitting them is also what
+# monomorphises `LineInfoGen`/`HistEventGen` over `wchar_t`.
+include = ["el_rfunc_t", "LineInfoWide", "HistEventWide"]
+
+exclude = [
+    # The core's wide aliases are `LineInfoGen<u32>`, `HistEventGen<u32>` and
+    # a `*mut u32` callback, which render as `uint32_t`. That is a DIFFERENT C
+    # type from `wchar_t`, which is signed on every target here, so a consumer
+    # passing a `wchar_t *` would get a diagnostic.
+    # `crates/nshedit-abi/src/cdecl/histedit.rs` restates all three over a
+    # `wchar_t` alias — the identical Rust type, checked by the compiler —
+    # and those are what get emitted.
+    "LineInfoW",
+    "HistEventW",
+    "ElRfuncT",
+    # Spelling-only aliases that exist for the generator to rename or for the
+    # header to reference, and that the C declares elsewhere or not at all.
+    # `wchar_t` comes from `<wchar.h>`; `CFile` is renamed to `FILE *` below.
+    "wchar_t",
+    "CFile",
+]
+
+[export.rename]
+# cbindgen names a monomorphised generic after its argument. The C's tags are
+# these, and a consumer writing `struct lineinfo` is writing a supported
+# thing, so the tags have to be the C's rather than cbindgen's.
+"LineInfoGen_c_char" = "lineinfo"
+"LineInfoGen_wchar_t" = "lineinfow"
+"HistEventGen_c_char" = "HistEvent"
+"HistEventGen_wchar_t" = "histeventW"
+
+# See the note on `LineInfoWide` in `crates/nshedit-abi/src/cdecl/histedit.rs`:
+# these carry a distinct Rust name only because `exclude` above is keyed on
+# names and would otherwise take the core's alias and this one together.
+"LineInfoWide" = "LineInfoW"
+"HistEventWide" = "HistEventW"
+
+# The core's `CFile` is `*mut c_void`, because no Rust can look inside a
+# `FILE`. `void *` and `FILE *` are not the same C type, and `el_init`'s
+# three streams and `EL_GETFP`/`EL_SETFP` are all declared `FILE *`. The
+# alias exists in `cdecl` so there is an item here to rename; the
+# declaration itself is excluded above, because `<stdio.h>` has the real one.
+"CFile" = "FILE*"

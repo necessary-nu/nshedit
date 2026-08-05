@@ -84,11 +84,26 @@ pub struct HistEntry {
 
 // [spec:libedit:def:readline.keymap-entry]
 /// C: `typedef struct _keymap_entry { char type; rl_linebuf_func_t *function; } KEYMAP_ENTRY;`
+///
+/// `#[repr(C)]` because it is one: `emacs_standard_keymap` and its two
+/// neighbours are exported arrays of this struct and a consumer reads their
+/// members. Without it Rust is free to order the two fields as it likes, and
+/// it does — the pointer first and the tag after it — so a C caller reading
+/// `km[i].type` would read the low byte of a function pointer, with a
+/// byte-identical symbol table and every conformance stage green. Found by
+/// `conformance/header-diff.sh`, which could not render this as anything but
+/// an incomplete type while the attribute was missing.
+#[repr(C)]
 pub struct KeymapEntry {
-    /// `ISFUNC` (0), `ISKMAP` (1) or `ISMACR` (2). A `char` in the C, and
-    /// left a byte-sized tag here.
-    pub r#type: u8,
-    pub function: Option<RlLinebufFuncT>,
+    /// `ISFUNC` (0), `ISKMAP` (1) or `ISMACR` (2). `c_char` because that is
+    /// what the C declares; `unsigned char` would be a different C type in
+    /// the header, however identical the storage.
+    pub r#type: c_char,
+    /// The C's `rl_linebuf_func_t *`, spelled out rather than written
+    /// `Option<RlLinebufFuncT>`: cbindgen renders a nullable function
+    /// pointer as one only when it is written as one, and through an alias
+    /// emits `Option<...>`, which is not C.
+    pub function: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
 }
 
 /// C: `#define KEYMAP_SIZE 256`.

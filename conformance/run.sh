@@ -16,6 +16,9 @@
 #                             traces diffed per operation
 #   6. vis-cross.sh           the in-tree vis(3) against libbsd's, which is
 #                             what wrote the history files already on disk
+#   7. header-diff.sh         the headers we generate from our own Rust
+#                             against libedit's, which is the only check in
+#                             the harness that sees a struct LAYOUT
 #
 # Each stage prints its own report and the summary at the end says which
 # passed. A non-zero exit means at least one stage found something; read the
@@ -59,6 +62,7 @@ stage "conformance-abi-shape"    "$CONF_DIR/abi-shape.sh"
 stage "determinism"              "$CONF_DIR/determinism.sh"
 stage "conformance-differential" "$CONF_DIR/differential.sh"
 stage "vis vs libbsd"            "$CONF_DIR/vis-cross.sh"
+stage "conformance-header-diff"  "$CONF_DIR/header-diff.sh"
 
 printf '\n########## summary ##########\n'
 for i in "${!names[@]}"; do

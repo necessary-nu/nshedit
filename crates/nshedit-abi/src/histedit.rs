@@ -74,8 +74,7 @@ use nshedit::chared::{ElAfuncT, ElZfuncT};
 use nshedit::el::{CFile, FuncT};
 use nshedit::hist::HistFunT;
 use nshedit::histedit::{
-    EditLine, ElRfuncT, HistEvent, HistEventW, History, HistoryW, LineInfo, LineInfoW, Tokenizer,
-    TokenizerW,
+    EditLine, ElRfuncT, HistEvent, History, HistoryW, LineInfo, Tokenizer, TokenizerW,
 };
 use nshedit::history::{
     HistoryArg, HistoryEfunT, HistoryGfunT, HistorySfunT, HistoryVfunT, SaveStream,
@@ -83,6 +82,9 @@ use nshedit::history::{
 use nshedit::map::ElFuncT;
 use nshedit::prompt::ElPfuncT;
 
+// Renamed on import so the signatures below read as `histedit.h` writes
+// them; see the note on `LineInfoWide`.
+use crate::cdecl::histedit::{HistEventWide as HistEventW, LineInfoWide as LineInfoW, wchar_t};
 use crate::cstdio::{self, CFileWriter};
 
 // ---------------------------------------------------------------------------
@@ -91,36 +93,88 @@ use crate::cstdio::{self, CFileWriter};
 // `nshedit::histedit` because they exist only to select an arm of the varargs
 // dispatch, and `plan/decisions/idiomatic-core.md` puts that dispatch in this
 // crate. The numbering is ABI: a consumer passes these integers directly.
+//
+// `pub` because the shipped `histedit.h` is generated from them. They must
+// stay `#define`s in that header and not an `enum`: consumers write
+// `#ifdef EL_PROMPT`, which an enumerator would silently answer no to.
+//
+// The doc line on each is the argument list, and it is what `histedit.h`
+// prints in a trailing comment beside every opcode. Under `el_wset`/`el_wget`
+// `Char` is `wchar_t` and `prompt_func` is `el_wpfunc_t`; under
+// `el_set`/`el_get` they are `char` and `el_pfunc_t`. The types shown are for
+// "set"; for "get" each is a pointer to it, so `EL_EDITMODE` takes an `int`
+// set and an `int *` get. Ops that only get are marked so.
+//
+// TWO OF THESE ANNOTATIONS ARE CORRECTED, not copied. ERR-core-api-34 records
+// both, with the disposition "fix the documentation", and its status has been
+// stuck at partial because the port shipped no header to carry the fix:
+//
+//   - EL_ADDFN's second argument is a help STRING in both APIs, where
+//     `histedit.h` annotates it `const Char`, a single character.
+//   - EL_GETTC's argument is `char *` in both APIs, where `histedit.h`
+//     annotates it `const Char *` — so under the wide entry point the
+//     original's annotation is wrong twice over.
+//
+// The rest of that entry is about the `H_*` opcodes, whose constants live in
+// `nshedit::histedit` and are annotated there or not at all.
 // ---------------------------------------------------------------------------
 
-const EL_PROMPT: c_int = 0;
-const EL_TERMINAL: c_int = 1;
-const EL_EDITOR: c_int = 2;
-const EL_SIGNAL: c_int = 3;
-const EL_BIND: c_int = 4;
-const EL_TELLTC: c_int = 5;
-const EL_SETTC: c_int = 6;
-const EL_ECHOTC: c_int = 7;
-const EL_SETTY: c_int = 8;
-const EL_ADDFN: c_int = 9;
-const EL_HIST: c_int = 10;
-const EL_EDITMODE: c_int = 11;
-const EL_RPROMPT: c_int = 12;
-const EL_GETCFN: c_int = 13;
-const EL_CLIENTDATA: c_int = 14;
-const EL_UNBUFFERED: c_int = 15;
-const EL_PREP_TERM: c_int = 16;
-const EL_GETTC: c_int = 17;
-const EL_GETFP: c_int = 18;
-const EL_SETFP: c_int = 19;
-const EL_REFRESH: c_int = 20;
-const EL_PROMPT_ESC: c_int = 21;
-const EL_RPROMPT_ESC: c_int = 22;
-const EL_RESIZE: c_int = 23;
-const EL_ALIAS_TEXT: c_int = 24;
-const EL_SAFEREAD: c_int = 25;
-const EL_WORDCHARS: c_int = 26;
-const EL_GETENV: c_int = 27;
+/// `, prompt_func);` — set/get. The prompt callback.
+pub const EL_PROMPT: c_int = 0;
+/// `, const char *);` — set/get. The terminal type.
+pub const EL_TERMINAL: c_int = 1;
+/// `, const Char *);` — set/get. `"emacs"` or `"vi"`.
+pub const EL_EDITOR: c_int = 2;
+/// `, int);` — set/get. Whether libedit installs signal handlers.
+pub const EL_SIGNAL: c_int = 3;
+/// `, const Char *, ..., NULL);` — set. A NULL-terminated argument list.
+pub const EL_BIND: c_int = 4;
+/// `, const Char *, ..., NULL);` — set. A NULL-terminated argument list.
+pub const EL_TELLTC: c_int = 5;
+/// `, const Char *, ..., NULL);` — set. A NULL-terminated argument list.
+pub const EL_SETTC: c_int = 6;
+/// `, const Char *, ..., NULL);` — set. A NULL-terminated argument list.
+pub const EL_ECHOTC: c_int = 7;
+/// `, const Char *, ..., NULL);` — set. A NULL-terminated argument list.
+pub const EL_SETTY: c_int = 8;
+/// `, const Char *name, const Char *help, el_func_t);` — set. `help` is a STRING, not the single `const Char` `histedit.h` annotates: ERR-core-api-34.
+pub const EL_ADDFN: c_int = 9;
+/// `, hist_fun_t, const void *);` — set. The history callback and its cookie.
+pub const EL_HIST: c_int = 10;
+/// `, int);` — set/get. Zero makes `el_gets` bypass the editing loop.
+pub const EL_EDITMODE: c_int = 11;
+/// `, prompt_func);` — set/get. The right-hand prompt callback.
+pub const EL_RPROMPT: c_int = 12;
+/// `, el_rfunc_t);` — set/get. `EL_BUILTIN_GETCFN` restores the default.
+pub const EL_GETCFN: c_int = 13;
+/// `, void *);` — set/get. Application data, stored and handed back.
+pub const EL_CLIENTDATA: c_int = 14;
+/// `, int);` — set/get. Return each character as it arrives.
+pub const EL_UNBUFFERED: c_int = 15;
+/// `, int);` — set. Put the terminal in or out of editing mode.
+pub const EL_PREP_TERM: c_int = 16;
+/// `, char *, ..., NULL);` — get only. `char *` in BOTH APIs, not the `const Char *` `histedit.h` annotates: ERR-core-api-34.
+pub const EL_GETTC: c_int = 17;
+/// `, int, FILE **);` — get only. The stream for one of the three fds.
+pub const EL_GETFP: c_int = 18;
+/// `, int, FILE *);` — set. The stream for one of the three fds.
+pub const EL_SETFP: c_int = 19;
+/// `, void);` — set. Redraw the line.
+pub const EL_REFRESH: c_int = 20;
+/// `, prompt_func, Char);` — set/get. Prompt, plus its literal-run marker.
+pub const EL_PROMPT_ESC: c_int = 21;
+/// `, prompt_func, Char);` — set/get. As `EL_PROMPT_ESC`, right-hand side.
+pub const EL_RPROMPT_ESC: c_int = 22;
+/// `, el_zfunc_t, void *);` — set. The window-size-change callback.
+pub const EL_RESIZE: c_int = 23;
+/// `, el_afunc_t, void *);` — set. The line-alias callback.
+pub const EL_ALIAS_TEXT: c_int = 24;
+/// `, int);` — set/get. Restart reads interrupted by a signal.
+pub const EL_SAFEREAD: c_int = 25;
+/// `, const Char *);` — set/get. The word-constituent character set.
+pub const EL_WORDCHARS: c_int = 26;
+/// `, char *(*func)(const char *));` — set/get. The environment accessor.
+pub const EL_GETENV: c_int = 27;
 
 // `el_flags` bits. C: `el.h`. `nshedit::el` declares the same constants
 // `pub(crate)`, so they are restated here rather than imported; the ops that
@@ -792,7 +846,7 @@ pub unsafe extern "C" fn tok_str(
 // [spec:libedit:def:histedit.el-wgets-fn]
 // [spec:libedit:sem:histedit.el-wgets-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn el_wgets(el: *mut EditLine, nread: *mut c_int) -> *const u32 {
+pub unsafe extern "C" fn el_wgets(el: *mut EditLine, nread: *mut c_int) -> *const wchar_t {
     // `nread` may be NULL, in which case the core substitutes its own scratch
     // count and discards it.
     // SAFETY: `el` must be non-NULL; `nread` is null or writable.
@@ -810,7 +864,7 @@ pub unsafe extern "C" fn el_wgets(el: *mut EditLine, nread: *mut c_int) -> *cons
 // [spec:libedit:def:histedit.el-wgetc-fn]
 // [spec:libedit:sem:histedit.el-wgetc-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn el_wgetc(el: *mut EditLine, wc: *mut u32) -> c_int {
+pub unsafe extern "C" fn el_wgetc(el: *mut EditLine, wc: *mut wchar_t) -> c_int {
     // Returned verbatim, including the 0 the core reports when `tty_rawmode`
     // fails — a terminal-setup failure indistinguishable from end of file
     // (ERR-input-24). Not corrected to -1 here.
@@ -821,7 +875,7 @@ pub unsafe extern "C" fn el_wgetc(el: *mut EditLine, wc: *mut u32) -> c_int {
 // [spec:libedit:def:histedit.el-wpush-fn]
 // [spec:libedit:sem:histedit.el-wpush-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn el_wpush(el: *mut EditLine, str_: *const u32) {
+pub unsafe extern "C" fn el_wpush(el: *mut EditLine, str_: *const wchar_t) {
     // A NULL string, a full stack or a failed duplication are all reported to
     // the user as a beep and to the caller not at all.
     // SAFETY: `el` must be non-NULL; `str_` is null or NUL-terminated.
@@ -831,7 +885,11 @@ pub unsafe extern "C" fn el_wpush(el: *mut EditLine, str_: *const u32) {
 // [spec:libedit:def:histedit.el-wparse-fn]
 // [spec:libedit:sem:histedit.el-wparse-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn el_wparse(el: *mut EditLine, argc: c_int, argv: *mut *const u32) -> c_int {
+pub unsafe extern "C" fn el_wparse(
+    el: *mut EditLine,
+    argc: c_int,
+    argv: *mut *const wchar_t,
+) -> c_int {
     // The core takes `&[&[u32]]`, which cannot carry the C's NULL entries;
     // `sem:histedit.el-wparse-fn` says they are passed through as NULL wide
     // pointers and that only `argv[0]` is dereferenced, so a NULL slot
@@ -1557,7 +1615,7 @@ pub unsafe extern "C" fn el_wline(el: *mut EditLine) -> *const LineInfoW {
 // [spec:libedit:def:histedit.el-winsertstr-fn]
 // [spec:libedit:sem:histedit.el-winsertstr-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn el_winsertstr(el: *mut EditLine, str_: *const u32) -> c_int {
+pub unsafe extern "C" fn el_winsertstr(el: *mut EditLine, str_: *const wchar_t) -> c_int {
     // A NULL string and an empty one are the same -1, so NULL becomes the
     // empty slice rather than a separate check.
     // SAFETY: `el` must be non-NULL; `str_` is null or NUL-terminated.
@@ -1567,7 +1625,7 @@ pub unsafe extern "C" fn el_winsertstr(el: *mut EditLine, str_: *const u32) -> c
 // [spec:libedit:def:histedit.el-wreplacestr-fn]
 // [spec:libedit:sem:histedit.el-wreplacestr-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn el_wreplacestr(el: *mut EditLine, str_: *const u32) -> c_int {
+pub unsafe extern "C" fn el_wreplacestr(el: *mut EditLine, str_: *const wchar_t) -> c_int {
     // As `el_winsertstr`: NULL and empty are both -1.
     // SAFETY: `el` must be non-NULL; `str_` is null or NUL-terminated.
     nshedit::chared::el_wreplacestr(unsafe { &mut *el }, unsafe { wstr(str_) }.unwrap_or(&[]))
@@ -1794,7 +1852,7 @@ pub unsafe extern "C" fn history_w(
 // [spec:libedit:def:histedit.tok-winit-fn]
 // [spec:libedit:sem:histedit.tok-winit-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tok_winit(ifs: *const u32) -> *mut TokenizerW {
+pub unsafe extern "C" fn tok_winit(ifs: *const wchar_t) -> *mut TokenizerW {
     // NULL selects the default `L"\t \n"`. The caller keeps ownership of its
     // string; the tokenizer owns everything it later hands back.
     // SAFETY: `ifs` is null or a NUL-terminated wide string.
@@ -1872,7 +1930,7 @@ pub unsafe extern "C" fn tok_wline(
     tok: *mut TokenizerW,
     line: *const LineInfoW,
     argc: *mut c_int,
-    argv: *mut *mut *const u32,
+    argv: *mut *mut *const wchar_t,
     cursorc: *mut c_int,
     cursoro: *mut c_int,
 ) -> c_int {
@@ -1915,9 +1973,9 @@ pub unsafe extern "C" fn tok_wline(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tok_wstr(
     tok: *mut TokenizerW,
-    line: *const u32,
+    line: *const wchar_t,
     argc: *mut c_int,
-    argv: *mut *mut *const u32,
+    argv: *mut *mut *const wchar_t,
 ) -> c_int {
     // A NUL-terminated string with no cursor: the core builds the `LineInfoW`
     // with `cursor == lastchar`, so the cursor never matches and both cursor

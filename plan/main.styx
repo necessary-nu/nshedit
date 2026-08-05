@@ -651,7 +651,7 @@ children (
 
             {
                 id abi-headers
-                title "Decide whether the port ships histedit.h, editline/readline.h and the man page"
+                title "Generate the shipped headers from our code with cbindgen, proven against the original"
                 deps (abi-varargs)
                 log (
                     {

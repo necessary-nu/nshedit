@@ -1,0 +1,130 @@
+# cbindgen configuration for the shipped `editline/readline.h`.
+#
+# As `histedit.toml`: the generated header is the shipped header, so a
+# rendering difference is a bug in this file rather than an allow-list entry.
+
+language = "C"
+style = "tag"
+sort_by = "None"
+
+include_guard = "_READLINE_H_"
+cpp_compat = true
+
+no_includes = true
+sys_includes = ["sys/types.h", "stdio.h"]
+
+# See `histedit.toml` for why documentation is on and why `c99`.
+documentation = true
+documentation_style = "c99"
+documentation_length = "short"
+
+# THE TEN `rl_*_func_t` TYPEDEFS, AND WHY THEY ARE HERE RATHER THAN GENERATED.
+#
+# C declares each as a **function type** — `typedef int rl_hook_func_t(void);`
+# — and every use site writes `rl_hook_func_t *`. Rust has no function type
+# distinct from a function pointer, so no Rust declaration can render as one.
+# Emitting the pointer form under the same name would compile and then be
+# wrong for every consumer that writes `rl_hook_func_t *my_hook;`, which is
+# the documented idiom and what GNU readline's own header teaches: their
+# declaration would silently become a pointer to a pointer.
+#
+# These are therefore config text rather than generated text. That is a real
+# cost and it is bounded: `conformance/header-diff.sh` compares every one of
+# them against `src/editline/readline.h` by asking a C compiler whether the
+# types are compatible, so a typo here fails the stage rather than shipping.
+# Nothing else in either header is written out this way.
+#
+# The rest of this block is the function-like macros, which for the same
+# reason have no Rust counterpart: a Rust `const` is a value, and `CTRL(c)`
+# is a substitution. `#define`s that ARE values come from Rust `const`s.
+after_includes = """
+
+/* list of readline stuff supported by editline library's readline wrapper */
+
+/* typedefs */
+typedef int	  rl_linebuf_func_t(const char *, int);
+typedef void	  rl_voidfunc_t(void);
+typedef void	  rl_vintfunc_t(int);
+typedef void	  rl_vcpfunc_t(char *);
+typedef char	**rl_completion_func_t(const char *, int, int);
+typedef char     *rl_compentry_func_t(const char *, int);
+typedef void	  rl_compdisp_func_t(char **, int, int);
+typedef int	  rl_command_func_t(int, int);
+typedef int	  rl_hook_func_t(void);
+typedef int       rl_icppfunc_t(char **);
+
+#ifndef CTRL
+#include <sys/ioctl.h>
+#if !defined(__sun) && !defined(__hpux) && !defined(_AIX)
+#include <sys/ttydefaults.h>
+#endif
+#ifndef CTRL
+#define CTRL(c)		((c) & 037)
+#endif
+#endif
+#ifndef UNCTRL
+#define UNCTRL(c)	(((c) - 'a' + 'A')|control_character_bit)
+#endif
+
+#define ABORT_CHAR	CTRL('G')
+
+#define RL_SETSTATE(x)		(rl_readline_state |= ((unsigned long) x))
+#define RL_UNSETSTATE(x)	(rl_readline_state &= ~((unsigned long) x))
+#define RL_ISSTATE(x)		(rl_readline_state & ((unsigned long) x))
+"""
+
+[export]
+# The C's names for the three records, plus the keymap array type. Nothing in
+# this header's own signatures uses them — the exported functions are written
+# against the core's Rust-cased types, which render to the same tags — so
+# cbindgen would drop them as unreachable. A consumer writes `HIST_ENTRY *`,
+# so they are named explicitly.
+include = ["HIST_ENTRY", "HISTORY_STATE", "KEYMAP_ENTRY", "KEYMAP_ENTRY_ARRAY"]
+
+exclude = [
+    # `<stdio.h>` declares `FILE`; this alias exists only so the rename below
+    # has an item to attach to. See `histedit.toml`.
+    "CFile",
+    # `readline.c` reaches `el_set`, `el_get` and `history` the way any
+    # consumer does, through their variadic declarations, which Rust spells as
+    # an `extern` block. Those are `histedit.h`'s functions: the C gets them
+    # by including it, and `editline/readline.h` declares none of them.
+    "el_set_va",
+    "el_get_va",
+    "history_va",
+    # A private alias in `crates/nshedit-abi/src/readline.rs` for the type of
+    # `rl_add_defun`'s dispatch table. `editline/readline.h` declares
+    # `rl_command_func_t` for the same shape, above, and this one is an
+    # implementation detail that has no business in the header.
+    "RlCommandFunc",
+    # The core's Rust-cased names for the three records. The C names come
+    # from `crates/nshedit-abi/src/cdecl/readline.rs`, which aliases the
+    # identical Rust types under the C's spelling; keeping both would put a
+    # second name for each record in the header.
+    "KeymapEntryArray",
+    # The ten function-pointer aliases the core declares. The C's
+    # counterparts are function TYPES and are emitted above; a consumer that
+    # got these instead would silently gain a level of indirection.
+    "RlLinebufFuncT",
+    "RlVoidfuncT",
+    "RlVintfuncT",
+    "RlVcpfuncT",
+    "RlCompletionFuncT",
+    "RlCompentryFuncT",
+    "RlCompdispFuncT",
+    "RlCommandFuncT",
+    "RlHookFuncT",
+    "RlIcppfuncT",
+]
+
+[export.rename]
+# The C's tags for the three records. `_history_state` is ours and is the one
+# adjudicated divergence in this header: the C leaves that record anonymous,
+# and cbindgen prints a Rust type's name, which a Rust type has. See the
+# DECIDED list in `conformance/header-diff.sh`.
+"HistEntry" = "_hist_entry"
+"KeymapEntry" = "_keymap_entry"
+"HistoryState" = "_history_state"
+
+"HistdataT" = "histdata_t"
+"CFile" = "FILE*"

@@ -66,10 +66,7 @@ use std::cell::{Cell, RefCell};
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use nshedit::chartype::{CtBufferT, ct_decode_string};
-use nshedit::editline::readline::{
-    HistEntry, HistdataT, HistoryState, Keymap, KeymapEntry, RlCompdispFuncT, RlCompletionFuncT,
-    RlHookFuncT, RlIcppfuncT, RlLinebufFuncT, RlVintfuncT, RlVoidfuncT,
-};
+use nshedit::editline::readline::{HistEntry, HistdataT, HistoryState, Keymap, KeymapEntry};
 use nshedit::el::{CFile, EditLine};
 use nshedit::filecomplete::{self, FilenameCompletionState};
 use nshedit::histedit::{
@@ -88,16 +85,6 @@ use crate::cstdio;
 /// and so cannot cross an `extern "C"` boundary. Collapse the two when the
 /// header types move into this crate.
 type RlCommandFunc = unsafe extern "C" fn(c_int, c_int) -> c_int;
-
-/// C: `rl_compentry_func_t *` — a completion generator, called repeatedly
-/// with an increasing `state` until it returns NULL. See [`RlCommandFunc`]
-/// for why this is not the core's `RlCompentryFuncT`.
-type RlCompentryFunc = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_char;
-
-/// C: `rl_vcpfunc_t *` — the callback-interface line handler, which takes
-/// ownership of the line. See [`RlCommandFunc`] for why this is not the
-/// core's `RlVcpfuncT`.
-type RlVcpfunc = unsafe extern "C" fn(*mut c_char);
 
 // ---------------------------------------------------------------------------
 // Constants `readline.c` gets from headers this crate does not own yet.
@@ -143,15 +130,15 @@ const EL_RESIZE: c_int = 23;
 const EL_BUILTIN_GETCFN: *const c_void = ptr::null();
 
 /// C: `#define RL_READLINE_VERSION 0x0402`.
-const RL_READLINE_VERSION: c_int = 0x0402;
+pub const RL_READLINE_VERSION: c_int = 0x0402;
 /// C: `#define RL_PROMPT_START_IGNORE '\1'`.
-const RL_PROMPT_START_IGNORE: u8 = 1;
+pub const RL_PROMPT_START_IGNORE: u8 = 1;
 /// C: `#define RL_PROMPT_END_IGNORE '\2'`.
-const RL_PROMPT_END_IGNORE: u8 = 2;
+pub const RL_PROMPT_END_IGNORE: u8 = 2;
 /// C: `#define RL_STATE_NONE 0x000000`.
-const RL_STATE_NONE: c_ulong = 0;
+pub const RL_STATE_NONE: c_ulong = 0;
 /// C: `#define RL_STATE_DONE 0x000001`.
-const RL_STATE_DONE: c_ulong = 1;
+pub const RL_STATE_DONE: c_ulong = 1;
 
 /// C: `#define ED_INSERT 9` (`fcns.h`, generated) — the self-insert action,
 /// the one value `rl_bind_key` can install. The core's copy is `pub(crate)`.
@@ -272,7 +259,7 @@ pub static mut rl_line_buffer: *mut c_char = ptr::null_mut();
 // [spec:libedit:def:readline.rl-linefunc]
 // [spec:libedit:sem:readline.rl-linefunc]
 #[unsafe(no_mangle)]
-pub static mut rl_linefunc: Option<RlVcpfunc> = None;
+pub static mut rl_linefunc: Option<unsafe extern "C" fn(*mut c_char)> = None;
 
 /// C: `int rl_done = 0;`
 // [spec:libedit:def:readline.rl-done]
@@ -284,7 +271,7 @@ pub static mut rl_done: c_int = 0;
 // [spec:libedit:def:readline.rl-event-hook]
 // [spec:libedit:sem:readline.rl-event-hook]
 #[unsafe(no_mangle)]
-pub static mut rl_event_hook: Option<RlHookFuncT> = None;
+pub static mut rl_event_hook: Option<unsafe extern "C" fn() -> c_int> = None;
 
 /// C: `KEYMAP_ENTRY_ARRAY emacs_standard_keymap;` — zero-initialized and
 /// never populated or consulted; it exists so programs referencing it link.
@@ -380,7 +367,9 @@ pub static mut history_no_expand_chars: *mut c_char = EXPAND_CHARS.as_ptr().cast
 // [spec:libedit:def:readline.history-inhibit-expansion-function]
 // [spec:libedit:sem:readline.history-inhibit-expansion-function]
 #[unsafe(no_mangle)]
-pub static mut history_inhibit_expansion_function: Option<RlLinebufFuncT> = None;
+pub static mut history_inhibit_expansion_function: Option<
+    unsafe extern "C" fn(*const c_char, c_int) -> c_int,
+> = None;
 
 /// C: `int rl_inhibit_completion = 0;`
 // [spec:libedit:def:readline.rl-inhibit-completion]
@@ -424,7 +413,9 @@ pub static mut rl_basic_quote_characters: *const c_char = c"\"'".as_ptr();
 // [spec:libedit:def:readline.rl-completion-entry-function]
 // [spec:libedit:sem:readline.rl-completion-entry-function]
 #[unsafe(no_mangle)]
-pub static mut rl_completion_entry_function: Option<RlCompentryFunc> = None;
+pub static mut rl_completion_entry_function: Option<
+    unsafe extern "C" fn(*const c_char, c_int) -> *mut c_char,
+> = None;
 
 /// C: `extern char *(*rl_completion_word_break_hook)(void);`
 ///
@@ -440,19 +431,21 @@ pub static mut rl_completion_word_break_hook: Option<unsafe extern "C" fn() -> *
 // [spec:libedit:def:readline.rl-attempted-completion-function]
 // [spec:libedit:sem:readline.rl-attempted-completion-function]
 #[unsafe(no_mangle)]
-pub static mut rl_attempted_completion_function: Option<RlCompletionFuncT> = None;
+pub static mut rl_attempted_completion_function: Option<
+    unsafe extern "C" fn(*const c_char, c_int, c_int) -> *mut *mut c_char,
+> = None;
 
 /// C: `rl_hook_func_t *rl_pre_input_hook = NULL;`
 // [spec:libedit:def:readline.rl-pre-input-hook]
 // [spec:libedit:sem:readline.rl-pre-input-hook]
 #[unsafe(no_mangle)]
-pub static mut rl_pre_input_hook: Option<RlHookFuncT> = None;
+pub static mut rl_pre_input_hook: Option<unsafe extern "C" fn() -> c_int> = None;
 
 /// C: `rl_hook_func_t *rl_startup1_hook = NULL;` — exported, never called.
 // [spec:libedit:def:readline.rl-startup1-hook]
 // [spec:libedit:sem:readline.rl-startup1-hook]
 #[unsafe(no_mangle)]
-pub static mut rl_startup1_hook: Option<RlHookFuncT> = None;
+pub static mut rl_startup1_hook: Option<unsafe extern "C" fn() -> c_int> = None;
 
 /// C: `extern int (*rl_getc_function)(FILE *);`
 ///
@@ -511,35 +504,37 @@ pub static mut _rl_print_completions_horizontally: c_int = 0;
 // [spec:libedit:def:readline.rl-redisplay-function]
 // [spec:libedit:sem:readline.rl-redisplay-function]
 #[unsafe(no_mangle)]
-pub static mut rl_redisplay_function: Option<RlVoidfuncT> = None;
+pub static mut rl_redisplay_function: Option<unsafe extern "C" fn()> = None;
 
 /// C: `rl_hook_func_t *rl_startup_hook = NULL;` — called by `readline()`
 /// before the terminal is prepared.
 // [spec:libedit:def:readline.rl-startup-hook]
 // [spec:libedit:sem:readline.rl-startup-hook]
 #[unsafe(no_mangle)]
-pub static mut rl_startup_hook: Option<RlHookFuncT> = None;
+pub static mut rl_startup_hook: Option<unsafe extern "C" fn() -> c_int> = None;
 
 /// C: `rl_compdisp_func_t *rl_completion_display_matches_hook = NULL;` —
 /// exported, and bypassed entirely by `rl_display_match_list`.
 // [spec:libedit:def:readline.rl-completion-display-matches-hook]
 // [spec:libedit:sem:readline.rl-completion-display-matches-hook]
 #[unsafe(no_mangle)]
-pub static mut rl_completion_display_matches_hook: Option<RlCompdispFuncT> = None;
+pub static mut rl_completion_display_matches_hook: Option<
+    unsafe extern "C" fn(*mut *mut c_char, c_int, c_int),
+> = None;
 
 /// C: `rl_vintfunc_t *rl_prep_term_function = (rl_vintfunc_t *)
 /// rl_prep_terminal;` — what `rl_reset_after_signal` calls through.
 // [spec:libedit:def:readline.rl-prep-term-function]
 // [spec:libedit:sem:readline.rl-prep-term-function]
 #[unsafe(no_mangle)]
-pub static mut rl_prep_term_function: Option<RlVintfuncT> = Some(rl_prep_terminal);
+pub static mut rl_prep_term_function: Option<unsafe extern "C" fn(c_int)> = Some(rl_prep_terminal);
 
 /// C: `rl_voidfunc_t *rl_deprep_term_function = (rl_voidfunc_t *)
 /// rl_deprep_terminal;` — exported, and never called from this file.
 // [spec:libedit:def:readline.rl-deprep-term-function]
 // [spec:libedit:sem:readline.rl-deprep-term-function]
 #[unsafe(no_mangle)]
-pub static mut rl_deprep_term_function: Option<RlVoidfuncT> = Some(rl_deprep_terminal);
+pub static mut rl_deprep_term_function: Option<unsafe extern "C" fn()> = Some(rl_deprep_terminal);
 
 /// C: `unsigned long rl_readline_state = RL_STATE_NONE;` — only
 /// `RL_STATE_DONE` is ever touched, set by `rl_callback_read_char` and
@@ -560,7 +555,9 @@ pub static mut _rl_complete_mark_directories: c_int = 0;
 // [spec:libedit:def:readline.rl-directory-completion-hook]
 // [spec:libedit:sem:readline.rl-directory-completion-hook]
 #[unsafe(no_mangle)]
-pub static mut rl_directory_completion_hook: Option<RlIcppfuncT> = None;
+pub static mut rl_directory_completion_hook: Option<
+    unsafe extern "C" fn(*mut *mut c_char) -> c_int,
+> = None;
 
 /// C: `int rl_completion_suppress_append;` — exported, never consulted.
 // [spec:libedit:def:readline.rl-completion-suppress-append]
@@ -3773,7 +3770,10 @@ fn _el_rl_complete(el: *mut EditLine, ch: c_int) -> c_uchar {
 // [spec:libedit:def:readline.rl-bind-key-fn]
 // [spec:libedit:sem:readline.rl-bind-key-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rl_bind_key(c: c_int, func: Option<RlCommandFunc>) -> c_int {
+pub unsafe extern "C" fn rl_bind_key(
+    c: c_int,
+    func: Option<unsafe extern "C" fn(c_int, c_int) -> c_int>,
+) -> c_int {
     let mut retval = -1;
     // SAFETY: single-threaded module state.
     unsafe {
@@ -3937,7 +3937,7 @@ fn rl_bind_wrapper(el: *mut EditLine, c: c_uchar) -> c_uchar {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rl_add_defun(
     name: *const c_char,
-    fun: Option<RlCommandFunc>,
+    fun: Option<unsafe extern "C" fn(c_int, c_int) -> c_int>,
     c: c_int,
 ) -> c_int {
     let mut dest = [0 as c_char; 8];
@@ -4028,7 +4028,7 @@ pub unsafe extern "C" fn rl_callback_read_char() {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rl_callback_handler_install(
     prompt: *const c_char,
-    linefunc: Option<RlVcpfunc>,
+    linefunc: Option<unsafe extern "C" fn(*mut c_char)>,
 ) {
     // SAFETY: single-threaded module state.
     unsafe {
@@ -4482,7 +4482,7 @@ pub unsafe extern "C" fn rl_set_screen_size(rows: c_int, cols: c_int) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rl_completion_matches(
     str_: *const c_char,
-    fun: Option<RlCompentryFunc>,
+    fun: Option<unsafe extern "C" fn(*const c_char, c_int) -> *mut c_char>,
 ) -> *mut *mut c_char {
     // SAFETY: `str_` is dereferenced by this function, as in the C, and `fun`
     // is called unconditionally. Every string the generator returns is adopted,
@@ -4745,7 +4745,7 @@ pub unsafe extern "C" fn rl_generic_bind(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rl_bind_key_in_map(
     key: c_int,
-    fun: Option<RlCommandFunc>,
+    fun: Option<unsafe extern "C" fn(c_int, c_int) -> c_int>,
     k: Keymap,
 ) -> c_int {
     // Stub, as `rl_generic_bind`.
@@ -4758,7 +4758,7 @@ pub unsafe extern "C" fn rl_bind_key_in_map(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rl_set_key(
     keyseq: *const c_char,
-    function: Option<RlCommandFunc>,
+    function: Option<unsafe extern "C" fn(c_int, c_int) -> c_int>,
     k: Keymap,
 ) -> c_int {
     // Stub: `rl_add_defun`, which binds exactly one byte, is the only working
@@ -4948,7 +4948,7 @@ pub unsafe extern "C" fn _rl_erase_entire_line() {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn completion_matches(
     text: *mut c_char,
-    genfunc: Option<RlCompentryFunc>,
+    genfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> *mut c_char>,
 ) -> *mut *mut c_char {
     // SAFETY: `text` is borrowed and never retained; `genfunc` is called
     // unconditionally, as in the C, and every string it returns is owned.

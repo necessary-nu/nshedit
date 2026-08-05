@@ -25,3 +25,16 @@ crate-type = ["cdylib", "staticlib"]
 [dependencies]
 nshedit.workspace = true
 nshedit-plat.workspace = true
+
+[dev-dependencies]
+# Generates the shipped headers, `include/histedit.h` and
+# `include/editline/readline.h`, from the Rust in this crate — see
+# `cbindgen/generate.rs`. The headers are generated and COMMITTED, so nothing
+# consuming or packaging this library needs cbindgen, or cargo, or Rust: a
+# `dev-dependency` is exactly the scope of "the people who regenerate them".
+#
+# A dependency rather than something to `cargo install`, so the version is
+# pinned by Cargo.lock and the same bytes come out on every machine, and so
+# `tests/headers.rs` can prove the committed copies are current without
+# anyone having remembered to install a tool.
+cbindgen = "0.29"

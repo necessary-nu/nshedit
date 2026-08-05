@@ -43,6 +43,7 @@
 // from `readline.c`'s `static` functions have no callers yet.
 #![allow(dead_code, unused_variables)]
 
+pub mod cdecl;
 pub mod chartype;
 pub mod eln;
 pub mod filecomplete;
