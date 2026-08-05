@@ -653,6 +653,7 @@ children (
                 id abi-headers
                 title "Generate the shipped headers from our code with cbindgen, proven against the original"
                 deps (abi-varargs)
+                sealed true
                 log (
                     {
                         at 2026-08-05T08:51:34.552190783Z
@@ -680,6 +681,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "CORRECTION, superseding the cbindgen half of the previous decision entry on this node. I had the direction backwards.\n\nWhat I recorded: cbindgen as a DIFFER, checking a header we maintain by hand, with libedit's .h as the source of truth.\n\nWhat is decided: THE GENERATED HEADER IS THE SHIPPED HEADER. cbindgen output is the true path. The original .h is what we diff AGAINST, and that diff proves OUR RUST IS CORRECT rather than proving the header is.\n\nWhy the inversion is not a preference. A hand-maintained header is a second artifact that must agree with the implementation and is maintained separately from it -- which is the exact failure mode this project keeps finding: two things obliged to agree, drifting silently, with no gate able to see it. The c_cc bug was that shape (a zero-length control-character row the bounds-safe accessors swallowed), and so were the four stale cross-file citations. Deriving the header from the code makes the disagreement impossible instead of merely detectable.\n\nIt also relocates the noise problem I had flagged as a cost, and improves it. Under the old framing every cosmetic difference became an allow-list entry, and I predicted the list would be long. Under this one a cosmetic difference is a CBINDGEN CONFIG BUG TO FIX: if the EL_* opcodes emerge as an enum rather than #define, that is not something to tolerate, it is something to configure until the output matches, because consumers write `#ifdef EL_PROMPT`. The allow-list then holds only genuine, decided divergences, which is what an allow-list is for. A long allow-list is now a signal that the config is wrong, not that the world is messy.\n\nTHE REAL COST, and it should be named rather than discovered: this pushes a constraint backwards from the header into the Rust type definitions. Our types must be shaped so cbindgen emits what histedit.h declares -- field order, typedef spelling, whether a thing is a struct or an opaque pointer. That is more constraining than writing a header by hand. It is the right cost, because it converts detectable drift into impossible drift, but expect to change type definitions to satisfy it and do not treat that as the tail wagging the dog. It is the dog.\n\nConsistent with the project goal: nshedit REPLACES libedit and subsumes it, so generated artifacts derive from our code rather than from upstream's. The original .h is a correctness oracle with a shelf life, not a permanent authority.\n\nWhat does not change: ship the headers, man pages excluded and still a separate call; the inherited header defects (histdata_t undeclared, completion_matches const mismatch) each need deciding individually; and abi-varargs is the prerequisite, now DONE, so histedit.h can declare el_set and el_get variadic exactly as the implementation now is."
+                    }
+
+                    {
+                        at 2026-08-05T18:55:37.953341935Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
@@ -1054,6 +1062,7 @@ children (
                 id conformance-header-diff
                 title "Diff a generated header against libedit's, which is the only check that would catch struct-layout drift"
                 deps (conformance-oracle abi-headers)
+                sealed true
                 log (
                     {
                         at 2026-08-05T15:55:30.456024642Z
@@ -1067,6 +1076,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "CORRECTION to the direction recorded on this node. See the same correction on abi-headers.\n\nThe generated header is what ships. This stage does not check a hand-written header against the code -- it checks THE CODE against the original .h, by generating a header from the ABI crate with cbindgen and diffing that against the oracle's histedit.h and editline/*.h. A difference means our Rust is wrong, or it is a divergence we have decided; it never means the generated header needs hand-editing, because nothing hand-edits it.\n\nThe gap this closes is unchanged and is still the reason the node exists: conformance/abi-shape.sh compares exported symbol NAMES. Nothing in the harness checks a signature and nothing checks a struct LAYOUT. A field in the wrong order inside LineInfo, LineInfoW, HistEvent or HistEventW breaks every C consumer that reads it, leaves the symbol table byte-identical, and passes all five stages. That is the worst shape a defect can have here, and platform-build proved the shape is real rather than theoretical -- blank_termios's zero-length c_cc was silent for exactly as long as the layer beneath it was stubbed.\n\nPractical consequence of the inversion, and the thing to get right first: spend the opening effort on cbindgen CONFIG rather than on an allow-list. Rendering differences are bugs in the config -- #define versus enum for the EL_* opcodes is the load-bearing one, since consumers write `#ifdef EL_PROMPT`, and an enum silently breaks them. Typedef spelling and declaration order are the same kind of thing. Only once the config is right does a remaining difference mean something, and those go on an allow-list WITH REASONS, the way abi-shape.sh's decided-symbols list works, so it cannot quietly absorb a new divergence. A long allow-list means the config is wrong.\n\nExpect to change Rust type definitions to make the output match. That is the intended direction of pressure, not a smell.\n\nDependencies stand: conformance-oracle, because the honest comparison is against the header for the version we ported rather than whatever the host has installed; and abi-headers, because that node decides what ships. abi-varargs is now done, so el_set and el_get can be declared variadic in the generated header exactly as the implementation is -- which was the sequencing reason abi-headers was gated on it."
+                    }
+
+                    {
+                        at 2026-08-05T18:55:40.16488204Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
