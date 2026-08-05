@@ -76,7 +76,7 @@ children (
             {
                 id terminal-tests
                 title "Port and extend tests for the terminal layer"
-                deps (terminal-translate)
+                deps (terminal-translate platform-build)
                 sealed true
             }
 
@@ -118,7 +118,7 @@ children (
             {
                 id buffer-tests
                 title "Port and extend tests for the line buffer and refresh"
-                deps (buffer-translate)
+                deps (buffer-translate platform-build)
                 sealed true
             }
 
@@ -160,7 +160,7 @@ children (
             {
                 id input-tests
                 title "Port and extend tests for input dispatch and binding"
-                deps (input-translate)
+                deps (input-translate platform-build)
                 sealed true
             }
 
@@ -202,7 +202,7 @@ children (
             {
                 id history-tests
                 title "Port and extend tests for history and search"
-                deps (history-translate)
+                deps (history-translate history-regex)
                 sealed true
             }
 
@@ -212,8 +212,13 @@ children (
                 deps (history-tests)
                 sealed true
             }
+
+            {
+                id history-regex
+                title "Choose and integrate a basic-regex engine for history search"
+                deps (history-translate)
+            }
         )
-        sealed true
     }
 
     {
@@ -244,7 +249,7 @@ children (
             {
                 id modes-tests
                 title "Port and extend tests for the editor command sets"
-                deps (modes-translate)
+                deps (modes-translate platform-build)
                 sealed true
             }
 
@@ -286,7 +291,7 @@ children (
             {
                 id completion-tests
                 title "Port and extend tests for completion and tokenization"
-                deps (completion-translate)
+                deps (completion-translate platform-build)
                 sealed true
             }
 
@@ -328,7 +333,14 @@ children (
             {
                 id core-api-tests
                 title "Port and extend tests for the EditLine lifecycle and public API"
-                deps (core-api-translate)
+                deps (
+                    core-api-translate
+                    abi-callback-types
+                    abi-visibility
+                    abi-varargs
+                    abi-narrow
+                    platform-build
+                )
                 sealed true
             }
 
@@ -370,7 +382,15 @@ children (
             {
                 id readline-compat-tests
                 title "Port and extend tests for the readline compatibility surface"
-                deps (readline-compat-translate)
+                deps (
+                    readline-compat-translate
+                    abi-callback-types
+                    abi-visibility
+                    abi-varargs
+                    abi-narrow
+                    abi-errno
+                    platform-build
+                )
                 sealed true
             }
 
@@ -382,5 +402,82 @@ children (
             }
         )
         sealed true
+    }
+
+    {
+        id platform
+        title "System access the port needs because libc is barred: syscalls, terminal control, the user database"
+        children (
+            {
+                id platform-decide
+                title "Decide the platform layer's scope, and record the divergences it forces"
+            }
+
+            {
+                id platform-build
+                title "Build one platform module and retire the six private stubs"
+                deps (platform-decide)
+            }
+
+            {
+                id platform-tests
+                title "Test the platform layer against the C's observable behaviour"
+                deps (platform-build)
+            }
+        )
+    }
+
+    {
+        id abi-surface
+        title "Make the exported C ABI reachable from the core"
+        children (
+            {
+                id abi-callback-types
+                title "Give the nine core callback typedefs the C ABI a caller actually passes"
+            }
+
+            {
+                id abi-visibility
+                title "Publish the thirty core entry points the ABI crate has to call"
+            }
+
+            {
+                id abi-varargs
+                title "Provide a typed dispatch the variadic shims and the readline layer can both call"
+                deps (abi-visibility abi-callback-types)
+            }
+
+            {
+                id abi-narrow
+                title "Decide and build the narrow history and tokenizer instantiations, which have byte semantics the wide store does not"
+                deps (abi-visibility)
+            }
+
+            {
+                id abi-errno
+                title "Give errno a writable home the ABI crate can publish to C callers"
+            }
+        )
+    }
+
+    {
+        id spec-repair
+        title "Correct the spec and the register against what translation measured"
+        children (
+            {
+                id spec-rule-corrections
+                title "Fix the six rules translation proved wrong about the C"
+            }
+
+            {
+                id errata-reconcile
+                title "Reconcile the register with what translation resolved, defined, under-scoped and newly found"
+            }
+
+            {
+                id readline-globals-rules
+                title "Write rules for the sixty exported readline globals, which have none"
+            }
+        )
     }
 )
