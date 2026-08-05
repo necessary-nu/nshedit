@@ -1,12 +1,34 @@
 //! Ported from `src/el.c`; rules live in `docs/spec/port/src/el.md`.
-
-// Every function body below is still `todo!()`, so every parameter is unused.
-// Remove this once the bodies land.
-#![allow(unused_variables)]
+//!
+//! # No codeset detection lives here
+//!
+//! `el.c` includes `<langinfo.h>` and `<locale.h>` and uses neither:
+//! `nl_langinfo` is never called, nothing from `<locale.h>` is referenced, and
+//! `MAXPATHLEN` is defined at the top of the file and never read. The single
+//! locale-sensitive decision in the C file is the `MB_CUR_MAX` test in
+//! `el_wset`'s `EL_HIST` arm, and `el_wset` is not in this module — the
+//! varargs dispatch belongs to the ABI crate. So none of the three carries
+//! over; the locale-sensitive work that does happen here is the multibyte
+//! conversion in `ct_decode_string`/`ct_encode_string` and the `iswspace`
+//! skip in [`el_source`], all of it served by `crate::locale`.
+//!
+//! `sem:el.el-init-internal-fn` records that this file never calls
+//! `setlocale`, so a C `EditLine` constructed before `setlocale(LC_CTYPE, "")`
+//! decodes its program name in the C locale. `crate::locale` already documents
+//! why the port cannot reproduce that (it resolves the charset from the
+//! environment, i.e. as if the program had called `setlocale(LC_ALL, "")`), and
+//! why the difference is not observable from here.
 
 use core::ffi::{c_char, c_void};
-use std::ffi::OsString;
+use core::ptr;
+use std::ffi::{CStr, CString, OsStr, OsString};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Write};
+use std::mem::ManuallyDrop;
+use std::os::fd::FromRawFd;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::Path;
+use std::sync::OnceLock;
 
 /// C: `#define EL_BUFSIZ ((size_t)1024)` — the initial line-buffer size, and
 /// the bound several unrelated routines reuse as a scratch limit.
@@ -30,20 +52,37 @@ pub(crate) const FIXIO: i32 = 0x100;
 /// Guards `el_line`'s re-entrant call into the application's resize hook.
 pub(crate) const FROM_ELLINE: i32 = 0x200;
 
-use crate::chared::ElCharedT;
-use crate::chartype::CtBufferT;
-use crate::hist::ElHistoryT;
-use crate::histedit::LineInfo;
-use crate::keymacro::ElKeymacroT;
-use crate::literal::ElLiteralT;
-use crate::map::ElMapT;
-use crate::prompt::ElPromptT;
-use crate::read::ElReadT;
+use crate::chared::{CKillT, CRedoT, CUndoT, CVcmdT, ElCharedT, ch_end, ch_init, ch_reset};
+use crate::chartype::{CtBufferT, ct_decode_string, ct_encode_string};
+use crate::hist::{ElHistoryT, hist_end, hist_init};
+use crate::histedit::{HistEventW, LineInfo};
+use crate::keymacro::{ElKeymacroT, KeymacroValueT, keymacro_end, keymacro_init};
+use crate::literal::{ElLiteralT, literal_end, literal_init};
+use crate::locale;
+use crate::map::{ElMapCurrent, ElMapT, map_end, map_init};
+use crate::parse::parse_line;
+use crate::prompt::{ElPromptT, prompt_end, prompt_init};
+use crate::read::{ElReadT, read_end, read_init};
 use crate::refresh::ElRefreshT;
-use crate::search::ElSearchT;
-use crate::sig::ElSignalT;
-use crate::terminal::ElTerminalT;
-use crate::tty::ElTtyT;
+use crate::search::{ElSearchT, search_end, search_init};
+use crate::sig::{ElSignalT, sig_end, sig_init};
+use crate::terminal::{
+    ElTerminalT, terminal_beep, terminal_change_size, terminal_end, terminal_get_size,
+    terminal_init,
+};
+use crate::tty::{
+    C_NCC, ElTtyT, NN_IO, Termios, TtypermEntry, tty_cookedmode, tty_end, tty_init, tty_rawmode,
+};
+
+/// C: `TCSAFLUSH`, the `tcsetattr` action [`el_end`] hands `tty_end`: restore
+/// after pending output drains and discard pending unread input.
+///
+/// `tty.c`'s translation has no home for the POSIX `TCSA*` constants yet and
+/// `tty_end`'s `how` is the raw POSIX action, so the value is spelled out
+/// here — Linux's, per `plan/decisions/posix-only-scope.md`. Private on
+/// purpose; it belongs in `crate::tty` once that module publishes them, the
+/// same disposition `hist.rs` records for the header constants it carries.
+const TCSAFLUSH: i32 = 2;
 
 /// Stand-in for the C's `FILE *`.
 ///
@@ -228,7 +267,196 @@ pub struct EditLine {
 /// built-in default owns what it returns. The two are reconciled where the
 /// hook is consulted, not here.
 pub fn secure_getenv(name: &str) -> Option<OsString> {
-    todo!()
+    // Step 1. `issetugid()` — see [`process_is_secure`] for what replaces it.
+    if process_is_secure() {
+        return None;
+    }
+    // Step 2. `getenv(name)`. The C hands back a borrowed pointer into the
+    // process environment; `var_os` copies, which is strictly stronger than
+    // the "valid until the next hook call" the hook contract asks for.
+    std::env::var_os(name)
+}
+
+/// The port's `issetugid()`: did this process gain privilege from the
+/// executable it ran?
+///
+/// ERR-core-api-25, disposition `fix`. The C picks one of four
+/// implementations at configure time and the last of them `#define`s
+/// `issetugid()` to the constant `1`, so libedit reads *no* environment at
+/// all on such a host. That branch is a portability artefact and is
+/// deliberately not reproduced; `sem:el.secure-getenv-fn` spells out the real
+/// test the port must perform instead, and this is it — the three conditions
+/// it names, OR'ed:
+///
+/// - the loader marked the process secure (`AT_SECURE` in the auxiliary
+///   vector, which also covers file capabilities and the other ways an exec
+///   can be privileged without the ids differing), or
+/// - the real uid differs from the effective uid, or
+/// - the real gid differs from the effective gid.
+///
+/// `plan/decisions/no-c-ffi.md` bars `getauxval`, `getuid` and friends, so
+/// both answers come from `/proc/self`, which is where Linux publishes them.
+/// The answer is cached: glibc computes `__libc_enable_secure` once during
+/// startup and `secure_getenv` reads that cached value, so a later
+/// `setuid()`/`setgid()` does not change what it reports, and neither does
+/// this.
+///
+/// When neither source can be read — no `/proc` — the process cannot be shown
+/// to be unprivileged and this answers `true`, denying every lookup. That is
+/// *not* the always-deny branch above: that one denies on hosts that could
+/// have answered, this one only where the platform genuinely cannot, and the
+/// default hook exists precisely so that the unknown case fails closed.
+fn process_is_secure() -> bool {
+    static SECURE: OnceLock<bool> = OnceLock::new();
+    *SECURE.get_or_init(|| match (auxv_at_secure(), ids_differ()) {
+        (None, None) => true,
+        (a, b) => a.unwrap_or(false) || b.unwrap_or(false),
+    })
+}
+
+/// `AT_SECURE` from the auxiliary vector, `None` if it could not be read.
+///
+/// The vector is a flat array of native-endian `unsigned long` key/value
+/// pairs terminated by an `AT_NULL` key, which is the layout `getauxval`
+/// walks.
+fn auxv_at_secure() -> Option<bool> {
+    /// `AT_NULL` — end of the vector.
+    const AT_NULL: usize = 0;
+    /// `AT_SECURE` — "the loader considers this a secure execution".
+    const AT_SECURE: usize = 23;
+
+    let raw = std::fs::read("/proc/self/auxv").ok()?;
+    let w = size_of::<usize>();
+    let mut i = 0;
+    while i + 2 * w <= raw.len() {
+        let key = native_word(&raw[i..i + w]);
+        let val = native_word(&raw[i + w..i + 2 * w]);
+        if key == AT_NULL {
+            return None;
+        }
+        if key == AT_SECURE {
+            return Some(val != 0);
+        }
+        i += 2 * w;
+    }
+    None
+}
+
+/// One native-endian `unsigned long` out of `/proc/self/auxv`.
+fn native_word(bytes: &[u8]) -> usize {
+    let mut w = [0u8; size_of::<usize>()];
+    w.copy_from_slice(bytes);
+    usize::from_ne_bytes(w)
+}
+
+/// Whether real and effective uid, or real and effective gid, differ.
+/// `None` if `/proc/self/status` could not be read or parsed.
+fn ids_differ() -> Option<bool> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let mut uids = None;
+    let mut gids = None;
+    for line in status.lines() {
+        // Both lines are `real effective saved filesystem`; only the first
+        // two fields matter.
+        if let Some(rest) = line.strip_prefix("Uid:") {
+            uids = first_two_ids(rest);
+        } else if let Some(rest) = line.strip_prefix("Gid:") {
+            gids = first_two_ids(rest);
+        }
+    }
+    let (ruid, euid) = uids?;
+    let (rgid, egid) = gids?;
+    Some(ruid != euid || rgid != egid)
+}
+
+/// The real and effective id from one `/proc/self/status` id line.
+fn first_two_ids(rest: &str) -> Option<(u32, u32)> {
+    let mut fields = rest.split_ascii_whitespace();
+    let real = fields.next()?.parse().ok()?;
+    let effective = fields.next()?.parse().ok()?;
+    Some((real, effective))
+}
+
+// [spec:libedit:sem:el.editline.el-getenv-fn]
+/// One environment lookup on behalf of `el`, through whatever hook it holds.
+///
+/// Every environment variable libedit reads goes through here, and the rule
+/// is explicit that the port must route exactly four lookups through it and
+/// no others: `"EDITRC"` and `"HOME"` from [`el_source`], `"TERM"` from
+/// `terminal_set` when it is called with a NULL name, and `"EDITOR"` from
+/// `vi_histedit`. An application that installs a hook is entitled to see
+/// precisely that call pattern, so the other two modules must call this
+/// rather than reading the environment themselves.
+///
+/// # Reconciling the default with the hook type
+///
+/// The C's step 3 is `el->el_getenv = secure_getenv`, i.e. the default *is* a
+/// value of the hook type. That does not survive translation:
+/// `sem:el.secure-getenv-fn` has [`secure_getenv`] return an owned
+/// `Option<OsString>`, while [`FuncT`] is the C ABI shape
+/// `fn(*const c_char) -> *mut c_char`, whose result is borrowed from storage
+/// the hook owns. Neither side may change — the rule fixes the Rust
+/// signature, the ABI fixes the pointer one.
+///
+/// So the field carries only what a C *application* installed, and `None`
+/// means "no application hook — the built-in default is in force". That is
+/// what [`el_init_internal`] leaves behind, and it is the C's step 3
+/// faithfully: after construction, a lookup reaches `secure_getenv`.
+///
+/// Two consequences, both intentional:
+/// - `el_get(EL_GETENV)` must report the *address* of `secure_getenv` on a
+///   freshly constructed `EditLine`. There is no such address here, so the
+///   ABI crate synthesises one — the same division of labour `sig.rs` uses
+///   for the file-static `sel`, and the reason `el_wset`/`el_wget` are not in
+///   this module.
+/// - The C distinguishes "default" from "the caller stored NULL"; this does
+///   not, and collapses the second onto the first. Storing NULL makes the
+///   next lookup an indirect call through a null pointer — undefined
+///   behaviour, ERR-core-api-08, disposition `define`, "reject NULL". Falling
+///   back to the built-in is that definition; the ABI crate may additionally
+///   reject the `el_set` outright, and nothing here depends on which.
+///
+/// The result is copied out of the hook's storage before returning, so the
+/// "valid at least until the next hook call" clause is satisfied with room to
+/// spare and no caller can retain a borrow across a later lookup.
+pub(crate) fn el_getenv(el: &EditLine, name: &str) -> Option<OsString> {
+    let Some(hook) = el.el_getenv else {
+        return secure_getenv(name);
+    };
+    // The four names are compile-time ASCII literals, so this never fails;
+    // the C passes them as string literals for the same reason.
+    let cname = CString::new(name).ok()?;
+    let value = hook(cname.as_ptr());
+    if value.is_null() {
+        // The hook's "unset, or I decline to answer".
+        return None;
+    }
+    // SAFETY: `def:el.editline.el-getenv-fn` is the contract the application
+    // accepted when it installed the hook — a NUL-terminated value, valid at
+    // least until the next call through the hook. The copy is taken here and
+    // now, so nothing outlives that window.
+    let bytes = unsafe { CStr::from_ptr(value) }.to_bytes().to_vec();
+    Some(OsString::from_vec(bytes))
+}
+
+/// C: `fileno(3)`.
+///
+/// A [`CFile`] is an opaque C `FILE *`; its descriptor lives inside the C
+/// library's own object, which `plan/decisions/no-c-ffi.md` forbids this
+/// crate from linking against and therefore from reading. There is no route
+/// to the real answer here, so this reports -1 — which is exactly what the C
+/// stores for a stream that has no underlying descriptor, and
+/// `sem:el.el-init-fn` and ERR-core-api-06 (disposition: reproduce the
+/// -1-descriptor outcome) describe what follows from it: construction still
+/// reports success, `tty_init` then fails, `NO_TTY` gets set, and nothing
+/// else notices.
+///
+/// The real `fileno` belongs to the ABI crate, which is what owns the
+/// `FILE *` in the first place. Its `el_init` export should call `fileno`
+/// itself and go straight to [`el_init_fd`]; this entry point exists so the
+/// C's call graph has a Rust counterpart, not as a working stdio bridge.
+fn fileno(_stream: CFile) -> i32 {
+    -1
 }
 
 // [spec:libedit:def:el.el-init-fn]
@@ -248,7 +476,21 @@ pub fn secure_getenv(name: &str) -> Option<OsString> {
 /// of -1 is stored undiagnosed and construction still reports success — and
 /// weaker still further in; see [`el_init_internal`].
 pub fn el_init(prog: &str, fin: CFile, fout: CFile, ferr: CFile) -> Option<Box<EditLine>> {
-    todo!()
+    // The whole body, one tail call. Nothing is validated: the C's `fileno`
+    // runs before any check, so a NULL stream is a null dereference
+    // (ERR-core-api-06, disposition `define` for that half — [`CFile`] is a
+    // raw pointer here and is never dereferenced, so a null one is simply
+    // stored). The evaluation order of the three calls is unspecified in C
+    // and has no observable consequence; left to right here.
+    el_init_fd(
+        prog,
+        fin,
+        fout,
+        ferr,
+        fileno(fin),
+        fileno(fout),
+        fileno(ferr),
+    )
 }
 
 // [spec:libedit:def:el.el-init-internal-fn]
@@ -281,7 +523,330 @@ pub(crate) fn el_init_internal(
     fderr: i32,
     flags: i32,
 ) -> Option<Box<EditLine>> {
-    todo!()
+    // Step 1. `el_calloc(1, sizeof(*el))`: zero-filled, so every pointer
+    // field starts NULL, every counter 0 and every embedded subsystem struct
+    // blank. Rust aborts rather than returning null on allocation failure, so
+    // the C's "if it returns NULL, return NULL" has no counterpart.
+    let mut el = Box::new(blank_editline());
+
+    // Step 2. Recorded, not duplicated, not validated, no ownership taken.
+    el.el_infile = fin;
+    el.el_outfile = fout;
+    el.el_errfile = ferr;
+    el.el_infd = fdin;
+    el.el_outfd = fdout;
+    el.el_errfd = fderr;
+
+    // Step 3. C: `el->el_getenv = secure_getenv`. `None` is that default —
+    // "no application hook installed, so lookups reach the built-in". See
+    // [`el_getenv`] for why the default cannot be stored as a [`FuncT`] and
+    // what the ABI crate owes as a result. Already `None` from step 1; the
+    // assignment is written out because the rule numbers it a step and
+    // because the field's initial value is load-bearing for security.
+    el.el_getenv = None;
+
+    // Step 4. C: `el->el_prog = wcsdup(ct_decode_string(prog, &el->el_scratch))`.
+    // Decode into the object's shared scratch buffer, then take a private
+    // copy the object owns until `el_end`.
+    //
+    // ERR-core-api-01, disposition `define`: the C's NULL test covers only
+    // `wcsdup`'s allocation failure, and `ct_decode_string`'s NULL — a NULL
+    // `prog`, or one that is not a valid multibyte string in the current
+    // `LC_CTYPE` — goes straight into `wcsdup` and is dereferenced. NULL
+    // cannot arrive through a `&str`; an undecodable `prog` can, and fails
+    // construction here rather than crashing.
+    //
+    // ERR-core-api-12, disposition `fix`: the C's `el_free(el)` on this path
+    // releases the object but not the `el_scratch.wbuff` this step just
+    // allocated, which only `el_end` ever frees. Dropping the box takes the
+    // buffer with it, so there is no leak to reproduce.
+    let prog_wide = ct_decode_string(Some(prog.as_bytes()), &mut el.el_scratch)?.to_vec();
+    el.el_prog = prog_wide;
+
+    // Step 5, and it happens *before* any subsystem init on purpose:
+    // `terminal_init` can raise `EDIT_DISABLED` and `tty_init` can raise
+    // `NO_TTY`, and both would be wiped out by a later assignment.
+    el.el_flags = flags;
+
+    // Step 6. "Order is important!!!", says the C, and it is: `map_init` must
+    // follow `terminal_init` (whose `terminal_bind_arrow` bails out while
+    // `el_map.key` is still NULL, which is what stops it installing garbage
+    // bindings), and `ch_init` must follow `map_init` (it sets
+    // `el_map.current = el_map.key`).
+    //
+    // ERR-core-api-02, disposition `define`: the C discards seven of these
+    // results and hands the caller a "successful" object with NULL buffers
+    // in it, each dereferenced without a guard the first time its feature is
+    // used. Construction fails here instead. The one documented exception is
+    // `hist_init`, whose rule is explicit that its failure must NOT be made
+    // fatal — `ch_enlargebufs` repairs the state through `hist_enlargebuf`
+    // (ERR-history-11) — so that result stays discarded, as in the C.
+    //
+    // Failing construction drops the box, which runs each already-initialised
+    // subsystem's `Drop` rather than its `*_end`. That is sound for every one
+    // of them: at this point none has touched anything outside the object —
+    // `terminal_init` releases its own partial allocations before returning
+    // -1, and `sig_init` installs no handler.
+
+    // 6.1. The only init whose failure is fatal in the C too.
+    if terminal_init(&mut el) == -1 {
+        return None;
+    }
+    // 6.2.
+    if keymacro_init(&mut el) == -1 {
+        return None;
+    }
+    // 6.3.
+    if map_init(&mut el) == -1 {
+        return None;
+    }
+    // 6.4. The only init whose failure is *recorded* rather than ignored, and
+    // the flag is consulted exactly once — by `el_end`, to decide whether to
+    // restore the terminal modes. Note `tty_init` returns 0 without doing
+    // anything while `EDIT_DISABLED` is set, so a `TERM=emacs` EditLine ends
+    // up with `NO_TTY` clear and `el_tty.t_initialized` still 0.
+    if tty_init(&mut el) == -1 {
+        el.el_flags |= NO_TTY;
+    }
+    // 6.5.
+    if ch_init(&mut el) == -1 {
+        return None;
+    }
+    // 6.6.
+    if search_init(&mut el) == -1 {
+        return None;
+    }
+    // 6.7. Deliberately discarded; see ERR-history-11 above.
+    let _ = hist_init(&mut el);
+    // 6.8. Cannot fail.
+    if prompt_init(&mut el) == -1 {
+        return None;
+    }
+    // 6.9.
+    if sig_init(&mut el) == -1 {
+        return None;
+    }
+    // 6.10. Returns void.
+    literal_init(&mut el);
+    // 6.11. ERR-core-api-03, disposition `define`. In the C this outcome is
+    // unreachable: `read_init` returns -1 either before allocating `el_read`
+    // or after calling `read_end` itself, so `el->el_read` is NULL either
+    // way, and `el_end` then calls `read_end` unconditionally — whose first
+    // act dereferences it. The process faults instead of returning NULL, and
+    // on one of the two paths it is a double `read_end` as well. Here
+    // `el_read` is an `Option` that `read_end` reads as "nothing to tear
+    // down", so the teardown below is safe to run and this actually returns
+    // `None`, which is what the rule requires.
+    if read_init(&mut el) == -1 {
+        el_end(Some(el));
+        return None;
+    }
+
+    // Step 7.
+    Some(el)
+}
+
+/// The C's `el_calloc(1, sizeof(struct editline))`: an all-zero `EditLine`.
+///
+/// Written out because none of the ported subsystem types derives `Default` —
+/// they are literal translations of C structs whose only constructor was
+/// `calloc` — and because several of them have no zero value that Rust can
+/// spell on its own. Where that happens the choice is the C's zero state
+/// under this crate's representation conventions:
+///
+/// - a `char *`/`wchar_t *`/`T **` that `calloc` left NULL is an empty
+///   `Vec`, which is what every `*_init` in the crate also leaves behind on
+///   its own failure path;
+/// - `el_map.current` is a selector, not a pointer, and has no NULL: `Key` is
+///   the value `ch_init` installs, so nothing observes the difference;
+/// - `el_keymacro.val` is the C's union, whose zeroed state is the `XK_NOD`
+///   "the union holds a NULL `str`" case that `def:keymacro.keymacro-value-t`
+///   maps to `Str` with an empty buffer;
+/// - `el_tty.t_t` is an array of structs carrying a `&'static str` name, and
+///   `tty_init` `memcpy`s the compiled-in `ttyperm` table over the whole
+///   thing before anything reads it.
+fn blank_editline() -> EditLine {
+    EditLine {
+        el_prog: Vec::new(),
+        el_infile: ptr::null_mut(),
+        el_outfile: ptr::null_mut(),
+        el_errfile: ptr::null_mut(),
+        el_infd: 0,
+        el_outfd: 0,
+        el_errfd: 0,
+        el_flags: 0,
+        el_cursor: CoordT { h: 0, v: 0 },
+        el_display: Vec::new(),
+        el_vdisplay: Vec::new(),
+        el_data: ptr::null_mut(),
+        el_line: ElLineT {
+            buffer: Vec::new(),
+            cursor: 0,
+            lastchar: 0,
+            limit: 0,
+        },
+        el_state: ElStateT {
+            inputmode: 0,
+            doingarg: 0,
+            argument: 0,
+            metanext: 0,
+            lastcmd: 0,
+            thiscmd: 0,
+            thisch: 0,
+        },
+        el_terminal: ElTerminalT {
+            t_name: None,
+            t_size: CoordT { h: 0, v: 0 },
+            t_flags: 0,
+            t_buf: Vec::new(),
+            t_loc: 0,
+            t_str: Vec::new(),
+            t_val: Vec::new(),
+            t_cap: Vec::new(),
+            t_entry: None,
+            t_fkey: Vec::new(),
+        },
+        el_tty: ElTtyT {
+            t_t: std::array::from_fn(|_| {
+                std::array::from_fn(|_| TtypermEntry {
+                    t_name: "",
+                    t_setmask: 0,
+                    t_clrmask: 0,
+                })
+            }),
+            t_c: [[0; C_NCC]; NN_IO],
+            t_or: blank_termios(),
+            t_ex: blank_termios(),
+            t_ed: blank_termios(),
+            t_ts: blank_termios(),
+            t_tabs: 0,
+            t_eight: 0,
+            t_speed: 0,
+            t_mode: 0,
+            t_vdisable: 0,
+            t_initialized: 0,
+        },
+        el_refresh: ElRefreshT {
+            r_cursor: CoordT { h: 0, v: 0 },
+            r_oldcv: 0,
+            r_newcv: 0,
+        },
+        el_prompt: blank_prompt(),
+        el_rprompt: blank_prompt(),
+        el_literal: ElLiteralT {
+            l_buf: Vec::new(),
+            l_idx: 0,
+            l_len: 0,
+        },
+        el_chared: ElCharedT {
+            c_undo: CUndoT {
+                len: 0,
+                cursor: 0,
+                buf: Vec::new(),
+            },
+            c_kill: CKillT {
+                buf: Vec::new(),
+                last: 0,
+                mark: 0,
+            },
+            c_redo: CRedoT {
+                buf: Vec::new(),
+                pos: 0,
+                lim: 0,
+                cmd: 0,
+                ch: 0,
+                count: 0,
+                action: 0,
+            },
+            c_vcmd: CVcmdT { action: 0, pos: 0 },
+            c_resizefun: None,
+            c_aliasfun: None,
+            c_resizearg: ptr::null_mut(),
+            c_aliasarg: ptr::null_mut(),
+        },
+        el_map: ElMapT {
+            alt: Vec::new(),
+            key: Vec::new(),
+            current: ElMapCurrent::Key,
+            emacs: None,
+            vic: None,
+            vii: None,
+            r#type: 0,
+            help: Vec::new(),
+            func: Vec::new(),
+            nfunc: 0,
+            wordchars: None,
+        },
+        el_keymacro: ElKeymacroT {
+            buf: Vec::new(),
+            map: None,
+            val: KeymacroValueT::Str(Vec::new()),
+        },
+        el_history: ElHistoryT {
+            buf: Vec::new(),
+            sz: 0,
+            last: 0,
+            eventno: 0,
+            r#ref: ptr::null_mut(),
+            fun: None,
+            ev: HistEventW {
+                num: 0,
+                str: ptr::null(),
+            },
+        },
+        el_search: ElSearchT {
+            patbuf: Vec::new(),
+            patlen: 0,
+            patdir: 0,
+            chadir: 0,
+            chacha: 0,
+            chatflg: 0,
+        },
+        el_signal: None,
+        el_read: None,
+        el_visual: blank_ct_buffer(),
+        el_scratch: blank_ct_buffer(),
+        el_lgcyconv: blank_ct_buffer(),
+        el_lgcylinfo: LineInfo {
+            buffer: ptr::null(),
+            cursor: ptr::null(),
+            lastchar: ptr::null(),
+        },
+        el_getenv: None,
+    }
+}
+
+/// The zeroed `struct termios` `calloc` leaves in an `el_tty` slot.
+fn blank_termios() -> Termios {
+    Termios {
+        c_iflag: 0,
+        c_oflag: 0,
+        c_cflag: 0,
+        c_lflag: 0,
+        c_cc: Vec::new(),
+    }
+}
+
+/// The zeroed `el_prompt_t` `calloc` leaves in `el_prompt` and `el_rprompt`.
+fn blank_prompt() -> ElPromptT {
+    ElPromptT {
+        p_func: None,
+        p_pos: CoordT { h: 0, v: 0 },
+        p_ignore: 0,
+        p_wide: 0,
+    }
+}
+
+/// The zeroed `ct_buffer_t` `calloc` leaves in the three conversion buffers,
+/// which `sem:chartype.ct-buffer-t` records as satisfying the module's
+/// `cbuff.len() == csize` invariant.
+fn blank_ct_buffer() -> CtBufferT {
+    CtBufferT {
+        cbuff: Vec::new(),
+        csize: 0,
+        wbuff: Vec::new(),
+        wsize: 0,
+    }
 }
 
 // [spec:libedit:def:el.el-init-fd-fn]
@@ -306,7 +871,13 @@ pub fn el_init_fd(
     fdout: i32,
     fderr: i32,
 ) -> Option<Box<EditLine>> {
-    todo!()
+    // The whole body, one tail call. The trailing 0 is the initial `el_flags`
+    // word: every flag clear — signal handling off, tty assumed usable,
+    // editing enabled, buffered, wide history, tty reset on setup enabled,
+    // `FIXIO` off. The readline layer is the only caller that wants anything
+    // else (`NO_RESET`), which is the entire reason `el_init_internal` exists
+    // separately.
+    el_init_internal(prog, fin, fout, ferr, fdin, fdout, fderr, 0)
 }
 
 // [spec:libedit:def:el.el-end-fn]
@@ -325,7 +896,83 @@ pub fn el_init_fd(
 /// through `EL_PROMPT`, `EL_RESIZE`, `EL_ALIAS_TEXT`, `EL_HIST` and
 /// `EL_GETCFN` are dropped without notification.
 pub fn el_end(el: Option<Box<EditLine>>) {
-    todo!()
+    // Step 1. The one NULL-tolerant entry point in the file.
+    let Some(mut el) = el else {
+        return;
+    };
+
+    // Step 2. First, so the terminal modes are restored while the tty
+    // subsystem is still live.
+    el_reset(&mut el);
+
+    // Step 3, in exactly this order. ERR-core-api-24, disposition "reproduce
+    // the order explicitly": this is NOT the reverse of construction. It is
+    // the same *forward* order as `el_init_internal`'s step 6, with one
+    // exception — `read_end` runs sixth here and `read_init` runs eleventh
+    // there. A `Drop` impl over fields declared in init order would run the
+    // opposite order silently, which is why the sequence is spelled out as
+    // calls and why the object is only dropped afterwards. Nothing in the
+    // current subsystem set depends on it (every `*_end` touches only its own
+    // fields and all but `read_end` are idempotent), but a future subsystem
+    // interaction would differ.
+    // 1. Also frees the display buffers, which is why `el_display` and
+    //    `el_vdisplay` are not released separately below.
+    terminal_end(&mut el);
+    // 2.
+    keymacro_end(&mut el);
+    // 3. Also frees the name and description of every `EL_ADDFN` function.
+    map_end(&mut el);
+    // 4. Skipped entirely when `NO_TTY` is set — one of the three ways the
+    //    original terminal modes can go unrestored, the other two being
+    //    `tty_end`'s own early exits on `EDIT_DISABLED` and on
+    //    `t_initialized == 0`. A `TERM=emacs` EditLine hits the last of those.
+    if el.el_flags & NO_TTY == 0 {
+        tty_end(&mut el, TCSAFLUSH);
+    }
+    // 5.
+    ch_end(&mut el);
+    // 6. Sixth, not eleventh; see above. Called unconditionally, as in the C:
+    //    ERR-core-api-03 puts the "tolerate an uninitialised read subsystem"
+    //    obligation on `read_end`, and `el_read`'s `Option` is where that
+    //    tolerance is expressed (`None` before `read_init` and after
+    //    `read_end`). The C's unguarded dereference is what makes the
+    //    constructor's failure path fault; guarding it here instead would
+    //    just hide the requirement one level up.
+    read_end(&mut el);
+    // 7.
+    search_end(&mut el);
+    // 8.
+    hist_end(&mut el);
+    // 9. A no-op.
+    prompt_end(&mut el);
+    // 10.
+    sig_end(&mut el);
+    // 11.
+    literal_end(&mut el);
+
+    // Step 4. The C then frees `el_prog`, the six conversion buffers and the
+    // object itself; dropping the box does all of it, in one go. Ownership,
+    // explicitly, and all of it is what dropping already gives:
+    // - `el_infile`/`el_outfile`/`el_errfile` are NOT closed and
+    //   `el_infd`/`el_outfd`/`el_errfd` are NOT closed; they were borrowed at
+    //   construction and go back to the caller untouched. Both are raw
+    //   values here, so dropping them does nothing, which is the point.
+    // - `el_data` is neither freed nor inspected, and the `el_getenv` hook is
+    //   neither called nor freed.
+    // - Callbacks installed through `EL_PROMPT`, `EL_RESIZE`,
+    //   `EL_ALIAS_TEXT`, `EL_HIST` and `EL_GETCFN`, and their opaque
+    //   arguments, are dropped without notification: there is no destructor
+    //   callback. The history object behind `EL_HIST` belongs to the caller
+    //   and must be destroyed separately with `history_end`.
+    // ERR-core-api-13, disposition `fix`: the C frees `el_lgcyconv.cbuff` and
+    // leaves `el_lgcylinfo`'s three `char *` members dangling into it for the
+    // instant before the object goes away. Nothing here reads them and they
+    // go out of existence with the object, so there is nothing to dangle.
+    //
+    // Not idempotent and not re-entrant in the C — the object is freed and
+    // there is no "already ended" marker — which is what taking the box by
+    // value expresses: a second `el_end` on the same object cannot be
+    // written.
 }
 
 // [spec:libedit:def:el.el-reset-fn]
@@ -338,7 +985,18 @@ pub fn el_end(el: Option<Box<EditLine>>) {
 /// for the line about to be discarded. Both results are discarded, so a
 /// failure to restore the modes is silent.
 pub fn el_reset(el: &mut EditLine) {
-    todo!()
+    // Step 1. Restore the saved `EX_IO` termios with `TCSADRAIN`; a no-op if
+    // the terminal is already in `EX_IO` mode or if `EDIT_DISABLED` is set.
+    // The result is discarded, so a failure to restore is silent.
+    //
+    // Order is load-bearing: this must run *before* the editor state is
+    // discarded, since it is the last chance to drain output written for the
+    // line being abandoned.
+    tty_cookedmode(el);
+
+    // Step 2. The C carries an `XXX: Do we want that?` comment here; the
+    // answer is frozen either way, because the behaviour crosses the ABI.
+    ch_reset(el);
 }
 
 // [spec:libedit:def:el.el-source-fn]
@@ -358,7 +1016,153 @@ pub fn el_reset(el: &mut EditLine) {
 /// aborts the rest of the file), or any of the early exits. There is no way
 /// for the caller to tell "could not open" from "a line failed".
 pub fn el_source(el: &mut EditLine, fname: Option<&Path>) -> i32 {
-    todo!()
+    // Steps 1 to 4: resolve the file name.
+    //
+    // The C carries a separate `path` pointer alongside `fname` purely so it
+    // can `el_free` the constructed one on the way out; the owned `Vec` below
+    // is both, and drops itself on every exit. ERR-core-api-22 is the
+    // disagreement about whether the step-5 early return leaks that buffer —
+    // `sem:el.el-source-fn` is right that it cannot, because that return is
+    // only reachable while `path` is still NULL (a constructed path always
+    // ends in `.editrc` and so is never empty). Either way there is nothing
+    // to leak here.
+    //
+    // ERR-core-api-33/35: the C initialises `fp = NULL` and then guards its
+    // only `fopen` with a redundant `if (fp == NULL)`. That is the vestige of
+    // a removed `./.editrc` attempt, and it is why `histedit.h` still claims
+    // this function reads "$PWD/.editrc or $HOME/.editrc". It does not: there
+    // is no `$PWD` lookup and no attempt at `./.editrc`. Dead code, not
+    // ported.
+    let name = match fname {
+        // Step 1. Used exactly as given: no `~` expansion, no search path, no
+        // directory prefix.
+        Some(f) => f.as_os_str().as_bytes().to_vec(),
+        None => match el_getenv(el, "EDITRC") {
+            // Step 2, again verbatim. The default hook is `secure_getenv`, so
+            // a set-uid/set-gid process gets `None` here and never honours
+            // `EDITRC`.
+            Some(editrc) => editrc.into_vec(),
+            None => {
+                // Step 3.
+                let Some(home) = el_getenv(el, "HOME") else {
+                    return -1;
+                };
+                // Step 4. C: a `strlen(HOME) + sizeof("/.editrc")` buffer and
+                // `snprintf(path, plen, "%s%s", ptr, elpath + (*ptr == '\0'))`
+                // — exactly enough room, so nothing truncates. Skipping the
+                // leading `/` when `HOME` is empty produces the *relative*
+                // path `.editrc`, which `fopen` resolves against the current
+                // working directory; that is the only way this function ever
+                // looks at the current directory. The C's allocation-failure
+                // -1 has no counterpart (Rust aborts instead).
+                let mut path = home.into_vec();
+                let suffix: &[u8] = if path.is_empty() {
+                    b".editrc"
+                } else {
+                    b"/.editrc"
+                };
+                path.extend_from_slice(suffix);
+                path
+            }
+        },
+    };
+
+    // A C file name ends at its first NUL, so anything past one is invisible
+    // to `fopen`; trimming here is what makes the step-5 test below the C's
+    // `fname[0] == '\0'` rather than merely "empty".
+    let end = name.iter().position(|&b| b == 0).unwrap_or(name.len());
+    let name = &name[..end];
+
+    // Step 5. Only ever rejects a caller-supplied "" or an `EDITRC` set to
+    // "": a constructed path is never empty.
+    if name.is_empty() {
+        return -1;
+    }
+
+    // Step 6. `errno` is left as the C's `fopen` set it but is not reported,
+    // and there is no way for the caller to tell this apart from a line that
+    // failed to parse — both are -1 (ERR-core-api-21).
+    let Ok(file) = File::open(OsStr::from_bytes(name)) else {
+        return -1;
+    };
+    let mut reader = BufReader::new(file);
+
+    // `error` is assigned by every line that reaches dispatch and is
+    // therefore the result of the LAST such line, not an accumulation
+    // (ERR-core-api-21, disposition `reproduce`). It stays 0 when no line
+    // ever gets that far.
+    let mut error = 0;
+
+    // The C's `getline` with an initially NULL buffer: one heap buffer
+    // allocated on the first line, reused and grown for the rest. `Ok(0)` is
+    // its -1 at end of file; a read error ends the loop the same way, as the
+    // C's does.
+    let mut line: Vec<u8> = Vec::new();
+    loop {
+        line.clear();
+        match reader.read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+
+        // a. Only the first byte is tested, so a truly empty line is skipped
+        //    but a line of spaces is not, and neither is a CRLF file's
+        //    "\r\n".
+        if line[0] == b'\n' {
+            continue;
+        }
+        // b. A final line with no trailing newline keeps all its bytes. No
+        //    other trailing whitespace is stripped, and `'\r'` is not.
+        if line.last() == Some(&b'\n') {
+            line.pop();
+        }
+
+        // c. An invalid multibyte sequence or an allocation failure skips the
+        //    line silently, with no diagnostic and no effect on the return
+        //    value. An embedded NUL truncates the line as far as decoding is
+        //    concerned; the remainder is never seen.
+        //
+        //    The C hands `parse_line` an interior pointer into `el_scratch`;
+        //    that cannot be done here, because `parse_line` needs the
+        //    `EditLine` mutably and the scratch buffer is part of it. The copy
+        //    is the only departure, and it costs nothing observable: the
+        //    decoded line still lands in `el_scratch`, so this call still
+        //    invalidates anything else holding a pointer previously returned
+        //    from `ct_decode_string` on the same `EditLine`.
+        let Some(decoded) = ct_decode_string(Some(&line), &mut el.el_scratch) else {
+            continue;
+        };
+        let decoded = decoded.to_vec();
+
+        // d. Advance past leading `iswspace`, stopping at the terminating
+        //    NUL — which is the end of the slice here, since
+        //    `ct_decode_string` returns the content without its terminator.
+        let cs = locale::charset();
+        let mut dptr = 0;
+        while dptr < decoded.len() && locale::iswspace(cs, decoded[dptr]) {
+            dptr += 1;
+        }
+
+        // e. Comment.
+        if decoded.get(dptr) == Some(&u32::from(b'#')) {
+            continue;
+        }
+
+        // f. ERR-core-api-20, disposition `reproduce`: a whitespace-only line
+        //    arrives here as an empty wide string, tokenises to zero words,
+        //    and `el_wparse` rejects that with -1 — which breaks the loop, so
+        //    every later line in the file is never read and `el_source`
+        //    returns -1. Only a literally empty line is safe. The same
+        //    applies to a typo part-way through an `.editrc`.
+        error = parse_line(el, &decoded[dptr..]);
+        if error == -1 {
+            break;
+        }
+    }
+
+    // Step 7. The C frees the `getline` buffer and the path buffer and
+    // `fclose`s the file with the result discarded; all three drop here.
+    error
 }
 
 // [spec:libedit:def:el.el-resize-fn]
@@ -376,7 +1180,51 @@ pub fn el_source(el: &mut EditLine, fname: Option<&Path>) -> i32 {
 /// the mask calls, and `terminal_change_size`'s -1 — is discarded, so an
 /// out-of-memory during a resize is silent.
 pub fn el_resize(el: &mut EditLine) {
-    todo!()
+    // Steps 1 and 3, the `sigprocmask(SIG_BLOCK)` / `sigprocmask(SIG_SETMASK)`
+    // pair around the body, have no counterpart here, and this is the one
+    // place in the function where the port departs from the rule.
+    //
+    // Two reasons, both structural:
+    //  - There is no signal-mask primitive in this crate to call.
+    //    `plan/decisions/no-c-ffi.md` bars libc, and `sig.rs`'s own masking
+    //    lives in a private `plat` module that is itself still a stub;
+    //    re-declaring a second copy of `sigset_t` here to hold a call that
+    //    does nothing would buy nothing and split the platform layer in two.
+    //  - The critical section it protects cannot be entered twice.
+    //    `sem:sig.sig-handler-fn`'s translation makes the handler body
+    //    deferred work run from the read loop on the editing thread — that is
+    //    what the `&mut EditLine` in `sig_handler`'s signature commits to —
+    //    and `sig_handler` reaches this function through exactly that path.
+    //    So the thing the mask exists to prevent, libedit's own `SIGWINCH`
+    //    handler re-entering the terminal layer while the display buffers are
+    //    being reallocated underneath it, is ruled out by the exclusive
+    //    borrow rather than by the mask.
+    //
+    // What is lost is only the ordering the mask bought against a *pending*
+    // signal, and the rule already notes that blocking never discarded one: a
+    // `SIGWINCH` arriving during the section was delivered as soon as step 3
+    // unblocked it. ERR-terminal-55 (libedit using `sigprocmask` rather than
+    // `pthread_sigmask`, unspecified in a multi-threaded process) is moot for
+    // the same reason.
+
+    // Step 2.
+    let mut lins = 0;
+    let mut cols = 0;
+    // `terminal_get_size` seeds both from the currently loaded capability
+    // values and then overrides them from `TIOCGWINSZ` on `el_infd` — the
+    // *input* descriptor, not the output one `tty_setup` uses for its
+    // `isatty` check (ERR-terminal-35) — ignoring any field the kernel
+    // reports as zero and ignoring `ioctl` failure entirely. It returns
+    // non-zero exactly when at least one of the two differs from the stored
+    // capability value, so the rebuild below runs only on a real change.
+    if terminal_get_size(el, &mut lins, &mut cols) != 0 {
+        // ERR-core-api-23, disposition "reproduce the silent return": the -1
+        // that `terminal_change_size` returns when the buffer rebuild fails
+        // is discarded, so an out-of-memory during a resize is silent. Not
+        // leaving the display state inconsistent afterwards is that
+        // function's obligation, not this one's.
+        terminal_change_size(el, lins, cols);
+    }
 }
 
 // [spec:libedit:def:el.el-beep-fn]
@@ -387,7 +1235,11 @@ pub fn el_resize(el: &mut EditLine) {
 /// added logic. Reports no errors, does not flush, and does not touch the
 /// cursor or any editing state.
 pub fn el_beep(el: &mut EditLine) {
-    todo!()
+    // The whole body. `terminal_beep` emits the terminal's audible-bell
+    // capability if the loaded description has a non-empty one, and otherwise
+    // writes a literal ASCII BEL (0x07). Nothing is flushed, so the bell may
+    // not reach the terminal until the next refresh.
+    terminal_beep(el);
 }
 
 // [spec:libedit:def:el.el-editmode-fn]
@@ -409,5 +1261,81 @@ pub fn el_beep(el: &mut EditLine) {
 /// `&[u32]` per the crate's `wchar_t` convention, compared for exact
 /// equality — case-sensitive, no abbreviations.
 pub(crate) fn el_editmode(el: &mut EditLine, argv: &[&[u32]]) -> i32 {
-    todo!()
+    // Step 1. Exactly one operand is required: bare `edit` and
+    // `edit on somethingelse` are both rejected, with no message and no state
+    // change. The C's three tests (`argv` NULL, `argc != 2`, `argv[1]` NULL)
+    // all produce this same -1, so the slice length is the whole test.
+    if argv.len() != 2 {
+        return -1;
+    }
+    let how = argv[1];
+
+    // Step 2. Exact wide string equality, case-sensitive, no abbreviations.
+    if wcs_eq_ascii(how, "on") {
+        // The order is required, not incidental: `tty_rawmode` returns 0
+        // immediately while `EDIT_DISABLED` is set, so the flag has to come
+        // down before the mode change is attempted.
+        el.el_flags &= !EDIT_DISABLED;
+        // ERR-core-api-19, disposition `reproduce`: the result is discarded,
+        // so a failure to change the terminal mode still reports success with
+        // `el_flags` already updated, leaving the flag and the actual
+        // terminal state out of step.
+        tty_rawmode(el);
+    } else if wcs_eq_ascii(how, "off") {
+        // Step 3, the mirror of the same constraint: `tty_cookedmode` also
+        // bails out while `EDIT_DISABLED` is set, so the terminal must be
+        // restored before the flag goes up. Result discarded as above.
+        tty_cookedmode(el);
+        el.el_flags |= EDIT_DISABLED;
+    } else {
+        // Step 4, the only case that produces output. C:
+        // `fprintf(el->el_errfile, "edit: Bad value `%ls'.\n", how)`, with the
+        // result discarded.
+        //
+        // `%ls` converts through the current `LC_CTYPE`, which is what
+        // `ct_encode_string` does. A local conversion buffer, not one of the
+        // `EditLine`'s: the C's `fprintf` uses stdio's own internal state and
+        // does not disturb `el_scratch` or `el_visual`, and borrowing one of
+        // those would invalidate pointers the C leaves alone.
+        let mut conv = blank_ct_buffer();
+        let mut msg = b"edit: Bad value `".to_vec();
+        if let Some(encoded) = ct_encode_string(Some(how), &mut conv) {
+            msg.extend_from_slice(encoded);
+        }
+        msg.extend_from_slice(b"'.\n");
+        write_errfile(el, &msg);
+        return -1;
+    }
+
+    // Step 5.
+    0
+}
+
+/// C: `wcscmp(s, L"…") == 0` against an ASCII literal.
+///
+/// The C's `argv` entries are NUL-terminated; the tokenizer hands the port
+/// slices that may or may not carry the terminator
+/// (`sem:tokenizer.fun-tok-finish-fn`), so the comparison stops at the first
+/// NUL exactly as `wcscmp` would.
+fn wcs_eq_ascii(s: &[u32], lit: &str) -> bool {
+    let end = s.iter().position(|&c| c == 0).unwrap_or(s.len());
+    let s = &s[..end];
+    s.len() == lit.len() && s.iter().zip(lit.bytes()).all(|(&c, b)| c == u32::from(b))
+}
+
+/// C: `fprintf(el->el_errfile, …)` for an already-formatted byte string.
+///
+/// The stream is a caller-owned `FILE *` the port cannot write through, so
+/// this goes to the matching descriptor, which the `EditLine` carries for
+/// exactly this reason (`def:el.editline`). Errors are discarded, as the C
+/// discards `fprintf`'s result. Same shape as `hist.rs`'s `write_outfile`.
+fn write_errfile(el: &EditLine, bytes: &[u8]) {
+    if el.el_errfd < 0 {
+        return;
+    }
+    // SAFETY: `el_errfd` is the application's descriptor and stays open for
+    // the life of the `EditLine`; `ManuallyDrop` is what keeps this borrow
+    // from closing it, which libedit never does.
+    let mut out = ManuallyDrop::new(unsafe { File::from_raw_fd(el.el_errfd) });
+    let _ = out.write_all(bytes);
 }
