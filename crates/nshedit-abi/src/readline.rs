@@ -2984,9 +2984,12 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
         // `FILE *`.
         //
         // The route out is `nshedit::history::history_save_fd`, which exists
-        // for exactly this case, and it needs the narrow history handle to
-        // be a real one — i.e. it is blocked on the narrow instantiation,
-        // which `history_va` below already aborts on.
+        // for exactly this case and now has a narrow handle to be given. Not
+        // taken here: it is `history_save_fp` with the caller's stream
+        // replaced by a descriptor, and switching to it changes what
+        // `append_history` writes and when, which is a behaviour change this
+        // node did not carry. Until then a NULL cookie still fails the cookie
+        // write and surfaces as the errno below.
         let cookie: CFile = ptr::null_mut();
         // As `write_history`: sampled, not cleared.
         let mark = crate::errno::mark();

@@ -10,11 +10,21 @@
 //!
 //! The header also forward-declares five handles as incomplete types. Rust
 //! has no incomplete types, so each is named here and resolved to the module
-//! that defines its body in C: `EditLine`, `HistoryW` and `TokenizerW` are
-//! re-exports, while the two narrow handles — `History` and `Tokenizer`,
-//! which the C produces by recompiling `history.c` and `tokenizer.c` with
-//! `Char = char` — are left as opaque placeholders, because those narrow
-//! instantiations are not separate symbols in the port manifest.
+//! that defines its body in C. `EditLine` is a re-export. The other four come
+//! in wide/narrow pairs — `HistoryW`/`History` and `TokenizerW`/`Tokenizer` —
+//! which the C produces by compiling `history.c` and `tokenizer.c` twice, once
+//! with `Char = wchar_t` and once with `Char = char`. The port compiles the
+//! same source twice too, by making it generic over the character type, so all
+//! four are re-exports naming the two instantiations; see
+//! [`crate::history::HistChar`].
+//!
+//! The header's four *complete* character-typed structs come in the same two
+//! pairs: `HistEvent`/`HistEventW` and `LineInfo`/`LineInfoW`. The C spells
+//! each pair as two struct definitions with one member's type changed, so each
+//! keeps its own `def` rule here, but both members of a pair are the same
+//! generic body at two arguments. They remain distinct Rust types, which is
+//! what makes "mixing the wide and narrow forms is undefined behaviour" a
+//! compile error rather than a convention.
 
 use core::ffi::{c_char, c_int};
 
@@ -95,6 +105,30 @@ pub use crate::history::HistoryW;
 /// Its body is `tokenizer.c`'s `struct TYPE(tokenizer)`, which the C defines
 /// without a rule of its own; see [`crate::tokenizer::TokenizerW`].
 pub use crate::tokenizer::TokenizerW;
+// [spec:libedit:def:histedit.history]
+/// C: `typedef struct history History;` — the narrow history handle. Its body
+/// is `historyn.c`'s `struct TYPE(history)`, i.e. `history.c` compiled with
+/// `Char = char`; see [`crate::history::History`].
+pub use crate::history::History;
+// [spec:libedit:def:histedit.tokenizer]
+/// C: `typedef struct tokenizer Tokenizer;` — the narrow tokenizer handle.
+/// Its body is `tokenizern.c`'s `struct TYPE(tokenizer)`, i.e. `tokenizer.c`
+/// compiled with `Char = char`; see [`crate::tokenizer::Tokenizer`].
+pub use crate::tokenizer::Tokenizer;
+
+/// C: `struct lineinfo` and `struct lineinfow`, which differ only in their
+/// three members' character type.
+///
+/// Not itself a C declaration — the header writes the struct out twice — but
+/// the two it *is* are [`LineInfo`] and [`LineInfoW`], which carry the rules.
+/// Generic so that `tokenizer.c`, which the C compiles twice against one of
+/// them each time, can likewise be one source here.
+#[repr(C)]
+pub struct LineInfoGen<C> {
+    pub buffer: *const C,
+    pub cursor: *const C,
+    pub lastchar: *const C,
+}
 
 // [spec:libedit:def:histedit.lineinfo]
 // [spec:libedit:def:histedit.line-info]
@@ -105,22 +139,18 @@ pub use crate::tokenizer::TokenizerW;
 /// Embedded in `EditLine` as `el_lgcylinfo` and returned by `el_line`. The
 /// three pointers are into `el_lgcyconv` and are invalidated by the next
 /// narrow call; see `sem:eln.el-line-fn`.
-#[repr(C)]
-pub struct LineInfo {
-    pub buffer: *const c_char,
-    pub cursor: *const c_char,
-    pub lastchar: *const c_char,
-}
+pub type LineInfo = LineInfoGen<c_char>;
 
-// [spec:libedit:def:histedit.history]
-/// C: `typedef struct history History;` — the opaque narrow history handle.
+/// C: `struct histevent` and `struct histeventW`, which differ only in
+/// `str`'s character type.
 ///
-/// `struct history` is `history.c` compiled with `Char = char`
-/// (`historyn.c`). That narrow instantiation is not a separate symbol in the
-/// port manifest, so its members are left to the history translation; this
-/// declaration exists so the header's incomplete type has a name.
-pub struct History {
-    _opaque: (),
+/// As [`LineInfoGen`]: the C declares the two separately, and the two are
+/// [`HistEvent`] and [`HistEventW`], which carry the rules. Generic so that
+/// `history.c` can be one source across its two compilations.
+#[repr(C)]
+pub struct HistEventGen<C> {
+    pub num: i32,
+    pub str: *const C,
 }
 
 // [spec:libedit:def:histedit.hist-event]
@@ -129,23 +159,7 @@ pub struct History {
 /// `str` is borrowed from the history entry that produced it and is
 /// invalidated when that entry is deleted or replaced; see
 /// `sem:histedit.history-fn`.
-#[repr(C)]
-pub struct HistEvent {
-    pub num: i32,
-    pub str: *const c_char,
-}
-
-// [spec:libedit:def:histedit.tokenizer]
-/// C: `typedef struct tokenizer Tokenizer;` — the opaque narrow tokenizer
-/// handle.
-///
-/// `struct tokenizer` is `tokenizer.c` compiled with `Char = char`
-/// (`tokenizern.c`), which the port manifest does not carry separately. The
-/// wide body is [`crate::tokenizer::TokenizerW`]; the narrow one is left to
-/// the tokenizer translation.
-pub struct Tokenizer {
-    _opaque: (),
-}
+pub type HistEvent = HistEventGen<c_char>;
 
 // [spec:libedit:def:histedit.lineinfow]
 // [spec:libedit:def:histedit.line-info-w]
@@ -158,12 +172,7 @@ pub struct Tokenizer {
 /// buffer grows. `sem:el.el-wline-fn` requires the port to
 /// produce this as a genuine borrowed view rather than a transmute, which is
 /// why `def:el.el-line-t`'s field order is frozen.
-#[repr(C)]
-pub struct LineInfoW {
-    pub buffer: *const u32,
-    pub cursor: *const u32,
-    pub lastchar: *const u32,
-}
+pub type LineInfoW = LineInfoGen<u32>;
 
 // [spec:libedit:def:histedit.el-rfunc-t-edit-line-wchar-t]
 /// C: `typedef int (*el_rfunc_t)(EditLine *, wchar_t *);`
@@ -185,8 +194,4 @@ pub type ElRfuncT = unsafe extern "C" fn(*mut EditLine, *mut u32) -> c_int;
 /// Embedded in `el_history_t` as the event cookie, and filled in by every
 /// `history_w` operation. `str` is borrowed from the history entry that owns
 /// it and is invalidated when that entry is deleted or replaced.
-#[repr(C)]
-pub struct HistEventW {
-    pub num: i32,
-    pub str: *const u32,
-}
+pub type HistEventW = HistEventGen<u32>;

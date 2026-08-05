@@ -1,17 +1,25 @@
 //! Ported from `src/tokenizer.c`; rules live in
 //! `docs/spec/port/src/tokenizer.md`.
 //!
-//! The C compiles this file twice — wide here, narrow via `tokenizern.c`.
-//! Only the wide instantiation carries rules in the port manifest; the
-//! narrow handle is [`crate::histedit::Tokenizer`].
+//! The C compiles this file twice — wide as itself, narrow via
+//! `tokenizern.c`, whose entire content is `#define NARROWCHAR` followed by
+//! `#include "tokenizer.c"`. The port does the same: everything below is
+//! generic over [`TokChar`], and the two instantiations are `C = u32` (the
+//! wide build's `wchar_t`) and `C = c_char` (the narrow build's `char`),
+//! producing the distinct handles [`TokenizerW`] and [`Tokenizer`].
 //!
-//! Function names are the wide instantiation's: `FUN(tok,init)` expands to
-//! `tok_winit` here, matching `TYPE(Tokenizer)` being [`TokenizerW`].
+//! [`TokChar`] is the port's `#ifdef NARROWCHAR` block, and unlike
+//! `history.c`'s it is pure substitution: `Char`, the `STR()` literals and
+//! `Strchr`. Nothing in the tokenizer converts between encodings or touches
+//! the locale, so there is no narrow/wide behavioural fork here at all — the
+//! narrow tokenizer splits bytes exactly as the wide one splits characters.
 
-use crate::histedit::LineInfoW;
+use core::ffi::c_char;
+
+use crate::histedit::{LineInfo, LineInfoGen, LineInfoW};
 
 /// C: `#define TOK_KEEP 1` — "this word exists even though it produced no
-/// elements". Set by `'`, `"` and `\`, cleared only by [`tok_wfinish`].
+/// elements". Set by `'`, `"` and `\`, cleared only by [`tok_finish_gen`].
 const TOK_KEEP: i32 = 1;
 
 /// C: `#define TOK_EAT 2` — the last thing consumed was a backslash-newline
@@ -27,11 +35,13 @@ const WINCR: usize = 20;
 const AINCR: usize = 10;
 
 /// C: `#define IFS STR("\t \n")` — the default separator set, used when the
-/// caller passes NULL to [`tok_winit`]. Held without a terminator: the C's
+/// caller passes NULL to [`tok_init_gen`]. Held without a terminator: the C's
 /// `Strchr` would also match the terminating NUL, but a NUL element never
 /// reaches the separator test (it has its own switch case), so the two are
 /// equivalent.
-const IFS: [u32; 3] = [0x09, 0x20, 0x0a];
+static IFS_W: [u32; 3] = [0x09, 0x20, 0x0a];
+/// `IFS_W`'s narrow twin: C `"\t \n"` where the wide build has `L"\t \n"`.
+static IFS_N: [c_char; 3] = [0x09, 0x20, 0x0a];
 
 /// The five elements the dispatch matches, as the ASCII code points the C
 /// compares against in both instantiations — `'`, `"`, `\`, newline, NUL.
@@ -41,6 +51,73 @@ const C_DQUOTE: u32 = 0x22;
 const C_BSLASH: u32 = 0x5c;
 const C_NEWLINE: u32 = 0x0a;
 const C_NUL: u32 = 0x00;
+
+/// The C's `Char` — `wchar_t` in `tokenizer.c`, `char` in `tokenizern.c` —
+/// and the three macros whose expansion differs between them.
+///
+/// Not a ported C type: it is `tokenizer.c`'s `#ifdef NARROWCHAR` table, made
+/// a trait so the one source below can be instantiated twice. All of it is
+/// substitution — there is no analogue here of `history.c`'s
+/// `ct_decode_string`/`ct_encode_string` fork.
+///
+/// `Strchr` does not appear: the C's `Strchr(tok->ifs, *ptr) != NULL` is
+/// `ifs.contains(&c)` over `PartialEq`, element for element in either build.
+pub trait TokChar: Copy + PartialEq + 'static {
+    /// C: `'\0'` as a `Char`.
+    const NUL: Self;
+    /// C: `'\\'` as a `Char`. The one element the state machine emits without
+    /// having read it, so the only one that needs a name on this side.
+    const BSLASH: Self;
+
+    /// C: `IFS`, i.e. `STR("\t \n")`.
+    fn default_ifs() -> &'static [Self];
+
+    /// The value the C's `switch (*ptr)` compares against its five `case`
+    /// labels.
+    ///
+    /// In the wide build that is the `wchar_t` itself. In the narrow build the
+    /// C promotes a possibly-signed `char` to `int`, so byte 0x80 arrives as
+    /// -128; this widens without sign instead. The two agree because the five
+    /// labels are all ASCII and neither route can map a byte at or above 0x80
+    /// onto one of them.
+    fn code(self) -> u32;
+}
+
+/// `Char = wchar_t`: `tokenizer.c` compiled as itself.
+impl TokChar for u32 {
+    const NUL: Self = C_NUL;
+    const BSLASH: Self = C_BSLASH;
+
+    fn default_ifs() -> &'static [Self] {
+        &IFS_W
+    }
+
+    fn code(self) -> u32 {
+        self
+    }
+}
+
+/// `Char = char`: `tokenizern.c`.
+impl TokChar for c_char {
+    const NUL: Self = C_NUL as c_char;
+    const BSLASH: Self = C_BSLASH as c_char;
+
+    fn default_ifs() -> &'static [Self] {
+        &IFS_N
+    }
+
+    fn code(self) -> u32 {
+        self as u8 as u32
+    }
+}
+
+/// C: `TYPE(Tokenizer)` with `Char = wchar_t` — `tokenizerW`, the wide
+/// handle.
+pub type TokenizerW = TokenizerGen<u32>;
+
+/// C: `TYPE(Tokenizer)` with `Char = char` — `tokenizer`, the narrow handle
+/// `tokenizern.c` produces and `crate::histedit::Tokenizer` names.
+pub type Tokenizer = TokenizerGen<c_char>;
 
 // [spec:libedit:def:tokenizer.quote-t]
 /// The quoting state machine. A genuine C `enum`, so a Rust enum.
@@ -57,16 +134,17 @@ pub enum QuoteT {
     QDoubleone,
 }
 
-/// C: `struct TYPE(tokenizer)` — the wide tokenizer, named `TokenizerW` by
-/// `def:histedit.tokenizer-w`. The C defines this body with
-/// no rule of its own, which is why there is no annotation here.
+/// C: `struct TYPE(tokenizer)`, named `TokenizerW` by
+/// `def:histedit.tokenizer-w` and `Tokenizer` by `def:histedit.tokenizer`.
+/// The C defines this body with no rule of its own, which is why there is no
+/// annotation here.
 ///
 /// `wptr`, `wmax`, `wstart` and every `argv` slot are pointers into
 /// `wspace` in the C, and `tok_line` rebases them after each `realloc`, so
 /// they are offsets here.
-pub struct TokenizerW {
+pub struct TokenizerGen<C> {
     /// C: `Char *ifs` — in-field separators, owned. Defaults to `L"\t \n"`.
-    pub ifs: Vec<u32>,
+    pub ifs: Vec<C>,
     /// Current number of arguments.
     pub argc: usize,
     /// Maximum number of arguments (the `argv` capacity, initially 10).
@@ -82,7 +160,7 @@ pub struct TokenizerW {
     /// `wspace`.
     pub wstart: usize,
     /// C: `Char *wspace` — the word buffer, owned. Starts at 20 elements.
-    pub wspace: Vec<u32>,
+    pub wspace: Vec<C>,
     /// Quoting state.
     pub quote: QuoteT,
     /// C: `int flags` — `TOK_KEEP` (1) and `TOK_EAT` (2). Kept an integer
@@ -93,18 +171,18 @@ pub struct TokenizerW {
 // [spec:libedit:def:tokenizer.fun-tok-finish-fn]
 // [spec:libedit:sem:tokenizer.fun-tok-finish-fn]
 /// C: `static void FUN(tok,finish)(TYPE(Tokenizer) *tok)`.
-fn tok_wfinish(tok: &mut TokenizerW) {
+fn tok_finish_gen<C: TokChar>(tok: &mut TokenizerGen<C>) {
     // Terminate the pending word in place, without advancing `wptr`. The
     // caller's growth slack guarantees this slot exists; there is no bounds
     // check in the C and none is needed here.
-    tok.wspace[tok.wptr] = 0;
+    tok.wspace[tok.wptr] = C::NUL;
     if (tok.flags & TOK_KEEP) != 0 || tok.wptr != tok.wstart {
         // Publish. `argv` slots are offsets into `wspace`, so the C's
         // `tok->argv[tok->argc++] = tok->wstart` is the offset itself.
         tok.argv[tok.argc] = Some(tok.wstart);
         tok.argc += 1;
         // `argv[argc] = NULL` is written only on this path, which is what
-        // ERR-input-38 turns into an observable defect after `tok_wreset`.
+        // ERR-input-38 turns into an observable defect after `tok_reset_gen`.
         tok.argv[tok.argc] = None;
         tok.wptr += 1;
         tok.wstart = tok.wptr;
@@ -120,19 +198,19 @@ fn tok_wfinish(tok: &mut TokenizerW) {
 ///
 /// `None` for `ifs` is the C's NULL, which selects the default `"\t \n"`;
 /// `None` for the return is an allocation failure. The `Box` is the C's
-/// `malloc`ed handle, which [`tok_wend`] frees.
-pub fn tok_winit(ifs: Option<&[u32]>) -> Option<Box<TokenizerW>> {
+/// `malloc`ed handle, which [`tok_end_gen`] frees.
+pub fn tok_init_gen<C: TokChar>(ifs: Option<&[C]>) -> Option<Box<TokenizerGen<C>>> {
     // The C's four allocations each abort to a NULL return, freeing whatever
     // it had already taken. Rust aborts on allocation failure rather than
     // reporting it, so `None` is unreachable here; the return type keeps the
     // C's contract because callers are specified to check it (and
     // ERR-input-13 is a caller that does not).
-    Some(Box::new(TokenizerW {
+    Some(Box::new(TokenizerGen {
         // The C copies the caller's string with `wcsdup`, so it is not
         // retained. A NUL inside the slice would truncate that copy; it
         // cannot be observed, since a NUL element never reaches the
         // separator test, so the slice is copied whole.
-        ifs: ifs.unwrap_or(&IFS).to_vec(),
+        ifs: ifs.unwrap_or(C::default_ifs()).to_vec(),
         argc: 0,
         amax: AINCR,
         // C: `argv[0] = NULL` only. The remaining slots are uninitialised
@@ -143,7 +221,7 @@ pub fn tok_winit(ifs: Option<&[u32]>) -> Option<Box<TokenizerW>> {
         wstart: 0,
         // C leaves the word buffer's contents uninitialised. Every element
         // is written before it is read, so zeroing is unobservable.
-        wspace: vec![0; WINCR],
+        wspace: vec![C::NUL; WINCR],
         quote: QuoteT::QNone,
         flags: 0,
     }))
@@ -152,7 +230,7 @@ pub fn tok_winit(ifs: Option<&[u32]>) -> Option<Box<TokenizerW>> {
 // [spec:libedit:def:tokenizer.fun-tok-reset-fn]
 // [spec:libedit:sem:tokenizer.fun-tok-reset-fn]
 /// C: `void FUN(tok,reset)(TYPE(Tokenizer) *tok)`.
-pub fn tok_wreset(tok: &mut TokenizerW) {
+pub fn tok_reset_gen<C: TokChar>(tok: &mut TokenizerGen<C>) {
     tok.argc = 0;
     tok.wstart = 0;
     tok.wptr = 0;
@@ -160,16 +238,16 @@ pub fn tok_wreset(tok: &mut TokenizerW) {
     tok.quote = QuoteT::QNone;
     // Exactly five assignments, as in the C. In particular `argv[0]` is
     // *not* restored to `None`: the stale offset from the previous parse
-    // survives, so a following `tok_wline` that publishes no word leaves the
+    // survives, so a following `tok_line_gen` that publishes no word leaves the
     // array without its terminator. Reproduced deliberately — ERR-input-38.
 }
 
 // [spec:libedit:def:tokenizer.fun-tok-end-fn]
 // [spec:libedit:sem:tokenizer.fun-tok-end-fn]
 /// C: `void FUN(tok,end)(TYPE(Tokenizer) *tok)` — four `free`s, including
-/// the handle itself, so this consumes the `Box` [`tok_winit`] handed out.
+/// the handle itself, so this consumes the `Box` [`tok_init_gen`] handed out.
 #[allow(clippy::boxed_local)]
-pub fn tok_wend(tok: Box<TokenizerW>) {
+pub fn tok_end_gen<C: TokChar>(tok: Box<TokenizerGen<C>>) {
     // C: `free(ifs)`, `free(wspace)`, `free(argv)`, `free(tok)`, in that
     // order, with nothing zeroed first. Dropping the box runs the three Vec
     // deallocations and then releases the handle. Taking the `Box` by value
@@ -193,9 +271,9 @@ pub fn tok_wend(tok: Box<TokenizerW>) {
 ///
 /// Returns the C's status: -1 internal error, 3 quoted return, 2 unmatched
 /// double quote, 1 unmatched single quote, 0 ok.
-pub fn tok_wline(
-    tok: &mut TokenizerW,
-    line: &LineInfoW,
+pub fn tok_line_gen<C: TokChar>(
+    tok: &mut TokenizerGen<C>,
+    line: &LineInfoGen<C>,
     argc: &mut i32,
     cursorc: Option<&mut i32>,
     cursoro: Option<&mut i32>,
@@ -203,8 +281,8 @@ pub fn tok_wline(
     /// The rule's "emit x": C `*tok->wptr++ = x`. No bounds check and no
     /// allocation, exactly as in the C — the previous pass's growth step
     /// left at least four free elements, which covers the two this can be
-    /// asked for in one pass plus [`tok_wfinish`]'s terminator.
-    fn emit(tok: &mut TokenizerW, x: u32) {
+    /// asked for in one pass plus [`tok_finish_gen`]'s terminator.
+    fn emit<C: TokChar>(tok: &mut TokenizerGen<C>, x: C) {
         tok.wspace[tok.wptr] = x;
         tok.wptr += 1;
     }
@@ -227,8 +305,8 @@ pub fn tok_wline(
         // frozen consequence is kept: a trailing backslash still drives the
         // `Q_one` NUL arm once, appending an extra NUL element to the word
         // that is invisible in the word itself but counted by `co`.
-        let c = if ptr >= line.lastchar {
-            C_NUL
+        let c: C = if ptr >= line.lastchar {
+            C::NUL
         } else {
             // (b) Cursor capture, by pointer identity and before the
             // element is processed. Substitution runs first in the C, so a
@@ -256,7 +334,7 @@ pub fn tok_wline(
         // the newline one returning 0 — is unreachable over a five-valued
         // `quote_t` and unrepresentable over a Rust enum, so it is not
         // ported (ERR-input-43).
-        match c {
+        match c.code() {
             C_SQUOTE => {
                 tok.flags |= TOK_KEEP;
                 tok.flags &= !TOK_EAT;
@@ -382,7 +460,7 @@ pub fn tok_wline(
                         // would also match the terminating NUL, which cannot
                         // be reached: NUL has its own case above.
                         if tok.ifs.contains(&c) {
-                            tok_wfinish(tok);
+                            tok_finish_gen(tok);
                         } else {
                             emit(tok, c);
                         }
@@ -392,7 +470,7 @@ pub fn tok_wline(
                     // anything other than ' " \ newline NUL. The only arm
                     // that emits two elements in one pass.
                     QuoteT::QDoubleone => {
-                        emit(tok, C_BSLASH);
+                        emit(tok, C::BSLASH);
                         tok.quote = QuoteT::QDouble;
                         emit(tok, c);
                     }
@@ -411,7 +489,7 @@ pub fn tok_wline(
         // are unreachable in Rust, which aborts on allocation failure.
         if tok.wptr >= tok.wmax - 4 {
             let size = tok.wmax + WINCR;
-            tok.wspace.resize(size, 0);
+            tok.wspace.resize(size, C::NUL);
             tok.wmax = size;
         }
         if tok.argc >= tok.amax - 4 {
@@ -435,7 +513,7 @@ pub fn tok_wline(
     if let Some(cursoro) = cursoro {
         *cursoro = co;
     }
-    tok_wfinish(tok);
+    tok_finish_gen(tok);
     // C: `*argv = tok->argv` — dropped, see the note above. The words are
     // `tok.argv[..argc]`, each an offset into `tok.wspace`.
     *argc = tok.argc as i32;
@@ -448,16 +526,16 @@ pub fn tok_wline(
 /// const Char ***argv)`.
 ///
 /// The C's NUL-terminated `line` is the slice; `argv` is dropped for the
-/// reason given on [`tok_wline`].
-pub fn tok_wstr(tok: &mut TokenizerW, line: &[u32], argc: &mut i32) -> i32 {
+/// reason given on [`tok_line_gen`].
+pub fn tok_str_gen<C: TokChar>(tok: &mut TokenizerGen<C>, line: &[C], argc: &mut i32) -> i32 {
     // C: `li.cursor = li.lastchar = Strchr(line, '\0')` — the address of the
     // terminating NUL, one past the last character. A slice with no NUL in
     // it would run that search off the end in the C, which the rule leaves
     // undefined; defined here as the end of the slice.
-    let end = line.iter().position(|&x| x == 0).unwrap_or(line.len());
+    let end = line.iter().position(|&x| x == C::NUL).unwrap_or(line.len());
     let buffer = line.as_ptr();
     // The C's `memset` is redundant — all three fields are assigned.
-    let li = LineInfoW {
+    let li = LineInfoGen {
         buffer,
         cursor: buffer.wrapping_add(end),
         lastchar: buffer.wrapping_add(end),
@@ -465,7 +543,84 @@ pub fn tok_wstr(tok: &mut TokenizerW, line: &[u32], argc: &mut i32) -> i32 {
     // Because `cursor == lastchar`, the in-loop cursor match can never fire;
     // the bookkeeping falls through to the end-of-input fallback and is then
     // discarded, both cursor out-parameters being NULL. Return value
-    // verbatim, the full 0/1/2/3/-1 set — `tok_wstr` is not restricted to
+    // verbatim, the full 0/1/2/3/-1 set — `tok_str_gen` is not restricted to
     // complete lines.
-    tok_wline(tok, &li, argc, None, None)
+    tok_line_gen(tok, &li, argc, None, None)
+}
+
+// ---------------------------------------------------------------------------
+// The two instantiations. C: `tokenizer.c` compiled as itself, and
+// `tokenizern.c` compiling it again under `NARROWCHAR`. Each is one call into
+// the shared source above with the character type pinned; the `def`/`sem`
+// rules belong to `histedit.h`, where the declarations are.
+// ---------------------------------------------------------------------------
+
+/// C: `TokenizerW *tok_winit(const wchar_t *)`.
+pub fn tok_winit(ifs: Option<&[u32]>) -> Option<Box<TokenizerW>> {
+    tok_init_gen::<u32>(ifs)
+}
+
+/// C: `void tok_wend(TokenizerW *)`.
+pub fn tok_wend(tok: Box<TokenizerW>) {
+    tok_end_gen::<u32>(tok);
+}
+
+/// C: `void tok_wreset(TokenizerW *)`.
+pub fn tok_wreset(tok: &mut TokenizerW) {
+    tok_reset_gen::<u32>(tok);
+}
+
+/// C: `int tok_wline(TokenizerW *, const LineInfoW *, int *, const wchar_t
+/// ***, int *, int *)`.
+pub fn tok_wline(
+    tok: &mut TokenizerW,
+    line: &LineInfoW,
+    argc: &mut i32,
+    cursorc: Option<&mut i32>,
+    cursoro: Option<&mut i32>,
+) -> i32 {
+    tok_line_gen::<u32>(tok, line, argc, cursorc, cursoro)
+}
+
+/// C: `int tok_wstr(TokenizerW *, const wchar_t *, int *, const wchar_t ***)`.
+pub fn tok_wstr(tok: &mut TokenizerW, line: &[u32], argc: &mut i32) -> i32 {
+    tok_str_gen::<u32>(tok, line, argc)
+}
+
+/// C: `Tokenizer *tok_init(const char *)` — the whole of `tokenizern.c`'s
+/// contribution to this entry point.
+///
+/// The word space is bytes: a multibyte character is split across as many
+/// `argv` elements as it has bytes only if one of them happens to be a
+/// separator, which for the default IFS and any UTF-8 input it never is,
+/// because no continuation byte is ASCII.
+pub fn tok_init(ifs: Option<&[c_char]>) -> Option<Box<Tokenizer>> {
+    tok_init_gen::<c_char>(ifs)
+}
+
+/// C: `void tok_end(Tokenizer *)`.
+pub fn tok_end(tok: Box<Tokenizer>) {
+    tok_end_gen::<c_char>(tok);
+}
+
+/// C: `void tok_reset(Tokenizer *)`.
+pub fn tok_reset(tok: &mut Tokenizer) {
+    tok_reset_gen::<c_char>(tok);
+}
+
+/// C: `int tok_line(Tokenizer *, const LineInfo *, int *, const char ***,
+/// int *, int *)`.
+pub fn tok_line(
+    tok: &mut Tokenizer,
+    line: &LineInfo,
+    argc: &mut i32,
+    cursorc: Option<&mut i32>,
+    cursoro: Option<&mut i32>,
+) -> i32 {
+    tok_line_gen::<c_char>(tok, line, argc, cursorc, cursoro)
+}
+
+/// C: `int tok_str(Tokenizer *, const char *, int *, const char ***)`.
+pub fn tok_str(tok: &mut Tokenizer, line: &[c_char], argc: &mut i32) -> i32 {
+    tok_str_gen::<c_char>(tok, line, argc)
 }

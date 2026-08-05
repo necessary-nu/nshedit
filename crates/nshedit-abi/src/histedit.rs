@@ -38,18 +38,21 @@
 //! `#[cfg(target_vendor = "apple")]` module built with `c_variadic` once it
 //! stabilises. Nothing here is gated on a nightly feature.
 //!
-//! # Core gaps
+//! # The narrow and wide halves
 //!
-//! Some bodies below are one call into `nshedit` that this crate cannot yet
-//! make: the narrow `history`/`tok_*` entry points, which have no narrow
-//! instantiation to call, and `el_wset(EL_SETFP)`, which needs a descriptor
-//! this crate may not derive. Those are marked with [`core_gap`] rather than
-//! guessed at; see that function's documentation.
+//! `history.c` and `tokenizer.c` are each compiled twice in the C, so each
+//! declares two families here: `history_winit`/`history_wend`/`history_w` and
+//! `tok_w*` over `wchar_t`, `history_init`/`history_end`/`history` and `tok_*`
+//! over `char`. `nshedit` carries both instantiations of one generic source
+//! (`nshedit::history::HistChar`, `nshedit::tokenizer::TokChar`), so the
+//! bodies here are pairs too — [`history_dispatch`] and [`argv_ptrs`] are the
+//! shared halves, and the ten exported functions differ only in which
+//! character type they pin.
 //!
-//! The `el_wset`/`el_wget` arms that were gapped on visibility are not: the
-//! twenty-six core entry points they call are `pub` now, four of them
-//! `#[doc(hidden)]` because their signatures are this boundary's business and
-//! not the core's API.
+//! Nothing in this module is blocked on the core any more. The two causes that
+//! used to abort here are both closed: the narrow instantiations exist, and
+//! `el_wset(EL_SETFP)`'s facility over a caller's opaque `FILE *` is
+//! [`crate::cstdio`], the third site `plan/decisions/no-c-ffi.md` enumerates.
 
 use core::ffi::{c_char, c_int, c_uchar, c_void};
 use std::cell::RefCell;
@@ -163,31 +166,6 @@ static EDITOR_VI: [u32; 3] = wide(b"vi\0");
 // Helpers: the C-shaped plumbing this crate exists to own.
 // ---------------------------------------------------------------------------
 
-/// A body that is one call into `nshedit`, where the call cannot be written
-/// from this crate. Diverging silently would be worse than stopping, so this
-/// stops — an `extern "C"` function aborts rather than unwinding, so no
-/// unwind crosses the ABI.
-///
-/// One cause left, and it is something `nshedit` owes this crate: **the
-/// narrow instantiations.** `historyn.c` and `tokenizern.c` are
-/// `history.c`/`tokenizer.c` recompiled with `Char = char`. `nshedit`
-/// declares `History` and `Tokenizer` as opaque placeholders and leaves those
-/// bodies "to the history translation" / "to the tokenizer translation".
-/// Until they exist there is nothing for the narrow `history`/`tok_*` entry
-/// points to call, and synthesising them over the wide store would change
-/// defined behaviour (byte semantics become wide semantics), which
-/// `dec:libedit:conformance-policy` reserves for a recorded decision rather
-/// than an implementation choice.
-///
-/// The other cause is closed. `el_wset(EL_SETFP)` and the two `H_*SAVE_FP`
-/// ops needed a facility over a caller's opaque `FILE *`;
-/// `plan/decisions/no-c-ffi.md` now enumerates that surface as its third
-/// site, and [`crate::cstdio`] is where it lives.
-#[cold]
-fn core_gap(needs: &str) -> ! {
-    panic!("nshedit-abi: this entry point is blocked on `nshedit` — needs {needs}");
-}
-
 /// One varargs slot read back as the C function pointer it carries.
 ///
 /// `Option<F>` for a function-pointer `F` has the same size and the same
@@ -241,6 +219,22 @@ unsafe fn cbytes<'a>(p: *const c_char) -> Option<&'a [u8]> {
     Some(unsafe { core::slice::from_raw_parts(p.cast::<u8>(), n) })
 }
 
+/// [`cbytes`] as the narrow instantiation's `Char`.
+///
+/// The narrow tokenizer's element type is `c_char`, not `u8` — it is the C's
+/// `char` — so the two entry points that hand it a caller's string need the
+/// slice at that type rather than as bytes.
+///
+/// # Safety
+/// As [`cbytes`].
+unsafe fn cstr<'a>(p: *const c_char) -> Option<&'a [c_char]> {
+    // SAFETY: the caller's contract, forwarded.
+    let b = unsafe { cbytes(p) }?;
+    // SAFETY: `c_char` and `u8` have the same size and alignment and every
+    // bit pattern is valid for both; this relabels the same bytes.
+    Some(unsafe { core::slice::from_raw_parts(b.as_ptr().cast::<c_char>(), b.len()) })
+}
+
 /// The program name `el_init`/`el_init_fd` take.
 ///
 /// C decodes it from the current locale's multibyte encoding and duplicates
@@ -274,6 +268,11 @@ thread_local! {
     // the pointer array is materialised here and replaced — invalidating the
     // previous one, exactly as the rule says — on every call.
     static TOKARGV: RefCell<HashMap<usize, Vec<*const u32>>> = RefCell::new(HashMap::new());
+    // `tok_line`/`tok_str`'s `argv`, for the narrow tokenizer — the same job
+    // as `TOKARGV` over `const char *` instead of `const wchar_t *`. Two maps
+    // rather than one because the value type differs, which also means the two
+    // handle families cannot be confused by a shared key space.
+    static TOKARGV_N: RefCell<HashMap<usize, Vec<*const c_char>>> = RefCell::new(HashMap::new());
     // `el_wget(EL_TERMINAL)`'s `const char *`. The C hands out
     // `el_terminal.t_name`, a borrowed `char *` a later `terminal_set`
     // replaces; `nshedit` keeps a `String`, which has no terminator, so the
@@ -599,24 +598,29 @@ pub unsafe extern "C" fn el_deletestr1(el: *mut EditLine, start: c_int, end: c_i
 // [spec:libedit:sem:histedit.history-init-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn history_init() -> *mut History {
-    // `History` is `history.c` compiled with `Char = char`, a separate store
-    // from the wide one with byte strings throughout. See `core_gap` cause 3.
-    core_gap("the narrow `historyn.c` instantiation behind `nshedit::histedit::History`")
+    // `History` is `history.c` compiled with `Char = char`: a separate store
+    // from the wide one, with byte strings throughout and no locale anywhere
+    // in it. As `history_winit`, the handle is raw all the way through —
+    // `H_END` frees it from inside `history` — and NULL is the C's allocation
+    // failure. The retained maximum starts at 0, so `H_SETSIZE` is required
+    // before any `H_ENTER` keeps anything.
+    nshedit::history::history_init()
 }
 
 // [spec:libedit:def:histedit.history-end-fn]
 // [spec:libedit:sem:histedit.history-end-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn history_end(h: *mut History) {
-    core_gap("the narrow `historyn.c` instantiation behind `nshedit::histedit::History`")
+    // `h` must be non-NULL; there is no check and calling it twice is a double
+    // free. Every `HistEvent.str` from this handle is dangling afterwards
+    // except those from `H_DEL`/`H_DELDATA`, which the caller owns.
+    nshedit::history::history_end(h);
 }
 
 /// C: `int history(History *, HistEvent *, int, ...);`
 ///
-/// Declared with fixed arity — three named parameters plus the eleven
-/// `H_FUNC` takes, the widest op — and read positionally. See the module
-/// documentation for why that is correct on x86-64 SysV and AArch64 AAPCS and
-/// wrong on AArch64 Apple.
+/// Declared with fixed arity and read positionally; see [`history_dispatch`],
+/// which is the same table `history_w` uses with `Char` set to `char`.
 // [spec:libedit:def:histedit.history-fn]
 // [spec:libedit:sem:histedit.history-fn]
 #[unsafe(no_mangle)]
@@ -638,9 +642,14 @@ pub unsafe extern "C" fn history(
     a11: *mut c_void,
 ) -> c_int {
     // Same op codes, argument shapes, error codes and ownership rules as
-    // `history_w` below — `sem:histedit.history-fn` is the rule `history_w`'s
-    // is written against — but over a byte store. See `core_gap` cause 3.
-    core_gap("the narrow `historyn.c` instantiation behind `nshedit::histedit::History`")
+    // `history_w` — `sem:histedit.history-fn` is the rule `history_w`'s is
+    // written against — but over a byte store, so `H_ADD`, `H_ENTER`,
+    // `H_APPEND`, `H_NEXT_STR`, `H_PREV_STR` and `H_REPLACE` take
+    // `const char *` and `ev.str` comes back as one. `H_LOAD`/`H_SAVE` are
+    // unchanged: the path was already narrow in both instantiations, and so
+    // was the file.
+    // SAFETY: this function's own contract, forwarded unchanged.
+    unsafe { history_dispatch::<c_char>(h, ev, op, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11) }
 }
 
 // [spec:libedit:def:histedit.tok-init-fn]
@@ -648,22 +657,45 @@ pub unsafe extern "C" fn history(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tok_init(ifs: *const c_char) -> *mut Tokenizer {
     // `Tokenizer` is `tokenizer.c` compiled with `Char = char`: a byte word
-    // space, byte `argv` slots and a byte IFS. See `core_gap` cause 3.
-    core_gap("the narrow `tokenizern.c` instantiation behind `nshedit::histedit::Tokenizer`")
+    // space, byte `argv` slots and a byte IFS. NULL selects the default
+    // `"\t \n"`; the caller keeps ownership of its string, and the tokenizer
+    // owns everything it later hands back.
+    // SAFETY: `ifs` is null or a NUL-terminated byte string.
+    nshedit::tokenizer::tok_init(unsafe { cstr(ifs) }).map_or(core::ptr::null_mut(), Box::into_raw)
 }
 
 // [spec:libedit:def:histedit.tok-end-fn]
 // [spec:libedit:sem:histedit.tok-end-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tok_end(tok: *mut Tokenizer) {
-    core_gap("the narrow `tokenizern.c` instantiation behind `nshedit::histedit::Tokenizer`")
+    // `tok` must be non-NULL (no check) and must be a `Tokenizer`; every
+    // `argv` array and word pointer from this tokenizer dangles afterwards,
+    // so the materialised array goes with it.
+    TOKARGV_N.with_borrow_mut(|m| m.remove(&(tok as usize)));
+    // SAFETY: `tok` is the handle `tok_init` returned, i.e. that `Box`.
+    nshedit::tokenizer::tok_end(unsafe { Box::from_raw(tok) });
 }
 
 // [spec:libedit:def:histedit.tok-reset-fn]
 // [spec:libedit:sem:histedit.tok-reset-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tok_reset(tok: *mut Tokenizer) {
-    core_gap("the narrow `tokenizern.c` instantiation behind `nshedit::histedit::Tokenizer`")
+    // Five assignments; nothing is freed and the grown capacities are kept.
+    // In particular `argv[0]` is not restored to NULL, so a following parse
+    // that publishes no word leaves the array unterminated (ERR-input-38).
+    // SAFETY: `tok` must be non-NULL.
+    nshedit::tokenizer::tok_reset(unsafe { &mut *tok });
+}
+
+/// [`publish_argv`]'s narrow twin — see there for why the array is
+/// materialised at all.
+fn publish_argv_n(tok: &Tokenizer, argc: c_int) -> *mut *const c_char {
+    let out = argv_ptrs(tok, argc);
+    TOKARGV_N.with_borrow_mut(|m| {
+        let slot = m.entry(core::ptr::from_ref(tok) as usize).or_default();
+        *slot = out;
+        slot.as_mut_ptr()
+    })
 }
 
 // [spec:libedit:def:histedit.tok-line-fn]
@@ -677,7 +709,41 @@ pub unsafe extern "C" fn tok_line(
     cursorc: *mut c_int,
     cursoro: *mut c_int,
 ) -> c_int {
-    core_gap("the narrow `tokenizern.c` instantiation behind `nshedit::histedit::Tokenizer`")
+    // `tok` and `line` must be non-NULL and `line->buffer` must be non-NULL;
+    // none is checked. The tokenizer is *not* reset — this appends, which is
+    // how multi-line continuation works. Everything else is `tok_wline`'s
+    // text: the same quoting machine over `char` instead of `wchar_t`, so a
+    // multibyte character is several elements here and one there, and neither
+    // consults the locale to decide.
+    // SAFETY: both are the caller's live objects.
+    let tok = unsafe { &mut *tok };
+    let line = unsafe { &*line };
+    let mut n: c_int = 0;
+    // `cursorc` and `cursoro` are NULL-checked in the C, so they are optional
+    // here; `argc` is written unconditionally on success.
+    // SAFETY: each is null or writable.
+    let cc = if cursorc.is_null() {
+        None
+    } else {
+        Some(unsafe { &mut *cursorc })
+    };
+    let co = if cursoro.is_null() {
+        None
+    } else {
+        Some(unsafe { &mut *cursoro })
+    };
+    let rv = nshedit::tokenizer::tok_line(tok, line, &mut n, cc, co);
+    if rv != 0 {
+        // On any non-zero return none of the four out-parameters is written.
+        return rv;
+    }
+    let words = publish_argv_n(tok, n);
+    // SAFETY: the success path writes both out-parameters, as in the C.
+    unsafe {
+        *argc = n;
+        *argv = words;
+    }
+    0
 }
 
 // [spec:libedit:def:histedit.tok-str-fn]
@@ -689,7 +755,24 @@ pub unsafe extern "C" fn tok_str(
     argc: *mut c_int,
     argv: *mut *mut *const c_char,
 ) -> c_int {
-    core_gap("the narrow `tokenizern.c` instantiation behind `nshedit::histedit::Tokenizer`")
+    // A NUL-terminated string with no cursor: the core builds the `LineInfo`
+    // with `cursor == lastchar`, so the cursor never matches and both cursor
+    // out-parameters are NULL. Does not reset the tokenizer either.
+    // SAFETY: `tok` must be non-NULL, `line` non-NULL and NUL-terminated.
+    let tok = unsafe { &mut *tok };
+    let s = unsafe { cstr(line) }.unwrap_or(&[]);
+    let mut n: c_int = 0;
+    let rv = nshedit::tokenizer::tok_str(tok, s, &mut n);
+    if rv != 0 {
+        return rv;
+    }
+    let words = publish_argv_n(tok, n);
+    // SAFETY: the success path writes both out-parameters, as in the C.
+    unsafe {
+        *argc = n;
+        *argv = words;
+    }
+    0
 }
 
 // [spec:libedit:def:histedit.wcsdup-fn]
@@ -1479,23 +1562,29 @@ pub unsafe extern "C" fn history_wend(h: *mut HistoryW) {
     nshedit::history::history_wend(h);
 }
 
-/// C: `int history_w(HistoryW *, HistEventW *, int, ...);`
+/// The varargs tail of `history_w`/`history`, read positionally and handed to
+/// the core as a `HistoryArg`.
 ///
-/// Declared with fixed arity — three named parameters plus the eleven
-/// `H_FUNC` takes, the widest op — and read positionally. See the module
-/// documentation for why that is correct on x86-64 SysV and AArch64 AAPCS and
-/// wrong on AArch64 Apple.
+/// Both entry points are declared with fixed arity — three named parameters
+/// plus the eleven `H_FUNC` takes, the widest op. See the module documentation
+/// for why that is correct on x86-64 SysV and AArch64 AAPCS and wrong on
+/// AArch64 Apple.
 ///
-/// The op enumeration below is the whole of this function: each code names
-/// how many trailing arguments it has and what they are, which is what the
-/// core's `HistoryArg` is a closed form of.
-// [spec:libedit:def:histedit.history-w-fn]
-// [spec:libedit:sem:histedit.history-w-fn]
-#[unsafe(no_mangle)]
+/// The op enumeration below is the whole of this function: each code names how
+/// many trailing arguments it has and what they are, which is what the core's
+/// `HistoryArg` is a closed form of. Only one entry in that table depends on
+/// the instantiation — the five string ops, whose argument is `const wchar_t
+/// *` wide and `const char *` narrow — so the table is written once and `C`
+/// picks the spelling. `H_LOAD` and `H_SAVE` take a `const char *` path in
+/// *both*, because the on-disk format is bytes and is frozen.
+///
+/// # Safety
+/// `h` and `ev` must be a live handle and a writable event of this
+/// instantiation, and each varargs slot must carry what its op code says.
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn history_w(
-    h: *mut HistoryW,
-    ev: *mut HistEventW,
+unsafe fn history_dispatch<C: nshedit::history::HistChar>(
+    h: *mut nshedit::history::HistoryGen<C>,
+    ev: *mut nshedit::histedit::HistEventGen<C>,
     op: c_int,
     a1: *mut c_void,
     a2: *mut c_void,
@@ -1549,7 +1638,7 @@ pub unsafe extern "C" fn history_w(
         // stores it, so the installed functions are called with libedit's own
         // builtin state pointer (ERR-history-04, frozen).
         H_FUNC => {
-            hf = HistoryW {
+            hf = nshedit::history::HistoryGen::<C> {
                 h_ref: a1,
                 // Not read by anything this op reaches: the C's `hf` is an
                 // uninitialised stack local except for the eleven fields it
@@ -1559,16 +1648,16 @@ pub unsafe extern "C" fn history_w(
                 // SAFETY: for this op the ten slots carry the ten vtable
                 // functions in exactly this order, per the header and
                 // `sem:histedit.history-w-fn`.
-                h_first: unsafe { fn_slot::<HistoryGfunT>(a2) },
-                h_next: unsafe { fn_slot::<HistoryGfunT>(a3) },
-                h_last: unsafe { fn_slot::<HistoryGfunT>(a4) },
-                h_prev: unsafe { fn_slot::<HistoryGfunT>(a5) },
-                h_curr: unsafe { fn_slot::<HistoryGfunT>(a6) },
-                h_set: unsafe { fn_slot::<HistorySfunT>(a7) },
-                h_clear: unsafe { fn_slot::<HistoryVfunT>(a8) },
-                h_enter: unsafe { fn_slot::<HistoryEfunT>(a9) },
-                h_add: unsafe { fn_slot::<HistoryEfunT>(a10) },
-                h_del: unsafe { fn_slot::<HistorySfunT>(a11) },
+                h_first: unsafe { fn_slot::<HistoryGfunT<C>>(a2) },
+                h_next: unsafe { fn_slot::<HistoryGfunT<C>>(a3) },
+                h_last: unsafe { fn_slot::<HistoryGfunT<C>>(a4) },
+                h_prev: unsafe { fn_slot::<HistoryGfunT<C>>(a5) },
+                h_curr: unsafe { fn_slot::<HistoryGfunT<C>>(a6) },
+                h_set: unsafe { fn_slot::<HistorySfunT<C>>(a7) },
+                h_clear: unsafe { fn_slot::<HistoryVfunT<C>>(a8) },
+                h_enter: unsafe { fn_slot::<HistoryEfunT<C>>(a9) },
+                h_add: unsafe { fn_slot::<HistoryEfunT<C>>(a10) },
+                h_del: unsafe { fn_slot::<HistorySfunT<C>>(a11) },
             };
             HistoryArg::Funcs(&hf)
         }
@@ -1590,7 +1679,7 @@ pub unsafe extern "C" fn history_w(
         // One `const wchar_t *`.
         // SAFETY: `a1` is a NUL-terminated wide string for these ops.
         H_ADD | H_ENTER | H_APPEND | H_NEXT_STR | H_PREV_STR => {
-            HistoryArg::Str(a1.cast::<u32>().cast_const())
+            HistoryArg::Str(a1.cast::<C>().cast_const())
         }
 
         // One `const char *` filename — narrow in both instantiations,
@@ -1629,7 +1718,7 @@ pub unsafe extern "C" fn history_w(
         // string it overwrites, so every call leaks one (ERR-history-08),
         // and it reaches into the builtin state without checking that one is
         // installed. Both reproduced.
-        H_REPLACE => HistoryArg::Replace(a1.cast::<u32>().cast_const(), a2),
+        H_REPLACE => HistoryArg::Replace(a1.cast::<C>().cast_const(), a2),
 
         // Anything else reads no argument and comes back -1 with `ev` set to
         // code 1, "unknown error" — which the core's default arm does, so it
@@ -1642,7 +1731,37 @@ pub unsafe extern "C" fn history_w(
     // (and which is NULL on an allocation failure); every other op's
     // `ev.str` points into libedit's storage or at a static message and must
     // not be freed.
-    nshedit::history::history_w(h, ev, op, arg)
+    nshedit::history::history_gen(h, ev, op, arg)
+}
+
+/// C: `int history_w(HistoryW *, HistEventW *, int, ...);`
+// [spec:libedit:def:histedit.history-w-fn]
+// [spec:libedit:sem:histedit.history-w-fn]
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn history_w(
+    h: *mut HistoryW,
+    ev: *mut HistEventW,
+    op: c_int,
+    a1: *mut c_void,
+    a2: *mut c_void,
+    a3: *mut c_void,
+    a4: *mut c_void,
+    a5: *mut c_void,
+    a6: *mut c_void,
+    a7: *mut c_void,
+    a8: *mut c_void,
+    a9: *mut c_void,
+    a10: *mut c_void,
+    a11: *mut c_void,
+) -> c_int {
+    // Ownership on the way out, reproduced by the core and not touched here:
+    // `H_DEL` and `H_DELDATA` hand the caller a string it owns and must free
+    // (and which is NULL on an allocation failure); every other op's `ev.str`
+    // points into libedit's storage or at a static message and must not be
+    // freed.
+    // SAFETY: this function's own contract, forwarded unchanged.
+    unsafe { history_dispatch::<u32>(h, ev, op, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11) }
 }
 
 // [spec:libedit:def:histedit.tok-winit-fn]
@@ -1678,8 +1797,8 @@ pub unsafe extern "C" fn tok_wreset(tok: *mut TokenizerW) {
     nshedit::tokenizer::tok_wreset(unsafe { &mut *tok });
 }
 
-/// Materialise the `const wchar_t **` a successful `tok_wline`/`tok_wstr`
-/// hands back.
+/// Resolve a tokenizer's `argv` offsets into the pointer array the C hands
+/// back, for either instantiation.
 ///
 /// The C's `*argv = tok->argv` aliases the tokenizer's own array; `nshedit`
 /// stores offsets into `wspace` instead, so the pointer array is built here
@@ -1687,12 +1806,15 @@ pub unsafe extern "C" fn tok_wreset(tok: *mut TokenizerW) {
 /// the C's "invalidated by the next `tok_line`, `tok_str` or `tok_reset`".
 ///
 /// Slot `argc` is materialised from whatever the tokenizer has there rather
-/// than forced to NULL, so `tok_wreset`'s stale terminator survives into the
+/// than forced to NULL, so `tok_reset`'s stale terminator survives into the
 /// array exactly as it does in the C (ERR-input-38).
-fn publish_argv(tok: &TokenizerW, argc: c_int) -> *mut *const u32 {
+fn argv_ptrs<C: nshedit::tokenizer::TokChar>(
+    tok: &nshedit::tokenizer::TokenizerGen<C>,
+    argc: c_int,
+) -> Vec<*const C> {
     let n = if argc > 0 { argc as usize } else { 0 };
     let base = tok.wspace.as_ptr();
-    let mut out: Vec<*const u32> = Vec::with_capacity(n + 1);
+    let mut out: Vec<*const C> = Vec::with_capacity(n + 1);
     for i in 0..=n {
         let p = match tok.argv.get(i).copied().flatten() {
             // SAFETY: published slots are offsets into `wspace`, which is
@@ -1702,6 +1824,13 @@ fn publish_argv(tok: &TokenizerW, argc: c_int) -> *mut *const u32 {
         };
         out.push(p);
     }
+    out
+}
+
+/// Materialise the `const wchar_t **` a successful `tok_wline`/`tok_wstr`
+/// hands back, and keep it alive until the next call on this tokenizer.
+fn publish_argv(tok: &TokenizerW, argc: c_int) -> *mut *const u32 {
+    let out = argv_ptrs(tok, argc);
     TOKARGV.with_borrow_mut(|m| {
         let slot = m.entry(core::ptr::from_ref(tok) as usize).or_default();
         *slot = out;

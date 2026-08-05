@@ -523,6 +523,14 @@ children (
                 id abi-narrow
                 title "Decide and build the narrow history and tokenizer instantiations, which have byte semantics the wide store does not"
                 deps (abi-visibility)
+                log (
+                    {
+                        at 2026-08-05T13:14:08.738660746Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

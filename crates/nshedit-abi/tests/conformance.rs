@@ -150,21 +150,17 @@ fn abi_shape() {
 /// operations under `LC_ALL=C.UTF-8` and 246 under `LC_ALL=C`, no terminal
 /// involved.
 ///
-/// Fails today on six lines, two causes, both port-side gaps rather than
-/// anything `docs/errata.md` registers:
+/// Passes: every operation agrees under both codesets, including every byte
+/// of the saved history file.
 ///
-/// 1. `history_init` and `tok_init` abort with `SIGABRT`. All eight narrow
-///    entry points route to `core_gap()` in `crates/nshedit-abi/src/histedit
-///    .rs`, because `nshedit` has no narrow instantiation of `historyn.c` or
-///    `tokenizern.c`. Probed in a forked child so the rest of the run
-///    survives.
-/// 2. `H_SAVE_FP` and `H_NSAVE_FP` return -1 and write nothing, because
-///    `nshedit::history::history_save_fp` cannot write through an opaque
-///    `FILE *` — the `fileno` question `plan/decisions/no-c-ffi.md` leaves as
-///    a candidate site and `plan/decisions/platform-layer.md` defers.
-///
-/// Everything else agrees, including every byte of the saved history file
-/// under both codesets.
+/// The last two divergences were `history_init` and `tok_init` aborting with
+/// `SIGABRT` — all eight narrow entry points routed to a `core_gap()` in
+/// `crates/nshedit-abi/src/histedit.rs`, because `nshedit` had no narrow
+/// instantiation of `historyn.c` or `tokenizern.c`. Both are live now:
+/// `nshedit::history` and `nshedit::tokenizer` are generic over the character
+/// type and instantiated at `u32` and `c_char`, so the narrow entry points
+/// call the same source the wide ones do. They are still probed in a forked
+/// child, which is what would let the rest of a run survive a regression.
 #[test]
 #[ignore = "needs a C toolchain; run ./conformance/run.sh or cargo test -- --ignored"]
 fn differential_traces() {
