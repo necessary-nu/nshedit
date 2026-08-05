@@ -860,12 +860,20 @@ children (
             {
                 id nshterm-extract
                 title "Carve the terminfo half out of term 1.2.1 and drop the colour half termcolor supersedes"
+                sealed true
                 log (
                     {
                         at 2026-08-05T12:15:12.875637217Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-05T13:13:29.434673323Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
