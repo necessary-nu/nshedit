@@ -6,6 +6,14 @@
 //!   entry points.
 //! - `editline/readline.h` — the GNU readline compatibility layer.
 //!
+//! Neither header is the whole ABI. `chartype.h` and `filecomplete.h` are not
+//! installed, and seven of their functions carry no `libedit_private` and are
+//! therefore exported symbols of `libedit.so` all the same — the two `ct_*`
+//! string converters and the five `fn_*` completion entry points. Debian's
+//! `libedit.so.2` exports every one of them, so a consumer that declared them
+//! itself reaches them today. The symbol table is the contract, not the
+//! header, so [`chartype`] and [`filecomplete`] export them here.
+//!
 //! Nothing here links a C library. This crate *is* the C library: it exports
 //! the symbols and builds as `libnshedit.so`, installed with `libedit.so.0`
 //! and `libreadline.so.8` symlinked onto it. See
@@ -35,7 +43,9 @@
 // from `readline.c`'s `static` functions have no callers yet.
 #![allow(dead_code, unused_variables)]
 
+pub mod chartype;
 pub mod eln;
+pub mod filecomplete;
 pub mod histedit;
 pub mod readline;
 

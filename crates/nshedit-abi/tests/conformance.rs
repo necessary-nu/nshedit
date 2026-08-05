@@ -32,14 +32,14 @@
 //! 1. They need a C toolchain and about a minute of wall clock for the
 //!    autotools build. `cargo test --workspace` on a machine without `gcc`
 //!    would fail for a reason that has nothing to do with the port.
-//! 2. They currently **report open gaps**, and closing those is a decision,
-//!    not a code change a test should force. Making them non-ignored today
-//!    would mean either a red `cargo test --workspace` or a baseline file
-//!    that quietly blesses whatever the port happens to do — and blessing is
-//!    exactly what a conformance harness must not do.
-//!
-//! When the gaps below are closed or explicitly registered, drop the
-//! `#[ignore]`.
+//! 2. Historically they **reported open gaps**, and closing those is a
+//!    decision, not a code change a test should force. Making them
+//!    non-ignored while a gap was open would have meant either a red `cargo
+//!    test --workspace` or a baseline file that quietly blessed whatever the
+//!    port happened to do — and blessing is exactly what a conformance
+//!    harness must not do. Every stage passes as of the `abi-missing-exports`
+//!    node, so only reason 1 still holds; run `./conformance/run.sh` in CI
+//!    where a toolchain is guaranteed.
 //!
 //! # How to read a failure
 //!
@@ -127,15 +127,31 @@ fn oracle_builds() {
 
 /// `conformance-abi-shape`: the drop-in claim, stated as a test.
 ///
-/// Fails today. The port exports 198 symbols; the oracle exports 227. Twenty
-/// of the difference is the `vis` family and is correct — Debian's libedit
-/// imports `strvis`/`strunvis`/`vis` from `libbsd` and exports none of them,
-/// so *matching* means not exporting them. The other nine are real:
-/// `ct_encode_string`, `ct_decode_string`, `fn_complete`, `fn_complete2`,
-/// `fn_display_match_list`, `fn_filename_completion_function`,
-/// `fn_tilde_expand`, `reallocarr` and `wcsdup`. The first eight are exported
-/// by Debian's `libedit.so.2` as well, so a deployed consumer can reach them
-/// today and would break on the port.
+/// Passes. The port exports 205 symbols; the oracle exports 226, and the
+/// difference is two decided sets and nothing else.
+///
+/// Twenty are the `vis` family, correct because Debian's libedit imports
+/// `strvis`/`strunvis`/`vis` from `libbsd` and exports none of them, so
+/// *matching* means not exporting them; our oracle exports them only because
+/// `libbsd-dev` is absent on this host.
+///
+/// The twenty-first is `reallocarr`, a libc gap-filler
+/// `dec:libedit:posix-only-scope` puts out of scope and
+/// `dec:libedit:no-c-ffi` gives no route to — it reallocates a block the
+/// caller allocated, so there is no `Layout` for `std::alloc::System` and only
+/// libc's `realloc` would do. `abi-shape.sh` prints the whole argument, and
+/// the residual risk with it: a consumer that declared it itself and reached
+/// it through `libedit.so.2` finds nothing here.
+///
+/// `wcsdup` was on this list until `src/wcsdup.c` was corrected to include
+/// `config.h` above its `#ifndef HAVE_WCSDUP` guard; the C now agrees with
+/// Debian, which imports it from glibc.
+///
+/// The seven that were real gaps — `ct_encode_string`, `ct_decode_string`,
+/// `fn_complete`, `fn_complete2`, `fn_display_match_list`,
+/// `fn_filename_completion_function` and `fn_tilde_expand` — are exported now,
+/// from [`nshedit_abi::chartype`] and [`nshedit_abi::filecomplete`]. Debian
+/// exports all seven, so a consumer deployed today reaches them.
 #[test]
 #[ignore = "needs a C toolchain; run ./conformance/run.sh or cargo test -- --ignored"]
 fn abi_shape() {

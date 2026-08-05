@@ -18,6 +18,13 @@
 #   ./conformance/abi-shape.sh --report # print the full three-way table only
 #
 # Failure looks like a named symbol under "MISSING" or "EXTRA", not a count.
+#
+# Two sets of symbols the oracle exports are missing on purpose, and each is
+# split out by name so it can never stand in for a real gap: the vis family,
+# for the build-configuration reason argued below, and the two libc
+# gap-fillers under "DECIDED", whose reasons this script prints in full. A
+# name may only join those sets by being decided, on the record, in a rule or
+# a plan decision — never by being observed to be missing.
 
 set -euo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
@@ -72,6 +79,91 @@ vis
 EOF
 sort -u -o "$SYM/vis-family" "$SYM/vis-family"
 
+# The libc gap-fillers the C exports and the port deliberately does not.
+# `dec:libedit:posix-only-scope` names both by name — "strlcpy, strlcat,
+# getline, wcsdup and reallocarr leave scope; they are libc gap-fillers with
+# no observable surface" — and `why_not_exported` below carries the argument
+# for each, including the part of that clause the symbol table disproves.
+#
+# This list is a decision, not an observation. Adding a name to it without a
+# rule or a plan decision behind it turns this stage into a rubber stamp.
+cat > "$SYM/not-exported" <<'EOF'
+reallocarr
+wcsdup
+EOF
+sort -u -o "$SYM/not-exported" "$SYM/not-exported"
+
+why_not_exported() {
+    case $1 in
+    reallocarr)
+        cat <<'EOF'
+  reallocarr — NetBSD's overflow-checked array realloc.
+
+    Out of scope by dec:libedit:posix-only-scope, which names it. glibc has no
+    reallocarr, so nothing is shadowed by its absence and nothing is shadowed
+    by its presence either; Debian's libedit.so.2 exports it for the same
+    reason our oracle does, which is that configure found the platform lacks
+    it and src/reallocarr.c was compiled in.
+
+    It is not an interface. No installed header declares it — src/Makefile.am
+    installs histedit.h and editline/readline.h and nothing else, and its
+    prototype lives in src/sys.h, which is private. It has exactly one caller
+    anywhere in libedit, src/wcsdup.c:38, and on a glibc host that file now
+    compiles to nothing. So it is an internal helper with default visibility
+    rather than a symbol a consumer was offered.
+
+    And it cannot be honoured in Rust. reallocarr reallocates a block the
+    CALLER allocated, so its size is not known here, and std::alloc::System
+    cannot be given the Layout that GlobalAlloc::realloc requires; only libc's
+    own realloc/free would do. That would be a fourth site on
+    dec:libedit:no-c-ffi's closed enumeration, and its two-part test refuses
+    it: the second half asks for a rule in the corpus that specifies the
+    behaviour, and there is none — .config/nspec/config.styx excludes
+    src/reallocarr.c, so the function has no def or sem rule at all. Reaching
+    for System::realloc with a fabricated Layout would be exactly the "route
+    to a nearby question" that decision rejects by name.
+
+    Residual risk, stated rather than hidden: a consumer that declared
+    reallocarr itself and resolved it through libedit.so.2 gets an unresolved
+    symbol against us, and on glibc there is no other provider. That is the
+    cost of holding both decisions, and it is the one gap in the drop-in claim
+    this stage now passes with.
+EOF
+        ;;
+    wcsdup)
+        cat <<'EOF'
+  wcsdup — a libc gap-filler, and on this platform not even that.
+
+    glibc supplies wcsdup@GLIBC_2.2.5, and Debian's libedit.so.2 IMPORTS it
+    from there rather than exporting one of its own. Out of scope by
+    dec:libedit:posix-only-scope and by sem:histedit.wcsdup-fn, which spells
+    the whole case out.
+
+    Exporting it would be actively harmful, not merely redundant: our artifact
+    is installed with libedit.so.0 symlinked onto it, ELF interposition binds
+    by load order, and a process that loaded us ahead of libc would resolve
+    every caller's wcsdup — libc's own included — to ours. That is the hazard
+    ERR-readline-53 records for completion_matches and the abi-surface node
+    records for the vis family.
+
+    The in-tree C no longer exports it either. src/wcsdup.c used to evaluate
+    `#ifndef HAVE_WCSDUP` two lines BEFORE `#include "config.h"`, so the macro
+    did not exist yet, the guard was unconditionally true, and the bundled
+    copy was compiled into every build. With the include moved above the
+    guard, config.h's `#define HAVE_WCSDUP 1` is visible and the file compiles
+    to nothing. The name is kept on this list so the decision survives a host
+    where HAVE_WCSDUP is genuinely 0.
+EOF
+        ;;
+    *)
+        printf '  %s — on the not-exported list with no reason recorded.\n' "$1"
+        printf '    That is a bug in this script: the list is a decision and\n'
+        printf '    every entry has to carry its argument.\n'
+        return 1
+        ;;
+    esac
+}
+
 section() { printf '\n=== %s ===\n' "$*"; }
 count() { wc -l < "$1" | tr -d ' '; }
 
@@ -87,17 +179,33 @@ printf '  gnu     %5s  %s\n' "$(count "$SYM/gnu")"    "$GNU_READLINE"
 comm -23 "$SYM/oracle" "$SYM/port" > "$SYM/missing-vs-oracle"
 comm -13 "$SYM/oracle" "$SYM/port" > "$SYM/extra-vs-oracle"
 
-# Split the missing set: the vis family is missing on purpose (see below),
-# everything else is a real gap.
+# Split the missing set three ways: the vis family is missing on purpose (see
+# below), the decided list is missing on purpose (reasons printed in full),
+# and whatever is left is a real gap.
 comm -12 "$SYM/missing-vs-oracle" "$SYM/vis-family" > "$SYM/missing-vis"
 comm -23 "$SYM/missing-vs-oracle" "$SYM/vis-family" > "$SYM/missing-other"
+comm -12 "$SYM/missing-other" "$SYM/not-exported" > "$SYM/missing-decided"
+comm -23 "$SYM/missing-other" "$SYM/not-exported" > "$SYM/missing-real"
 
 section "port vs oracle: MISSING, vis family (expected — see below)"
 cat "$SYM/missing-vis" || true
+section "port vs oracle: MISSING, decided (expected — reasons below)"
+cat "$SYM/missing-decided" || true
 section "port vs oracle: MISSING, everything else"
-cat "$SYM/missing-other" || true
+cat "$SYM/missing-real" || true
 section "port vs oracle: EXTRA (symbols the C does not export)"
 cat "$SYM/extra-vs-oracle" || true
+
+if [ -s "$SYM/missing-decided" ]; then
+    section "why those are not exported"
+    decided_ok=0
+    while read -r sym; do
+        why_not_exported "$sym" || decided_ok=1
+        printf '\n'
+    done < "$SYM/missing-decided"
+else
+    decided_ok=0
+fi
 
 # ---------------------------------------------------------------------------
 # The vis question. libedit does not have one answer to it; the build host
@@ -166,9 +274,15 @@ done
 # Verdict.
 # ---------------------------------------------------------------------------
 status=0
-if [ -s "$SYM/missing-other" ]; then
-    printf '\nFAIL: %s symbol(s) the oracle exports and the port does not, outside the vis family.\n' \
-        "$(count "$SYM/missing-other")"
+if [ -s "$SYM/missing-real" ]; then
+    printf '\nFAIL: %s symbol(s) the oracle exports and the port does not, outside the\n' \
+        "$(count "$SYM/missing-real")"
+    printf '      vis family and the decided list:\n'
+    sed 's/^/        /' "$SYM/missing-real"
+    status=1
+fi
+if [ "$decided_ok" -ne 0 ]; then
+    printf '\nFAIL: a name on the not-exported list carries no recorded reason.\n'
     status=1
 fi
 if [ -s "$SYM/extra-vs-oracle" ]; then
@@ -176,5 +290,8 @@ if [ -s "$SYM/extra-vs-oracle" ]; then
         "$(count "$SYM/extra-vs-oracle")"
     status=1
 fi
-[ "$status" -eq 0 ] && printf '\nPASS: the port exports exactly the oracle'"'"'s symbols, less the vis family.\n'
+if [ "$status" -eq 0 ]; then
+    printf '\nPASS: the port exports exactly the oracle'"'"'s symbols, less the vis family\n'
+    printf '      and the %s decided above.\n' "$(count "$SYM/missing-decided")"
+fi
 exit "$status"

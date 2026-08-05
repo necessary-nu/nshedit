@@ -849,7 +849,7 @@ unsafe fn c_free(p: *mut u8, size: usize) {
 /// # Safety
 ///
 /// As [`c_free`], and `p` must be NUL-terminated.
-unsafe fn c_free_str(p: *mut c_char) {
+pub(crate) unsafe fn c_free_str(p: *mut c_char) {
     if p.is_null() {
         return;
     }
@@ -864,7 +864,7 @@ unsafe fn c_free_str(p: *mut c_char) {
 /// # Safety
 ///
 /// As [`c_free`], with the `n` the block was allocated with.
-unsafe fn c_free_array<T>(p: *mut T, n: usize) {
+pub(crate) unsafe fn c_free_array<T>(p: *mut T, n: usize) {
     if p.is_null() {
         return;
     }
@@ -878,7 +878,7 @@ unsafe fn c_free_array<T>(p: *mut T, n: usize) {
 /// # Safety
 ///
 /// As [`c_alloc`].
-unsafe fn c_dup(b: &[u8]) -> *mut c_char {
+pub(crate) unsafe fn c_dup(b: &[u8]) -> *mut c_char {
     // SAFETY: the length is `b.len() + 1`, which is what is written below.
     let p = unsafe { c_alloc(b.len() + 1) };
     if p.is_null() {
@@ -897,7 +897,7 @@ unsafe fn c_dup(b: &[u8]) -> *mut c_char {
 /// # Safety
 ///
 /// `p` must be non-NULL and NUL-terminated, and outlive the slice.
-unsafe fn c_bytes<'a>(p: *const c_char) -> &'a [u8] {
+pub(crate) unsafe fn c_bytes<'a>(p: *const c_char) -> &'a [u8] {
     // SAFETY: the caller guarantees a live NUL-terminated string.
     unsafe { CStr::from_ptr(p) }.to_bytes()
 }
@@ -907,7 +907,7 @@ unsafe fn c_bytes<'a>(p: *const c_char) -> &'a [u8] {
 /// # Safety
 ///
 /// As [`c_bytes`], for a non-NULL `p`.
-unsafe fn c_bytes_opt<'a>(p: *const c_char) -> Option<&'a [u8]> {
+pub(crate) unsafe fn c_bytes_opt<'a>(p: *const c_char) -> Option<&'a [u8]> {
     if p.is_null() {
         None
     } else {
@@ -3542,18 +3542,8 @@ pub unsafe extern "C" fn history_search_pos(
 pub unsafe extern "C" fn tilde_expand(name: *mut c_char) -> *mut c_char {
     // SAFETY: `name` is a NUL-terminated string; it is read, never modified,
     // despite the non-const parameter readline source compatibility wants.
-    unsafe {
-        if name.is_null() {
-            return ptr::null_mut();
-        }
-        // The core takes a `&str`, so a path that is not valid UTF-8 cannot be
-        // handed through unchanged; reported as a core-signature gap.
-        let txt = String::from_utf8_lossy(c_bytes(name)).into_owned();
-        match filecomplete::fn_tilde_expand(&txt) {
-            Some(s) => c_dup(s.as_bytes()),
-            None => ptr::null_mut(),
-        }
-    }
+    // C: `return fn_tilde_expand(name);`
+    unsafe { crate::filecomplete::fn_tilde_expand(name) }
 }
 
 // [spec:libedit:def:readline.filename-completion-function-fn]
@@ -3563,31 +3553,9 @@ pub unsafe extern "C" fn filename_completion_function(
     name: *const c_char,
     state: c_int,
 ) -> *mut c_char {
+    // C: `return fn_filename_completion_function(name, state);`
     // SAFETY: `name` is a NUL-terminated string.
-    unsafe { fn_filename_completion_function(name, state) }
-}
-
-/// The `fn_filename_completion_function` forwarder both spellings share.
-///
-/// The core made the C's function-level statics an explicit state object, and
-/// presenting the C's single process-wide scan — restarted by `state == 0`,
-/// so two interleaved scans corrupt each other — is this crate's job.
-///
-/// # Safety
-///
-/// `name` must be NULL or a NUL-terminated string.
-unsafe fn fn_filename_completion_function(name: *const c_char, state: c_int) -> *mut c_char {
-    // SAFETY: the caller guarantees the string.
-    let text = unsafe { c_bytes_opt(name) }.unwrap_or(b"");
-    let text = String::from_utf8_lossy(text).into_owned();
-    FILENAME_SCAN.with_borrow_mut(|scan| {
-        let scan = scan.get_or_insert_with(FilenameCompletionState::default);
-        match filecomplete::fn_filename_completion_function(scan, &text, state) {
-            // SAFETY: the block is handed to the caller, who frees it.
-            Some(s) => unsafe { c_dup(s.as_bytes()) },
-            None => ptr::null_mut(),
-        }
-    })
+    unsafe { crate::filecomplete::fn_filename_completion_function(name, state) }
 }
 
 // [spec:libedit:def:readline.username-completion-function-fn]
@@ -3717,23 +3685,7 @@ pub unsafe extern "C" fn rl_display_match_list(matches: *mut *mut c_char, len: c
             Some(append_char_str),
         );
 
-        let mut used = vec![false; num + 1];
-        for (i, sorted) in owned.iter().enumerate().take(num + 1).skip(1) {
-            let want = sorted.as_bytes();
-            for j in 1..=num {
-                let p = *matches.add(j);
-                if !used[j] && !p.is_null() && c_bytes(p) == want {
-                    used[j] = true;
-                    if j != i {
-                        let tmp = *matches.add(i);
-                        *matches.add(i) = *matches.add(j);
-                        *matches.add(j) = tmp;
-                        used.swap(i, j);
-                    }
-                    break;
-                }
-            }
-        }
+        crate::filecomplete::permute_to_match(matches, &owned);
     }
 }
 
@@ -4671,10 +4623,11 @@ pub unsafe extern "C" fn rl_filename_completion_function(
     text: *const c_char,
     state: c_int,
 ) -> *mut c_char {
-    // SAFETY: `text` is a NUL-terminated string. Identical to
+    // C: `return fn_filename_completion_function(text, state);` — identical to
     // `filename_completion_function`; both spellings exist because readline
     // renamed the function.
-    unsafe { fn_filename_completion_function(text, state) }
+    // SAFETY: `text` is a NUL-terminated string.
+    unsafe { crate::filecomplete::fn_filename_completion_function(text, state) }
 }
 
 // [spec:libedit:def:readline.rl-forced-update-display-fn]
