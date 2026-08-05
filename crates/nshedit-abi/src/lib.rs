@@ -172,3 +172,154 @@ mod errno {
         }
     }
 }
+
+/// The caller's `FILE *`, which only this crate may touch.
+///
+/// Four entry points on the C ABI take a stream the application owns and are
+/// specified in terms of what stdio does with it — `sem:el.el-init-fn` is
+/// literally `el_init_fd(prog, fin, fout, ferr, fileno(fin), fileno(fout),
+/// fileno(ferr))`, `sem:el.el-wset-fn`'s `EL_SETFP` stores `fileno(fp)`
+/// alongside the stream, `sem:readline.rl-initialize-fn` steps 4 and 5 take
+/// three more `fileno`s, and `sem:history.history-save-fp-fn` decides on
+/// `ftell(fp) == 0` and writes with `fputs`/`fprintf`.
+///
+/// A `FILE *` is an opaque handle into the C library's own object. Its
+/// buffer, its position bookkeeping and its descriptor live in memory whose
+/// layout is that library's private business and differs between glibc, musl
+/// and the BSDs, so no Rust — in this workspace or in any crate — can read
+/// it. `plan/decisions/no-c-ffi.md` names this the third and last site where
+/// a libc symbol may be declared, and nothing but this module does it.
+///
+/// # Why not the descriptor
+///
+/// `fileno` alone would let `std::fs::File::from_raw_fd` carry the writes,
+/// which would make this one symbol instead of three. It answers a different
+/// question. The stream owns a userspace buffer the descriptor knows nothing
+/// about, so:
+///
+/// - `ftell(fp)` counts bytes still sitting in that buffer and
+///   `lseek(fd, 0, SEEK_CUR)` does not. On a stream the caller has already
+///   written to and not flushed, the two disagree, and step 1 of
+///   `sem:history.history-save-fp-fn` turns that disagreement into a cookie
+///   written where the C writes none.
+/// - A write to the descriptor reaches the file immediately; a write to the
+///   stream sits in the buffer until the caller flushes. Bytes the caller
+///   wrote *before* calling us would therefore land *after* ours.
+/// - The rule's closing clause — *the stream is neither flushed nor closed*
+///   — is a positive statement about where the bytes are when the call
+///   returns. Through the descriptor they are on the file; through the
+///   stream they are in the caller's buffer, which is what the C promises.
+///
+/// Flushing first would repair the first two and not the third, and would
+/// itself be a stdio call. So the stream is used as a stream.
+pub(crate) mod cstdio {
+    use core::ffi::{c_char, c_int, c_long, c_void};
+    use std::io::{self, Write};
+
+    use nshedit::el::CFile;
+
+    // `fileno`, `ftell` and `fputs` are POSIX and spelled the same in every
+    // libc this port targets, so unlike `errno`'s accessor there is no
+    // per-platform arm. None of them is `safe`: each dereferences the stream,
+    // and a NULL or already-closed one is undefined behaviour in the C too.
+    unsafe extern "C" {
+        /// C: `int fileno(FILE *stream)` — the descriptor behind a stream, or
+        /// -1 with `errno` set if it has none.
+        fn fileno(stream: *mut c_void) -> c_int;
+        /// C: `long ftell(FILE *stream)` — the stream's position, or -1 on a
+        /// stream that cannot report one (a pipe, a socket).
+        fn ftell(stream: *mut c_void) -> c_long;
+        /// C: `int fputs(const char *s, FILE *stream)` — non-negative on
+        /// success, `EOF` on failure.
+        fn fputs(s: *const c_char, stream: *mut c_void) -> c_int;
+    }
+
+    /// C: `fileno(fp)`, with the null dereference defined away.
+    ///
+    /// `sem:el.el-init-fn` is explicit that a NULL stream reaching `fileno`
+    /// is undefined behaviour and that a port must treat it as a caller
+    /// error rather than reproduce it. -1 is that treatment, and it is also
+    /// the value `fileno` itself yields for a stream with no descriptor —
+    /// which the same rule follows through: the -1 is stored undiagnosed,
+    /// construction still reports success, `tty_init` then fails and sets
+    /// `NO_TTY`, and nothing else notices.
+    pub(crate) fn fileno_of(stream: CFile) -> c_int {
+        if stream.is_null() {
+            return -1;
+        }
+        // SAFETY: a non-NULL `CFile` is a live `FILE *` the caller owns; that
+        // is the contract every rule taking one states, and the C dereferences
+        // it with no more checking than this.
+        unsafe { fileno(stream) }
+    }
+
+    /// C: `ftell(fp) == 0` — step 1 of `sem:history.history-save-fp-fn`.
+    ///
+    /// A NULL stream answers `true`, so the cookie write is attempted and
+    /// fails through [`CFileWriter`], which is the -1/`_HE_HIST_WRITE` the
+    /// port already defined for this case before the stream could be reached
+    /// at all. The C would fault instead.
+    pub(crate) fn at_start(stream: CFile) -> bool {
+        if stream.is_null() {
+            return true;
+        }
+        // SAFETY: as `fileno_of`.
+        unsafe { ftell(stream) == 0 }
+    }
+
+    /// The caller's stream as a byte sink, one `fputs` per write.
+    ///
+    /// [`Write::flush`] is deliberately a no-op: the rule ends *the stream is
+    /// neither flushed nor closed — the caller owns it*, so everything
+    /// written here stays in the caller's own buffer exactly as the C leaves
+    /// it.
+    pub(crate) struct CFileWriter {
+        stream: CFile,
+        /// The NUL-terminated copy `fputs` needs. Reused across writes, as
+        /// the C reuses its `ptr` scratch.
+        term: Vec<u8>,
+    }
+
+    impl CFileWriter {
+        pub(crate) fn new(stream: CFile) -> Self {
+            Self {
+                stream,
+                term: Vec::new(),
+            }
+        }
+    }
+
+    impl Write for CFileWriter {
+        /// One call, one `fputs`.
+        ///
+        /// The two things the core writes are the 13-byte history cookie and
+        /// one vis-encoded entry with its newline, and neither can contain a
+        /// NUL — `strvis` never emits one. That is the same guarantee the C's
+        /// own `fputs(hist_cookie, fp)` and `fprintf(fp, "%s\n", ptr)` rest
+        /// on, so terminating here loses nothing: `fputs` writes exactly the
+        /// bytes `buf` holds.
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.stream.is_null() {
+                return Err(io::Error::from(io::ErrorKind::InvalidInput));
+            }
+            self.term.clear();
+            self.term.reserve(buf.len() + 1);
+            self.term.extend_from_slice(buf);
+            self.term.push(0);
+            // SAFETY: `term` is NUL-terminated and outlives the call, and the
+            // stream is the caller's live `FILE *`.
+            let rc = unsafe { fputs(self.term.as_ptr().cast::<c_char>(), self.stream) };
+            if rc < 0 {
+                // The C's `EOF`. Only the cookie write is checked
+                // (`sem:history.history-save-fp-fn` step 1); the per-entry
+                // writes discard this, which is ERR-history-21.
+                return Err(io::Error::other("fputs"));
+            }
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+}

@@ -490,9 +490,12 @@ pub(crate) fn el_getenv(el: &EditLine, name: &str) -> Option<OsString> {
 /// else notices.
 ///
 /// The real `fileno` belongs to the ABI crate, which is what owns the
-/// `FILE *` in the first place. Its `el_init` export should call `fileno`
-/// itself and go straight to [`el_init_fd`]; this entry point exists so the
-/// C's call graph has a Rust counterpart, not as a working stdio bridge.
+/// `FILE *` in the first place, and that is where it now lives: the exported
+/// `el_init` calls it and goes straight to [`el_init_fd`], so no C caller
+/// reaches this stub. It stays so the C's call graph has a Rust counterpart
+/// and so [`el_init`] below reads as the rule writes it; it is not a working
+/// stdio bridge, and a Rust caller with a real stream has a descriptor for it
+/// and should call [`el_init_fd`].
 fn fileno(_stream: CFile) -> i32 {
     -1
 }

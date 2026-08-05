@@ -31,7 +31,6 @@ use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::fs::OpenOptionsExt;
 
 use crate::chartype::{CtBufferT, ct_decode_string, ct_encode_string};
-use crate::el::CFile;
 use crate::histedit::{
     H_ADD, H_APPEND, H_CLEAR, H_CURR, H_DEL, H_DELDATA, H_END, H_ENTER, H_FIRST, H_FUNC, H_GETSIZE,
     H_GETUNIQUE, H_LAST, H_LOAD, H_NEXT, H_NEXT_EVDATA, H_NEXT_EVENT, H_NEXT_STR, H_NSAVE_FP,
@@ -1600,29 +1599,46 @@ fn cookie_prefix_matches(line: &[u8]) -> bool {
     true
 }
 
+/// A caller's `FILE *`, reduced to the two facilities
+/// `sem:history.history-save-fp-fn` uses one for.
+///
+/// Not a ported C type. `H_SAVE_FP` and `H_NSAVE_FP` put a raw `FILE *` on
+/// the public varargs ABI, and a `FILE *` is an opaque handle into the C
+/// library's own object — its buffer, its position bookkeeping and its
+/// descriptor all live in memory whose layout is that library's private
+/// business. `[dec:libedit:no-c-ffi]` keeps this crate out of libc entirely,
+/// so the stream is not named here at all: the ABI crate, which is where
+/// that decision's third enumerated site lives, calls `ftell` and `fputs` on
+/// the caller's object and hands the core just their two answers.
+///
+/// The split matters for more than tidiness. Writing through the descriptor
+/// behind the stream instead — `fileno` plus `File::from_raw_fd` — answers a
+/// *different* question: the stream carries a userspace buffer the descriptor
+/// knows nothing about, so `ftell` and `lseek` disagree whenever anything is
+/// pending, and a raw write reaches the file ahead of bytes the caller wrote
+/// through the stream earlier. See [`history_save_fd`], which is that route
+/// and is offered to Rust callers who have a descriptor and no stream.
+pub struct SaveStream<'a> {
+    /// C: `ftell(fp) == 0` — write the cookie, or skip it.
+    ///
+    /// False covers both the intended case (a stream already positioned past
+    /// a header) and ERR-history-20: on a pipe or socket `ftell` returns -1,
+    /// so the file comes out headerless and `history_load` later rejects it.
+    pub at_start: bool,
+    /// The stream as a byte sink: one call per `fputs`, `Err` for its `EOF`.
+    ///
+    /// It is neither flushed nor closed — the caller owns it, and the C
+    /// leaves everything it wrote sitting in the stream's own buffer.
+    pub out: &'a mut dyn Write,
+}
+
 // [spec:libedit:def:history.history-save-fp-fn]
 // [spec:libedit:sem:history.history-save-fp-fn]
 /// C: `static int history_save_fp(TYPE(History) *h, size_t nelem, FILE *fp)`
 ///
 /// `fp` is the caller's stream, neither flushed nor closed here.
-fn history_save_fp(h: &mut HistoryW, nelem: usize, fp: CFile) -> i32 {
-    let _ = (h, nelem);
-    if fp.is_null() {
-        return -1;
-    }
-    // **A hole, reported rather than papered over.** [`CFile`] is an opaque
-    // `FILE *` the caller owns, and `[dec:libedit:no-c-ffi]` bars linking
-    // libc, so nothing in this crate can `ftell`, `fputs` or `fprintf`
-    // through it — the same wall `el_init`'s `fileno` hits. The C's own
-    // header-write failure already returns -1 (the dispatcher reports
-    // `_HE_HIST_WRITE`), so that is the outcome here, chosen because it is a
-    // result the C can produce rather than an invented one.
-    //
-    // Everything else about `H_SAVE_FP`/`H_NSAVE_FP` is implemented: the
-    // algorithm lives in [`history_save_out`] and [`history_save_fd`] is the
-    // entry point the ABI crate can reach it through once it has a
-    // descriptor for the caller's stream.
-    -1
+fn history_save_fp(h: &mut HistoryW, nelem: usize, fp: SaveStream<'_>) -> i32 {
+    history_save_out(h, nelem, fp.out, fp.at_start)
 }
 
 /// The whole of `sem:history.history-save-fp-fn`, against a writer.
@@ -1737,8 +1753,15 @@ fn history_save_out(h: &mut HistoryW, nelem: usize, out: &mut dyn Write, at_star
         // C: `fprintf(fp, "%s\n", ptr)` — one line per entry. ERR-history-21:
         // the return is ignored, so `ENOSPC`, `EIO` and a full pipe are
         // invisible and the function still reports success.
-        let _ = out.write_all(&ptr[..n as usize]);
-        let _ = out.write_all(b"\n");
+        //
+        // One write, not two: `strnvis` terminates at `ptr[n]`, so writing the
+        // newline over that terminator hands the sink exactly the bytes the
+        // C's `"%s\n"` produces, in exactly one call — which is what makes a
+        // sink that is a `FILE *` do one `fputs` per entry, as the C does one
+        // `fprintf`. The slot is always there: `strnvis` wrote its NUL into
+        // it.
+        ptr[n as usize] = b'\n';
+        let _ = out.write_all(&ptr[..n as usize + 1]);
 
         i = i.saturating_add(1);
         retval = hg(h.h_prev, h.h_ref, &mut ev);
@@ -1750,17 +1773,21 @@ fn history_save_out(h: &mut HistoryW, nelem: usize, out: &mut dyn Write, at_star
 
 /// [`history_save_fp`] against a descriptor rather than a `FILE *`.
 ///
-/// Not a ported function: it is the C's `history_save_fp` with the one part
-/// this crate cannot express — writing through a caller's opaque stdio
-/// stream — replaced by the descriptor behind it. `H_SAVE_FP` and
-/// `H_NSAVE_FP` are unreachable without it (see [`history_save_fp`]), so this
-/// is what the ABI crate calls to close them, and what a Rust caller uses
-/// directly. `nelem == usize::MAX` is the C's `(size_t)-1`, "all entries".
+/// Not a ported function, and **not** the route `H_SAVE_FP` takes: it is the
+/// C's `history_save_fp` with the caller's stream replaced by the descriptor
+/// behind it, which is a different object. A stream carries a userspace
+/// buffer the descriptor knows nothing about, so `ftell` and `lseek` disagree
+/// whenever anything is pending and a write here reaches the file ahead of
+/// bytes the caller wrote through the stream earlier. That is why the ABI
+/// crate calls `ftell`/`fputs` on the stream itself and hands the core a
+/// [`SaveStream`]; this entry point exists for a Rust caller that has a
+/// descriptor and no stream, which is every caller of this crate that is not
+/// the C ABI. `nelem == usize::MAX` is the C's `(size_t)-1`, "all entries".
 ///
-/// The descriptor is borrowed: it is neither flushed nor closed here, matching
-/// the C's contract for the stream. The cookie is written only when the
-/// descriptor is at offset 0, which reproduces ERR-history-20 — a pipe or
-/// socket cannot report a position, so it gets no header.
+/// The descriptor is borrowed: it is neither closed nor left with buffered
+/// bytes. The cookie is written only when the descriptor is at offset 0,
+/// which is ERR-history-20 in descriptor terms — a pipe or socket cannot
+/// report a position, so it gets no header.
 pub fn history_save_fd(h: &mut HistoryW, nelem: usize, fd: RawFd) -> i32 {
     if fd < 0 {
         return -1;
@@ -1808,9 +1835,10 @@ fn history_save(h: &mut HistoryW, fname: &str) -> i32 {
 
     // C: `history_save_fp(h, (size_t)-1, fp)`. The stream is fresh at offset
     // 0, so the cookie is always written, and `(size_t)-1` means "all
-    // entries, oldest first". This does not route through
-    // [`history_save_fp`], which cannot write to an opaque `FILE *`; it calls
-    // the shared body directly, with the `ftell` answer it already knows.
+    // entries, oldest first". The file is this function's own — the C's
+    // `fdopen` of the descriptor it just opened, not a caller's stream — so
+    // it calls the shared body directly with the `ftell` answer it already
+    // knows, instead of building a [`SaveStream`] to say the same thing.
     let i = history_save_out(h, usize::MAX, &mut out, true);
 
     // C: `fclose(fp)` with the **return value ignored**, so a failure to
@@ -1968,10 +1996,11 @@ pub enum HistoryArg<'a> {
     Str(*const u32),
     /// One `const char *` path, narrow in both builds: `H_LOAD`, `H_SAVE`.
     Path(&'a str),
-    /// One `FILE *`: `H_SAVE_FP`.
-    Fp(CFile),
+    /// One `FILE *`: `H_SAVE_FP`. The stream arrives as the two answers the
+    /// ABI crate read off it; see [`SaveStream`].
+    Fp(SaveStream<'a>),
     /// `size_t nelem` then `FILE *`: `H_NSAVE_FP`.
-    NSaveFp(usize, CFile),
+    NSaveFp(usize, SaveStream<'a>),
     /// `int num` then `void **d`: `H_NEXT_EVDATA`, `H_DELDATA`. The pointer
     /// stays raw because `H_DELDATA` accepts the magic `(void **)-1`.
     EvData(i32, *mut *mut c_void),

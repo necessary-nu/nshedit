@@ -44,10 +44,13 @@
 //!   `rl_initialize`), `ioctl(FIONREAD)` (the poll in `_rl_event_read_char`)
 //!   and `raise(SIGTSTP)` (`_el_rl_tstp`) have no route that
 //!   `plan/decisions/no-c-ffi.md` allows, and no core module offers one yet.
-//! - **No `FILE *` facility.** `stdin`/`stdout`/`stderr` cannot be named and
-//!   `fileno` cannot be called, so a `NULL` `rl_instream`/`rl_outstream`
-//!   means "the standard descriptor" here rather than being rewritten to the
-//!   C stream object.
+//! - **No `stdin`/`stdout`/`stderr`.** `fileno` is available now — see
+//!   [`crate::cstdio`], the third site on `plan/decisions/no-c-ffi.md`'s
+//!   enumeration — so an application's own `rl_instream`/`rl_outstream`
+//!   yields its own descriptors. The three standard streams are data objects
+//!   rather than functions and are not on that enumeration, so a `NULL`
+//!   `rl_instream`/`rl_outstream` still means "the standard descriptor" here
+//!   rather than being rewritten to the C stream object.
 //! - **No passwd database.** `getpwuid`/`getpwent` are read out of
 //!   `/etc/passwd` by [`passwd_entries`]; the core needs this too, for
 //!   `fn_tilde_expand`.
@@ -72,6 +75,8 @@ use nshedit::histedit::{
     H_PREV_EVENT, H_PREV_STR, H_REPLACE, H_SAVE, H_SET, H_SETSIZE, HistEvent, History,
 };
 use nshedit::tty::{C_EOF, C_REPRINT, TS_IO};
+
+use crate::cstdio;
 
 /// C: `rl_command_func_t *` — the application's keystroke handler.
 ///
@@ -932,10 +937,22 @@ fn isspace(c: u8) -> bool {
 /// `fprintf(rl_outstream, ...)` for the two diagnostics `get_history_event`
 /// and `_history_expand_command` print.
 ///
-/// Gap: there is no `FILE *` facility, so this reaches the process's standard
-/// output — what `rl_outstream` defaults to. An application that redirected
-/// `rl_outstream` does not see these two messages where it asked for them.
+/// The stream is the application's, so this goes through it — one `fputs`,
+/// buffered exactly as the C's `fprintf` is, so a caller that interleaves its
+/// own writes sees them in the order it wrote them. See [`crate::cstdio`].
+///
+/// A NULL `rl_outstream` reaches the process's standard output instead. The C
+/// cannot be here with a NULL one: `rl_initialize` defaults it to `stdout`,
+/// which is step 3 and the one part of that rule the port still cannot do —
+/// `stdout` is a data object and is not on `no-c-ffi`'s enumeration. Writing
+/// to descriptor 1 is what that stream would have done.
 fn rl_out_write(msg: &[u8]) {
+    // SAFETY: single-threaded module state.
+    let stream = unsafe { rl_outstream };
+    if !stream.is_null() {
+        let _ = cstdio::CFileWriter::new(stream).write_all(msg);
+        return;
+    }
     let out = std::io::stdout();
     let mut out = out.lock();
     let _ = out.write_all(msg);
@@ -1373,17 +1390,36 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
 
         rl_readline_state &= !RL_STATE_DONE;
 
-        // Gap: `stdin`/`stdout` cannot be named and `fileno` cannot be
-        // called, so a NULL stream keeps meaning "the standard one" instead
-        // of being rewritten to the C stream object, and the descriptors are
-        // the standard three. An application that sets `rl_instream` to its
-        // own `FILE *` still gets descriptor 0 for terminal work — which the
-        // C also does for everything except the stream it reads through.
-        let (fdin, fdout, fderr) = (0, 1, 2);
+        // Steps 4 and 5's `fileno` is no longer a gap: an application that
+        // installs its own `rl_instream`/`rl_outstream` now gets *its*
+        // descriptors, which is the whole point of those exported globals.
+        //
+        // Step 3 still is one. `stdin` and `stdout` are data objects in the C
+        // library — and macros over an array on the BSDs — which
+        // `plan/decisions/no-c-ffi.md`'s enumeration does not reach, so a
+        // NULL stream keeps meaning "the standard one" instead of being
+        // rewritten to the C's own stream object, and falls back to the
+        // descriptor that stream carries at program start. Same for `stderr`,
+        // which step 5 passes as `ferr`.
+        let fdin = if rl_instream.is_null() {
+            0
+        } else {
+            cstdio::fileno_of(rl_instream)
+        };
+        let fdout = if rl_outstream.is_null() {
+            1
+        } else {
+            cstdio::fileno_of(rl_outstream)
+        };
+        let fderr = 2;
 
-        // Gap: the `tcgetattr(fileno(rl_instream))` test for a clear `ECHO`
-        // has no syscall route, so `editmode` keeps the value the C leaves it
-        // with when `tcgetattr` fails.
+        // Gap: step 4's `tcgetattr(fileno(rl_instream))` test for a clear
+        // `ECHO`. The `fileno` half is answered now; the `tcgetattr` half has
+        // no route until the platform layer lands (group 4 of the register in
+        // `plan/decisions/platform-layer.md`), so `editmode` keeps the value
+        // the C leaves it with when `tcgetattr` fails. This is the one
+        // divergence that fails *open*: we edit on a non-echoing input where
+        // the C would not.
         let editmode = 1;
 
         E = crate::histedit::el_init_fd(
@@ -2933,11 +2969,25 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
             Ok(f) => f,
             Err(e) => return errno_of(&e),
         };
-        // Gap: `H_NSAVE_FP` takes a `FILE *`, and the port has no way to make
-        // one or to read the application's. The cookie handed over is this
-        // crate's own open file; the history layer needs a decision on what a
-        // `CFile` is before it can write through it.
-        let cookie: CFile = Box::into_raw(Box::new(fp)).cast();
+        // Gap, and a different one from the rest of this crate's `FILE *`
+        // work. `crate::cstdio` reads and writes a stream the *application*
+        // owns; this function has to *make* one, for a file it opened itself,
+        // and `fopen`/`fdopen` are not on `plan/decisions/no-c-ffi.md`'s
+        // enumeration — the argument there is about a caller's opaque object,
+        // which this is not.
+        //
+        // A NULL cookie is what goes over instead: `H_NSAVE_FP` then fails
+        // its cookie write and reports -1/`_HE_HIST_WRITE`, which surfaces
+        // here as the errno below. It must NOT be a fabricated pointer — the
+        // dispatcher now calls the real `ftell` on whatever arrives, so a
+        // `Box<File>` cast to `CFile` would be handed to the C library as a
+        // `FILE *`.
+        //
+        // The route out is `nshedit::history::history_save_fd`, which exists
+        // for exactly this case, and it needs the narrow history handle to
+        // be a real one — i.e. it is blocked on the narrow instantiation,
+        // which `history_va` below already aborts on.
+        let cookie: CFile = ptr::null_mut();
         // As `write_history`: sampled, not cleared.
         let mark = crate::errno::mark();
         let rc = history_va(H, &mut ev, H_NSAVE_FP, n as usize, cookie);
@@ -2948,8 +2998,8 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
         } else {
             0
         };
-        // The FILE this function opened is the one it closes.
-        drop(Box::from_raw(cookie.cast::<std::fs::File>()));
+        // The file this function opened is the one it closes.
+        drop(fp);
         if rc == -1 {
             return if e != 0 { e } else { EINVAL };
         }

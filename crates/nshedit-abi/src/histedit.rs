@@ -64,9 +64,13 @@ use nshedit::histedit::{
     EditLine, ElRfuncT, HistEvent, HistEventW, History, HistoryW, LineInfo, LineInfoW, Tokenizer,
     TokenizerW,
 };
-use nshedit::history::{HistoryArg, HistoryEfunT, HistoryGfunT, HistorySfunT, HistoryVfunT};
+use nshedit::history::{
+    HistoryArg, HistoryEfunT, HistoryGfunT, HistorySfunT, HistoryVfunT, SaveStream,
+};
 use nshedit::map::ElFuncT;
 use nshedit::prompt::ElPfuncT;
+
+use crate::cstdio::{self, CFileWriter};
 
 // ---------------------------------------------------------------------------
 // `el_set`/`el_get` operation codes. C: `histedit.h`, which defines them as
@@ -164,24 +168,21 @@ static EDITOR_VI: [u32; 3] = wide(b"vi\0");
 /// stops — an `extern "C"` function aborts rather than unwinding, so no
 /// unwind crosses the ABI.
 ///
-/// Two causes, both of them things `nshedit` owes this crate:
+/// One cause left, and it is something `nshedit` owes this crate: **the
+/// narrow instantiations.** `historyn.c` and `tokenizern.c` are
+/// `history.c`/`tokenizer.c` recompiled with `Char = char`. `nshedit`
+/// declares `History` and `Tokenizer` as opaque placeholders and leaves those
+/// bodies "to the history translation" / "to the tokenizer translation".
+/// Until they exist there is nothing for the narrow `history`/`tok_*` entry
+/// points to call, and synthesising them over the wide store would change
+/// defined behaviour (byte semantics become wide semantics), which
+/// `dec:libedit:conformance-policy` reserves for a recorded decision rather
+/// than an implementation choice.
 ///
-/// 1. **A stream facility.** `el_wset(EL_SETFP)` installs a `FILE *` *and its
-///    `fileno`*, and `nshedit::el::CFile` is an opaque `*mut c_void` with no
-///    way to derive a descriptor from it. `plan/decisions/no-c-ffi.md` calls
-///    the `FILE *` surface a candidate site for the libc ration and
-///    `plan/decisions/platform-layer.md` defers it, so this crate may not
-///    simply declare `fileno` — the enumeration is closed until that is
-///    argued.
-/// 2. **The narrow instantiations.** `historyn.c` and `tokenizern.c` are
-///    `history.c`/`tokenizer.c` recompiled with `Char = char`. `nshedit`
-///    declares `History` and `Tokenizer` as opaque placeholders and leaves
-///    those bodies "to the history translation" / "to the tokenizer
-///    translation". Until they exist there is nothing for the narrow
-///    `history`/`tok_*` entry points to call, and synthesising them over the
-///    wide store would change defined behaviour (byte semantics become wide
-///    semantics), which `dec:libedit:conformance-policy` reserves for a
-///    recorded decision rather than an implementation choice.
+/// The other cause is closed. `el_wset(EL_SETFP)` and the two `H_*SAVE_FP`
+/// ops needed a facility over a caller's opaque `FILE *`;
+/// `plan/decisions/no-c-ffi.md` now enumerates that surface as its third
+/// site, and [`crate::cstdio`] is where it lives.
 #[cold]
 fn core_gap(needs: &str) -> ! {
     panic!("nshedit-abi: this entry point is blocked on `nshedit` — needs {needs}");
@@ -376,8 +377,23 @@ pub unsafe extern "C" fn el_init(
     let Some(prog) = (unsafe { prog_name(prog) }) else {
         return core::ptr::null_mut();
     };
-    // The core derives the three descriptors with `fileno`, as the C does.
-    nshedit::el::el_init(prog, fin, fout, ferr).map_or(core::ptr::null_mut(), Box::into_raw)
+    // `sem:el.el-init-fn`: the entire body is one tail call to `el_init_fd`
+    // with `fileno` of each stream. The `fileno` is this crate's, not the
+    // core's — a `FILE *` is the C library's own object and only this crate
+    // may reach into it (`plan/decisions/no-c-ffi.md`), which is exactly what
+    // `nshedit::el::el_init`'s own documentation asks the ABI to do. The
+    // evaluation order of the three calls is unspecified in C and has no
+    // observable consequence; left to right here.
+    nshedit::el::el_init_fd(
+        prog,
+        fin,
+        fout,
+        ferr,
+        cstdio::fileno_of(fin),
+        cstdio::fileno_of(fout),
+        cstdio::fileno_of(ferr),
+    )
+    .map_or(core::ptr::null_mut(), Box::into_raw)
 }
 
 // [spec:libedit:def:histedit.el-init-fd-fn]
@@ -1034,8 +1050,33 @@ pub unsafe extern "C" fn el_wset(
 
         // An `int what` then a `FILE *`, installed together with its
         // `fileno`. 0 for what in {0,1,2}, -1 otherwise. `fileno` is called
-        // with no NULL check, which the C leaves undefined.
-        EL_SETFP => core_gap("`nshedit`'s `fileno` equivalent for `CFile`"),
+        // with no NULL check, which the C leaves undefined; `fileno_of`
+        // answers -1 for a NULL stream instead, which is the descriptor the
+        // C stores for a stream that has none.
+        //
+        // Both varargs are consumed before `what` is validated, which a fixed
+        // arity makes moot. The previously installed stream is neither
+        // flushed nor closed — the caller owns the old one and the new.
+        EL_SETFP => {
+            let fp = a2;
+            match int_arg(a1) {
+                0 => {
+                    el.el_infile = fp;
+                    el.el_infd = cstdio::fileno_of(fp);
+                }
+                1 => {
+                    el.el_outfile = fp;
+                    el.el_outfd = cstdio::fileno_of(fp);
+                }
+                2 => {
+                    el.el_errfile = fp;
+                    el.el_errfd = cstdio::fileno_of(fp);
+                }
+                // Any other `what` changes nothing.
+                _ => return -1,
+            }
+            0
+        }
 
         // No further arguments: clear the recorded display, redraw prompt and
         // line, flush. Returns 0 — the arm assigns nothing to `rv`.
@@ -1496,6 +1537,11 @@ pub unsafe extern "C" fn history_w(
     // `HistoryArg` takes outlives the match.
     let hf;
 
+    // The caller's stream for `H_SAVE_FP`/`H_NSAVE_FP`, hoisted for the same
+    // reason: the core borrows it for the length of the call and never past
+    // it, so no `FILE *` outlives the operation that was handed it.
+    let mut fp_out: Option<CFileWriter> = None;
+
     let arg = match op {
         // `void *ptr` then ten function pointers: first, next, last, prev,
         // curr, set, clear, enter, add, del — eleven arguments, one more than
@@ -1554,14 +1600,26 @@ pub unsafe extern "C" fn history_w(
             None => return -1,
         },
 
-        // One `FILE *`, which the caller keeps and must close.
-        H_SAVE_FP => HistoryArg::Fp(a1),
+        // One `FILE *`, which the caller keeps and must close. The stream is
+        // read and written here rather than in the core: see
+        // [`crate::cstdio`] for why the descriptor behind it is not a
+        // substitute.
+        H_SAVE_FP => HistoryArg::Fp(SaveStream {
+            at_start: cstdio::at_start(a1),
+            out: fp_out.insert(CFileWriter::new(a1)),
+        }),
 
         // `size_t n` then `FILE *`. `n` is passed through unchanged: the walk
         // takes `n` steps back from the newest and then writes forward, so it
         // emits **n + 1** entries and `n == 0` writes one (ERR-history-15).
         // Not corrected here.
-        H_NSAVE_FP => HistoryArg::NSaveFp(a1 as usize, a2),
+        H_NSAVE_FP => HistoryArg::NSaveFp(
+            a1 as usize,
+            SaveStream {
+                at_start: cstdio::at_start(a2),
+                out: fp_out.insert(CFileWriter::new(a2)),
+            },
+        ),
 
         // `int` then `void **`. The pointer stays raw: `H_DELDATA` accepts
         // the magic `(void **)-1` meaning "position the cursor only".

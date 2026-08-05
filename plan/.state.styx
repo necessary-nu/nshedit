@@ -74,5 +74,6 @@ assertions (
     {id conformance-oracle, kind @complete, author "brendan@necessary.nu", at 2026-08-05T10:59:31.364311107Z}
     {id conformance-abi-shape, kind @complete, author "brendan@necessary.nu", at 2026-08-05T10:59:33.018312897Z}
     {id conformance-differential, kind @complete, author "brendan@necessary.nu", at 2026-08-05T10:59:37.412561917Z}
-    {id spec-corrections-2, kind @doing, author "brendan@necessary.nu", at 2026-08-05T11:15:00.248743756Z}
+    {id spec-corrections-2, kind @complete, author "brendan@necessary.nu", at 2026-08-05T11:16:30.244303886Z}
+    {id abi-file-surface, kind @doing, author "brendan@necessary.nu", at 2026-08-05T11:28:33.864068238Z}
 )
