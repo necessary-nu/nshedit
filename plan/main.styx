@@ -854,37 +854,45 @@ children (
     }
 
     {
-        id nterminfo
+        id nshterm
         title "Our terminfo crate, because the one we depended on has been unmaintained since 2018"
         children (
             {
-                id nterminfo-extract
+                id nshterm-extract
                 title "Carve the terminfo half out of term 1.2.1 and drop the colour half termcolor supersedes"
+                log (
+                    {
+                        at 2026-08-05T12:15:12.875637217Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {
-                id nterminfo-env-guard
+                id nshterm-env-guard
                 title "Guard TERMINFO, TERMINFO_DIRS and HOME, which a set-uid consumer must not honour"
-                deps (nterminfo-extract)
+                deps (nshterm-extract)
             }
 
             {
-                id nterminfo-padding
+                id nshterm-padding
                 title "Preserve the padding delays parm::expand discards, which go live when t_speed becomes real"
-                deps (nterminfo-extract)
+                deps (nshterm-extract)
             }
 
             {
-                id nterminfo-hashed-db
+                id nshterm-hashed-db
                 title "Survey whether any platform we target ships hashed terminfo, then decide whether to read it"
                 priority 40
-                deps (nterminfo-extract)
+                deps (nshterm-extract)
                 log (
                     {
                         at 2026-08-05T11:53:53.861057785Z
                         author "brendan@necessary.nu"
                         kind @note
-                        text "Upstream refuses this outright. term-1.2.1's searcher.rs opens with its own module doc: \"ncurses-compatible database discovery — Does not support hashed database, only filesystem!\" So every consumer of that crate silently fails on a hashed system, and nobody was going to fix it because the crate has been looking for a maintainer since November 2018 (Stebalien/term#93).\n\nWhy it matters here rather than being a nicety: the failure is total, not partial. get_dbpath_for_term walks TERMINFO, $HOME/.terminfo, TERMINFO_DIRS and the four compiled-in directories, then within each tries <dir>/<first-char>/<term> and <dir>/<hex>/<term>. On a system whose terminfo is a single terminfo.db, none of those paths exist, tgetent reports \"no entry\", and libedit falls back to dumb defaults — no cursor addressing, no clear-to-eol, no insert/delete line. The whole editor degrades, on a machine where the C works perfectly through ncurses.\n\nDebian uses the filesystem tree, which is why the port works here and why this has not bitten. That makes it a portability cliff rather than a visible bug: it is invisible until it is total.\n\nWhat it costs: ncurses' hashed database is a Berkeley DB 1.85 hash file. Reading it means implementing that format — bucket pages, the hash function, overflow chains — or finding a pure-Rust crate that already does and checking its licence, which is the same trap terminfo 0.9.0's WTFPL was. Do not assume a crate exists; check, and check the licence before designing around it. Writing it is bounded but it is not a weekend.\n\nCheck before building: which systems actually ship hashed. ncurses is configured with --with-hashed-db and the answer differs by distro and by BSD. That survey decides whether this is P1 or a later nicety, and it is cheap to do first.\n\nWorth knowing for the crate's own sake: this is the feature that makes nterminfo better than what we forked rather than merely unblocked. Combined with the termcap column (nterminfo-termcap-names), it is a terminfo reader that handles both database layouts and all three name columns, which is more than term or the WTFPL terminfo crate offer. If we publish, that is the argument for it existing."
+                        text "Upstream refuses this outright. term-1.2.1's searcher.rs opens with its own module doc: \"ncurses-compatible database discovery — Does not support hashed database, only filesystem!\" So every consumer of that crate silently fails on a hashed system, and nobody was going to fix it because the crate has been looking for a maintainer since November 2018 (Stebalien/term#93).\n\nWhy it matters here rather than being a nicety: the failure is total, not partial. get_dbpath_for_term walks TERMINFO, $HOME/.terminfo, TERMINFO_DIRS and the four compiled-in directories, then within each tries <dir>/<first-char>/<term> and <dir>/<hex>/<term>. On a system whose terminfo is a single terminfo.db, none of those paths exist, tgetent reports \"no entry\", and libedit falls back to dumb defaults — no cursor addressing, no clear-to-eol, no insert/delete line. The whole editor degrades, on a machine where the C works perfectly through ncurses.\n\nDebian uses the filesystem tree, which is why the port works here and why this has not bitten. That makes it a portability cliff rather than a visible bug: it is invisible until it is total.\n\nWhat it costs: ncurses' hashed database is a Berkeley DB 1.85 hash file. Reading it means implementing that format — bucket pages, the hash function, overflow chains — or finding a pure-Rust crate that already does and checking its licence, which is the same trap terminfo 0.9.0's WTFPL was. Do not assume a crate exists; check, and check the licence before designing around it. Writing it is bounded but it is not a weekend.\n\nCheck before building: which systems actually ship hashed. ncurses is configured with --with-hashed-db and the answer differs by distro and by BSD. That survey decides whether this is P1 or a later nicety, and it is cheap to do first.\n\nWorth knowing for the crate's own sake: this is the feature that makes nshterm better than what we forked rather than merely unblocked. Combined with the termcap column (nshterm-termcap-names), it is a terminfo reader that handles both database layouts and all three name columns, which is more than term or the WTFPL terminfo crate offer. If we publish, that is the argument for it existing."
                     }
 
                     {
@@ -898,15 +906,29 @@ children (
                         at 2026-08-05T12:07:01.833918144Z
                         author "brendan@necessary.nu"
                         kind @note
-                        text "Verified against ncurses source and this host, replacing the recollection the earlier notes on this node were resting on. Two claims held; a third measurement reprioritises the whole node.\n\nCONFIRMED, from ncurses/tinfo/hashed_db.c: the access method is DB_HASH in every branch, so db185 -- btree only by its own documentation -- does not fit. Also confirmed that ncurses spans API generations, and the branches are explicit:\n\n    HASHED_DB_API >= 4   db_create() + result->open(result, NULL, path, NULL, DB_HASH, ...)\n    HASHED_DB_API >= 3   db_create() + result->open(result, path, NULL, DB_HASH, ...)\n    HASHED_DB_API >= 2   db_open(path, DB_HASH, ...)\n    HASHED_DB_API <  2   dbopen(path, ..., DB_HASH, NULL)\n\nThe `< 2` branch is the 1.85 API, so db185 is the right generation for it and only the wrong access method. Extending db185 with hash support would cover exactly that branch and no other. Worth knowing if we ever contribute there rather than build our own.\n\nTHE MEASUREMENT THAT CHANGES THE PRIORITY: Debian's libtinfo.so.6 records NEEDED libc.so.6 and nothing else, and has zero db_*/dbopen undefined symbols. Debian's ncurses is built WITHOUT --with-hashed-db. There is no hashed database on the target platform at all.\n\nSo this node is not the cliff the earlier note called it. Re-read that note with this in mind: \"the failure is total, not partial\" and \"the whole editor degrades\" are both accurate about a hashed system and irrelevant to Debian, and I wrote them before checking whether Debian was one. Deprioritised accordingly -- a portability gap for systems configured differently, not something the port is standing on.\n\nWhat the survey still owes, and it is smaller now: which platforms in our POSIX scope actually ship --with-hashed-db. FreeBSD and the commercial Unixes are the candidates. If the answer is none we care about, this leaf can be retired rather than built, and the honest version of nterminfo's publishing pitch drops from \"handles both database layouts\" to \"handles the filesystem layout, like ncurses does on Linux\"."
+                        text "Verified against ncurses source and this host, replacing the recollection the earlier notes on this node were resting on. Two claims held; a third measurement reprioritises the whole node.\n\nCONFIRMED, from ncurses/tinfo/hashed_db.c: the access method is DB_HASH in every branch, so db185 -- btree only by its own documentation -- does not fit. Also confirmed that ncurses spans API generations, and the branches are explicit:\n\n    HASHED_DB_API >= 4   db_create() + result->open(result, NULL, path, NULL, DB_HASH, ...)\n    HASHED_DB_API >= 3   db_create() + result->open(result, path, NULL, DB_HASH, ...)\n    HASHED_DB_API >= 2   db_open(path, DB_HASH, ...)\n    HASHED_DB_API <  2   dbopen(path, ..., DB_HASH, NULL)\n\nThe `< 2` branch is the 1.85 API, so db185 is the right generation for it and only the wrong access method. Extending db185 with hash support would cover exactly that branch and no other. Worth knowing if we ever contribute there rather than build our own.\n\nTHE MEASUREMENT THAT CHANGES THE PRIORITY: Debian's libtinfo.so.6 records NEEDED libc.so.6 and nothing else, and has zero db_*/dbopen undefined symbols. Debian's ncurses is built WITHOUT --with-hashed-db. There is no hashed database on the target platform at all.\n\nSo this node is not the cliff the earlier note called it. Re-read that note with this in mind: \"the failure is total, not partial\" and \"the whole editor degrades\" are both accurate about a hashed system and irrelevant to Debian, and I wrote them before checking whether Debian was one. Deprioritised accordingly -- a portability gap for systems configured differently, not something the port is standing on.\n\nWhat the survey still owes, and it is smaller now: which platforms in our POSIX scope actually ship --with-hashed-db. FreeBSD and the commercial Unixes are the candidates. If the answer is none we care about, this leaf can be retired rather than built, and the honest version of nshterm's publishing pitch drops from \"handles both database layouts\" to \"handles the filesystem layout, like ncurses does on Linux\"."
                     }
                 )
             }
 
             {
-                id nterminfo-termcap-names
+                id nshterm-termcap-names
                 title "Carry the termcap column ncurses has and term dropped, so legacy two-letter names resolve"
-                deps (nterminfo-extract)
+                deps (nshterm-extract)
+            }
+
+            {
+                id nshterm-tests
+                title "Test the crate we now own, which arrived with a test-to-production ratio of 0.015"
+                deps (nshterm-extract)
+                log (
+                    {
+                        at 2026-08-05T12:16:48.605511787Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Debt inherited at extraction, measured by the test-footprint gate: crates/nshterm/src/parser has a test-to-production ratio of 0.015 against a floor of 0.200. Bypassed at the extraction commit because it was true of term 1.2.1 before we touched it and fixing it was not that node's job. It is our problem now.\n\nWhat actually came across: 9 tests and 28 compiled terminfo fixtures under tests/data (linux and its variants, rxvt and its variants, screen, vt100, xterm, xterm-256color, dumb). They pass. The compiled parser gets a real workout from those fixtures; parm::expand does not, and that is the gap that matters.\n\nparm::expand is the one to aim at. The complexity gate puts it at cyclomatic 130 against a threshold of 50 -- it is an interpreter for terminfo's parameterised-string language, with a stack, variables, arithmetic, conditionals and printf-style formatting. Almost none of that is covered. It is also where nshterm-padding lands, so tests come first or that change is unverifiable.\n\nWorth knowing when writing them: ncurses' own test suite and the terminfo(5) grammar are the reference, and the C's `tputs`/`tgoto` behaviour is already specified in our rules -- sem:terminal.tgoto-fn and sem:terminal.tputs-fn -- so those give concrete expectations rather than guesses. The conformance harness cannot help here: it exercises libedit's surface, and nothing in the current driver reaches a parameterised capability.\n\nDo not lower the floor to make this pass. The ratio is a fact about a crate we intend to publish."
+                    }
+                )
             }
         )
         log (

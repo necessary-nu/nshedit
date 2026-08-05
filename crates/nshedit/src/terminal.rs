@@ -26,8 +26,8 @@
 use core::ffi::c_char;
 use std::io::Write;
 
-use term::terminfo::TermInfo;
-use term::terminfo::parm::{Param, Variables, expand};
+use nshterm::TermInfo;
+use nshterm::parm::{Param, Variables, expand};
 
 use crate::chartype::{
     MB_FILL_CHAR, VISUAL_WIDTH_MAX, ct_decode_string, ct_encode_char, ct_encode_string,
@@ -613,7 +613,7 @@ pub(crate) fn tgetent(entry: &mut Option<TermInfo>, name: &str) -> i32 {
         }
         // "Readable, but nothing for this type." `TERM` unset cannot arise —
         // `terminal_set` always passes a name — but it means the same thing.
-        Err(term::Error::TerminfoEntryNotFound | term::Error::TermUnset) => {
+        Err(nshterm::Error::TerminfoEntryNotFound | nshterm::Error::TermUnset) => {
             *entry = None;
             0
         }
