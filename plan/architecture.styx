@@ -37,6 +37,7 @@ elements (
             {at "2026-08-04T17:47:40Z", kind @modified, by "[dec:libedit:idiomatic-core]"}
             {at "2026-08-05T08:32:17Z", kind @modified, by "[dec:libedit:no-c-ffi]"}
             {at "2026-08-05T08:34:05Z", kind @modified, by "[dec:libedit:platform-layer]"}
+            {at "2026-08-05T09:12:40Z", kind @modified, by "[dec:libedit:platform-layer]"}
         )
     }
     {
@@ -52,20 +53,23 @@ elements (
         log (
             {at "2026-08-04T17:47:40Z", kind @established, by "[dec:libedit:idiomatic-core]"}
             {at "2026-08-05T08:34:05Z", kind @modified, by "[dec:libedit:platform-layer]"}
+            {at "2026-08-05T09:12:40Z", kind @modified, by "[dec:libedit:platform-layer]"}
         )
     }
     {
         id [arch:libedit:platform]
-        name "Platform layer"
+        name "Platform layer: syscalls through rustix, signals and passwd through libc"
         kind @boundary
         lifecycle @provisional
         owns ()
         exposes ("crates/nshedit-plat/src/**")
         depends_on ()
         composed_of ()
-        decisions ([dec:libedit:platform-layer])
+        decisions ([dec:libedit:platform-layer] [dec:libedit:no-c-ffi])
         log (
             {at "2026-08-05T08:34:05Z", kind @established, by "[dec:libedit:platform-layer]"}
+            {at "2026-08-05T09:12:40Z", kind @modified, by "[dec:libedit:no-c-ffi]"}
+            {at "2026-08-05T09:12:40Z", kind @modified, by "[dec:libedit:platform-layer]"}
         )
     }
     {

@@ -1,6 +1,6 @@
 ---
 id [dec:libedit:platform-layer]
-epitome "One crate owns the syscalls, through rustix and no libc; the two primitives rustix declines land on the ABI crate's side of the libc exception, reached by hook."
+epitome "One crate owns the syscalls: rustix wherever it reaches, and the two families it declines — signals and passwd — are libc symbols named in nshedit-plat itself, so the core calls them with no hook to install."
 state @decided
 category @existence
 scope {
@@ -80,15 +80,19 @@ alternatives (
     }
     {
         option "nix for the syscalls."
-        rejected_because "It links libc unconditionally for the entire surface, which [dec:libedit:no-c-ffi] forbids the core outright, so the pure-Rust majority is surrendered to buy the signal minority. Its typed wrappers also need conversion at every `def`-rule boundary because `Termios`, `SigAction` and `SigSet` are frozen to the C's shape, and it brings cfg_aliases, memoffset and pin-utils. Licence is clean (MIT); the cost is architectural."
+        rejected_because "Widening the libc exception does not rescue it. [dec:libedit:no-c-ffi]'s test is per-facility and turns on there being no pure-Rust route; nix routes the entire surface through libc — termios, ioctl and the uid queries included, where rustix has one — so the pure-Rust majority is surrendered to buy the signal minority and the exception stops being enumerable, which is the property that keeps it from spreading. Its typed wrappers also need conversion at every `def`-rule boundary because `Termios`, `SigAction` and `SigSet` are frozen to the C's shape, and it brings cfg_aliases, memoffset and pin-utils. Licence is clean (MIT); the cost is architectural."
     }
     {
         option "Hand-rolled syscalls: an asm! wrapper per call."
         rejected_because "rt_sigaction needs an SA_RESTORER trampoline per architecture, and rustix's own maintainers document raw signal syscalls as undefined behaviour inside a process that already has a libc. The ABI crate is a cdylib loaded into exactly such processes, so this is the one place hand-rolling is not merely risky but wrong."
     }
     {
-        option "Put the libc-backed primitives in nshedit-plat too, so the core reaches sigaction and getpwnam_r directly, and widen [dec:libedit:no-c-ffi] to permit it."
-        rejected_because "It is the simpler build and it would probably work, but it spends an exception that decision reserves for the ABI crate and re-opens a question that was just settled. It also costs nsh a real property: a core whose only kernel route is rustix. If the hook indirection proves to be friction rather than design, this is the amendment to make, and it should be made in no-c-ffi rather than assumed here."
+        option "Keep nshedit-plat pure rustix and have the core reach signals and passwd through a process-global hook with a built-in default, the libc-backed implementation being installed by nshedit-abi."
+        rejected_because "This is what the first pass of this decision chose, and it was chosen on a false premise: that nsh would consume the port through the C ABI. nsh links the core, so the hook hands the port's primary consumer machinery it has to build itself — a libc-backed signal and passwd shim duplicating the one nshedit-abi already ships — merely to get EL_SIGNAL and ~user on a directory-joined host. The property it was defending turns out not to exist: nsh is a POSIX shell, so it handles SIGINT, SIGCHLD, SIGTSTP/SIGTTOU and tcsetpgrp itself and links a signal API whatever nshedit does, and rustix declines sigaction for nsh on exactly the grounds it declines it for us. 'A core whose only kernel route is rustix' therefore kept the declaration out of one crate by forcing the identical declaration into the next one. Two consumers, one facility, and the shared crate declining to supply it: this is the friction the first pass deferred a question about, and the amendment it named."
+    }
+    {
+        option "Name the libc symbols in nshedit-plat and offer no override at all."
+        rejected_because "What failed about the hook was that it was mandatory, not that a seam existed. One process-global slot per family, defaulting to nshedit-plat's own implementation and installed by nobody, costs a static and a null check, and buys an embedder that must route signal arming through its own bookkeeping — or answer passwd lookups from a cache rather than a blocking NSS call inside a keystroke — a way to do it without forking the crate."
     }
     {
         option "Reach the user database through NSS without libc, by speaking the SSSD socket or the systemd-userdb varlink protocol directly."
@@ -96,28 +100,33 @@ alternatives (
     }
     {
         option "Settle for parsing /etc/passwd everywhere, and accept that directory users get no tilde expansion."
-        rejected_because "On a host whose accounts come from LDAP, SSSD, AD or systemd-homed the invoking user is usually absent from /etc/passwd, so it is not only `~alice` that breaks — bare `~` and `~/...` break for the person at the keyboard. getpwnam_r is what the C calls and what the rule specifies, so /etc/passwd is the fallback, not the answer."
+        rejected_because "On a host whose accounts come from LDAP, SSSD, AD or systemd-homed the invoking user is usually absent from /etc/passwd, so it is not only `~alice` that breaks — bare `~` and `~/...` break for the person at the keyboard. getpwnam_r is what the C calls and what the rule specifies, and with the exception widened there is nothing left standing between the core and it."
     }
 )
 consequences {
     accepted (
         "A third workspace crate, nshedit-plat, is the only place in the workspace that issues a syscall. Both nshedit and nshedit-abi depend on it; nothing else does."
-        "nshedit-plat links no libc. Its whole kernel route is rustix 1.1.x, which supplies termios, TIOCGWINSZ, fcntl and the uid/gid queries — five of the eight holes, completely. Licence: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT, and we take MIT OR Apache-2.0. Transitively on Linux it is exactly linux-raw-sys (same triple) and bitflags (MIT OR Apache-2.0). No WTFPL anywhere in that tree."
-        "On aarch64 and x86_64 Linux rustix selects its linux_raw backend and issues syscalls directly, so [dec:libedit:no-c-ffi]'s rule that the core crate may not name a libc symbol survives intact. Cargo.lock will still name libc and errno because they are non-optional in rustix's libc-backend target block; they are never compiled for our targets."
-        "rustix declines signals on principle — not_implemented.rs lists sigaction, sigprocmask and sigwait as out of scope because a libc expects to be involved, and the runtime module's replacements are documented as undefined behaviour in a process that has a libc, which the exported cdylib always does. So sigaction, sigprocmask and pthread_kill are libc symbols and land on the ABI crate's side of no-c-ffi's exception. The same goes for getpwnam_r, getpwuid_r and setpwent/getpwent/endpwent."
-        "The core reaches both through a process-global hook with a built-in default, which is the shape el_getenv already establishes and the category [dec:libedit:idiomatic-core] assigns to the ABI crate anyway: signal dispositions and the passwd database are process-wide, not per-EditLine. nshedit-abi installs a libc-backed hook at rl_initialize and el_init; an embedder such as nsh installs its own or takes the default."
-        "The user database goes through NSS, via getpwnam_r and getpwuid_r, whenever a hook is installed — so a user that exists only in LDAP, SSSD, AD, NIS or systemd-homed resolves exactly as it does for the C. The cost is the one the rule already names: the lookup can block on a network name service, inside a completion keystroke."
-        "The built-in default stays the /etc/passwd parse already written, because something has to answer when no hook is installed. It is a fallback and must be documented as one: it is blind to every directory backend, and on a directory-joined host that blindness reaches bare ~ and ~/... as well as ~user. nsh should install the hook."
+        "rustix 1.1.x is nshedit-plat's route for everything rustix reaches: termios, TIOCGWINSZ, fcntl and the uid/gid queries — five of the eight holes, completely. Licence: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT, and we take MIT OR Apache-2.0. Transitively on Linux it is exactly linux-raw-sys (same triple) and bitflags (MIT OR Apache-2.0). No WTFPL anywhere in that tree."
+        "On aarch64 and x86_64 Linux rustix selects its linux_raw backend and issues syscalls directly, so nothing in that five-eighths of the layer goes near a libc. Cargo.lock will still name libc and errno because they are non-optional in rustix's libc-backend target block; they are never compiled for our targets."
+        "rustix declines signals on principle — not_implemented.rs lists sigaction, sigprocmask and sigwait as out of scope because a libc expects to be involved, and the runtime module's replacements are documented as undefined behaviour in a process that has a libc, which is exactly what the exported cdylib is loaded into. So sigaction, sigprocmask and pthread_kill are libc symbols, and so are getpwnam_r, getpwuid_r and setpwent/getpwent/endpwent, whose NSS backends are dlopened C objects with no pure-Rust route at all."
+        "Those two families are named in nshedit-plat directly, under [dec:libedit:no-c-ffi]'s libc exception, which this decision widens from the ABI crate to the platform crate. The widening is argued and recorded there, in the decision that owns the rule. The core crate still names no libc symbol, and no build.rs hunts for a library."
+        "The core calls them the way it calls tcsetattr. There is no hook to install, nothing to arm and no built-in default to fall back to: a consumer that links nshedit gets EL_SIGNAL and NSS-backed tilde expansion by linking it, and nshedit-abi installs nothing."
+        "An override survives, optional and installed by nobody: one process-global slot per family, defaulting to nshedit-plat's implementation. It is there for an embedder that must route signal arming through its own bookkeeping, or answer passwd lookups from a cache instead of a blocking NSS call inside a keystroke. Nothing has to install one for the specified behaviour to hold — that mandatory quality is what sank the hook."
+        "This moves where the capability lives, not when it fires. EL_SIGNAL still defaults to off and libedit still installs no handler until a caller asks, so a shell that manages its own SIGINT, SIGCHLD and job control keeps every disposition it had. sem:sig.sig-set-fn's contract is unchanged in every particular except that it can now be honoured."
+        "The declarations are transcribed in nshedit-plat alongside the termios ABI and signal numbers the layer already transcribes — struct sigaction, sigset_t, struct passwd — so no crate joins the graph, cargo tree -p nshedit is unchanged, and the workspace's whole libc surface is two extern blocks a reader can count."
+        "The user database goes through NSS, via getpwnam_r and getpwuid_r, for every consumer — so a user that exists only in LDAP, SSSD, AD, NIS or systemd-homed resolves exactly as it does for the C. The cost is the one the rule already names, now paid by default rather than opted into: the lookup can block on a network name service, inside a completion keystroke."
+        "Both /etc/passwd parsers are retired outright rather than kept as a fallback. Nothing needs to answer when no hook is installed, because there is no hook, and a parse sitting behind getpwnam_r would disagree with the C in exactly the case sem:filecomplete.fn-tilde-expand-fn pins: any non-zero return, ERANGE included, reads as no such user, and a hand parser has no 1024-byte limit to hit."
         "A static-musl build gets musl's files-only getpwnam_r, which is the /etc/passwd behaviour again. That is a property of the target, not of this decision, and it is the same answer a statically linked C libedit gives."
-        "The platform layer is Linux-shaped, following posix-only-scope and the precedent tty.rs already set: the termios ABI, the V* subscripts, the signal numbers and _POSIX_VDISABLE are all transcribed for Linux/glibc. rustix supplies the ones it can portably; the rest stay transcribed."
+        "What the widening costs: what does the core link was answerable from one manifest and is now answerable from one manifest plus one enumerated extern block, read rather than queried; and a target without a libc could not link the signal and passwd paths. Neither reaches nsh, which links std and therefore a libc, and handles signals itself regardless."
+        "The platform layer is Linux-shaped, following posix-only-scope and the precedent tty.rs already set: the termios ABI, the V* subscripts, the signal numbers, the struct layouts above and _POSIX_VDISABLE are all transcribed for Linux/glibc. rustix supplies the ones it can portably; the rest stay transcribed."
         "Order matters. Landing termios before signals makes ^Z strictly worse than today: raw mode with no SIGTSTP handler leaves a suspended process behind a terminal in raw mode, where today nothing is raw so nothing is broken. platform-build lands tcgetattr/tcsetattr and sigaction together or neither."
         "The two /proc readers already written stay, because they answer things no syscall does: /proc/self/auxv for AT_SECURE, which sem:el.secure-getenv-fn names as one of its three conditions and which rustix exposes only through the same unsafe runtime module. The uid/gid half moves to getuid/geteuid/getgid/getegid."
         "Retiring the stubs changes behaviour that tests may already pin, because every one of them degrades into a state the C also defines. Any test asserting NO_TTY, a zero baud rate, an unexpanded tilde or a silent el_resize is asserting the stub, not the C."
     )
     deferred (
         "Whether nshedit-plat is one flat module or splits by facility. It has one caller each for most functions, so flat until it is not."
-        "The ABI crate's FILE * surface — fileno, and fputs/ftell through a caller-supplied stream — is libc under the same exception as errno, but it is C-representation machinery rather than a syscall, so it is nshedit-abi's to build and is not this layer's scope. It is listed in the divergence register because nothing else records it."
-        "Whether the hook indirection for signals and passwd is design or friction. If it is friction, the amendment is to widen no-c-ffi's exception to nshedit-plat and let the core call directly — argued there, not assumed here."
+        "The ABI crate's FILE * surface — fileno, and fputs/ftell through a caller-supplied stream — would be a third site for [dec:libedit:no-c-ffi]'s exception and is not yet one: the enumeration there is closed until it is argued there. Either way it is C-representation machinery rather than a syscall, so it is nshedit-abi's to build and is not this layer's scope. It is listed in the divergence register because nothing else records it."
+        "Whether the two override slots earn their keep. They cost a static and a null check each, nothing installs them today, and if no embedder asks they are deletable without touching a rule."
         "Whether ioctl(FIONREAD) is worth supplying. Two rules want it — read.el-wgets-fn's typeahead pre-check and readline.rl-event-read-char-fn's poll — and the first does not compile in the C on glibc, so only the readline one is a real obligation."
         "Whether a non-Linux build is supported at all. rustix falls back to its libc backend off Linux, and the transcribed termios and signal numbers are wrong there regardless, so the honest answer is probably no."
     )
@@ -174,13 +183,16 @@ line without the C compatibility shim loaded.
 So the honest trade-off is a third crate against a `pub` module, and the
 crate wins on two counts that are not aesthetic. The syscall dependency
 is declared in exactly one manifest, so `cargo tree -p nshedit` stays a
-short and checkable answer to *what does the core link*. And the layer
+short answer to *what does the core link* — short, though after the
+widening below not a complete one on its own: one `extern` block in the
+same crate is the rest of it. And the layer
 can be built and exercised against a real kernel without the 35,000
 lines above it.
 
 ### How the syscalls are reached
 
-`rustix`, and only `rustix`.
+`rustix` wherever `rustix` reaches, which is most of them, and the
+platform's libc for the two families it declines.
 
 `rustix` 1.1.x on Linux selects its `linux_raw` backend and issues
 syscalls directly: no libc linkage, no `build.rs` probing, and a
@@ -204,46 +216,99 @@ It does not cover signals, and not by omission. rustix's
 expects to be involved in signal handling. Its `runtime` module has
 replacements, and its own documentation says calling them in a process
 that has a libc is undefined behaviour. `nshedit-abi` builds a `cdylib`
-whose entire reason for existing is to be loaded into C programs. That
-rules out rustix's runtime module and a hand-rolled `rt_sigaction`
-alike, and the hand-rolled version would additionally need an
-`SA_RESTORER` trampoline written in assembly per architecture.
+whose entire reason for existing is to be loaded into C programs, and
+nsh links `std`, which links a libc too — so there is no consumer for
+whom the replacements are defined. That rules out rustix's runtime
+module and a hand-rolled `rt_sigaction` alike, and the hand-rolled
+version would additionally need an `SA_RESTORER` trampoline written in
+assembly per architecture.
 
-`nix` would cover both halves under a clean MIT and loses anyway,
-because it depends on `libc` unconditionally — which [[no-c-ffi]] bars
-the core from outright. Its wrappers also wrap types that `def` rules
-have already frozen to the C's shape, so every call site converts, and
-it adds three more crates.
+`nix` would cover both halves under a clean MIT and loses anyway, and
+widening the exception does not save it. It depends on `libc`
+unconditionally and routes the *whole* surface through it — termios,
+`ioctl` and the uid queries included, where rustix has a pure-Rust
+route — so it fails the first half of [[no-c-ffi]]'s test everywhere
+except the two families that actually need it, and an exception granted
+that broadly stops being enumerable. Its wrappers also wrap types that
+`def` rules have already frozen to the C's shape, so every call site
+converts, and it adds three more crates.
 
 So `sigaction`, `sigprocmask` and `pthread_kill` are libc symbols with
-nowhere pure to go, and so are `getpwnam_r` and its neighbours.
-[[no-c-ffi]] already answers where those live: the ABI crate may name a
-libc symbol where the C ABI cannot otherwise be honoured, and the core
-crate may not. `EL_SIGNAL`, `tilde_expand` and
-`username_completion_function` are all C ABI surface, so the test is
-met — but the placement rule still stands, and this decision respects
-it rather than spending an exception reserved for somewhere else.
+nowhere pure to go, and so are `getpwnam_r` and its neighbours. They are
+declared in `nshedit-plat`, and the core calls them the way it calls
+`tcsetattr`.
 
-The core therefore reaches both through a process-global hook with a
-built-in default. That is not an invention for the occasion: `el_getenv`
-is already exactly this — a hook the ABI crate can install, with a
-built-in default (`secure_getenv`) that works standalone. And the
-category fits, because signal dispositions and the passwd database are
-genuinely process-wide rather than per-`EditLine`, which is the kind of
-state [[idiomatic-core]] assigns to the ABI crate in the first place.
-`nshedit-abi` installs a libc-backed hook; nsh installs its own or
-takes the default.
+That is a widening of [[no-c-ffi]], which first confined the exception
+to the ABI crate, and it is argued there rather than assumed here. The
+short form: the original test was *the C ABI cannot otherwise be
+honoured*, which is the wrong question to ask about this port's own
+consumers. nsh links `nshedit` and never includes `histedit.h`, so it is
+not the C ABI and could never meet that test — while still needing
+`EL_SIGNAL`, and still needing `~alice` to expand on a host whose
+accounts live in LDAP. The replacement test asks whether a pure-Rust
+route exists and whether a rule specifies the behaviour. Both questions
+are answerable for both consumers, and both answer yes here.
 
-The alternative — put the libc calls in `nshedit-plat` and widen
-[[no-c-ffi]] — is a simpler build and is written up as a rejected
-option rather than dismissed. If the indirection turns out to be
-friction rather than design, that is the amendment to make, and it
-belongs in `no-c-ffi` where the rule lives.
+An override survives on each family — one process-global slot,
+defaulting to `nshedit-plat`'s own implementation — for an embedder that
+must route signal arming through its own bookkeeping or answer passwd
+lookups from a cache. Nothing installs one, and nothing has to.
+
+### What the first pass decided, and why this reverses it
+
+The first pass put these two families on the ABI crate's side of the
+exception and had the core reach them through a process-global hook with
+a built-in default, on the model of `el_getenv`. The shape was
+defensible in itself. What made it wrong was a factual error one layer
+up: it was written believing nsh would consume the port through the C
+ABI, so the hook looked like a seam only an unusual embedder would ever
+meet, with `nshedit-abi` installing the real implementation for
+everybody else.
+
+nsh links the core. Under that design the port's primary consumer is
+precisely the consumer that gets the built-in default — no signal
+handling at all, and an `/etc/passwd` parse that misses the person at
+the keyboard on a directory-joined workstation — unless it writes a
+libc-backed signal and passwd shim of its own, byte for byte the one
+`nshedit-abi` already carries. Two consumers, one facility, and the
+crate they share declining to supply it. That is what the deferred
+question meant by friction, and this is the amendment it named.
+
+The property the hook was defending does not survive inspection either.
+It was *a core whose only kernel route is rustix*. nsh is a POSIX shell:
+it handles `SIGINT` on the foreground job, reaps on `SIGCHLD`, does job
+control with `SIGTSTP`/`SIGTTOU` and `tcsetpgrp`. There is no more a
+pure-Rust route to `sigaction` for nsh than there is for us — rustix
+declines it for nsh on the same documented grounds — so nsh links a
+signal API whatever `nshedit` does. Keeping the declaration out of
+`nshedit-plat` would have relocated it into nsh rather than eliminating
+it, and charged nsh a duplicate implementation for the privilege. It was
+not a close call and should not be recorded as one.
+
+Two things are genuinely lost, and they are small. *What does the core
+link* was answerable from one manifest and is now answerable from one
+manifest plus one `extern` block — enumerated in [[no-c-ffi]], but read
+rather than queried. And the safe default changes character: a passwd
+lookup that would have been a local file parse until somebody opted into
+NSS is an NSS call for everyone, so a completion keystroke can block on
+a name service by default, including in a test on a host with an
+interesting `nsswitch.conf`. That is the C's behaviour and the rule's,
+it is the only thing that makes directory users work at all, and the
+override slot is there for a caller that must not pay it.
+
+One thing that might look lost is not. Under the hook, an embedder had
+to consciously install something before libedit could touch a signal
+disposition, which read as a safety property. It was not doing that
+work: `EL_SIGNAL` defaults to off, `sem:sig.sig-set-fn` runs only when a
+caller turns it on, and a shell that owns its dispositions keeps them
+either way. This decision moves where the capability lives, not whether
+libedit reaches for it.
 
 ### The user database
 
-`getpwnam_r` and `getpwuid_r`, through NSS. `/etc/passwd` is the
-fallback, not the answer.
+`getpwnam_r` and `getpwuid_r`, through NSS. `/etc/passwd` is not the
+answer, and once the exception reaches `nshedit-plat` it is not the
+fallback either.
 
 The difference is not academic and it is not small. On a workstation
 joined to a directory — LDAP with `nss_ldap`, SSSD, AD, `nss_systemd`
@@ -276,15 +341,16 @@ can block on a network name service, inside a completion keystroke. The
 C has always had that property.
 
 Because `getpwnam_r` is a libc symbol, it sits where the previous
-section put it: installed by `nshedit-abi`, or by an embedder, through
-a process-global hook. `fn_tilde_expand` is a free function with no
-`EditLine` to hang a per-instance hook on, which is awkward until you
-notice that the C's `getpwnam_r` is process-global too — so the shape is
-the C's, not a compromise. The `/etc/passwd` parse already written stays
-as the built-in default, because something must answer when no hook is
-installed. It is a fallback, it is blind to every directory backend, and
-that must be said in the rule rather than left for a user to discover.
-nsh should install the hook.
+section put it: declared in `nshedit-plat`, called by the core, for
+every consumer. `fn_tilde_expand` is a free function with no `EditLine`
+to hang a per-instance lookup on, which would be awkward if the lookup
+needed per-instance configuration — it does not, because the C's
+`getpwnam_r` is process-global too, so the shape is the C's rather than
+a compromise. The two `/etc/passwd` parsers already written are retired
+rather than demoted to a fallback: nothing has to answer when no
+override is installed, and a parse sitting behind `getpwnam_r` would
+disagree with the C in exactly the case the rule pins, where any
+non-zero return — `ERANGE` included — must read as *no such user*.
 
 ### The divergence register
 
@@ -456,9 +522,9 @@ exposes it only through the same unsafe runtime module signals are
 barred from.
 
 **12. `fileno` is unreachable, so `el_init` and `EL_SETFP` cannot be
-honoured.** This group is `nshedit-abi`'s under [[no-c-ffi]]'s libc
-exception rather than this layer's, and is recorded here because
-nothing else records it. `sem:el.el-init-fn` is specified as
+honoured.** This group is `nshedit-abi`'s rather than this layer's, and
+closing it would mean a third entry on [[no-c-ffi]]'s enumeration,
+argued there. It is recorded here because nothing else records it. `sem:el.el-init-fn` is specified as
 `el_init_fd(prog, fin, fout, ferr, fileno(fin), fileno(fout),
 fileno(ferr))`. There is no way to derive a descriptor from a
 caller-supplied `FILE *` without libc, so the ABI crate assumes
@@ -482,20 +548,19 @@ changed.
 
 ### What platform-build does with this
 
-Build `nshedit-plat` over `rustix`, retire the six core stubs against
-it, and hoist the two duplicated `/etc/passwd` parsers and the two
-duplicated `getuid` readers into one place. Groups 1 through 7 and 9
-close outright; group 11 loses its uid and gid exposure and keeps the
-auxv read.
+Build `nshedit-plat` over `rustix`, declare the signal and passwd
+families in it, retire the six core stubs against it, and delete the two
+duplicated `/etc/passwd` parsers and the two duplicated `getuid` readers
+rather than hoisting them. Groups 1 through 10 close outright — 8 and 10
+included, with no hook to build first, no built-in default to preserve
+and nothing for a consumer to install. Group 11 loses its uid and gid
+exposure and keeps the auxv read. Group 12 is `nshedit-abi`'s alone.
 
-Groups 8 and 10 need the hook first — a process-global arming vtable
-for signals and a process-global passwd lookup — with the built-in
-defaults being today's behaviour and today's `/etc/passwd` parse, and
-the libc-backed implementations landing in `nshedit-abi`. Group 12 is
-`nshedit-abi`'s alone.
+The two override slots are a static and a null check each and sit off
+the critical path; nothing in the register depends on either.
 
 Two orderings are load-bearing. `tcgetattr`/`tcsetattr` and the signal
-hook land together, because raw mode without a `SIGTSTP` handler is
+calls land together, because raw mode without a `SIGTSTP` handler is
 worse than neither: today `^Z` suspends a process whose terminal was
 never made raw, and a half-built platform layer would suspend it behind
 a raw terminal instead. And `sigprocmask` lands with
