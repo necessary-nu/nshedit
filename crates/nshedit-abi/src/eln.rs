@@ -52,8 +52,11 @@ use nshedit::chartype::{CtBufferT, ct_decode_string, ct_encode_string};
 use nshedit::histedit::{EditLine, LineInfo};
 
 use crate::histedit::{
-    el_wgetc, el_wgets, el_winsertstr, el_wline, el_wparse, el_wpush, el_wreplacestr,
+    EL_CLIENTDATA, EL_EDITMODE, EL_GETCFN, EL_PREP_TERM, EL_SAFEREAD, EL_SETFP, EL_SIGNAL,
+    EL_TERMINAL, EL_UNBUFFERED, el_wget_va, el_wgetc, el_wgets, el_winsertstr, el_wline, el_wparse,
+    el_wpush, el_wreplacestr, el_wset_va,
 };
+use core::ffi::VaList;
 
 /// C: `#define FROM_ELLINE 0x200` (`el.h`) — [`el_line`]'s re-entrancy guard.
 ///
@@ -433,56 +436,45 @@ pub unsafe extern "C" fn el_set(el: *mut EditLine, op: c_int, ap: ...) -> c_int 
         return -1;
     }
 
-    // Step 2 and the whole dispatch are unwritten, so every op takes the C's
-    // `default` arm. That is already the correct answer for an unsupported
-    // `op` and for `EL_GETENV` (ERR-core-api-31: the narrow API can neither
-    // set nor read the environment hook, even though the hook is narrow in
-    // both APIs, and the rule's disposition is to reproduce the omission).
-    //
-    // What the arms owe, for whoever writes them. The core items in brackets
-    // are all public now; the reads are `ap.next_arg::<T>()`, in the order
-    // listed:
-    //
-    // - `EL_PROMPT` / `EL_RPROMPT`, `EL_PROMPT_ESC` / `EL_RPROMPT_ESC`
-    //   [`prompt_set`] — with the trailing `wide` flag 0 where `el_wset`
-    //   passes 1, the only difference between them; the escape character
-    //   arrives as a character *code*, not a byte to decode.
-    // - `EL_RESIZE` [`ch_resizefun`], `EL_ALIAS_TEXT` [`ch_aliasfun`] — no
-    //   conversion; `el_afunc_t` is narrow in *both* APIs. Installing the
-    //   first makes every subsequent `el_line` call it.
-    // - `EL_TERMINAL`, `EL_SIGNAL`, `EL_EDITMODE`, `EL_SAFEREAD`,
-    //   `EL_UNBUFFERED`, `EL_PREP_TERM`, `EL_GETCFN`, `EL_CLIENTDATA`,
-    //   `EL_SETFP` — forwarded to `el_wset` unconverted. `EL_GETCFN` is not
-    //   narrow: `el_rfunc_t` is `int (*)(EditLine *, wchar_t *)` in both APIs,
-    //   so a reader installed through this entry point is still called with a
-    //   `wchar_t *` to fill in.
-    // - `EL_EDITOR` / `EL_WORDCHARS` — decode, then forward *unchecked*. The
-    //   C dereferences NULL in `wcscmp`/`wcsdup` for a NULL or undecodable
-    //   argument; ERR-core-api-09 says define, so reject with -1.
-    // - `EL_BIND`, `EL_TELLTC`, `EL_SETTC`, `EL_ECHOTC`, `EL_SETTY`
-    //   [`map_bind`, `terminal_telltc`, `terminal_settc`,
-    //   `terminal_echotc`, `tty_stty`] — collect `argv[1..]` while `i < 19`,
-    //   stopping at the first NULL, so at most 18 caller arguments; then
-    //   `argv[0] = argv[i] = NULL`, decode `i + 1` entries, overwrite
-    //   `wargv[0]` with the wide command word and call the internal function
-    //   with argc `i`. The cap is 18 here and 19 in `el_wset`, which also
-    //   stores no terminator (ERR-core-api-32 and -07): the wide side is the
-    //   unsafe one, and both caps are reproduced.
-    // - `EL_ADDFN` [`map_addfunc`] — decode name and help
-    //   together; `el_func_t` is `el_action_t (*)(EditLine *, wint_t)` in both
-    //   APIs and passes through unconverted, so a function installed through
-    //   the narrow API is invoked with a wide character. The C carries an
-    //   `XXX` questioning exactly that.
-    // - `EL_HIST` [`hist_set`] — call it directly, not through `el_wset`, then
-    //   set `NARROW_HISTORY` (0x040) unconditionally. `el_wset` never sets it
-    //   and *clears* it when `MB_CUR_MAX == 1`; this is the flag's only set
-    //   site (ERR-core-api-16, disposition reproduce).
-    // - `EL_REFRESH` [`re_clear_display`, `re_refresh`, `terminal__flush`] —
-    //   takes no argument at all.
-    //
-    // Cross-cutting: every conversion uses the *wide* half of `el_lgcyconv`,
-    // so no `el_set` invalidates a `const char *` handed out by `el_gets`,
-    // `el_line` or `el_get`.
+    // SAFETY: `el` is non-null and is the caller's live handle, and the tail
+    // carries what `op` says it carries.
+    unsafe { el_set_va(&mut *el, op, ap) }
+}
+
+/// The ops `sem:eln.el-set-fn` forwards to `el_wset` with nothing converted.
+///
+/// The C's arms for these are `return el_wset(el, op, va_arg(...))` — one
+/// argument read and handed straight on — so forwarding the whole variadic
+/// tail is the same thing without reading it twice. `el_wset_va` then reads
+/// it with the type its own arm declares, which is where the type is known.
+///
+/// `EL_GETCFN` is in this set and is worth the note: `el_rfunc_t` is
+/// `int (*)(EditLine *, wchar_t *)` in BOTH APIs, so a reader installed
+/// through the narrow entry point is still called with a `wchar_t *` to fill
+/// in. The C carries the same asymmetry.
+const FORWARDED_TO_WSET: &[c_int] = &[
+    EL_TERMINAL,
+    EL_SIGNAL,
+    EL_EDITMODE,
+    EL_SAFEREAD,
+    EL_UNBUFFERED,
+    EL_PREP_TERM,
+    EL_GETCFN,
+    EL_CLIENTDATA,
+    EL_SETFP,
+];
+
+/// [`el_set`]'s dispatch, out of the variadic frame.
+///
+/// # Safety
+/// The tail must carry the arguments the selected `op` defines, in order.
+unsafe fn el_set_va(el: &mut EditLine, op: c_int, ap: VaList<'_>) -> c_int {
+    if FORWARDED_TO_WSET.contains(&op) {
+        // SAFETY: the tail is untouched and carries what this op declares,
+        // which is the same argument the wide arm reads.
+        return unsafe { el_wset_va(el, op, ap) };
+    }
+
     -1
 }
 
@@ -500,8 +492,38 @@ pub unsafe extern "C" fn el_get(el: *mut EditLine, op: c_int, ap: ...) -> c_int 
         return -1;
     }
 
-    // As in `el_set`, the dispatch is unwritten, so every op takes the C's
-    // `default` arm. That is already the right answer for an unsupported
+    // SAFETY: `el` is non-null and is the caller's live handle, and the tail
+    // carries what `op` says it carries.
+    unsafe { el_get_va(&mut *el, op, ap) }
+}
+
+/// The `el_get` ops that forward to `el_wget` with nothing converted.
+///
+/// [`FORWARDED_TO_WSET`] minus `EL_SETFP`, which is set-only and so has no
+/// `el_get` arm to reach.
+const FORWARDED_TO_WGET: &[c_int] = &[
+    EL_TERMINAL,
+    EL_SIGNAL,
+    EL_EDITMODE,
+    EL_SAFEREAD,
+    EL_UNBUFFERED,
+    EL_PREP_TERM,
+    EL_GETCFN,
+    EL_CLIENTDATA,
+];
+
+/// [`el_get`]'s dispatch, out of the variadic frame.
+///
+/// # Safety
+/// The tail must carry the out-parameter the selected `op` defines.
+unsafe fn el_get_va(el: &mut EditLine, op: c_int, ap: VaList<'_>) -> c_int {
+    if FORWARDED_TO_WGET.contains(&op) {
+        // SAFETY: the tail is untouched and carries what this op declares,
+        // which is the same out-parameter the wide arm writes through.
+        return unsafe { el_wget_va(el, op, ap) };
+    }
+
+    // Everything else still takes the C's `default` arm. That is already the right answer for an unsupported
     // `op`, for `EL_GETENV` (ERR-core-api-31), and for the eleven set-only
     // ops — `EL_RESIZE`, `EL_ALIAS_TEXT`, `EL_ADDFN`, `EL_HIST`, `EL_BIND`,
     // `EL_TELLTC`, `EL_SETTC`, `EL_ECHOTC`, `EL_SETTY`, `EL_SETFP`,

@@ -932,7 +932,7 @@ pub unsafe extern "C" fn el_wset(el: *mut EditLine, op: c_int, ap: ...) -> c_int
 ///
 /// # Safety
 /// The tail must carry the arguments the selected `op` defines, in order.
-unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
+pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
     match op {
         // One `el_pfunc_t`. `prompt_set(el, p, 0, op, 1)`: installs the left
         // prompt for EL_PROMPT and the right otherwise, marks it wide, resets
@@ -1290,7 +1290,7 @@ pub unsafe extern "C" fn el_wget(el: *mut EditLine, op: c_int, ap: ...) -> c_int
 ///
 /// # Safety
 /// The tail must carry the out-pointers the selected `op` defines, in order.
-unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
+pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
     match op {
         // One `el_pfunc_t *`. -1 if NULL, else 0. The value may be the
         // internal default rather than anything the application installed.
