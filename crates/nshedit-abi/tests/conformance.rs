@@ -19,28 +19,34 @@
 //!
 //! ```text
 //! ./conformance/run.sh                        # everything, with a report
-//! cargo test -p nshedit-abi -- --ignored      # the same, through cargo
+//! cargo test -p nshedit-abi --test conformance # the same, through cargo
 //! ./conformance/build-oracle.sh [--clean]     # just the oracle
 //! ./conformance/abi-shape.sh                  # just the symbol comparison
 //! ./conformance/differential.sh [driver]      # just the trace diff
 //! ./conformance/header-diff.sh                # just the header comparison
 //! ```
 //!
-//! # Why `#[ignore]`
+//! # These run by default
 //!
-//! Two reasons, and neither is that the tests are flaky.
+//! They are not `#[ignore]`d. A repository whose entire subject is porting a
+//! C library, whose oracle is built from `src/*.c` in this tree, is not one
+//! where a C toolchain can go missing — and the cost is 4.7s warm, paid once
+//! more on a cold `target/` for the autotools build.
 //!
-//! 1. They need a C toolchain and about a minute of wall clock for the
-//!    autotools build. `cargo test --workspace` on a machine without `gcc`
-//!    would fail for a reason that has nothing to do with the port.
-//! 2. Historically they **reported open gaps**, and closing those is a
-//!    decision, not a code change a test should force. Making them
-//!    non-ignored while a gap was open would have meant either a red `cargo
-//!    test --workspace` or a baseline file that quietly blessed whatever the
-//!    port happened to do — and blessing is exactly what a conformance
-//!    harness must not do. Every stage passes as of the `abi-missing-exports`
-//!    node, so only reason 1 still holds; run `./conformance/run.sh` in CI
-//!    where a toolchain is guaranteed.
+//! They **must** run single-threaded, which [`STAGES`] enforces rather than
+//! leaving to an invocation flag. Every stage shares one work directory under
+//! `target/conformance/`, wiping and rebuilding it; `conformance/run.sh` runs
+//! them in sequence, and cargo would otherwise run them in parallel and let
+//! `differential_traces` read a tree `traces_are_deterministic` was midway
+//! through replacing. Serialising here keeps `cargo test --workspace` honest
+//! without asking anyone to remember `--test-threads=1`.
+//!
+//! Historically they were ignored for a second reason worth recording: they
+//! **reported open gaps**, and closing those is a decision, not something a
+//! red test should force. Making them non-ignored then would have meant
+//! either a red workspace or a baseline file that quietly blessed whatever
+//! the port happened to do — and blessing is exactly what a conformance
+//! harness must not do. Every stage passes, so that reason is spent too.
 //!
 //! # How to read a failure
 //!
@@ -64,6 +70,22 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard};
+
+/// Serialises the stages against each other.
+///
+/// Every one of them wipes and rebuilds the same work directory under
+/// `target/conformance/`, so two running at once corrupt each other's inputs.
+/// Cargo runs tests in parallel by default, so the guard has to live here —
+/// relying on `--test-threads=1` would mean a bare `cargo test --workspace`
+/// fails intermittently and blames the port for it.
+static STAGES: Mutex<()> = Mutex::new(());
+
+/// Takes the stage lock, ignoring poisoning: a panicking stage means that
+/// stage failed, not that the work directory is unusable for the next one.
+fn stage_lock() -> MutexGuard<'static, ()> {
+    STAGES.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -119,8 +141,8 @@ fn require_port_cdylib() {
 /// `conformance-oracle`: the reference artifact builds, reproducibly and
 /// offline, from the C in this tree.
 #[test]
-#[ignore = "needs a C toolchain; run ./conformance/run.sh or cargo test -- --ignored"]
 fn oracle_builds() {
+    let _stages = stage_lock();
     run_script("build-oracle.sh", &[]);
     // Idempotent: a second invocation must be a no-op, not a rebuild.
     run_script("build-oracle.sh", &[]);
@@ -154,8 +176,8 @@ fn oracle_builds() {
 /// from [`nshedit_abi::chartype`] and [`nshedit_abi::filecomplete`]. Debian
 /// exports all seven, so a consumer deployed today reaches them.
 #[test]
-#[ignore = "needs a C toolchain; run ./conformance/run.sh or cargo test -- --ignored"]
 fn abi_shape() {
+    let _stages = stage_lock();
     require_port_cdylib();
     run_script("build-oracle.sh", &[]);
     run_script("abi-shape.sh", &[]);
@@ -179,8 +201,8 @@ fn abi_shape() {
 /// call the same source the wide ones do. They are still probed in a forked
 /// child, which is what would let the rest of a run survive a regression.
 #[test]
-#[ignore = "needs a C toolchain; run ./conformance/run.sh or cargo test -- --ignored"]
 fn differential_traces() {
+    let _stages = stage_lock();
     require_port_cdylib();
     run_script("build-oracle.sh", &[]);
     run_script("differential.sh", &[]);
@@ -190,8 +212,8 @@ fn differential_traces() {
 /// means nothing. This runs every driver three times against each library
 /// under each locale, from a freshly wiped work directory, and compares.
 #[test]
-#[ignore = "needs a C toolchain; run ./conformance/run.sh or cargo test -- --ignored"]
 fn traces_are_deterministic() {
+    let _stages = stage_lock();
     require_port_cdylib();
     run_script("build-oracle.sh", &[]);
     run_script("determinism.sh", &[]);
@@ -222,8 +244,8 @@ fn traces_are_deterministic() {
 /// produces — is `tests/headers.rs`, which needs no toolchain and is not
 /// ignored.
 #[test]
-#[ignore = "needs a C toolchain; run ./conformance/run.sh or cargo test -- --ignored"]
 fn header_diff() {
+    let _stages = stage_lock();
     require_port_cdylib();
     run_script("build-oracle.sh", &[]);
     run_script("header-diff.sh", &[]);
@@ -239,8 +261,8 @@ fn header_diff() {
 /// `C.UTF-8` and `C`, so a history file written by either is readable by the
 /// other.
 #[test]
-#[ignore = "needs a C toolchain; run ./conformance/run.sh or cargo test -- --ignored"]
 fn vis_matches_libbsd() {
+    let _stages = stage_lock();
     run_script("build-oracle.sh", &[]);
     run_script("vis-cross.sh", &[]);
 }
