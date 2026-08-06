@@ -118,4 +118,5 @@ assertions (
     {id modes-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.140404752Z}
     {id completion-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.176874275Z}
     {id readline-compat-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.248802077Z}
+    {id nshterm-env-guard, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:33:06.246888397Z}
 )

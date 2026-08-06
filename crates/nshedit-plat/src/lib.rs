@@ -127,3 +127,36 @@ pub fn getgid() -> u32 {
 pub fn getegid() -> u32 {
     rustix::process::getegid().as_raw()
 }
+
+/// Whether this process is running with privileges its invoker did not have —
+/// set-uid or set-gid — and must therefore not trust the environment it was
+/// handed.
+///
+/// This is ncurses' `is_elevated()`, from `ncurses/tinfo/access.c:190`, in the
+/// form it falls back to when `issetugid(2)` and `getauxval(AT_SECURE)` are
+/// both unavailable:
+///
+/// ```c
+/// #define is_posix_elevated() \
+///         (getuid() != geteuid() \
+///          || getgid() != getegid())
+/// ```
+///
+/// The POSIX form and not the other two because rustix exposes neither:
+/// `issetugid` is BSD and macOS, and `AT_SECURE` needs `getauxval`, which
+/// `dec:libedit:no-c-ffi` gives no route to. The difference matters in one
+/// case and it is worth naming: `AT_SECURE` is also set when a program gains
+/// capabilities or crosses a `nosuid` boundary without any uid changing, so a
+/// process elevated *only* that way reads as unelevated here. That is a
+/// narrower guard than glibc's `secure_getenv`, not a wrong one.
+///
+/// What this deliberately does NOT test is whether the process is root.
+/// ncurses guards that separately, behind `--disable-root-environ`, and
+/// Debian does not pass it — `debian/rules:137` passes
+/// `--disable-setuid-environ` and nothing about root. So a root shell on a
+/// deployed system does honour `TERMINFO`, and matching what is actually
+/// installed beats matching a build nobody ships.
+#[must_use]
+pub fn is_elevated() -> bool {
+    getuid() != geteuid() || getgid() != getegid()
+}

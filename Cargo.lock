@@ -333,6 +333,9 @@ dependencies = [
 [[package]]
 name = "nshterm"
 version = "0.1.0"
+dependencies = [
+ "nshedit-plat",
+]
 
 [[package]]
 name = "once_cell"

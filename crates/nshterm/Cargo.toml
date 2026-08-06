@@ -13,3 +13,4 @@ keywords = ["terminfo", "terminal", "termcap", "tty"]
 categories = ["command-line-interface", "parser-implementations"]
 
 [dependencies]
+nshedit-plat.workspace = true

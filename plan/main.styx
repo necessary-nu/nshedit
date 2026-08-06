@@ -1318,6 +1318,22 @@ children (
                 id nshterm-env-guard
                 title "Guard TERMINFO, TERMINFO_DIRS and HOME, which a set-uid consumer must not honour"
                 deps (nshterm-extract)
+                sealed true
+                log (
+                    {
+                        at 2026-08-06T17:29:16.712214736Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T17:33:06.246888397Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
             }
 
             {
