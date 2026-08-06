@@ -5089,3 +5089,6 @@ mod vis_flags_test {
         assert_eq!(out, b"\\040");
     }
 }
+
+#[cfg(test)]
+mod tests;
