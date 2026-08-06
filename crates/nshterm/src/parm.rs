@@ -73,9 +73,10 @@ pub enum Error {
     IntegerConstantOverflow,
     /// A malformed integer constant was used.
     MalformedIntegerConstant,
-    /// A format width constant was too large (overflowed a usize)
+    /// A format width was larger than 10000, the same bound ncurses enforces.
     FormatWidthOverflow,
-    /// A format precision constant was too large (overflowed a usize)
+    /// A format precision was larger than 10000, the same bound ncurses
+    /// enforces.
     FormatPrecisionOverflow,
 }
 
@@ -91,10 +92,8 @@ impl ::std::fmt::Display for Error {
             MalformedCharacterConstant => f.write_str("malformed character constant"),
             IntegerConstantOverflow => f.write_str("integer constant computation overflowed"),
             MalformedIntegerConstant => f.write_str("malformed integer constant"),
-            FormatWidthOverflow => f.write_str("format width constant computation overflowed"),
-            FormatPrecisionOverflow => {
-                f.write_str("format precision constant computation overflowed")
-            }
+            FormatWidthOverflow => f.write_str("format width is larger than 10000"),
+            FormatPrecisionOverflow => f.write_str("format precision is larger than 10000"),
         }
     }
 }
@@ -475,23 +474,67 @@ fn read_format_byte(flags: &mut Flags, fstate: &mut FormatState, cur: char) -> R
             *fstate = FormatState::Width;
         }
         (FormatState::Width, '0'..='9') => {
-            flags.width = flags
-                .width
-                .checked_mul(10)
-                .and_then(|w| w.checked_add(cur as usize - '0' as usize))
-                .ok_or(Error::FormatWidthOverflow)?;
+            flags.width = push_format_digit(flags.width, cur).ok_or(Error::FormatWidthOverflow)?;
         }
         (FormatState::Flags | FormatState::Width, '.') => *fstate = FormatState::Precision,
         (FormatState::Precision, '0'..='9') => {
-            flags.precision = flags
-                .precision
-                .checked_mul(10)
-                .and_then(|p| p.checked_add(cur as usize - '0' as usize))
-                .ok_or(Error::FormatPrecisionOverflow)?;
+            flags.precision =
+                push_format_digit(flags.precision, cur).ok_or(Error::FormatPrecisionOverflow)?;
         }
         _ => return Err(Error::UnrecognizedFormatOption(cur)),
     }
     Ok(())
+}
+
+/// The largest width or precision a conversion specification may carry.
+///
+/// This is ncurses' own bound, from `parse_format` in
+/// `ncurses/tinfo/lib_tparm.c`:
+///
+/// ```c
+/// value = (value * 10) + (*s - '0');
+/// if (value > 10000)
+///     err = TRUE;
+/// ```
+///
+/// Confirmed against `libtinfo` 6.5+20250216: `tparm("%p1%10000d", 42)` yields
+/// 10000 bytes and `tparm("%p1%10001d", 42)` yields `42`.
+///
+/// Bounding this bounds the whole expansion. A capability's own length caps how
+/// many conversions it can contain — a string capability is reachable only
+/// through a `u16` offset, so it is at most 32767 bytes — and each conversion
+/// now contributes at most 10001 bytes. That is the same product ncurses
+/// arrives at, since it grows its output buffer under exactly these two limits.
+const MAX_FORMAT_VALUE: usize = 10_000;
+
+/// Accumulate one decimal digit into a width or precision, rejecting a value
+/// past [`MAX_FORMAT_VALUE`].
+///
+/// Unchecked arithmetic is sufficient *because* of the bound: `value` is at
+/// most `MAX_FORMAT_VALUE` on entry, so the product cannot exceed 100_009.
+///
+/// The bound is load-bearing, not cosmetic. A width or precision below
+/// `usize::MAX` — which is all the previous `checked_mul` asked for — still
+/// reached two places that cannot take one:
+///
+/// - `format!("{:01$}", d, flags.precision)` panics with "Formatting argument
+///   out of range" from a precision of 65536, because Rust packs a formatting
+///   width into a `u16`. `%p1%.65536d` is eleven bytes.
+/// - [`pad`] hands `flags.width` to `Vec::with_capacity`, so `%p1%99999999999d`
+///   aborts the process on a failed 99999999999-byte allocation.
+///
+/// Both inputs are a compiled terminfo entry, which is a file we did not write,
+/// found wherever the search path led.
+///
+/// Past the bound we diverge from ncurses deliberately. It discards the flags
+/// and renders a bare `%d`, emitting a control sequence the database did not
+/// describe; `tparm(3)` has no error channel its callers check, so degrading is
+/// the only move available to it. [`expand`] returns a `Result` that this
+/// crate's caller does check, so it reports the capability as malformed rather
+/// than quietly writing the wrong bytes to a terminal.
+fn push_format_digit(value: usize, cur: char) -> Option<usize> {
+    let next = value * 10 + (cur as usize - '0' as usize);
+    (next <= MAX_FORMAT_VALUE).then_some(next)
 }
 
 #[derive(Copy, PartialEq, Clone, Default)]
@@ -639,7 +682,7 @@ fn pad(s: Vec<u8>, flags: Flags, zero_after: Option<usize>) -> Vec<u8> {
 #[cfg(test)]
 mod test {
     use super::Param::{self, Number, Words};
-    use super::{Variables, expand};
+    use super::{Error, Variables, expand};
     use std::result::Result::Ok;
 
     #[test]
@@ -823,5 +866,63 @@ mod test {
                 .bytes()
                 .collect::<Vec<_>>())
         );
+    }
+
+    /// The width and precision bound sits exactly where ncurses puts it.
+    ///
+    /// Every expectation here is what `libtinfo` 6.5+20250216 printed for the
+    /// same capability, so the two agree byte for byte right up to the edge.
+    #[test]
+    fn test_format_size_boundary_matches_ncurses() {
+        let vars = &mut Variables::new();
+
+        let at = expand(b"%p1%10000d", &[Number(42)], vars).unwrap();
+        assert_eq!(at.len(), 10000);
+        assert_eq!(&at[9998..], b"42");
+        assert!(at[..9998].iter().all(|&b| b == b' '));
+
+        let at = expand(b"%p1%.10000d", &[Number(42)], vars).unwrap();
+        assert_eq!(at.len(), 10000);
+        assert_eq!(&at[9998..], b"42");
+        assert!(at[..9998].iter().all(|&b| b == b'0'));
+
+        // One past it, ncurses discards the flags and renders `42`. We report
+        // the capability instead, for the reason given on `push_format_digit`.
+        assert!(matches!(
+            expand(b"%p1%10001d", &[Number(42)], vars),
+            Err(Error::FormatWidthOverflow)
+        ));
+        assert!(matches!(
+            expand(b"%p1%.10001d", &[Number(42)], vars),
+            Err(Error::FormatPrecisionOverflow)
+        ));
+    }
+
+    /// A width or precision that fits in a `usize` is not thereby safe.
+    ///
+    /// Before the bound, `%p1%.65536d` panicked inside `format!` — Rust packs a
+    /// formatting width into a `u16` — and `%p1%99999999999d` aborted the
+    /// process on a failed 99999999999-byte `Vec::with_capacity`. Each is a
+    /// dozen bytes of a compiled terminfo entry.
+    #[test]
+    fn test_format_size_is_bounded() {
+        let vars = &mut Variables::new();
+        let caps: [&[u8]; 6] = [
+            b"%p1%.65536d",
+            b"%p1%65536d",
+            b"%p1%99999999999d",
+            b"%p1%.99999999999d",
+            b"%p1%18446744073709551615d",
+            // More digits than a usize holds, which the previous `checked_mul`
+            // caught and nothing else did.
+            b"%p1%99999999999999999999999999d",
+        ];
+        for cap in caps {
+            assert!(
+                expand(cap, &[Number(42)], vars).is_err(),
+                "{} was accepted",
+                String::from_utf8_lossy(cap),
+            );
+        }
     }
 }
