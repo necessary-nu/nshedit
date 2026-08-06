@@ -38,9 +38,10 @@
 // boilerplate `# Safety` section on all ~160 of them would say less than the
 // rule already does.
 #![allow(clippy::missing_safety_doc)]
-// Both of these go away as the bodies land: until then every function is
-// `todo!()`, so its parameters are unread, and the private helpers translated
-// from `readline.c`'s `static` functions have no callers yet.
+// The bodies have landed, so the reason these are still here is narrower than
+// it was: `readline.c`'s `static` helpers translated across with no callers
+// yet, and a handful of parameters an arm accepts to match the C's signature
+// and does not read.
 #![allow(dead_code, unused_variables)]
 
 pub mod cdecl;

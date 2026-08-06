@@ -28,21 +28,20 @@
 //!
 //! # What the C does that this does not yet do
 //!
-//! **`el_set` and `el_get` dispatch on no op.** Both carry the `...` the
-//! header declares and both walk no argument: every op falls to the C's
-//! `default` arm and comes back -1. That is the right answer for an
-//! unrecognised `op` and wrong for every recognised one, and the register
-//! carries it as ERR-core-api-09 and ERR-core-api-18.
+//! **`el_get` answers -1 for the ops that need a narrowing conversion.**
+//! There is no arm for `EL_EDITOR`, `EL_WORDCHARS`, `EL_PROMPT`, `EL_RPROMPT`,
+//! `EL_PROMPT_ESC` or `EL_RPROMPT_ESC`, so the caller gets -1 and nothing
+//! written where the C answers 0 with a value. The setter side handles the
+//! same ops; only the getter half is missing.
 //!
-//! Neither of the two reasons that was written down still holds. Defining a
-//! C-variadic function is no longer unstable — `c_variadic` is stable in 1.99,
-//! which is what `plan/main.styx`'s `abi-varargs` settled, and the signatures
-//! below say so. And the core items the arms need are public now: everything
-//! [`crate::histedit::el_wset`]'s own dispatch calls, which is all of them bar
-//! `ct_decode_argv` — whose job is done here one string at a time through
-//! [`ct_decode_string`], exactly as [`el_parse`] already does it. What is left
-//! is the dispatch itself, and each arm's obligations are enumerated on the
-//! two functions below.
+//! That is a gap this port introduced, not one it reproduces. Everything else
+//! dispatches: [`el_set`] forwards nine ops to [`crate::histedit::el_wset`],
+//! collects the list ops, decodes `EL_EDITOR` and `EL_WORDCHARS`, and handles
+//! `EL_HIST` and the prompt family; [`el_get`] forwards the ops that need no
+//! conversion, `EL_GETTC` and `EL_GETFP` among them.
+//!
+//! ERR-core-api-09 and ERR-core-api-18 were written when both functions were
+//! a blanket -1. They no longer describe this file.
 
 use core::ffi::{CStr, c_char, c_int, c_void};
 use core::ptr;
