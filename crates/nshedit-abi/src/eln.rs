@@ -52,9 +52,9 @@ use nshedit::chartype::{CtBufferT, ct_decode_string, ct_encode_string};
 use nshedit::histedit::{EditLine, LineInfo};
 
 use crate::histedit::{
-    EL_CLIENTDATA, EL_EDITMODE, EL_GETCFN, EL_PREP_TERM, EL_SAFEREAD, EL_SETFP, EL_SIGNAL,
-    EL_TERMINAL, EL_UNBUFFERED, el_wget_va, el_wgetc, el_wgets, el_winsertstr, el_wline, el_wparse,
-    el_wpush, el_wreplacestr, el_wset_va,
+    EL_CLIENTDATA, EL_EDITMODE, EL_EDITOR, EL_GETCFN, EL_PREP_TERM, EL_SAFEREAD, EL_SETFP,
+    EL_SIGNAL, EL_TERMINAL, EL_UNBUFFERED, EL_WORDCHARS, el_wget_va, el_wgetc, el_wgets,
+    el_winsertstr, el_wline, el_wparse, el_wpush, el_wreplacestr, el_wset_va,
 };
 use core::ffi::VaList;
 
@@ -468,11 +468,43 @@ const FORWARDED_TO_WSET: &[c_int] = &[
 ///
 /// # Safety
 /// The tail must carry the arguments the selected `op` defines, in order.
-unsafe fn el_set_va(el: &mut EditLine, op: c_int, ap: VaList<'_>) -> c_int {
+unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
     if FORWARDED_TO_WSET.contains(&op) {
         // SAFETY: the tail is untouched and carries what this op declares,
         // which is the same argument the wide arm reads.
         return unsafe { el_wset_va(el, op, ap) };
+    }
+
+    // C: decode, then hand the wide string to the same core item the wide arm
+    // calls. ERR-core-api-09, disposition define: the C forwards unchecked and
+    // dereferences NULL inside `wcscmp`/`wcsdup` when the argument is NULL or
+    // does not decode in the current locale, so both are rejected here with -1
+    // instead.
+    //
+    // The decode goes through `el_lgcyconv`, and that is the point rather than
+    // a convenience: `sem:eln.el-set-fn` requires every conversion to use the
+    // WIDE half, so no `el_set` invalidates a `const char *` a caller is still
+    // holding from `el_gets`, `el_line` or `el_get`.
+    if op == EL_EDITOR || op == EL_WORDCHARS {
+        // SAFETY: the op's argument is null or a NUL-terminated byte string.
+        let p = unsafe { ap.next_arg::<*const c_char>() };
+        if p.is_null() {
+            return -1;
+        }
+        let el_ptr: *mut EditLine = el;
+        // SAFETY: `el_ptr` is live and `p` is non-null and NUL-terminated.
+        let wide = unsafe { decode_through_lgcyconv(el_ptr, p) };
+        if wide.is_null() {
+            return -1;
+        }
+        // SAFETY: the decode returns a NUL-terminated string in
+        // `el_lgcyconv.wbuff`, which outlives this call.
+        let s = unsafe { wide_upto_nul(wide) };
+        return if op == EL_EDITOR {
+            nshedit::map::map_set_editor(el, s)
+        } else {
+            nshedit::map::map_set_wordchars(el, s)
+        };
     }
 
     -1
