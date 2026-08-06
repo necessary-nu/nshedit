@@ -184,6 +184,21 @@ children (
                 title "Write tests for the line buffer and refresh from their sem rules; there are none to port"
                 deps (buffer-translate platform-build)
                 sealed true
+                log (
+                    {
+                        at 2026-08-06T22:39:48.300726043Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T22:52:15.681276245Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
             }
 
             {

@@ -1392,3 +1392,149 @@ pub(crate) fn re_clear_lines(el: &mut EditLine) {
         terminal__putc(el, u32::from(b'\n'));
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::el::blank_editline;
+
+    /// A screen row of `dlen` cells plus the reserved terminator slot at
+    /// `d[dlen]` that both `re_insert` and `re_delete` write, holding `s` and
+    /// NUL-padded. The sentinel goes in the terminator slot so a test can tell
+    /// "wrote the terminator" from "returned before reaching it".
+    const DLEN: i32 = 8;
+    const SENTINEL: u32 = 0xFFFF;
+
+    fn row(s: &str) -> Vec<u32> {
+        let mut d = vec![0u32; DLEN as usize + 1];
+        for (i, c) in s.chars().enumerate() {
+            d[i] = u32::from(c);
+        }
+        d[DLEN as usize] = SENTINEL;
+        d
+    }
+
+    /// The row read as the terminal would: up to the first NUL.
+    fn shown(d: &[u32]) -> String {
+        d[..DLEN as usize]
+            .iter()
+            .take_while(|&&c| c != 0)
+            .filter_map(|&c| char::from_u32(c))
+            .collect()
+    }
+
+    fn cells(s: &str) -> Vec<u32> {
+        s.chars().map(u32::from).collect()
+    }
+
+    /// `re_insert` opens the gap right-to-left and the cells that fall off the
+    /// end of the row are discarded rather than growing it — the row is a
+    /// fixed-width screen line, not a string.
+    #[test]
+    fn inserting_into_a_row_shifts_the_tail_right_and_drops_what_overflows() {
+        let mut d = row("abcd");
+        re_insert(&mut d, 2, DLEN, &cells("XY"), 2);
+        assert_eq!(shown(&d), "abXYcd");
+        assert_eq!(d[DLEN as usize], 0, "the terminator slot is always written");
+
+        // A full row: 'g' and 'h' are pushed past the end and lost.
+        let mut d = row("abcdefgh");
+        re_insert(&mut d, 2, DLEN, &cells("XY"), 2);
+        assert_eq!(shown(&d), "abXYcdef");
+    }
+
+    /// The clamp is to what fits from `dat` onwards, and it is observable in
+    /// the shift: two cells at column 6 of an eight-cell row have nowhere to
+    /// move to, so the row's existing content is left exactly where it was.
+    #[test]
+    fn inserting_clamps_to_the_room_left_in_the_row() {
+        let mut d = row("abcdefgh");
+        re_insert(&mut d, 6, DLEN, &cells("XY"), 5);
+        assert_eq!(shown(&d), "abcdefXY");
+    }
+
+    /// Both guards return before the terminator write, so a non-positive count
+    /// and the negative count a `dat` past `dlen` manufactures leave the row
+    /// completely alone. Nothing here may index outside it.
+    #[test]
+    fn inserting_nothing_touches_no_cell_at_all() {
+        let mut d = row("abcd");
+        let before = d.clone();
+        re_insert(&mut d, 2, DLEN, &cells("XY"), 0);
+        assert_eq!(d, before);
+        re_insert(&mut d, 2, DLEN, &cells("XY"), -1);
+        assert_eq!(d, before);
+        // `dat > dlen` clamps `num` negative, which every later step skips.
+        re_insert(&mut d, DLEN + 1, DLEN, &cells("XY"), 3);
+        assert_eq!(d, before, "including the terminator slot");
+    }
+
+    /// `re_delete` slides the tail down and terminates the row, but the cells
+    /// it vacated keep stale copies — the row still reads correctly only
+    /// because the string's own NUL slides down with it.
+    #[test]
+    fn deleting_from_a_row_slides_the_tail_down_over_stale_cells() {
+        let mut d = row("abcdef");
+        re_delete(&mut d, 2, DLEN, 3);
+        assert_eq!(shown(&d), "abf");
+        assert_eq!(
+            d[5],
+            u32::from('f'),
+            "the vacated cell keeps its stale copy"
+        );
+        assert_eq!(d[DLEN as usize], 0);
+    }
+
+    /// A deletion reaching the end of the row is a truncation: the row is cut
+    /// at `dat` with no shifting, and the early return means even the
+    /// terminator slot is left as it was.
+    #[test]
+    fn deleting_to_the_end_of_the_row_just_truncates_it() {
+        let mut d = row("abcdef");
+        re_delete(&mut d, 4, DLEN, 10);
+        assert_eq!(shown(&d), "abcd");
+        assert_eq!(d[5], u32::from('f'), "nothing was shifted");
+        assert_eq!(d[DLEN as usize], SENTINEL, "returned before the terminator");
+
+        let mut d = row("abcdef");
+        let before = d.clone();
+        re_delete(&mut d, 2, DLEN, 0);
+        assert_eq!(d, before);
+    }
+
+    /// `re_nextline` moves to column 0 of the next row, and on the last row
+    /// emulates a scroll by rotating the virtual rows instead. ERR-terminal-47
+    /// is that `el_display` — the image of what is physically on screen — is
+    /// deliberately NOT rotated with it.
+    #[test]
+    fn the_next_line_rotates_only_the_virtual_rows_at_the_bottom() {
+        let mut el = blank_editline();
+        el.el_terminal.t_size.v = 3;
+        el.el_vdisplay = vec![cells("Aa"), cells("Bb"), cells("Cc")];
+        el.el_display = vec![cells("Dd"), cells("Ee"), cells("Ff")];
+
+        // Room below: advance, and only the column resets.
+        el.el_refresh.r_cursor = CoordT { h: 5, v: 1 };
+        re_nextline(&mut el);
+        assert_eq!((el.el_refresh.r_cursor.h, el.el_refresh.r_cursor.v), (0, 2));
+        assert_eq!(el.el_vdisplay[0][0], u32::from('A'), "no rotation yet");
+
+        // On the last row: rotate up, and stay put vertically.
+        el.el_refresh.r_cursor.h = 7;
+        re_nextline(&mut el);
+        assert_eq!((el.el_refresh.r_cursor.h, el.el_refresh.r_cursor.v), (0, 2));
+        assert_eq!(el.el_vdisplay[0][0], u32::from('B'));
+        assert_eq!(el.el_vdisplay[1][0], u32::from('C'));
+        assert_eq!(el.el_vdisplay[2][0], 0, "only the first cell is cleared");
+        assert_eq!(
+            el.el_vdisplay[2][1],
+            u32::from('a'),
+            "the recycled row keeps the rest of its stale content"
+        );
+        assert_eq!(
+            el.el_display.iter().map(|r| r[0]).collect::<Vec<_>>(),
+            cells("DEF"),
+            "ERR-terminal-47: the real image is left behind"
+        );
+    }
+}
