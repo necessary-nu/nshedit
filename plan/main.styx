@@ -990,6 +990,19 @@ children (
                     }
                 )
             }
+
+            {
+                id terminal-change-size
+                title "Fix terminal_change_size, which fails where the C succeeds, so every settc co/li reports an error"
+                log (
+                    {
+                        at 2026-08-06T19:37:18.431211169Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "PARKED UNDER THE WRONG PARENT. This is terminal-layer work and belongs under `terminal`; it sits under `abi-surface` because `terminal`'s decomposition carries `sealed true` and both `nplan_add --parent terminal` and `nplan_mv` refuse it. That refusal is the seal working — it means \"these children are the whole of this work\" — so the fix is an explicit unseal by someone who decides that claim is no longer true, not a quiet insert somewhere the graph will not notice. Move it when that happens.\n\nTHE DEFECT, traced from the harness rather than guessed at.\n\nconformance/driver/el_api.c reports two remaining divergences out of 88:\n\n    0038 parse: <settc co 132>   oracle parse=0   port parse=1\n    0039 parse: <settc li 50>    oracle parse=0   port parse=1\n\n`el_wparse` returns `-i` where `i` is the builtin's return — src/parse.c, `i = (*cmds[i].func)(el, argc, argv); return -i;` — so `parse=1` means the builtin returned -1 and `parse=0` means it returned 0. The port's `terminal_settc` is therefore failing where the C succeeds.\n\nIts only failure path past argument validation is the last one:\n\n    if size_changed && terminal_change_size(el, val(el, T_LI), val(el, T_CO)) == -1 {\n        return -1;\n    }\n\nand `size_changed` is true for exactly `co` and `li`, which is exactly the two operations that diverge. `settc` on any other capability agrees. So `terminal_change_size` returns -1 in the port and 0 in the C, on a capability that exists and a value that parses.\n\nNot investigated further, and I stopped rather than dig at the end of a session: what it does next is grow the display arrays, which is where a real difference would live and where a wrong guess would be expensive.\n\nWorth noting what this says about the harness. The el_api driver was written to find missing coverage and it has now produced two distinct real defects — el_set's whole dispatch, and this — neither of which any gate could see, because both are functions that return a plausible value. That is the argument for building conformance-driver-readline and conformance-driver-ub rather than annotating wave 3 from reading."
+                    }
+                )
+            }
         )
         log (
             {
