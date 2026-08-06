@@ -30,3 +30,7 @@ stamp-h1
 
 # Rust build artifacts
 /target
+
+# Coverage profiles from conformance/coverage.sh, which some cargo
+# invocations drop in the working directory rather than under target/.
+*.profraw
