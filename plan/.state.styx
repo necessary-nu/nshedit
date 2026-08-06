@@ -134,4 +134,5 @@ assertions (
     {id core-api-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:35:40.475369128Z}
     {id input-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:38:12.812999138Z}
     {id completion-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:40:49.484541728Z}
+    {id modes-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:43:13.434642289Z}
 )

@@ -1142,3 +1142,6 @@ pub(crate) fn ed_command(el: &mut EditLine, c: u32) -> ElActionT {
     // `CC_REFRESH` on every branch; there is no error return path.
     CC_REFRESH
 }
+
+#[cfg(test)]
+mod test;

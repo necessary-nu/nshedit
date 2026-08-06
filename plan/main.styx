@@ -520,6 +520,21 @@ children (
                 title "Write tests for the editor command sets from their sem rules; there are none to port"
                 deps (modes-translate platform-build)
                 sealed true
+                log (
+                    {
+                        at 2026-08-06T23:43:06.736977108Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Two mechanics that made this tractable, worth reusing rather than rediscovering. read_init plus el_wpush drives every command that reads a character — ^V, f/F/t/T, _x, :, / — without owning a terminal, because el_wgetc drains the macro queue before it touches the tty. And hist_fun_t can be stubbed with a real C-variadic `unsafe extern \"C\" fn(..., _: ...)` on the pinned nightly, which is what made vi_history_word testable at all.\n\nThree traps in the helper set-up, each with a comment at the site. re_refresh recurses to a stack overflow on a zero-sized terminal, measured — which is why every helper fits an 80x24 screen rather than leaving t_size at its default. ch_init does not install el_map.wordchars, and without it ce__isword answers differently, so a helper that skips map_init tests a different predicate than the editor uses. Descriptors default to 0, the test runner's own stdout.\n\nThree places where deriving from the C beat intuition, all now pinned: w and W FAIL on the last character of the line, not just at the end (ERR-modes-06's `cursor + 1 >= lastchar`); p at end of line silently degrades to P; and `;` after a `t` does not move at all (ERR-modes-64).\n\nTWO DELIBERATE BEHAVIOURS THAT WILL READ AS BUGS LATER, both now locked down. vi_match's cursor++ is unconditional (vi.rs:933), where sem:vi.vi-match-fn step 6 describes it as conditional on delta > 0 — but the C's delta is size_t, so the backward value is SIZE_MAX and the test is always true. The port follows the C rather than the rule; the consequence is that `d%` on `a(bc)d` with the cursor on `)` yields `a()d`, sparing both brackets. And ed_search_next_history never stashes the live line: only the two prev functions do.\n\nFOUR RULES COVERED MORE THINLY THAN THE REST, on the record rather than in the count's fine print. emacs.em-inc-search-next-fn and em-inc-search-prev-fn: the only path into ce_inc_search needing neither a terminal nor a populated keymap is the entry bound check, so the tests pin what the two bodies do — reset patlen but not patbuf, return the helper's answer verbatim — and cannot observe the direction constant that is the only thing distinguishing them. vi.vi-repeat-search-next-fn and vi-repeat-search-prev-fn: only the patlen == 0 guard is pinned; the direction inversion needs a history store.\n\nEvery one of the 77 tests passed on its first run, which is worth reading with the same suspicion input-tests applied to the same result."
+                    }
+
+                    {
+                        at 2026-08-06T23:43:13.434642289Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
 
             {

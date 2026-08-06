@@ -1454,3 +1454,6 @@ pub(crate) fn vi_redo(el: &mut EditLine, c: u32) -> ElActionT {
         None => CC_ERROR,
     }
 }
+
+#[cfg(test)]
+mod test;
