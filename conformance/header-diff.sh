@@ -59,6 +59,7 @@ command -v clang >/dev/null || die "no clang: this stage compares types by askin
 command -v python3 >/dev/null || die "no python3: header-abi.py drives clang and cpp"
 [ -f "$ORACLE_PREFIX/include/histedit.h" ] || die "no oracle headers — run ./conformance/build-oracle.sh first"
 [ -f "$PORT_LIB" ] || die "no $PORT_LIB — run 'cargo build' first"
+stage_port_soname
 
 # The two headers libedit installs: `src/Makefile.am` line 55 is
 # `nobase_include_HEADERS = histedit.h editline/readline.h` and nothing else.
@@ -270,8 +271,12 @@ if gcc -std=c11 -O0 -g -Wall -Wextra -Werror \
         -L"$PORT_LIB_DIR" -lnshedit -Wl,-rpath,"$PORT_LIB_DIR" \
         > "$HDR/consumer.build" 2>&1; then
     printf '  built with -Wall -Wextra -Werror\n'
+    # DT_NEEDED names the SONAME, so what `ldd` prints is the libnshedit.so.0
+    # link `stage_port_soname` made. Compare the object it resolves to, not
+    # the name it was reached by.
     resolved=$(ldd "$consumer" | awk '/libnshedit/ { print $3 }' | head -1)
-    if [ "$resolved" != "$PORT_LIB" ]; then
+    resolved=$([ -e "${resolved:-}" ] && readlink -f -- "$resolved")
+    if [ "$resolved" != "$(readlink -f -- "$PORT_LIB")" ]; then
         printf '  FAIL: resolves to %s, not %s — refusing to trust the run\n' \
             "${resolved:-<nothing>}" "$PORT_LIB"
         status=1

@@ -10,12 +10,13 @@ authors.workspace = true
 publish = false
 
 [lib]
-# Builds as libnshedit.so / libnshedit.a — one real artifact. The
-# compatibility names are symlinks onto it at install time:
-#   libedit.so.0     -> libnshedit.so
-#   libreadline.so.8 -> libnshedit.so
-# Both surfaces are exported from this one object, which is what libedit
-# itself already does. See plan/decisions/no-c-ffi.md.
+# Builds as libnshedit.so / libnshedit.a — one real artifact, carrying SONAME
+# libnshedit.so.0 (see build.rs). The compatibility names are symlinks onto it,
+# laid down by packaging/install.sh; libreadline.so.8 is deliberately NOT among
+# them, at 149 of its 736 symbols. See `abi-soname` in plan/main.styx.
+#
+# Both the libedit and the readline surface are exported from this one object,
+# which is what libedit itself already does. See plan/decisions/no-c-ffi.md.
 #
 # No `rlib`: the core crate already produces libnshedit.rlib, and two targets
 # cannot write the same filename.

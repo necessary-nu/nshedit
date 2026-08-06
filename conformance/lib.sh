@@ -23,6 +23,20 @@ REPORTS=$OUT/reports               # trace + diff output a human reads
 PORT_LIB_DIR=$ROOT/target/debug
 PORT_LIB=$PORT_LIB_DIR/libnshedit.so
 
+# The SONAME `crates/nshedit-abi/build.rs` stamps onto the cdylib, which is
+# therefore what every binary linked against it records as DT_NEEDED and what
+# the loader then goes looking for.
+PORT_SONAME=libnshedit.so.0
+
+# Cargo writes only `libnshedit.so`, so nothing the harness links can start
+# until a file named for the SONAME sits beside it. `packaging/install.sh`
+# creates that link at install time; this creates it in target/ so the stages
+# exercise the same two-name arrangement rather than a special case.
+stage_port_soname() {
+    [ -f "$PORT_LIB" ] || die "no $PORT_LIB — run 'cargo build'"
+    ln -sfn -- "$(basename -- "$PORT_LIB")" "$PORT_LIB_DIR/$PORT_SONAME"
+}
+
 # The two system libraries the ABI comparison uses, and only it. They are
 # never an oracle: see plan/main.styx, the `conformance` node's log.
 DEBIAN_LIBEDIT=/usr/lib/x86_64-linux-gnu/libedit.so.2

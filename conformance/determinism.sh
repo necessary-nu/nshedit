@@ -22,6 +22,7 @@ REPEATS=3
 
 [ -f "$ORACLE_PREFIX/lib/libedit.so" ] || die "no oracle — run ./conformance/build-oracle.sh"
 [ -f "$PORT_LIB" ] || die "no $PORT_LIB — run 'cargo build'"
+stage_port_soname
 
 mkdir -p -- "$DRIVERS" "$REPORTS/determinism"
 status=0

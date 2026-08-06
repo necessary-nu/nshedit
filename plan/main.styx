@@ -758,6 +758,7 @@ children (
             {
                 id abi-soname
                 title "Give the cdylib a SONAME and the install symlinks a consumer's DT_NEEDED actually records"
+                sealed true
                 log (
                     {
                         at 2026-08-05T15:38:17.60379371Z
@@ -771,6 +772,27 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "DECIDED: SONAME libnshedit.so.0, with libedit.so.2 installed as a symlink onto it. Do NOT claim libreadline.so.8 yet.\n\nMeasured on this host:\n\n    /usr/lib/x86_64-linux-gnu/libedit.so.2       SONAME libedit.so.2\n    /usr/lib/x86_64-linux-gnu/libreadline.so.8   SONAME libreadline.so.8\n    target/debug/libnshedit.so                   SONAME (none)\n\nWhy a SONAME at all: the linker copies a library's SONAME into the consuming program's DT_NEEDED, and the loader then looks for a file with exactly that name. With none, anything newly linked against us records the path it was handed instead of a stable name, so moving or renaming the file breaks the binary. That is a defect regardless of what name we choose.\n\nWhy our own name rather than claiming libedit.so.2 directly: a program linked fresh against us should record what it actually depends on. The symlink is what serves the existing population -- every binary already installed carries DT_NEEDED libedit.so.2, so a file of that name has to be us for them to load us at all, and a symlink does that without us impersonating a version we do not own.\n\nWHY NOT libreadline.so.8, and this is the load-bearing half: we export 149 of its 736 symbols. Measured, not estimated -- and note the port is not behind libedit here, since Debian's libedit.so.2 exports 148 of the same set and the oracle 149. The problem is the denominator. A program that needs any of the other 587 and finds a libreadline.so.8 that is us fails at load with an unresolved symbol, which is a WORSE outcome than us not being installed: without the symlink it gets real readline and works. Claiming the soname converts \"not installed\" into \"installed and broken\". Revisit only with a measurement of what real consumers actually reference, not with a symbol count.\n\nFollow-on for whoever builds this: cdylib SONAME is set through the linker, so this is a rustflags or build-script concern rather than a Cargo.toml field, and it needs to survive both debug and release profiles. Verify with `objdump -p ... | grep SONAME` and add that assertion to conformance/abi-shape.sh, which currently checks symbol names and would not notice a missing or wrong SONAME at all."
+                    }
+
+                    {
+                        at 2026-08-06T14:06:57.006461209Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T14:08:34.911095447Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "AMENDS the compat symlink set on this node: it must be BOTH libedit.so.2 and libedit.so.0, not libedit.so.2 alone. The earlier entry measured only Debian's binary and read its soname as libedit's. It is not.\n\nMeasured, at the source rather than the artifact:\n\n    this tree,      configure.ac:38      LT_VERSION 0:75:0 -> 0:78:0\n    oracle build,   readelf -d           SONAME libedit.so.0, file libedit.so.0.0.78\n    Debian 3.1-20250104                  SONAME libedit.so.2, file libedit.so.2.0.75\n    debian/patches/update-soname.diff    -AC_SUBST(LT_VERSION, [0:75:0])\n                                         +AC_SUBST(LT_VERSION, [2:75:0])\n\nSo libedit.so.2 is a Debian patch, one line of it, and libedit's own soname is and always has been libedit.so.0. libtool reads current:revision:age and names the object lib.so.(current-age), which is how 2:75:0 becomes .so.2.0.75 and 0:78:0 becomes .so.0.0.78.\n\nThe consequence is that a compat set of {libedit.so.2} serves Debian and Ubuntu and nothing else. Fedora, Arch, the BSDs, and anyone who ran ./configure themselves all have DT_NEEDED libedit.so.0 baked into their binaries — including, note, the oracle drivers this repo's own harness builds. Shipping only .so.2 would have left the most common case, a from-source build, unable to load us at all.\n\nBoth symlinks point at libnshedit.so.0, so this costs one more line and no new decision about what we are. The reasoning of the original entry is untouched: our own SONAME stays libnshedit.so.0 so a newly linked program records what it actually loaded, the compat names exist only to carry binaries that were linked before we existed, and libreadline.so.8 is still refused at 149 of 736 symbols because an unresolved-symbol failure at LOAD time is worse than not being installed.\n\nWhat this does introduce is that we now claim two filenames a distribution's own package manager also claims, rather than one. Recorded in packaging/install.sh, which prints every symlink it creates and takes --no-compat to skip them."
+                    }
+
+                    {
+                        at 2026-08-06T14:15:41.566972783Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

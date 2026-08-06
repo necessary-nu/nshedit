@@ -19,6 +19,9 @@
 #   7. header-diff.sh         the headers we generate from our own Rust
 #                             against libedit's, which is the only check in
 #                             the harness that sees a struct LAYOUT
+#   8. soname.sh              install, then load: a consumer linked against a
+#                             real libedit before we existed is run against
+#                             our install and has to start
 #
 # Each stage prints its own report and the summary at the end says which
 # passed. A non-zero exit means at least one stage found something; read the
@@ -63,6 +66,7 @@ stage "determinism"              "$CONF_DIR/determinism.sh"
 stage "conformance-differential" "$CONF_DIR/differential.sh"
 stage "vis vs libbsd"            "$CONF_DIR/vis-cross.sh"
 stage "conformance-header-diff"  "$CONF_DIR/header-diff.sh"
+stage "conformance-soname"       "$CONF_DIR/soname.sh"
 
 printf '\n########## summary ##########\n'
 for i in "${!names[@]}"; do

@@ -251,6 +251,32 @@ fn header_diff() {
     run_script("header-diff.sh", &[]);
 }
 
+/// `conformance-soname`: the LOADER's half of the drop-in claim.
+///
+/// [`abi_shape`] compares exported symbol names and [`header_diff`] compiles a
+/// consumer against our headers. Neither asks what decides whether a binary
+/// already on someone's disk starts: does the loader find us under the name
+/// that binary recorded as `DT_NEEDED`?
+///
+/// Passes. `conformance/soname.sh` installs into `target/conformance/prefix`
+/// and then runs a consumer built against Debian's `libedit.so.2`, and another
+/// built against the in-tree oracle's `libedit.so.0`, with nothing but that
+/// install on the library path. Both load and both work, which is the compat
+/// symlinks doing their job — neither binary knows anything about us.
+///
+/// Both names are needed: `libedit.so.0` is libedit's own, from
+/// `configure.ac`'s `LT_VERSION 0:75:0`, and `libedit.so.2` exists only
+/// because `debian/patches/update-soname.diff` changes that line to `2:75:0`.
+/// A newly linked consumer records `libnshedit.so.0` instead, which is the
+/// point — `ldd` names what actually loaded.
+#[test]
+fn soname_and_compat_symlinks() {
+    let _stages = stage_lock();
+    require_port_cdylib();
+    run_script("build-oracle.sh", &[]);
+    run_script("soname.sh", &[]);
+}
+
 /// Whether the history file format the port reproduces is the same one
 /// already on disk.
 ///

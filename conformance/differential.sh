@@ -41,14 +41,15 @@ fi
 
 [ -f "$ORACLE_PREFIX/lib/libedit.so" ] || die "no oracle — run ./conformance/build-oracle.sh"
 [ -f "$PORT_LIB" ] || die "no $PORT_LIB — run 'cargo build'"
+stage_port_soname
 
 mkdir -p -- "$DRIVERS" "$REPORTS"
 
-# The port's library file is named libnshedit.so and carries no SONAME, so it
-# is linked by -l name with an rpath. The oracle carries SONAME libedit.so.0.
-# Neither link line can reach /usr/lib: -L comes first and the rpath is
-# absolute, and the check after each build confirms which library the binary
-# actually resolved to.
+# Both libraries are linked by -l name with an rpath, and both carry a SONAME
+# — libnshedit.so.0 for the port, libedit.so.0 for the oracle — so DT_NEEDED
+# records the soname and the rpath is what finds it. Neither link line can
+# reach /usr/lib: -L comes first and the rpath is absolute, and the check
+# after each build confirms which library the binary actually resolved to.
 compile_driver() {
     local src=$1 which=$2 out=$3 libdir=$4 libname=$5
     gcc -std=c11 -O0 -g -Wall -Wextra -Wno-unused-parameter \
@@ -63,9 +64,17 @@ compile_driver() {
 # libedit: if ldd resolves libedit to /usr/lib, we stop.
 verify_link() {
     local bin=$1 which=$2 expect=$3
-    local resolved
-    resolved=$(ldd "$bin" | awk '/libedit|libnshedit/ { print $3 }' | head -1)
-    [ -n "$resolved" ] || die "$which driver links no libedit/libnshedit at all"
+    local line resolved
+    line=$(ldd "$bin" | grep -E 'libedit|libnshedit' | head -1)
+    [ -n "$line" ] || die "$which driver links no libedit/libnshedit at all"
+    # A DT_NEEDED naming a file the loader cannot find prints "=> not found",
+    # whose third field is the word "not". Say so, rather than reporting a
+    # missing library as one that resolved somewhere surprising.
+    case "$line" in
+        *"not found"*) die "$which driver needs ${line%% *}, which is not on the search path" ;;
+    esac
+    resolved=$(printf '%s\n' "$line" | awk '{ print $3 }')
+    [ -n "$resolved" ] || die "$which driver: cannot read a path out of: $line"
     case "$resolved" in
         "$expect"*) : ;;
         *) die "$which driver resolves to $resolved, not $expect — refusing to run" ;;
