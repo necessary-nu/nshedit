@@ -65,6 +65,7 @@
 //! *positively identified* rather than being whatever failed to look like
 //! something else.
 
+use bstr::{BString, ByteSlice};
 use std::io::{self, Write};
 
 /// Identifies a native history file. Checked, not assumed: a file that does
@@ -82,10 +83,18 @@ pub const VERSION: u8 = 1;
 const DELIM: u8 = 0;
 
 /// One history entry: what was typed, and whatever the application attached.
+///
+/// The two fields have different types on purpose. [`text`](Record::text) is a
+/// [`BString`] — bytes that are *conventionally* text, without the UTF-8
+/// promise a `String` would make and cannot keep about what someone typed. It
+/// prints readably in a test failure and carries `bstr`'s string operations,
+/// which the search and listing paths want. [`blob`](Record::blob) is a plain
+/// `Vec<u8>` because it is genuinely opaque: nothing here may treat it as text
+/// or look inside it at all.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Record {
     /// The entry itself, exactly as it was entered. Arbitrary bytes.
-    pub text: Vec<u8>,
+    pub text: BString,
     /// Application-defined. Empty when there is none — notably on the C ABI
     /// path, where `HentryGen::data` is a bare `*mut c_void` with no length
     /// and therefore nothing that could be persisted even in principle.
@@ -94,7 +103,7 @@ pub struct Record {
 
 impl Record {
     /// A record carrying only the entry text.
-    pub fn new(text: impl Into<Vec<u8>>) -> Self {
+    pub fn new(text: impl Into<BString>) -> Self {
         Self {
             text: text.into(),
             blob: Vec::new(),
@@ -116,6 +125,9 @@ pub enum Error {
     /// The last frame has no terminator: the file was truncated mid-write.
     /// Everything before it is still returned — see [`read_all`].
     Truncated,
+    /// The file carries neither format's signature. Reported rather than
+    /// guessed at: see [`Format::Unknown`].
+    UnrecognisedFormat,
 }
 
 impl std::fmt::Display for Error {
@@ -127,6 +139,7 @@ impl std::fmt::Display for Error {
             }
             Error::BadRecord(i) => write!(f, "record {i} is corrupt"),
             Error::Truncated => f.write_str("the file ends inside a record"),
+            Error::UnrecognisedFormat => f.write_str("not a history file we recognise"),
         }
     }
 }
@@ -156,6 +169,107 @@ pub fn is_native(head: &[u8]) -> bool {
 /// COBS overhead and its delimiter.
 pub fn sniff_len() -> usize {
     MAGIC.len() + 8
+}
+
+/// libedit's own file starts with this, and has since it was V1.
+const LIBEDIT_COOKIE: &[u8] = b"_HiStOrY_V2_\n";
+
+/// Which history file this is.
+///
+/// Both variants are recognised by a signature the format *puts there*, never
+/// by elimination. A file that is neither is [`Unknown`](Format::Unknown)
+/// rather than being decoded on the assumption that it must be one of them —
+/// guessing wrong here means presenting one user's file as another's history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    /// Ours: COBS-framed records behind a [`MAGIC`] header frame.
+    Native,
+    /// libedit's `_HiStOrY_V2_`: one vis-encoded entry per line.
+    LibeditV2,
+    /// Neither signature is present. A GNU readline file lands here, since
+    /// its format is raw lines with nothing identifying them.
+    Unknown,
+}
+
+/// Identifies a file from its first few bytes.
+///
+/// Reading is deliberately not behind a feature or an option. Whichever
+/// format we write, a user's existing file has to keep opening — otherwise
+/// changing the default silently loses everybody's history, and every switch
+/// becomes a migration someone has to be told about.
+pub fn detect(head: &[u8]) -> Format {
+    if head.starts_with(LIBEDIT_COOKIE) {
+        Format::LibeditV2
+    } else if is_native(head) {
+        Format::Native
+    } else {
+        Format::Unknown
+    }
+}
+
+/// Reads a history file of whichever format it turns out to be.
+///
+/// Same contract as [`read_all`]: whatever could be read, plus whatever
+/// stopped it, because a partial history beats none.
+pub fn read_any(bytes: &[u8]) -> (Vec<Record>, Option<Error>) {
+    match detect(bytes) {
+        Format::Native => read_all(bytes),
+        Format::LibeditV2 => read_libedit(bytes),
+        Format::Unknown => (Vec::new(), Some(Error::UnrecognisedFormat)),
+    }
+}
+
+/// Reads libedit's `_HiStOrY_V2_`: the cookie line, then one vis-encoded
+/// entry per line.
+///
+/// Entries get an empty [`Record::blob`], which is not a loss — the format
+/// has nowhere to put one. `H_SAVE` writes `ev.str` and drops the entry's
+/// `void *data`, so a libedit file never carried application data to begin
+/// with.
+fn read_libedit(bytes: &[u8]) -> (Vec<Record>, Option<Error>) {
+    let mut out = Vec::new();
+    let mut fault = None;
+    for (i, line) in bytes.lines().enumerate().skip(1) {
+        // The C skips empty lines rather than entering an empty event.
+        if line.is_empty() {
+            continue;
+        }
+        match unvis_line(line) {
+            Some(text) => out.push(Record::new(text)),
+            // Local, like the native reader's: one unreadable line costs one
+            // entry. The C is even more forgiving — `history.c:869` casts
+            // `strunvis`'s return to void and enters whatever it produced —
+            // but entering a half-decoded line is worse than saying so.
+            None => {
+                fault.get_or_insert(Error::BadRecord(i));
+            }
+        }
+    }
+    (out, fault)
+}
+
+/// One vis-encoded line, decoded.
+///
+/// The single seam onto `vis(3)`, so the `bsd` feature is one `cfg` rather
+/// than a scattering of them. Note this is the DECODER, which
+/// `bsd::vis::decode` implements with no libc in it at all — the encoder is
+/// the half that reaches `isgraph`/`mbtowc`/`wctomb`.
+#[cfg(feature = "bsd")]
+fn unvis_line(line: &[u8]) -> Option<Vec<u8>> {
+    bsd::vis::decode(line, bsd::vis::Flags::NONE).ok()
+}
+
+/// Without the `bsd` feature there is no decoder, so a libedit file is
+/// readable only if it happens to contain no escapes. Refusing outright would
+/// be worse: a file of plain ASCII commands with no spaces decodes correctly
+/// by doing nothing, and there is no reason to withhold it.
+#[cfg(not(feature = "bsd"))]
+fn unvis_line(line: &[u8]) -> Option<Vec<u8>> {
+    if line.contains(&b'\\') {
+        None
+    } else {
+        Some(line.to_vec())
+    }
 }
 
 /// Writes the header frame. Call once, when creating the file; appending to
@@ -236,7 +350,10 @@ pub fn read_all(bytes: &[u8]) -> (Vec<Record>, Option<Error>) {
 
 fn decode_record(body: &[u8]) -> Option<Record> {
     let (text, blob): (Vec<u8>, Vec<u8>) = postcard::from_bytes(body).ok()?;
-    Some(Record { text, blob })
+    Some(Record {
+        text: text.into(),
+        blob,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -337,7 +454,7 @@ mod test {
             Record::new(&b"\xff\xfe not utf-8"[..]),
             Record::new(&b""[..]),
             Record {
-                text: b"with a blob".to_vec(),
+                text: b"with a blob".into(),
                 blob: vec![0, 1, 2, 0, 0, 255],
             },
         ];
@@ -465,5 +582,107 @@ mod test {
         let (back, fault) = read_all(&header);
         assert_eq!(fault, None);
         assert!(back.is_empty());
+    }
+    /// The point of sniffing: a file a user already has must keep opening,
+    /// whichever format we happen to write today.
+    ///
+    /// These bytes are a real `_HiStOrY_V2_` file, produced by the in-tree C
+    /// through `write_history(3)` and copied here verbatim, escapes and all.
+    #[test]
+    #[cfg(feature = "bsd")]
+    fn a_real_libedit_file_reads_back() {
+        let libedit: &[u8] = b"_HiStOrY_V2_\n\
+            echo\\040plain\n\
+            echo\\040two\\012lines\n\
+            echo\\011tab\\040and\\040star\n\
+            echo\\040trailing\\040space\\040\n";
+
+        assert_eq!(detect(libedit), Format::LibeditV2);
+        let (back, fault) = read_any(libedit);
+        assert_eq!(fault, None);
+        let texts: Vec<&[u8]> = back.iter().map(|r| r.text.as_slice()).collect();
+        assert_eq!(
+            texts,
+            vec![
+                &b"echo plain"[..],
+                &b"echo two\nlines"[..],
+                &b"echo\ttab and star"[..],
+                &b"echo trailing space "[..],
+            ]
+        );
+        // The format has nowhere to put one, so every blob is empty rather
+        // than the reader having invented something.
+        assert!(back.iter().all(|r| r.blob.is_empty()));
+    }
+
+    /// The escaping libedit applies is exactly what the decoder undoes: the
+    /// newline that made the format need `vis` in the first place comes back
+    /// as a newline, inside a single entry rather than splitting it in two.
+    #[test]
+    #[cfg(feature = "bsd")]
+    fn the_embedded_newline_survives_the_legacy_path() {
+        let libedit: &[u8] = b"_HiStOrY_V2_\necho\\040two\\012lines\n";
+        let (back, _) = read_any(libedit);
+        assert_eq!(back.len(), 1, "one entry, not two");
+        assert_eq!(back[0].text, b"echo two\nlines");
+    }
+
+    #[test]
+    fn each_format_is_recognised_by_its_own_signature() {
+        let native = file(&[Record::new(&b"x"[..])]);
+        assert_eq!(detect(&native), Format::Native);
+        assert_eq!(detect(b"_HiStOrY_V2_\nfoo\n"), Format::LibeditV2);
+
+        // A GNU readline file is raw lines with nothing identifying them, so
+        // it is Unknown rather than being decoded as either.
+        assert_eq!(detect(b"echo plain\necho other\n"), Format::Unknown);
+        assert_eq!(detect(b""), Format::Unknown);
+        assert_eq!(read_any(b"echo plain\n").1, Some(Error::UnrecognisedFormat));
+    }
+
+    /// Reading is not behind the feature. Without `bsd` a libedit file with
+    /// no escapes in it still opens, because nothing needs decoding.
+    #[test]
+    fn an_unescaped_legacy_file_reads_without_the_bsd_feature() {
+        let libedit: &[u8] = b"_HiStOrY_V2_\nls\npwd\n";
+        let (back, fault) = read_any(libedit);
+        assert_eq!(fault, None);
+        assert_eq!(back.len(), 2);
+        assert_eq!(back[0].text, b"ls");
+    }
+
+    /// A bad escape costs one entry, matching the native reader. libedit
+    /// itself is looser — `history.c:869` casts `strunvis`'s return to void
+    /// and enters whatever came out — but a half-decoded command is worse
+    /// than a reported gap.
+    ///
+    /// `\M!` is the realistic corruption, not an invented one: libedit writes
+    /// a UTF-8 byte as `\M-b`, so a single flipped byte in a history file
+    /// containing any non-ASCII produces exactly this. Most malformed input
+    /// does NOT reach here — `\z` decodes to `z` and `\888` to `888`, since
+    /// `unvis` drops the backslash rather than failing, measured against the
+    /// `bsd` decoder.
+    #[test]
+    #[cfg(feature = "bsd")]
+    fn a_bad_escape_costs_one_entry() {
+        let libedit: &[u8] = b"_HiStOrY_V2_\ngood\\040one\n\\M!bad\ngood\\040two\n";
+        let (back, fault) = read_any(libedit);
+        assert!(matches!(fault, Some(Error::BadRecord(_))), "{fault:?}");
+        let texts: Vec<&[u8]> = back.iter().map(|r| r.text.as_slice()).collect();
+        assert_eq!(texts, vec![&b"good one"[..], &b"good two"[..]]);
+    }
+    /// Without `bsd` there is no decoder, so an escaped legacy file is
+    /// reported rather than half-read. The alternative would be handing back
+    /// `echo\\040plain` as though that were the command someone ran, which
+    /// is a wrong answer dressed as a right one.
+    #[test]
+    #[cfg(not(feature = "bsd"))]
+    fn an_escaped_legacy_file_is_refused_without_the_bsd_feature() {
+        let libedit: &[u8] = b"_HiStOrY_V2_\nls\necho\\040plain\n";
+        let (back, fault) = read_any(libedit);
+        assert!(matches!(fault, Some(Error::BadRecord(_))), "{fault:?}");
+        // The line that needed no decoding is still returned.
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].text, b"ls");
     }
 }

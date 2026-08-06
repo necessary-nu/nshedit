@@ -299,12 +299,20 @@ children (
                 title "A native history file: COBS-framed postcard records, appendable, greppable, locale-free"
                 priority 1
                 kind @feat
+                sealed true
                 log (
                     {
                         at 2026-08-06T15:14:40.509826279Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T15:40:02.793761788Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -315,6 +323,14 @@ children (
                 priority 1
                 kind @feat
                 deps (history-format-native)
+                log (
+                    {
+                        at 2026-08-06T15:41:48.357108383Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {
