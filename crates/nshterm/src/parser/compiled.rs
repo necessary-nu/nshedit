@@ -143,9 +143,14 @@ pub fn parse(file: &mut dyn io::Read, longnames: bool) -> Result<TermInfo> {
             })
             .collect::<io::Result<Vec<_>>>()?;
 
-        let mut string_table = Vec::new();
-        file.take(string_table_bytes as u64)
-            .read_to_end(&mut string_table)?;
+        // `read_exact` rather than `take(..).read_to_end(..)`: a file that
+        // ends inside its own string table has to fail here, the same way
+        // every other short read in this format does. Reading what is there
+        // and trusting the declared length instead left the slices below out
+        // of range. The length is a `u16` read through `read_nonneg!`, so
+        // the allocation is bounded by 32767 bytes.
+        let mut string_table = vec![0; string_table_bytes];
+        file.read_exact(&mut string_table)?;
 
         string_offsets
             .into_iter()
@@ -170,12 +175,14 @@ pub fn parse(file: &mut dyn io::Read, longnames: bool) -> Result<TermInfo> {
                     return Ok((name, Vec::new()));
                 }
 
+                // The offset is a claim the file makes about itself, and
+                // nothing above has measured it against the table that is
+                // actually there; indexing on trust panicked.
+                let tail = string_table.get(offset..).ok_or(StringOffsetOutOfRange)?;
+
                 // Find the offset of the NUL we want to go to
-                let nulpos = string_table[offset..string_table_bytes]
-                    .iter()
-                    .position(|&b| b == 0);
-                match nulpos {
-                    Some(len) => Ok((name, string_table[offset..offset + len].to_vec())),
+                match tail.iter().position(|&b| b == 0) {
+                    Some(len) => Ok((name, tail[..len].to_vec())),
                     None => Err(StringsMissingNull),
                 }
             })
@@ -433,9 +440,8 @@ mod test {
     fn a_truncated_entry_is_an_io_error_rather_than_a_panic() {
         let e = Entry::minimal();
         let full = e.bytes();
-        // Every cut before the string table starts. The table itself is the
-        // one section whose short read is not caught — see
-        // `defects::a_truncated_string_table_is_an_error_not_a_panic`.
+        // Every cut before the string table starts; the table's own short
+        // read is `a_truncated_string_table_is_an_error_not_a_panic`, below.
         for len in 0..full.len() - e.table.len() {
             match parse_bytes(&full[..len]) {
                 Err(Error::Io(_)) => {}
@@ -447,46 +453,38 @@ mod test {
         }
     }
 
-    /// Parser behaviour that `term(5)` implies and this crate does not yet
-    /// deliver. `#[ignore]`d rather than deleted, and not fixed here.
-    mod defects {
-        use super::{Entry, parse_bytes};
-
-        #[test]
-        #[ignore = "a short string table panics on an out-of-range slice index"]
-        fn a_truncated_string_table_is_an_error_not_a_panic() {
-            // `parse` trusts the declared `string_table_bytes` when slicing
-            // the table it actually read:
-            //     string_table[offset..string_table_bytes]
-            // `read_to_end` stops at EOF, so a file that ends inside its own
-            // string table leaves that slice out of range and the index
-            // panics. Every other short read in the format is an
-            // `Error::Io`; this one takes the process down.
-            //
-            // It matters because the bytes come from a file the caller did
-            // not write — `TermInfo::from_env` opens whatever the terminfo
-            // search path resolves to — so a corrupt or hostile entry is
-            // reachable input, not a hypothetical.
-            let e = Entry::minimal();
-            let full = e.bytes();
-            for len in full.len() - e.table.len()..full.len() {
-                assert!(
-                    parse_bytes(&full[..len]).is_err(),
-                    "truncating to {len} bytes should be an error"
-                );
-            }
+    #[test]
+    fn a_truncated_string_table_is_an_error_not_a_panic() {
+        // `parse` used to trust the declared `string_table_bytes` when
+        // slicing the table it actually read:
+        //     string_table[offset..string_table_bytes]
+        // `read_to_end` stops at EOF, so a file that ended inside its own
+        // string table left that slice out of range and the index panicked.
+        // Every other short read in the format is an `Error::Io`; this one
+        // took the process down.
+        //
+        // It matters because the bytes come from a file the caller did
+        // not write — `TermInfo::from_env` opens whatever the terminfo
+        // search path resolves to — so a corrupt or hostile entry is
+        // reachable input, not a hypothetical.
+        let e = Entry::minimal();
+        let full = e.bytes();
+        for len in full.len() - e.table.len()..full.len() {
+            assert!(
+                parse_bytes(&full[..len]).is_err(),
+                "truncating to {len} bytes should be an error"
+            );
         }
+    }
 
-        #[test]
-        #[ignore = "a string offset past the end of the table panics on an out-of-range slice index"]
-        fn a_string_offset_past_the_table_is_an_error_not_a_panic() {
-            // The same slice, reached the other way: a complete file whose
-            // offset table points outside the string table. Nothing
-            // validates `offset` against the table's length.
-            let mut e = Entry::minimal();
-            e.offsets = vec![99];
-            assert!(parse_bytes(&e.bytes()).is_err());
-        }
+    #[test]
+    fn a_string_offset_past_the_table_is_an_error_not_a_panic() {
+        // The same slice, reached the other way: a complete file whose
+        // offset table points outside the string table. Nothing used to
+        // validate `offset` against the table's length.
+        let mut e = Entry::minimal();
+        e.offsets = vec![99];
+        assert!(parse_bytes(&e.bytes()).is_err());
     }
 
     // -----------------------------------------------------------------

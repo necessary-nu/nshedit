@@ -13,11 +13,12 @@
 //! byte sequence in it reaches the expander. Nothing here may panic; an
 //! `Err` is a fine answer, a crash is not.
 //!
-//! The `defects` module at the bottom holds tests written to the behaviour
-//! `terminfo(5)` and `tparm(3)` specify but this crate does not yet produce.
-//! They are `#[ignore]`d rather than deleted or weakened. A test graduates out
-//! of that module, unchanged, when the defect it describes is fixed — the two
-//! padding tests above did.
+//! This file carried a `defects` module of `#[ignore]`d tests, written to the
+//! behaviour `terminfo(5)` and `tparm(3)` specify but this crate did not
+//! produce — kept as known-failing rather than deleted or weakened, on the
+//! rule that a test graduates out of it unchanged once the defect is fixed.
+//! All of them have; the module is gone and its tests are below, with their
+//! assertions as written. Their comments keep the account of what was wrong.
 //!
 //! Expected values come from one of two places: a run of the real ncurses
 //! `tparm(3)` against the same capability and parameters, or the grammar as
@@ -230,89 +231,112 @@ fn a_dollar_that_opens_no_delay_is_literal() {
 }
 
 // ---------------------------------------------------------------------------
-// defects
+// arithmetic that a file can steer into a trap
 // ---------------------------------------------------------------------------
 
-/// Tests written to the behaviour `terminfo(5)` and `tparm(3)` specify, which
-/// `expand` does not currently produce.
-///
-/// Each is `#[ignore]`d rather than deleted or weakened: a known-failing test
-/// that states the contract is worth more than a passing one that pins the
-/// defect in place. Run them with `cargo test -p nshterm -- --ignored`.
-///
-/// Fixing one means moving its test up into the body of this file with its
-/// assertions untouched, not editing it in place.
-mod defects {
-    use super::{cap, ex, ex_err, fixture, nums, s};
-    use nshterm::parm::Error;
+#[test]
+fn parameter_index_zero_is_rejected_not_panicked_on() {
+    // terminfo(5) gives the range as `%p[1-9]`, so `%p0` is malformed and
+    // belongs with `%pa` as InvalidParameterIndex. `expand` used to compute
+    // `0usize - 1` to index a nine-element array: a panic in a debug build,
+    // an out-of-bounds index in a release one. A terminfo file is untrusted
+    // input, so this is reachable.
+    assert_eq!(
+        ex_err(b"%p0%d", &nums(&[5])),
+        Error::InvalidParameterIndex('0')
+    );
+}
 
-    #[test]
-    #[ignore = "expand panics on %p0 (subtract-with-overflow indexing mparams)"]
-    fn parameter_index_zero_is_rejected_not_panicked_on() {
-        // terminfo(5) gives the range as `%p[1-9]`, so `%p0` is malformed and
-        // belongs with `%pa` as InvalidParameterIndex. Instead `expand`
-        // computes `0usize - 1` to index a nine-element array: a panic in a
-        // debug build, an out-of-bounds index in a release one. A terminfo
-        // file is untrusted input, so this is reachable.
-        assert_eq!(
-            ex_err(b"%p0%d", &nums(&[5])),
-            Error::InvalidParameterIndex('0')
-        );
+#[test]
+fn division_by_zero_yields_zero() {
+    // ncurses' tparm guards both: `npush(y ? (x / y) : 0)`. `expand`
+    // evaluated `x / y` directly, so a capability whose divisor came
+    // from a parameter took the process down.
+    assert_eq!(s(b"%p1%{0}%/%d", &nums(&[5])), "0");
+    assert_eq!(s(b"%p1%p2%/%d", &nums(&[5, 0])), "0");
+}
+
+#[test]
+fn modulo_by_zero_yields_zero() {
+    assert_eq!(s(b"%p1%{0}%m%d", &nums(&[5])), "0");
+}
+
+#[test]
+fn arithmetic_overflow_wraps_rather_than_panicking() {
+    // C's int arithmetic wraps in every implementation terminfo targets,
+    // and ncurses reports -2147483648 here. Whatever this crate chooses —
+    // wrapping, saturating, or an Error variant — it must not panic on
+    // bytes that came out of a file.
+    assert_eq!(s(b"%p1%{2147483647}%+%d", &nums(&[1])), "-2147483648");
+}
+
+#[test]
+fn the_worst_case_of_each_operator_returns() {
+    // The companion to the assertion above: every operand pair that traps in
+    // C reaches `expand` from a file, so none of them may panic. `i32::MIN /
+    // -1` is the one where ncurses is no guide — the real tparm takes SIGFPE
+    // on it, which a library cannot copy — so this pins only that it returns.
+    let extremes = [i32::MIN, -1, 0, 1, i32::MAX];
+    for op in [&b"%+"[..], b"%-", b"%*", b"%/", b"%m", b"%&", b"%|", b"%^"] {
+        for x in extremes {
+            for y in extremes {
+                let mut cap = b"%p1%p2".to_vec();
+                cap.extend_from_slice(op);
+                cap.extend_from_slice(b"%d");
+                assert!(
+                    expand(&cap, &nums(&[x, y]), &mut Variables::new()).is_ok(),
+                    "{:?} on {x} and {y}",
+                    String::from_utf8_lossy(op)
+                );
+            }
+        }
     }
+}
 
-    #[test]
-    #[ignore = "expand panics on division by zero; ncurses pushes 0"]
-    fn division_by_zero_yields_zero() {
-        // ncurses' tparm guards both: `npush(y ? (x / y) : 0)`. `expand`
-        // evaluates `x / y` directly, so a capability whose divisor comes
-        // from a parameter takes the process down.
-        assert_eq!(s(b"%p1%{0}%/%d", &nums(&[5])), "0");
-        assert_eq!(s(b"%p1%p2%/%d", &nums(&[5, 0])), "0");
-    }
+// ---------------------------------------------------------------------------
+// conversions that printf(3) defines and this crate once did not
+// ---------------------------------------------------------------------------
 
-    #[test]
-    #[ignore = "expand panics on modulo by zero; ncurses pushes 0"]
-    fn modulo_by_zero_yields_zero() {
-        assert_eq!(s(b"%p1%{0}%m%d", &nums(&[5])), "0");
-    }
+#[test]
+fn a_leading_zero_in_the_width_pads_with_zeros() {
+    // terminfo(5) says the conversion works "as in printf", and ncurses
+    // hands the whole spec to sprintf, so `%02x` zero-pads. `expand` used to
+    // fold the leading 0 into the width and pad with spaces; `Flags` had no
+    // zero-pad member at all.
+    //
+    // This is not academic. The linux console's `initc` — shipped, and in
+    // tests/data — is
+    //   \E]P%p1%x%p2%{255}%*%{1000}%/%02x%p3...%02x%p4...%02x
+    // so any channel below 0x10 emitted a space inside an OSC payload
+    // instead of a leading zero, corrupting the sequence.
+    assert_eq!(s(b"%p1%02d", &nums(&[7])), "07");
+    assert_eq!(s(b"%p1%03d", &nums(&[7])), "007");
+    assert_eq!(s(b"%p1%02x", &nums(&[15])), "0f");
 
-    #[test]
-    #[ignore = "expand panics on integer overflow in %+ %- %* and on i32::MIN / -1"]
-    fn arithmetic_overflow_wraps_rather_than_panicking() {
-        // C's int arithmetic wraps in every implementation terminfo targets,
-        // and ncurses reports -2147483648 here. Whatever this crate chooses —
-        // wrapping, saturating, or an Error variant — it must not panic on
-        // bytes that came out of a file.
-        assert_eq!(s(b"%p1%{2147483647}%+%d", &nums(&[1])), "-2147483648");
-    }
+    let initc = cap(&fixture("linux"), "initc");
+    assert_eq!(ex(&initc, &nums(&[1, 1000, 60, 0])), b"\x1b]P1ff0f00");
+}
 
-    #[test]
-    #[ignore = "expand has no zero-pad flag: %02x renders as ' f' instead of '0f'"]
-    fn a_leading_zero_in_the_width_pads_with_zeros() {
-        // terminfo(5) says the conversion works "as in printf", and ncurses
-        // hands the whole spec to sprintf, so `%02x` zero-pads. `expand`
-        // folds the leading 0 into the width and pads with spaces; `Flags`
-        // has no zero-pad member at all.
-        //
-        // This is not academic. The linux console's `initc` — shipped, and in
-        // tests/data — is
-        //   \E]P%p1%x%p2%{255}%*%{1000}%/%02x%p3...%02x%p4...%02x
-        // so any channel below 0x10 emits a space inside an OSC payload
-        // instead of a leading zero, corrupting the sequence.
-        assert_eq!(s(b"%p1%02d", &nums(&[7])), "07");
-        assert_eq!(s(b"%p1%03d", &nums(&[7])), "007");
-        assert_eq!(s(b"%p1%02x", &nums(&[15])), "0f");
+#[test]
+fn zero_padding_goes_behind_a_sign_or_a_base_prefix() {
+    // The rest of C's `0` flag, checked against glibc's own printf: the fill
+    // follows the prefix rather than preceding it, `-` beats `0`, and a
+    // precision suppresses `0` outright for the integer conversions.
+    assert_eq!(s(b"%p1%05d", &nums(&[-7])), "-0007");
+    assert_eq!(s(b"%p1% 05d", &nums(&[7])), " 0007");
+    assert_eq!(s(b"%p1%#010x", &nums(&[15])), "0x0000000f");
+    assert_eq!(s(b"%p1%#010o", &nums(&[15])), "0000000017");
+    assert_eq!(s(b"%p1%:-05d", &nums(&[7])), "7    ");
+    assert_eq!(s(b"%p1%05.3d", &nums(&[7])), "  007");
+    // The flag is defined for the numeric conversions only, and glibc pads
+    // `%05s` with spaces.
+    assert_eq!(s(b"%p1%05s", &[Param::Words("ab".to_owned())]), "   ab");
+}
 
-        let initc = cap(&fixture("linux"), "initc");
-        assert_eq!(ex(&initc, &nums(&[1, 1000, 60, 0])), b"\x1b]P1ff0f00");
-    }
-
-    #[test]
-    #[ignore = "expand renders %#o of 0 as '00'; C and ncurses give '0'"]
-    fn alternate_octal_of_zero_is_a_single_zero() {
-        // The alternate form guarantees a leading 0, it does not add one to a
-        // value that is already 0. `expand` special-cases `#` for hex by
-        // testing `d != 0` but unconditionally prepends for octal.
-        assert_eq!(s(b"%p1%#o", &nums(&[0])), "0");
-    }
+#[test]
+fn alternate_octal_of_zero_is_a_single_zero() {
+    // The alternate form guarantees a leading 0, it does not add one to a
+    // value that is already 0. `expand` special-cased `#` for hex by
+    // testing `d != 0` but prepended unconditionally for octal.
+    assert_eq!(s(b"%p1%#o", &nums(&[0])), "0");
 }

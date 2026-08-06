@@ -69,6 +69,33 @@
 //!   vanished. Padding now survives expansion verbatim, which is what ncurses'
 //!   `tparm(3)` does and what leaves it available to a `tputs(3)`; see
 //!   [`parm::expand`].
+//! * **Fixed**: six ways a terminfo entry could panic the process. A compiled
+//!   entry is a file this crate did not write — [`TermInfo::from_env`] opens
+//!   whatever the terminfo search path resolves to — so every one of these was
+//!   reachable input, and a panic in a library is a denial of service in every
+//!   consumer of it. In [`parm::expand`]: `%p0` indexed a nine-element array
+//!   at `0usize - 1`; `%/` and `%m` divided without guarding a zero divisor,
+//!   where ncurses writes `npush(y ? (x / y) : 0)`; and `%+`, `%-`, `%*` and
+//!   `%i` overflowed, where C's `int` wraps and ncurses duly reports
+//!   `-2147483648` for `INT_MAX + 1`. `%p0` is now an
+//!   [`InvalidParameterIndex`][parm::Error::InvalidParameterIndex], the
+//!   divisions yield zero, and the arithmetic wraps — including `i32::MIN /
+//!   -1`, where ncurses is no guide because the real `tparm` takes `SIGFPE`.
+//!   In [`parser::compiled`]: the string table was read with `read_to_end` and
+//!   then sliced against the length the header *declared*, so a file ending
+//!   inside its own string table went out of range, as did any offset pointing
+//!   past the table. The table is now read with `read_exact`, making a short
+//!   one the same clean [`Error::Io`] as every other short read in the format,
+//!   and a stray offset is [`Error::StringOffsetOutOfRange`].
+//! * **Fixed**: two printf-style conversions that `terminfo(5)` defines by
+//!   reference to `printf(3)` — ncurses hands the whole specification to
+//!   `sprintf`, so C is the spec. The `0` flag did not exist: `Flags` had no
+//!   member for it and the leading zero folded into the width, so `%02x` of 15
+//!   padded with a space. That is live on the `linux` console, whose shipped
+//!   `initc` is `…%{1000}%/%02x…`; a colour channel below `0x10` put a space
+//!   inside an OSC payload. And `%#o` of 0 rendered as `00`, because the
+//!   alternate form prepended a zero unconditionally rather than only when the
+//!   value did not already start with one.
 //!
 //! [`term`]: https://crates.io/crates/term/1.2.1
 //! [Stebalien/term#93]: https://github.com/Stebalien/term/issues/93
@@ -287,6 +314,12 @@ pub enum Error {
     NamesMissingNull,
     /// The strings table was missing a trailing null terminator.
     StringsMissingNull,
+    /// A string capability's offset pointed outside the string table.
+    ///
+    /// The offset table and the string table are sized independently in the
+    /// header, so an entry can name a start that the table it belongs to does
+    /// not reach.
+    StringOffsetOutOfRange,
 }
 
 // manually implemented because std::io::Error does not implement Eq/PartialEq
@@ -307,6 +340,7 @@ impl std::cmp::PartialEq for Error {
             InvalidLength => matches!(other, InvalidLength),
             NamesMissingNull => matches!(other, NamesMissingNull),
             StringsMissingNull => matches!(other, StringsMissingNull),
+            StringOffsetOutOfRange => matches!(other, StringOffsetOutOfRange),
         }
     }
 }
@@ -335,6 +369,9 @@ impl std::fmt::Display for Error {
             InvalidLength => f.write_str("invalid length field value, must be >= -1"),
             NamesMissingNull => f.write_str("names table missing NUL terminator"),
             StringsMissingNull => f.write_str("string table missing NUL terminator"),
+            StringOffsetOutOfRange => {
+                f.write_str("string capability offset lies outside the string table")
+            }
         }
     }
 }

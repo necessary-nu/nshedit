@@ -214,17 +214,9 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables) -> Result<Vec<
                     },
                     '+' | '-' | '/' | '*' | '^' | '&' | '|' | 'm' => {
                         match (stack.pop(), stack.pop()) {
-                            (Some(Number(y)), Some(Number(x))) => stack.push(Number(match cur {
-                                '+' => x + y,
-                                '-' => x - y,
-                                '*' => x * y,
-                                '/' => x / y,
-                                '|' => x | y,
-                                '&' => x & y,
-                                '^' => x ^ y,
-                                'm' => x % y,
-                                _ => unreachable!("logic error"),
-                            })),
+                            (Some(Number(y)), Some(Number(x))) => {
+                                stack.push(Number(binary_op(cur, x, y)))
+                            }
                             (Some(_), Some(_)) => return Err(Error::TypeMismatch),
                             _ => return Err(Error::StackUnderflow),
                         }
@@ -259,8 +251,8 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables) -> Result<Vec<
                     },
                     'i' => match (&mparams[0], &mparams[1]) {
                         (&Number(x), &Number(y)) => {
-                            mparams[0] = Number(x + 1);
-                            mparams[1] = Number(y + 1);
+                            mparams[0] = Number(x.wrapping_add(1));
+                            mparams[1] = Number(y.wrapping_add(1));
                         }
                         (_, _) => return Err(Error::TypeMismatch),
                     },
@@ -278,17 +270,7 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables) -> Result<Vec<
                     ':' | '#' | ' ' | '.' | '0'..='9' => {
                         let mut flags = Flags::default();
                         let mut fstate = FormatState::Flags;
-                        match cur {
-                            ':' => (),
-                            '#' => flags.alternate = true,
-                            ' ' => flags.space = true,
-                            '.' => fstate = FormatState::Precision,
-                            '0'..='9' => {
-                                flags.width = cur as usize - '0' as usize;
-                                fstate = FormatState::Width;
-                            }
-                            _ => unreachable!("logic error"),
-                        }
+                        read_format_byte(&mut flags, &mut fstate, cur)?;
                         state = FormatPattern(flags, fstate);
                     }
 
@@ -305,14 +287,13 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables) -> Result<Vec<
                 }
             }
             PushParam => {
-                // params are 1-indexed
-                stack.push(
-                    mparams[match cur.to_digit(10) {
-                        Some(d) => d as usize - 1,
-                        None => return Err(Error::InvalidParameterIndex(cur)),
-                    }]
-                    .clone(),
-                );
+                // params are 1-indexed, and `terminfo(5)` gives the range as
+                // `%p[1-9]`, so `%p0` is as malformed as `%pa`. Taking the
+                // digit on trust indexed `mparams` at `0usize - 1`.
+                match cur.to_digit(10) {
+                    Some(d @ 1..=9) => stack.push(mparams[d as usize - 1].clone()),
+                    _ => return Err(Error::InvalidParameterIndex(cur)),
+                }
             }
             SetVar => match cur {
                 'A'..='Z' => {
@@ -378,8 +359,8 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables) -> Result<Vec<
             }
             FormatPattern(ref mut flags, ref mut fstate) => {
                 old_state = Nothing;
-                match (*fstate, cur) {
-                    (_, 'd') | (_, 'o') | (_, 'x') | (_, 'X') | (_, 's') => {
+                match cur {
+                    'd' | 'o' | 'x' | 'X' | 's' => {
                         if let Some(arg) = stack.pop() {
                             let res = format(arg, FormatOp::from_char(cur), *flags)?;
                             output.extend(res);
@@ -389,46 +370,7 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables) -> Result<Vec<
                             return Err(Error::StackUnderflow);
                         }
                     }
-                    (FormatState::Flags, '#') => {
-                        flags.alternate = true;
-                    }
-                    (FormatState::Flags, '-') => {
-                        flags.left = true;
-                    }
-                    (FormatState::Flags, '+') => {
-                        flags.sign = true;
-                    }
-                    (FormatState::Flags, ' ') => {
-                        flags.space = true;
-                    }
-                    (FormatState::Flags, '0'..='9') => {
-                        flags.width = cur as usize - '0' as usize;
-                        *fstate = FormatState::Width;
-                    }
-                    (FormatState::Width, '0'..='9') => {
-                        flags.width = match flags
-                            .width
-                            .checked_mul(10)
-                            .and_then(|w| w.checked_add(cur as usize - '0' as usize))
-                        {
-                            Some(width) => width,
-                            None => return Err(Error::FormatWidthOverflow),
-                        }
-                    }
-                    (FormatState::Width, '.') | (FormatState::Flags, '.') => {
-                        *fstate = FormatState::Precision;
-                    }
-                    (FormatState::Precision, '0'..='9') => {
-                        flags.precision = match flags
-                            .precision
-                            .checked_mul(10)
-                            .and_then(|w| w.checked_add(cur as usize - '0' as usize))
-                        {
-                            Some(precision) => precision,
-                            None => return Err(Error::FormatPrecisionOverflow),
-                        }
-                    }
-                    _ => return Err(Error::UnrecognizedFormatOption(cur)),
+                    _ => read_format_byte(flags, fstate, cur)?,
                 }
             }
             SeekIfElse(level) => {
@@ -479,6 +421,79 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables) -> Result<Vec<
     Ok(output)
 }
 
+/// Apply one binary operator to the two numbers popped for it.
+///
+/// Three guards live here rather than in the caller's match, all of them
+/// about bytes that came out of a terminfo file rather than out of this
+/// crate:
+///
+/// * Division and modulo by zero yield zero. ncurses' `tparm` writes exactly
+///   that — `npush(y ? (x / y) : 0)` — because a capability is free to divide
+///   by a parameter the caller left at its default.
+/// * The arithmetic wraps. C's `int` wraps on every machine terminfo targets
+///   and ncurses reports `-2147483648` for `INT_MAX + 1`; a Rust debug build
+///   would panic instead.
+/// * `i32::MIN / -1` wraps to `i32::MIN`. Here ncurses is no guide: C leaves
+///   the case undefined and the real `tparm` takes `SIGFPE` on x86, which is
+///   not a behaviour a library can copy.
+fn binary_op(op: char, x: i32, y: i32) -> i32 {
+    match op {
+        '+' => x.wrapping_add(y),
+        '-' => x.wrapping_sub(y),
+        '*' => x.wrapping_mul(y),
+        '/' if y == 0 => 0,
+        '/' => x.wrapping_div(y),
+        'm' if y == 0 => 0,
+        'm' => x.wrapping_rem(y),
+        '|' => x | y,
+        '&' => x & y,
+        '^' => x ^ y,
+        _ => unreachable!("logic error"),
+    }
+}
+
+/// Consume one byte of a printf-style conversion specification, updating the
+/// flags and which part of the specification the next byte belongs to.
+///
+/// The grammar is `printf(3)`'s: `%[flags][width][.precision]` before the
+/// conversion character. A leading `0` is therefore the zero-pad *flag*, not
+/// the first digit of the width — `%02x` means "width 2, padded with zeros".
+/// ncurses gets this for free by copying the whole specification into a
+/// `sprintf` format string; this reimplements it.
+fn read_format_byte(flags: &mut Flags, fstate: &mut FormatState, cur: char) -> Result<(), Error> {
+    match (*fstate, cur) {
+        // `terminfo(5)`: "Use a ':' to allow the next character to be a '-'
+        // flag, avoiding interpreting '%-' as an operator."
+        (FormatState::Flags, ':') => (),
+        (FormatState::Flags, '#') => flags.alternate = true,
+        (FormatState::Flags, '-') => flags.left = true,
+        (FormatState::Flags, '+') => flags.sign = true,
+        (FormatState::Flags, ' ') => flags.space = true,
+        (FormatState::Flags, '0') => flags.zero = true,
+        (FormatState::Flags, '1'..='9') => {
+            flags.width = cur as usize - '0' as usize;
+            *fstate = FormatState::Width;
+        }
+        (FormatState::Width, '0'..='9') => {
+            flags.width = flags
+                .width
+                .checked_mul(10)
+                .and_then(|w| w.checked_add(cur as usize - '0' as usize))
+                .ok_or(Error::FormatWidthOverflow)?;
+        }
+        (FormatState::Flags | FormatState::Width, '.') => *fstate = FormatState::Precision,
+        (FormatState::Precision, '0'..='9') => {
+            flags.precision = flags
+                .precision
+                .checked_mul(10)
+                .and_then(|p| p.checked_add(cur as usize - '0' as usize))
+                .ok_or(Error::FormatPrecisionOverflow)?;
+        }
+        _ => return Err(Error::UnrecognizedFormatOption(cur)),
+    }
+    Ok(())
+}
+
 #[derive(Copy, PartialEq, Clone, Default)]
 struct Flags {
     width: usize,
@@ -487,6 +502,8 @@ struct Flags {
     left: bool,
     sign: bool,
     space: bool,
+    /// `printf(3)`'s `0` flag: fill the width with zeros rather than spaces.
+    zero: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -515,9 +532,9 @@ impl FormatOp {
 
 fn format(val: Param, op: FormatOp, flags: Flags) -> Result<Vec<u8>, Error> {
     use self::FormatOp::*;
-    let mut s = match val {
+    match val {
         Number(d) => {
-            match op {
+            let s = match op {
                 Digit => {
                     // C doesn't take sign into account in precision calculation.
                     if flags.sign {
@@ -531,11 +548,14 @@ fn format(val: Param, op: FormatOp, flags: Flags) -> Result<Vec<u8>, Error> {
                     }
                 }
                 Octal => {
-                    if flags.alternate {
-                        // Leading octal zero counts against precision.
-                        format!("0{:01$o}", d, flags.precision.saturating_sub(1))
+                    let s = format!("{:01$o}", d, flags.precision);
+                    // The alternate form guarantees a leading zero, it does
+                    // not add one to a value that already has it: C and
+                    // ncurses render `%#o` of 0 as "0", not "00".
+                    if flags.alternate && !s.starts_with('0') {
+                        format!("0{s}")
                     } else {
-                        format!("{:01$o}", d, flags.precision)
+                        s
                     }
                 }
                 Hex => {
@@ -554,7 +574,11 @@ fn format(val: Param, op: FormatOp, flags: Flags) -> Result<Vec<u8>, Error> {
                 }
                 String => return Err(Error::TypeMismatch),
             }
-            .into_bytes()
+            .into_bytes();
+            // C ignores the `0` flag once a precision is given, since the
+            // precision has already decided how many digits there are.
+            let zero_after = (flags.zero && flags.precision == 0).then(|| number_prefix(&s));
+            Ok(pad(s, flags, zero_after))
         }
         Words(s) => match op {
             String => {
@@ -562,23 +586,54 @@ fn format(val: Param, op: FormatOp, flags: Flags) -> Result<Vec<u8>, Error> {
                 if flags.precision > 0 && flags.precision < s.len() {
                     s.truncate(flags.precision);
                 }
-                s
+                // `0` is defined for the numeric conversions only, and glibc
+                // pads `%05s` with spaces, so a string never zero-pads.
+                Ok(pad(s, flags, None))
             }
-            _ => return Err(Error::TypeMismatch),
+            _ => Err(Error::TypeMismatch),
         },
-    };
-    if flags.width > s.len() {
-        let n = flags.width - s.len();
-        if flags.left {
-            s.extend(repeat_n(b' ', n));
-        } else {
-            let mut s_ = Vec::with_capacity(flags.width);
-            s_.extend(repeat_n(b' ', n));
-            s_.extend(s);
-            s = s_;
-        }
     }
-    Ok(s)
+}
+
+/// How many leading bytes of an already-formatted number are its sign or base
+/// prefix, which zero padding has to go *after* rather than before: C renders
+/// `%#010x` of 15 as `0x0000000f` and `%05d` of -7 as `-0007`.
+///
+/// Only [`format`]'s own output reaches this, so the two-byte case cannot be
+/// anything but the alternate form's `0x`/`0X` — no other conversion here
+/// emits an `x` at all, and the octal form's forced leading zero is a digit
+/// rather than a prefix, which is exactly how C pads it.
+fn number_prefix(s: &[u8]) -> usize {
+    match s {
+        [b'+' | b'-' | b' ', ..] => 1,
+        [b'0', b'x' | b'X', ..] => 2,
+        _ => 0,
+    }
+}
+
+/// Bring `s` up to `flags.width`, in `printf(3)`'s order.
+///
+/// `zero_after` is `Some(prefix)` when the `0` flag applies, `prefix` being
+/// the length of the sign or base prefix the zeros go behind. A left
+/// justification wins over it, as it does in C.
+fn pad(s: Vec<u8>, flags: Flags, zero_after: Option<usize>) -> Vec<u8> {
+    if flags.width <= s.len() {
+        return s;
+    }
+    let n = flags.width - s.len();
+    let mut out = Vec::with_capacity(flags.width);
+    if flags.left {
+        out.extend(s);
+        out.extend(repeat_n(b' ', n));
+    } else if let Some(prefix) = zero_after {
+        out.extend_from_slice(&s[..prefix]);
+        out.extend(repeat_n(b'0', n));
+        out.extend_from_slice(&s[prefix..]);
+    } else {
+        out.extend(repeat_n(b' ', n));
+        out.extend(s);
+    }
+    out
 }
 
 #[cfg(test)]
