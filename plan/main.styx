@@ -571,6 +571,22 @@ children (
                 title "Write tests for completion and tokenization from their sem rules; there are none to port"
                 deps (completion-translate platform-build)
                 sealed true
+                log (
+                    {
+                        at 2026-08-06T23:40:49.484541728Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-06T23:41:53.89815562Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Two traps in blank_editline that any later test author building on it will hit, both worked around in this file's el_with with the reason in its doc comment.\n\nblank_editline leaves el_state.lastcmd and el_state.thiscmd both zero, and fn_complete2 reads equal values as the SECOND consecutive invocation of the same command. A test built straight on it therefore takes the `?` listing path instead of the first-tab path, silently — it completes, it just completes the wrong way. el_with moves thiscmd off lastcmd.\n\nblank_editline also leaves el_outfd at 0. Both write_outfile and the beep take that literally, so an unmodified blank editor writes BEL to the process's stdin. el_with sets it to -1, and the listing tests hand it a real file.\n\nThree expectations written from reading rather than running turned out wrong.\n\nThe listing gap is two spaces, not one. fn_display_match_list's column separator (`col != 0 ? \" \" : \"\"`) is written ON TOP OF the append character rather than instead of it, so three-character names at width 3 come out \"abc  abd \". The trailing space on the last column is the append character with nothing following it, which is why every listed line ends in whitespace.\n\n`'\\''` in the tokenizer does not do what it looks like. Inside single quotes the backslash is emitted literally, the next quote closes, and the fourth reopens — so the string is an unmatched quote and returns 1. The real property is `'a\\'` giving [\"a\\\\\"]: a backslash does not defend the closing quote inside single quotes.\n\n`gen` is a reserved keyword in edition 2024. Cost a compile round, nothing more.\n\ntokenizer.fun-tok-end-fn is left without a unit test of its own on purpose: it is drop(tok), and there is nothing to assert that the type system does not already guarantee. It stays verified by hist_tok.c."
+                        after_done true
+                    }
+                )
             }
 
             {

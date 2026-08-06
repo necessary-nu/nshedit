@@ -624,3 +624,282 @@ pub fn tok_line(
 pub fn tok_str(tok: &mut Tokenizer, line: &[c_char], argc: &mut i32) -> i32 {
     tok_str_gen::<c_char>(tok, line, argc)
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn wide(s: &str) -> Vec<u32> {
+        s.chars().map(u32::from).collect()
+    }
+
+    /// The expected side of a `parse` comparison, spelled once.
+    fn vec_of(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    /// The published words, resolved the way a caller resolves `argv`: each
+    /// slot is an offset into `wspace`, and the word runs to the NUL
+    /// [`tok_finish_gen`] wrote after it.
+    fn words(tok: &TokenizerW) -> Vec<String> {
+        tok.argv[..tok.argc]
+            .iter()
+            .map(|slot| {
+                let start = slot.expect("a slot below argc is never the terminator");
+                tok.wspace[start..]
+                    .iter()
+                    .take_while(|&&c| c != 0)
+                    .filter_map(|&c| char::from_u32(c))
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// One whole line through a fresh wide tokenizer, with the default `ifs`.
+    ///
+    /// `argc` starts at -1 and is returned untouched by the three early exits,
+    /// which is itself part of the contract: a caller that reads `argc` after
+    /// a non-zero return is reading whatever it passed in.
+    fn parse(line: &str) -> (i32, i32, Vec<String>) {
+        let mut tok = tok_winit(None).unwrap();
+        let mut argc = -1;
+        let rv = tok_wstr(&mut tok, &wide(line), &mut argc);
+        let w = words(&tok);
+        tok_wend(tok);
+        (rv, argc, w)
+    }
+
+    /// Both quote characters suppress the separator test for everything
+    /// between them, which is the whole point of the state machine: `ifs` is
+    /// consulted only in `Q_none`.
+    // [spec:libedit:sem:tokenizer.quote-t/test]
+    // [spec:libedit:sem:tokenizer.fun-tok-line-fn/test]
+    // [spec:libedit:sem:tokenizer.fun-tok-str-fn/test]
+    #[test]
+    fn a_separator_inside_quotes_is_an_ordinary_character() {
+        assert_eq!(parse("a 'b c' d"), (0, 3, vec_of(&["a", "b c", "d"])));
+        assert_eq!(parse("a \"b c\" d"), (0, 3, vec_of(&["a", "b c", "d"])));
+
+        // The quotes themselves are consumed, so a word can be assembled out
+        // of quoted and unquoted runs with no separator between them.
+        assert_eq!(parse("a'b'c"), (0, 1, vec_of(&["abc"])));
+
+        // Each kind is inert inside the other: `Q_single` and `Q_double` emit
+        // the opposite quote instead of changing state.
+        assert_eq!(parse("'a\"b'"), (0, 1, vec_of(&["a\"b"])));
+        assert_eq!(parse("\"a'b\""), (0, 1, vec_of(&["a'b"])));
+    }
+
+    /// `TOK_KEEP` is what makes an empty quoted word exist at all: without it
+    /// `tok_finish` publishes only when the write pointer moved, so `''` — a
+    /// deliberate empty argument — would vanish instead of becoming an empty
+    /// `argv` element. A run of separators, which sets no such flag, does
+    /// collapse.
+    // [spec:libedit:sem:tokenizer.fun-tok-finish-fn/test]
+    #[test]
+    fn an_empty_quoted_word_is_published_and_a_run_of_separators_is_not() {
+        assert_eq!(parse("a '' b"), (0, 3, vec_of(&["a", "", "b"])));
+        assert_eq!(parse("\"\""), (0, 1, vec_of(&[""])));
+        assert_eq!(parse("  a  "), (0, 1, vec_of(&["a"])));
+        assert_eq!(parse("   "), (0, 0, vec![]));
+
+        // A lone backslash sets it too, so `\` at end of a word keeps that
+        // word even when it contributed no character of its own.
+        assert_eq!(parse("a \\"), (0, 2, vec_of(&["a", ""])));
+    }
+
+    /// ERR-input-41, reproduced: inside double quotes a backslash is kept
+    /// before anything ordinary — the one dispatch arm that emits two
+    /// elements in a single pass — but is DROPPED before a quote character,
+    /// where sh(1) keeps it. The asymmetry is the defect.
+    // [spec:libedit:sem:tokenizer.quote-t/test]
+    #[test]
+    fn a_backslash_inside_double_quotes_survives_only_before_an_ordinary_character() {
+        assert_eq!(parse("\"\\x\""), (0, 1, vec_of(&["\\x"])));
+        assert_eq!(
+            parse("\"\\'\""),
+            (0, 1, vec_of(&["'"])),
+            "the backslash is lost"
+        );
+        assert_eq!(parse("\"\\\"\""), (0, 1, vec_of(&["\""])));
+        assert_eq!(parse("\"\\\\\""), (0, 1, vec_of(&["\\"])));
+
+        // Inside SINGLE quotes the backslash is never special at all: both
+        // characters come through, and it does not defend the closing quote
+        // either — `'a\'` is a finished word, not an escaped apostrophe.
+        assert_eq!(parse("'\\x'"), (0, 1, vec_of(&["\\x"])));
+        assert_eq!(parse("'a\\'"), (0, 1, vec_of(&["a\\"])));
+    }
+
+    /// A backslash-newline at end of input is the "quoted return" that tells
+    /// the caller to read another line: the return is 3, `argc` is left
+    /// untouched, and the tokenizer's state is deliberately NOT reset — so
+    /// the next call continues the very word that was interrupted.
+    // [spec:libedit:sem:tokenizer.fun-tok-line-fn/test]
+    // [spec:libedit:sem:tokenizer.fun-tok-str-fn/test]
+    #[test]
+    fn a_backslash_newline_asks_for_another_line_and_resumes_the_same_word() {
+        let mut tok = tok_winit(None).unwrap();
+        let mut argc = -1;
+        assert_eq!(tok_wstr(&mut tok, &wide("echo a\\\n"), &mut argc), 3);
+        assert_eq!(argc, -1, "an early return never writes argc");
+
+        assert_eq!(tok_wstr(&mut tok, &wide("b\n"), &mut argc), 0);
+        assert_eq!(argc, 2);
+        assert_eq!(words(&tok), ["echo", "ab"]);
+        tok_wend(tok);
+
+        // Inside quotes a newline is not a continuation, it is a character:
+        // the word carries it and the caller is told the quote is still open.
+        assert_eq!(parse("'a\nb"), (1, -1, vec![]));
+        assert_eq!(parse("\"a\nb"), (2, -1, vec![]));
+        assert_eq!(parse("'a\nb'"), (0, 1, vec_of(&["a\nb"])));
+    }
+
+    /// ERR-input-39, reproduced. The newline is a member of the DEFAULT `ifs`
+    /// and yet it never splits a word, because the five dispatched elements
+    /// are matched before the separator test — in `Q_none` it ends the line
+    /// instead, and everything after it is silently dropped.
+    // [spec:libedit:sem:tokenizer.fun-tok-line-fn/test]
+    #[test]
+    fn a_newline_ends_the_line_rather_than_separating_words() {
+        assert_eq!(parse("a\nb"), (0, 1, vec_of(&["a"])));
+        assert_eq!(parse("\n"), (0, 0, vec![]));
+        // The line ends whether or not a word was pending.
+        assert_eq!(parse("ab\ncd ef"), (0, 1, vec_of(&["ab"])));
+    }
+
+    /// Unterminated quotes are reported rather than closed: 1 for a single
+    /// quote and 2 for a double, and in both cases `argc` and every partial
+    /// word are left where they are for a following call to continue.
+    // [spec:libedit:sem:tokenizer.fun-tok-line-fn/test]
+    #[test]
+    fn an_unterminated_quote_is_reported_by_its_own_return_code() {
+        assert_eq!(parse("'a"), (1, -1, vec![]));
+        assert_eq!(parse("\"a"), (2, -1, vec![]));
+
+        // An embedded NUL is the same end of input as running out of buffer,
+        // so it truncates the line rather than being tokenized.
+        let mut tok = tok_winit(None).unwrap();
+        let mut argc = -1;
+        assert_eq!(tok_wstr(&mut tok, &[0x61, 0, 0x62], &mut argc), 0);
+        assert_eq!(argc, 1);
+        assert_eq!(words(&tok), ["a"]);
+        tok_wend(tok);
+    }
+
+    /// The frozen consequence of ERR-input-15. Everything at or past
+    /// `lastchar` reads as NUL, and a trailing backslash therefore drives the
+    /// `Q_one` NUL arm once before the loop exits — appending a NUL element
+    /// to the word. It is invisible in the word itself, which ends at the
+    /// first NUL, but the cursor offset counts it: `co` says two for a
+    /// one-character word.
+    // [spec:libedit:sem:tokenizer.fun-tok-line-fn/test]
+    #[test]
+    fn a_trailing_backslash_pads_the_word_with_a_nul_the_cursor_offset_counts() {
+        let mut tok = tok_winit(None).unwrap();
+        let buf = wide("a\\");
+        // SAFETY: `buf` holds two elements and stays alive for the call, so
+        // the two derived pointers are one past its last element — the
+        // `lastchar`/`cursor` position `def:histedit.line-info-w` describes.
+        let li = LineInfoW {
+            buffer: buf.as_ptr(),
+            cursor: unsafe { buf.as_ptr().add(2) },
+            lastchar: unsafe { buf.as_ptr().add(2) },
+        };
+        let (mut argc, mut cc, mut co) = (-1, -1, -1);
+        assert_eq!(
+            tok_wline(&mut tok, &li, &mut argc, Some(&mut cc), Some(&mut co)),
+            0
+        );
+        assert_eq!(argc, 1);
+        assert_eq!(words(&tok), ["a"]);
+        // A cursor at `lastchar` never matches inside the loop — the
+        // end-of-input substitution runs first — so both fall through to the
+        // exit's fallback, which reports the word being assembled.
+        assert_eq!(cc, 0);
+        assert_eq!(co, 2, "one character of word, two elements of wspace");
+        tok_wend(tok);
+    }
+
+    /// ERR-input-38, reproduced. `tok_reset` makes exactly five assignments
+    /// and `argv[0]` is not among them, while `argv[argc] = NULL` is written
+    /// only on the publish path — so after a reset and a parse that publishes
+    /// nothing, the array is left without its terminator and a caller walking
+    /// it to NULL reads a word from the previous line.
+    // [spec:libedit:sem:tokenizer.fun-tok-reset-fn/test]
+    #[test]
+    fn a_reset_leaves_the_argv_terminator_from_the_previous_parse() {
+        let mut tok = tok_winit(None).unwrap();
+        let mut argc = -1;
+        assert_eq!(tok_wstr(&mut tok, &wide("a b"), &mut argc), 0);
+        assert_eq!(argc, 2);
+        assert_eq!(tok.argv[2], None, "the publish path does write one");
+
+        tok_wreset(&mut tok);
+        assert_eq!(tok.argc, 0);
+        assert_eq!(tok.wptr, 0);
+        assert_eq!(tok.wstart, 0);
+        assert_eq!(tok.flags, 0);
+        assert!(matches!(tok.quote, QuoteT::QNone));
+        assert_eq!(tok.argv[0], Some(0), "and it does not undo one");
+
+        let mut argc = -1;
+        assert_eq!(tok_wstr(&mut tok, &[], &mut argc), 0);
+        assert_eq!(argc, 0);
+        assert!(
+            tok.argv[0].is_some(),
+            "argv[argc] is not the NULL terminator the caller stops at"
+        );
+        tok_wend(tok);
+    }
+
+    /// The separator set is the caller's, and it is the ONLY thing `ifs`
+    /// controls: the five dispatched elements are matched first, so naming
+    /// one of them a separator has no effect whatever.
+    // [spec:libedit:sem:tokenizer.fun-tok-init-fn/test]
+    #[test]
+    fn the_separator_set_is_replaceable_but_cannot_reach_the_dispatch() {
+        let tok = tok_winit(None).unwrap();
+        assert_eq!(tok.ifs, wide("\t \n"));
+        assert_eq!(tok.amax, AINCR);
+        assert_eq!(tok.wmax, WINCR);
+        tok_wend(tok);
+
+        let ifs = wide(",");
+        let mut tok = tok_winit(Some(&ifs)).unwrap();
+        let mut argc = -1;
+        assert_eq!(tok_wstr(&mut tok, &wide("a,b c"), &mut argc), 0);
+        assert_eq!(words(&tok), ["a", "b c"]);
+        tok_wend(tok);
+
+        // A quote named as a separator still quotes, and the line still ends
+        // unterminated.
+        let ifs = wide("'");
+        let mut tok = tok_winit(Some(&ifs)).unwrap();
+        let mut argc = -1;
+        assert_eq!(tok_wstr(&mut tok, &wide("a'b"), &mut argc), 1);
+        tok_wend(tok);
+    }
+
+    /// Both buffers grow, and the growth is what makes the unchecked `emit`
+    /// safe: it runs once per pass with four elements of slack, which covers
+    /// the two the `Q_doubleone` arm can emit together plus `tok_finish`'s
+    /// terminator.
+    // [spec:libedit:sem:tokenizer.fun-tok-line-fn/test]
+    #[test]
+    fn the_word_and_argv_buffers_grow_past_their_initial_sizes() {
+        let long = "x".repeat(60);
+        assert_eq!(parse(&long), (0, 1, vec![long]));
+
+        let many = "a ".repeat(30);
+        let (rv, argc, w) = parse(&many);
+        assert_eq!((rv, argc), (0, 30));
+        assert_eq!(w, vec!["a"; 30]);
+
+        // The two-element arm, thirty times over, so the slack is exercised
+        // rather than merely reserved.
+        let pairs = format!("\"{}\"", "\\z".repeat(30));
+        assert_eq!(parse(&pairs), (0, 1, vec!["\\z".repeat(30)]));
+    }
+}

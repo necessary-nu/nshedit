@@ -1347,3 +1347,6 @@ pub fn _el_fn_sh_complete(el: &mut EditLine, ch: i32) -> u8 {
     // does the same thing. Both symbols must be kept.
     _el_fn_complete(el, ch)
 }
+
+#[cfg(test)]
+mod test;
