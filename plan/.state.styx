@@ -104,7 +104,7 @@ assertions (
     {id buffer-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-05T14:28:39.309482835Z}
     {id core-api-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.21434514Z}
     {id abi-varargs, kind @complete, author "brendan@necessary.nu", at 2026-08-06T18:52:38.6521658Z}
-    {id platform-build, kind @doing, author "brendan@necessary.nu", at 2026-08-05T17:42:53.450490636Z}
+    {id platform-build, kind @complete, author "brendan@necessary.nu", at 2026-08-06T22:23:56.53704517Z}
     {id abi-headers, kind @complete, author "brendan@necessary.nu", at 2026-08-05T18:55:37.953341935Z}
     {id conformance-header-diff, kind @complete, author "brendan@necessary.nu", at 2026-08-05T18:55:40.16488204Z}
     {id abi-soname, kind @complete, author "brendan@necessary.nu", at 2026-08-06T14:15:41.566972783Z}

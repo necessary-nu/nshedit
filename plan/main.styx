@@ -692,12 +692,20 @@ children (
                 id platform-build
                 title "Build one platform module and retire the six private stubs"
                 deps (platform-decide)
+                sealed true
                 log (
                     {
                         at 2026-08-05T17:42:53.450490636Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T22:23:56.53704517Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
