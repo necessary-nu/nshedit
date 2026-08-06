@@ -95,6 +95,13 @@ children (
                         kind @note
                         text "tgoto's workaround is now redundant, reported by the agent that removed the bug it worked around (commit c146bb7).\n\ncrates/nshedit/src/terminal.rs's tgoto, around lines 688-756, splits the capability at every `$`, expands the runs between with expand_into, and copies padding runs through by hand. It did that because nshterm's ancestor discarded `$<...>` and swallowed text after a bare `$`. nshterm::parm::expand now passes padding through verbatim in one pass, so the split is unnecessary.\n\nIt is still CORRECT -- nothing is broken and there is no urgency. But its own doc comment records a latent cost the fix removes: \"`%i` and the `%P`/`%g` variables apply within a run, and `vars` is threaded across runs but the parameters are re-supplied unincremented to each\". That is a real semantic difference from a single expand call, currently invisible because no shipped capability puts `%i` after a padding run. Collapsing tgoto to one expand call deletes both the caveat and about 50 lines.\n\nDo this together with the termcap-name work already noted on this leaf rather than as its own pass -- both are in the same function's neighbourhood and both are cheap once someone is in there.\n\nVerify with the conformance differential, which is at zero divergences: any change here must keep it there. Note the current driver does not reach a parameterised capability, so the differential will NOT catch a regression in tgoto. conformance-driver-el is what would, since EL_TELLTC and the editrc path exercise capability handling. Either write the driver first or test tgoto directly; do not rely on a green differential as evidence for this one."
                     }
+
+                    {
+                        at 2026-08-06T17:28:14.034714683Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -198,6 +205,14 @@ children (
                 title "Translate input dispatch and binding to Rust"
                 deps (input-markup)
                 sealed true
+                log (
+                    {
+                        at 2026-08-06T17:28:14.070577067Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
 
             {
@@ -241,6 +256,21 @@ children (
                 title "Translate history and search to Rust"
                 deps (history-markup)
                 sealed true
+                log (
+                    {
+                        at 2026-08-06T17:28:06.867516484Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Completing this with one function deliberately not translated, and saying so rather than letting the node look cleaner than it is.\n\n`crates/nshedit/src/search.rs:347` is the only `todo!()` left anywhere in the workspace — measured, not assumed: `grep -rn 'todo!\\|unimplemented!'` over every crate returns exactly that one site. It is `ce_search_line`'s regex path, and it is not translatable in the way the rest of this node was: the C calls `regcomp`/`regexec`, and `dec:libedit:no-c-ffi` gives the core crate no route to either. It needs an engine chosen, which is a decision, not a translation.\n\nThat decision already has a node — `history-regex`, which deps on this one. So the carve-out is in the graph rather than in someone's memory, and completing this is what makes that node startable.\n\nEverything else in the concern is done and measured: the wave-2 gate reads 650/650 per symbol, and the conformance differential drives history and the tokenizer end to end at 247 operations under C.UTF-8 and 246 under C, identical to an oracle built from this tree's own C — which covers H_ENTER, H_ADD, H_APPEND, H_DEL, H_SAVE, H_LOAD, H_NSAVE_FP, the narrow and wide instantiations, and every byte of the saved history file.\n\nThe same reasoning applies to the six sibling translate nodes being completed alongside this one. None of them has a stub; the gate that measures them is per-symbol and full; and the frontier was handing back work the manifest already called done, which made `nplan_next` unusable as a source of what to do next. That is the actual cost of leaving these open, and it is why they are being closed now rather than at the end of the wave."
+                    }
+
+                    {
+                        at 2026-08-06T17:28:14.105422139Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
 
             {
@@ -391,6 +421,14 @@ children (
                 title "Translate the editor command sets to Rust"
                 deps (modes-markup)
                 sealed true
+                log (
+                    {
+                        at 2026-08-06T17:28:14.140404752Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
 
             {
@@ -434,6 +472,14 @@ children (
                 title "Translate completion and tokenization to Rust"
                 deps (completion-markup)
                 sealed true
+                log (
+                    {
+                        at 2026-08-06T17:28:14.176874275Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
 
             {
@@ -483,6 +529,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T17:28:14.21434514Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -535,6 +588,14 @@ children (
                 title "Translate the readline compatibility surface to Rust"
                 deps (readline-compat-markup)
                 sealed true
+                log (
+                    {
+                        at 2026-08-06T17:28:14.248802077Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
 
             {
