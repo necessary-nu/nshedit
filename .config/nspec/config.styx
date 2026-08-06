@@ -12,6 +12,12 @@ specs ({
         // strlcpy/strlcat/getline/wcsdup/reallocarr are libc gap-fillers with no
         // observable surface. vis/unvis stay: they are the history file format.
         {name source-impl, languages (@c), include (src/**/*.c src/**/*.h), exclude (src/sys.h src/strlcpy.c src/strlcat.c src/getline.c src/wcsdup.c src/reallocarr.c), mode @impl-only}
-        {name target-impl, languages (@rust), include (src/**/*.rs crates/**/*.rs), exclude (target/**), mode @both}
+        // `test_include` is scanned verify-only: a `/test` annotation there
+        // counts, a bare impl annotation is ignored. That is how the
+        // conformance harness claims what it verifies — the C driver and the
+        // shell stages execute the port against an oracle built from this
+        // tree's own C, which is stronger evidence than a unit test, but they
+        // are not target sources and must never be read as impl sites.
+        {name target-impl, languages (@rust @c @bash), include (src/**/*.rs crates/**/*.rs), test_include (crates/**/tests/**/*.rs conformance/**/*.c conformance/**/*.sh), exclude (target/**), mode @both}
     )
 })
