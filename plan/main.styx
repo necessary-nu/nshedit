@@ -829,18 +829,42 @@ children (
                 id platform-tests
                 title "Write tests for the platform layer against the C's observable behaviour; there are none to port"
                 deps (platform-build)
+                sealed true
+                log (
+                    {
+                        at 2026-08-06T23:53:50.518121992Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
 
             {
                 id platform-plat-tests
                 title "Test nshedit-plat itself, the one crate where a wrong constant is silent and total"
                 deps (platform-build)
+                sealed true
                 log (
                     {
                         at 2026-08-05T17:45:17.786274439Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Debt we created, not debt we inherited, which is why this gets its own node rather than riding on platform-tests. crates/nshedit-plat/src measures 0.094 test-to-production against a 0.200 floor, bypassed at the platform-build commit.\n\nWhat is already there and is genuinely good: five tests including a sigaction install/raise/restore round-trip -- the only thing that can catch a mis-transcribed struct -- and compile-time layout assertions checked against gcc's own offsets (sigaction 152 bytes, sigset_t 128, passwd 48). That is the highest-value testing for this crate and it is why the number understates the coverage.\n\nWhy the number still matters here more than elsewhere. This crate is two libc extern blocks and a rustix wrapper layer, and its failure mode is not a wrong answer but a silently wrong one: a struct field at the wrong offset, a V* subscript off by one, a flag word with the wrong bit. platform-build already found exactly that class of bug in the CORE -- blank_termios building a zero-length c_cc, which cc_get and cc_set swallowed silently because they are bounds-safe -- and that one was invisible for as long as the syscall beneath it was stubbed. The same shape of mistake inside nshedit-plat has nothing beneath it to be invisible against.\n\nWhat to aim at, roughly in order of how badly a mistake would hurt:\n- The 17-entry V* subscript table in termios.rs. rustix's SpecialCodeIndex cannot be constructed from a number, so this table was written by hand from the kernel's names; an off-by-one here silently rebinds the user's erase or interrupt character. Assert every entry against the C's own header rather than against the table's author.\n- plat::tcsetattr's read-then-overwrite. It exists because rustix uses TCSETS2 and libedit's termios has no c_ispeed/c_ospeed; the test that matters is that a line at an arbitrary BOTHER speed survives a call that never meant to touch the speed.\n- The signal trampoline's AtomicPtr slot, specifically the ordering: sig_set publishes inside the blocked window and sig_clr clears, which the C never does. Concurrency here is not theoretical -- the handler runs on whatever thread the kernel picks.\n- getpwnam_r's ERANGE conflation, which sem:filecomplete.fn-tilde-expand-fn requires be preserved.\n\nDo not lower the floor. And note the conformance harness cannot help: it is headless and drives the C ABI, where this crate sits underneath. The PTY differential platform-build built separately is the closest thing and it is not in the tree -- worth recovering into conformance-pty rather than rewriting."
+                    }
+
+                    {
+                        at 2026-08-06T23:53:42.915909805Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "0.094 to 1.286 against a 0.200 floor, 5 tests to 31. The floor was not touched. Method calibrated by reproducing the plan's recorded 0.0943 at the platform-build commit exactly before trusting the after number.\n\nHOW THE EXPECTATIONS AVOID BEING A SECOND TRANSCRIPTION. A `#[cfg(test)] mod cheader` reads the C library's own headers and resolves `#define`s — integer and char literals, CTRL('c'), bare aliases — so every constant is checked against the authority rather than against the value the implementation already has. No compiler and no build.rs, which the no-FFI decision forbids. About 118 values now come from headers: 17 V* subscripts, 58 flag bits, NCCS, three TCSA*, _POSIX_VDISABLE, 25 C_* defaults from <sys/ttydefaults.h> with src/tty.h supplying the seven it does not define, seven signal numbers, SA_ONSTACK/SIG_BLOCK/SIG_SETMASK, O_NDELAY. Both gcc-derived layouts match: sigaction 152/0/8/136/144, passwd 48/0/8/16/20/24/32/40.\n\nNO WRONG CONSTANT WAS FOUND. That is the result, and it is worth as much as a bug would have been because the table was hand-written from kernel names.\n\nWHAT WAS FOUND: glibc's sigaction hands back a sa_mask whose bytes past the first eight are uninitialised. Installed::Displaced(SigAction) therefore carries 120 bytes of glibc's own stack. Reproduced in plain C with glibc's own struct on glibc 2.41, so it is the libc's behaviour and not our transcription — glibc talks to the kernel through a kernel_sigaction whose mask is one 64-bit word and copies a full 128-byte sigset_t back out of it, even when the caller zeroed the struct first. Harmless today because a saved disposition is only ever handed straight back to sigaction, which reads the same eight bytes. Two consequences: signal.rs:155's `unsafe impl Send for SigAction` SAFETY comment says the fields are \"a function address, a bit set and a flag word\", which is that plus 120 bytes of somebody else's stack and should be amended; and nothing may ever compare, hash or log a saved SigAction, because that reads uninitialised memory.\n\nTHE NEAR-MISS, which is the most useful thing here. The first pty round-trip wrote its marker bytes through CC_INDICES and read them back through tcgetattr, which also uses CC_INDICES — so a swapped pairing cancelled out and the test passed against a deliberately corrupted table. It was caught only by mutation-testing. The fix is V_TOKENS, an independently written name-to-token list sized from CC_INDICES.len() so a dropped entry fails to compile. All 31 tests were then mutation-checked: 14 mutations planted (swapped V* pairing, wrong VERASE, wrong ECHOCTL, wrong CPGOFF, swapped rows and columns, tcsetattr not seeding from live settings, BSD SIGCONT, wrong SA_ONSTACK, swapped sa_flags and sa_restorer, off-by-one SigSet bit, no-op clear_signal_slot, SA_RESTART set, silent trampoline, pw_dir ignoring a non-zero return, swapped pw_dir and pw_shell), each caught by the intended test.\n\nNOT TESTED, AND WHY. The AtomicPtr memory ordering as such: thread::spawn and join are themselves synchronisation points, so a cross-thread test passes with Relaxed. The test pins the arrangement the ordering exists to make sound and says so; catching a weakened ordering needs a racing loop under a model checker. TCSADRAIN and TCSAFLUSH actually draining and flushing: distinguishing them from TCSANOW needs a pty with real queued I/O and a timing assumption, so the mapping is checked against the header instead. setpwent/getpwent/endpwent cursor semantics beyond one enumeration, because the cursor is process-global and cargo test is parallel.\n\nThese tests need the libc development headers. They fail with a message naming the missing file rather than skipping, because a skipped assertion is the exact failure mode this node exists to close, and the conformance harness already requires a C toolchain. rustix's pty feature is a dev-dependency only, verified with cargo tree --edges no-dev."
+                    }
+
+                    {
+                        at 2026-08-06T23:53:49.980781496Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }

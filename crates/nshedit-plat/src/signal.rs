@@ -420,7 +420,111 @@ fn raise_default(signo: i32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use core::mem::offset_of;
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+
     use super::*;
+    use crate::cheader;
+
+    /// The `SIGWINCH` disposition and the trampoline's slot are
+    /// process-global, and `cargo test` runs these on parallel threads. Every
+    /// test that arms or disarms takes this first, so that one test's restore
+    /// cannot land between another's install and raise.
+    static ARMED: Mutex<()> = Mutex::new(());
+
+    /// Exclusive use of one signal's disposition, put back on the way out.
+    ///
+    /// `SIGWINCH` throughout, because its default disposition is *ignore*: a
+    /// failure that leaves no handler installed cannot kill the test runner.
+    /// Restoring from `Drop` rather than from the end of each test is what
+    /// stops a single failure from leaving our trampoline installed and
+    /// turning every later arming test red for a reason of its own.
+    struct Disposition {
+        signo: i32,
+        saved: SigAction,
+        _armed: MutexGuard<'static, ()>,
+    }
+
+    impl Disposition {
+        fn take(signo: i32) -> Self {
+            let armed = ARMED.lock().unwrap_or_else(PoisonError::into_inner);
+            Self {
+                signo,
+                saved: current(signo),
+                _armed: armed,
+            }
+        }
+    }
+
+    impl Drop for Disposition {
+        fn drop(&mut self) {
+            clear_signal_slot();
+            // Not asserted: a failure here during an unwind would abort the
+            // runner and hide the failure that caused it.
+            install(self.signo, &self.saved);
+        }
+    }
+
+    /// Ours are the numbers glibc's own headers give, not the ones POSIX
+    /// declines to fix. `SIGCONT` and `SIGTSTP` are the pair that actually
+    /// differ across the platforms in scope, and getting either wrong would
+    /// trap a signal the editor was never asked to handle.
+    #[test]
+    fn the_signal_numbers_are_the_ones_the_headers_define() {
+        let h = cheader::defines(&["bits/signum-generic.h", "bits/signum-arch.h"]);
+        for (name, ours) in [
+            ("SIGHUP", signo::SIGHUP),
+            ("SIGINT", signo::SIGINT),
+            ("SIGQUIT", signo::SIGQUIT),
+            ("SIGTERM", signo::SIGTERM),
+            ("SIGWINCH", signo::SIGWINCH),
+            ("SIGCONT", signo::SIGCONT),
+            ("SIGTSTP", signo::SIGTSTP),
+        ] {
+            assert_eq!(h[name], i64::from(ours), "{name}");
+        }
+    }
+
+    /// The three `sigaction`/`sigprocmask` words this module transcribes,
+    /// against `bits/sigaction.h`.
+    #[test]
+    fn the_sigaction_words_are_the_ones_the_header_defines() {
+        let h = sigaction_defines();
+        assert_eq!(h["SA_ONSTACK"], i64::from(SA_ONSTACK));
+        assert_eq!(h["SIG_BLOCK"], i64::from(SIG_BLOCK));
+        assert_eq!(h["SIG_SETMASK"], i64::from(SIG_SETMASK));
+    }
+
+    /// The field offsets of `struct sigaction`, which no header states and
+    /// only a compiler can answer.
+    ///
+    /// Produced by gcc 15 on x86_64 glibc and carried here rather than probed,
+    /// because a `build.rs` that compiles a program to find out what the
+    /// platform looks like is exactly what `plan/decisions/no-c-ffi.md`
+    /// forbids:
+    ///
+    /// ```c
+    /// printf("%zu %zu %zu %zu %zu\n", sizeof(struct sigaction),
+    ///        offsetof(struct sigaction, sa_handler),
+    ///        offsetof(struct sigaction, sa_mask),
+    ///        offsetof(struct sigaction, sa_flags),
+    ///        offsetof(struct sigaction, sa_restorer));
+    /// // 152 0 8 136 144
+    /// ```
+    ///
+    /// The size assertion beside the type cannot catch a reorder — `sa_flags`
+    /// and `sa_restorer` are both 8-aligned words and swapping them keeps the
+    /// size — and a reorder is the mistake that makes the libc install a
+    /// handler address it read out of `sa_mask`.
+    #[test]
+    fn the_struct_sigaction_layout_is_the_one_gcc_lays_out() {
+        assert_eq!(size_of::<SigAction>(), 152);
+        assert_eq!(size_of::<SigSet>(), 128);
+        assert_eq!(offset_of!(SigAction, handler), 0);
+        assert_eq!(offset_of!(SigAction, mask), 8);
+        assert_eq!(offset_of!(SigAction, flags), 136);
+        assert_eq!(offset_of!(SigAction, restorer), 144);
+    }
 
     #[test]
     fn a_sigset_sets_the_bit_the_kernel_reads() {
@@ -428,6 +532,13 @@ mod tests {
         // Bit `signo - 1`, little-endian within the first word for every
         // signal Linux numbers below 65.
         assert_eq!(set.val[0], (1 << 0) | (1 << 27));
+
+        // The word boundary, where the `signo - 1` arithmetic would show. 64
+        // is `SIGRTMAX`, the highest signal Linux has, and it belongs in the
+        // top bit of the first word; 65 is the first that does not exist.
+        assert_eq!(SigSet::of(&[64]).val[0], 1 << 63);
+        assert_eq!(SigSet::of(&[65]).val[1], 1);
+
         // Out of range is dropped rather than corrupting a neighbouring word.
         let mut wild = SigSet::empty();
         wild.add(0);
@@ -436,14 +547,53 @@ mod tests {
         assert!(wild.val.iter().all(|&w| w == 0));
     }
 
+    /// The bits this module sets are the bits the kernel reads back — every
+    /// one of them, not merely a mask that round-trips through itself.
+    ///
+    /// The thread's own mask is restored before returning; `cargo test` gives
+    /// each test its own thread, and a mask is per-thread.
+    #[test]
+    fn the_kernel_reads_back_exactly_the_bits_the_sigset_holds() {
+        let saved = sigmask_block(&SigSet::empty()).expect("read the current mask");
+
+        let want = SigSet::of(&[signo::SIGHUP, signo::SIGWINCH, 64]);
+        assert!(sigmask_set(&want), "SIG_SETMASK");
+        let now = sigmask_block(&SigSet::empty()).expect("read it back");
+        assert_eq!(now.val, want.val);
+
+        assert!(sigmask_set(&saved), "SIG_SETMASK");
+        assert_eq!(
+            sigmask_block(&SigSet::empty()).expect("read it back").val,
+            saved.val
+        );
+    }
+
+    /// `sigmask_block` is `SIG_BLOCK`, not `SIG_SETMASK`: it adds to the
+    /// thread's mask and reports what was there before, which is what makes
+    /// `sig_handler`'s save-and-restore pair work.
+    #[test]
+    fn blocking_adds_to_the_mask_and_reports_the_old_one() {
+        let saved = sigmask_block(&SigSet::empty()).expect("read the current mask");
+
+        assert!(sigmask_set(&SigSet::of(&[signo::SIGHUP])));
+        let before = sigmask_block(&SigSet::of(&[signo::SIGWINCH])).expect("SIG_BLOCK");
+        assert_eq!(before.val, SigSet::of(&[signo::SIGHUP]).val);
+        let after = sigmask_block(&SigSet::empty()).expect("read it back");
+        assert_eq!(
+            after.val,
+            SigSet::of(&[signo::SIGHUP, signo::SIGWINCH]).val,
+            "SIG_BLOCK replaced the mask instead of adding to it"
+        );
+
+        assert!(sigmask_set(&saved));
+    }
+
     /// The one test that can catch a wrong `struct sigaction` transcription,
     /// which the size assertion above cannot: a field in the wrong place
     /// makes the libc install a handler address it read out of `sa_mask`.
-    ///
-    /// `SIGWINCH` because its default disposition is *ignore*, so a failure
-    /// that leaves no handler installed cannot kill the test runner.
     #[test]
     fn a_handler_installs_records_and_restores() {
+        let _disposition = Disposition::take(signo::SIGWINCH);
         static SLOT: AtomicI32 = AtomicI32::new(0);
         // SAFETY: `SLOT` is a static, so it outlives the registration below,
         // which is cleared before this test returns.
@@ -476,9 +626,203 @@ mod tests {
         clear_signal_slot();
     }
 
+    /// What `sem:sig.sig-clr-fn` promises the application: the disposition
+    /// libedit displaced comes back *intact*, and comes back working.
+    ///
+    /// Each field is checked as far as the libc round-trips it, because
+    /// nothing in this crate ever reads one — a `SigAction` is only ever
+    /// stored whole and put back whole, so a field read into the wrong place
+    /// would be invisible until an application that had its own `SIGWINCH`
+    /// handler stopped receiving them.
+    ///
+    /// **`sa_mask` is only meaningful in its first eight bytes.** glibc's
+    /// `sigaction` talks to the kernel through a `struct kernel_sigaction`
+    /// whose mask is one 64-bit word, and on the way back out it copies the
+    /// caller's full 128-byte `sigset_t` worth out of it — so the other 120
+    /// bytes of a displaced disposition are whatever was on glibc's stack,
+    /// even when the caller zeroed the struct first. Reproduced in plain C
+    /// against glibc 2.41 with glibc's own `struct sigaction`, so it is a
+    /// property of the libc and not of the transcription here.
+    ///
+    /// It is harmless in this crate only because a saved disposition is never
+    /// read, compared or hashed — it goes straight back to `sigaction`, which
+    /// copies the same eight bytes back in. Anything that starts inspecting
+    /// one is reading uninitialised memory.
     #[test]
-    fn a_mask_round_trips_through_sigprocmask() {
-        let blocked = sigmask_block(&SigSet::of(&[signo::SIGWINCH])).expect("SIG_BLOCK");
-        assert!(sigmask_set(&blocked), "SIG_SETMASK");
+    fn an_applications_own_disposition_survives_being_displaced() {
+        let _disposition = Disposition::take(signo::SIGWINCH);
+        let h = sigaction_defines();
+        let sa_restart = c_int::try_from(h["SA_RESTART"]).expect("SA_RESTART");
+
+        let theirs = SigAction {
+            handler: application_handler as *const () as usize,
+            mask: SigSet::of(&[signo::SIGINT, signo::SIGQUIT]),
+            flags: sa_restart,
+            restorer: core::ptr::null(),
+        };
+        assert!(install(signo::SIGWINCH, &theirs));
+
+        let Installed::Displaced(osa) = install_handler(signo::SIGWINCH, &SigSet::empty()) else {
+            panic!("an application's handler is not ours and must be reported as displaced");
+        };
+        assert_eq!(osa.handler, theirs.handler, "sa_handler");
+        assert_eq!(osa.mask.val[0], theirs.mask.val[0], "sa_mask");
+        assert_eq!(osa.flags & sa_restart, sa_restart, "sa_flags");
+
+        APPLICATION_RAN.store(0, Ordering::Relaxed);
+        assert!(restore_handler(signo::SIGWINCH, osa));
+        assert!(raise(signo::SIGWINCH));
+        assert_eq!(
+            APPLICATION_RAN.load(Ordering::Relaxed),
+            signo::SIGWINCH,
+            "the application's handler was not the one put back"
+        );
+    }
+
+    /// The two departures from the C that `sem:sig.sig-set-fn` requires,
+    /// checked against what the kernel actually stored rather than against the
+    /// struct we handed it.
+    ///
+    /// `SA_RESTART` unset is load-bearing: it is how an interrupted `read`
+    /// comes back `EINTR`, which is the only way the read loop learns a signal
+    /// arrived. A full `sa_mask` is the other: it stops a second trapped
+    /// signal nesting inside the first and re-entering the editor.
+    #[test]
+    fn the_installed_action_neither_restarts_nor_nests() {
+        let _disposition = Disposition::take(signo::SIGWINCH);
+        let h = sigaction_defines();
+        let sa_restart = c_int::try_from(h["SA_RESTART"]).expect("SA_RESTART");
+
+        let mask = SigSet::of(&[signo::SIGINT, signo::SIGWINCH, signo::SIGCONT]);
+        let Installed::Displaced(osa) = install_handler(signo::SIGWINCH, &mask) else {
+            panic!("the first install must displace the default disposition");
+        };
+
+        let installed = current(signo::SIGWINCH);
+        assert_eq!(installed.flags & sa_restart, 0, "SA_RESTART was set");
+        assert_eq!(
+            installed.flags & SA_ONSTACK,
+            SA_ONSTACK,
+            "SA_ONSTACK was not set"
+        );
+        // Only the kernel's own word of `sa_mask` survives the trip back out
+        // of glibc; see the test above for why.
+        assert_eq!(
+            installed.mask.val[0], mask.val[0],
+            "sa_mask was not every trap"
+        );
+        assert!(installed.is_ours());
+
+        assert!(restore_handler(signo::SIGWINCH, osa));
+    }
+
+    /// The handler runs on whatever thread the kernel picks, so the slot
+    /// `sig_set` publishes has to be visible from one that never touched it.
+    ///
+    /// This is what the `Release`/`Acquire` pair on `PENDING_SLOT` is for.
+    /// Spawning is itself a synchronisation point, so this cannot catch a
+    /// weakened ordering on its own; what it does pin is that the trampoline
+    /// records for a thread other than the one that armed, which is the
+    /// arrangement the ordering exists to make sound.
+    #[test]
+    fn the_trampoline_records_from_a_thread_that_never_armed() {
+        let _disposition = Disposition::take(signo::SIGWINCH);
+        static SLOT: AtomicI32 = AtomicI32::new(0);
+        // SAFETY: `SLOT` is a static and the registration is cleared before
+        // this test returns.
+        unsafe { set_signal_slot(&raw const SLOT) };
+        let Installed::Displaced(osa) = install_handler(signo::SIGWINCH, &SigSet::empty()) else {
+            panic!("the first install must displace the default disposition");
+        };
+
+        std::thread::spawn(|| assert!(raise(signo::SIGWINCH)))
+            .join()
+            .expect("the raising thread");
+        assert_eq!(SLOT.load(Ordering::Relaxed), signo::SIGWINCH);
+
+        clear_signal_slot();
+        assert!(restore_handler(signo::SIGWINCH, osa));
+    }
+
+    /// `sig_clr` drops the registration, which the C never does — after its
+    /// `el_end` the file-static `sel` dangles for the rest of the process
+    /// (ERR-terminal-18), and `sem:sig.sig-end-fn` requires the port not to
+    /// reproduce that.
+    ///
+    /// Also the re-pointing case: arming a second `EditLine` must send the
+    /// record to the second one, since the slot is the port's counterpart of a
+    /// single file-static.
+    #[test]
+    fn the_slot_can_be_repointed_and_dropped() {
+        let _disposition = Disposition::take(signo::SIGWINCH);
+        static FIRST: AtomicI32 = AtomicI32::new(0);
+        static SECOND: AtomicI32 = AtomicI32::new(0);
+
+        let Installed::Displaced(osa) = install_handler(signo::SIGWINCH, &SigSet::empty()) else {
+            panic!("the first install must displace the default disposition");
+        };
+
+        // SAFETY: both are statics and the registration is cleared below.
+        unsafe { set_signal_slot(&raw const FIRST) };
+        assert!(raise(signo::SIGWINCH));
+        assert_eq!(FIRST.load(Ordering::Relaxed), signo::SIGWINCH);
+
+        unsafe { set_signal_slot(&raw const SECOND) };
+        FIRST.store(0, Ordering::Relaxed);
+        assert!(raise(signo::SIGWINCH));
+        assert_eq!(SECOND.load(Ordering::Relaxed), signo::SIGWINCH);
+        assert_eq!(
+            FIRST.load(Ordering::Relaxed),
+            0,
+            "the first slot was still written"
+        );
+
+        // The handler stays installed here on purpose: a delivery arriving
+        // after the slot is dropped must be swallowed, not followed into
+        // freed storage.
+        clear_signal_slot();
+        SECOND.store(0, Ordering::Relaxed);
+        assert!(raise(signo::SIGWINCH));
+        assert_eq!(
+            SECOND.load(Ordering::Relaxed),
+            0,
+            "a cleared slot was written"
+        );
+
+        assert!(restore_handler(signo::SIGWINCH, osa));
+    }
+
+    /// Stands in for an application that had its own `SIGWINCH` handler before
+    /// libedit was ever initialised.
+    static APPLICATION_RAN: AtomicI32 = AtomicI32::new(0);
+
+    extern "C" fn application_handler(signo: c_int) {
+        APPLICATION_RAN.store(signo, Ordering::Relaxed);
+    }
+
+    /// `sigaction(signo, NULL, &osa)` — what is installed right now.
+    fn current(signo: i32) -> SigAction {
+        let mut osa = SigAction {
+            handler: 0,
+            mask: SigSet::empty(),
+            flags: 0,
+            restorer: core::ptr::null(),
+        };
+        // SAFETY: the out-parameter is live and correctly shaped; a NULL `act`
+        // is POSIX's "report only".
+        let rv = unsafe { sys::sigaction(signo, core::ptr::null(), &raw mut osa) };
+        assert_eq!(rv, 0, "sigaction({signo}, NULL, &osa)");
+        osa
+    }
+
+    /// `sigaction(signo, &sa, NULL)` — install without asking what was there.
+    fn install(signo: i32, sa: &SigAction) -> bool {
+        // SAFETY: `sa` is the platform's `struct sigaction` layout and lives
+        // for the call.
+        unsafe { sys::sigaction(signo, &raw const *sa, core::ptr::null_mut()) == 0 }
+    }
+
+    fn sigaction_defines() -> std::collections::HashMap<String, i64> {
+        cheader::defines(&["bits/sigaction.h"])
     }
 }

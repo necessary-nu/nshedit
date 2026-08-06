@@ -255,3 +255,137 @@ fn endpwent_default() {
     // SAFETY: no arguments to get wrong.
     unsafe { sys::endpwent() };
 }
+
+#[cfg(test)]
+mod tests {
+    use core::mem::offset_of;
+
+    use super::*;
+    use crate::cheader;
+
+    /// The field offsets of `struct passwd`, which no header states and only a
+    /// compiler can answer.
+    ///
+    /// Produced by gcc 15 on x86_64 glibc and carried here rather than probed,
+    /// because a `build.rs` that compiles a program to find out what the
+    /// platform looks like is what `plan/decisions/no-c-ffi.md` forbids:
+    ///
+    /// ```c
+    /// printf("%zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(struct passwd),
+    ///        offsetof(struct passwd, pw_name), offsetof(struct passwd, pw_passwd),
+    ///        offsetof(struct passwd, pw_uid),  offsetof(struct passwd, pw_gid),
+    ///        offsetof(struct passwd, pw_gecos), offsetof(struct passwd, pw_dir),
+    ///        offsetof(struct passwd, pw_shell));
+    /// // 48 0 8 16 20 24 32 40
+    /// ```
+    ///
+    /// The size assertion beside the type cannot catch a reorder, and only two
+    /// of these fields are ever read — so a `pw_dir` at the wrong offset would
+    /// hand back `pw_shell`, which is also an absolute path and would look
+    /// entirely plausible in a completion.
+    #[test]
+    fn the_struct_passwd_layout_is_the_one_gcc_lays_out() {
+        assert_eq!(size_of::<Passwd>(), 48);
+        assert_eq!(offset_of!(Passwd, pw_name), 0);
+        assert_eq!(offset_of!(Passwd, pw_passwd), 8);
+        assert_eq!(offset_of!(Passwd, pw_uid), 16);
+        assert_eq!(offset_of!(Passwd, pw_gid), 20);
+        assert_eq!(offset_of!(Passwd, pw_gecos), 24);
+        assert_eq!(offset_of!(Passwd, pw_dir), 32);
+        assert_eq!(offset_of!(Passwd, pw_shell), 40);
+    }
+
+    /// `getpwnam_r` distinguishes "no such user" from "your buffer was too
+    /// small"; `sem:filecomplete.fn-tilde-expand-fn` requires the port not to.
+    /// Any non-zero return is *no such user*, `ERANGE` included, and so is a
+    /// zero return with a NULL result.
+    ///
+    /// The conflation is not a shrug: a bigger buffer, or an `ERANGE` retry,
+    /// would expand names the C leaves alone, which is a behavioural
+    /// divergence in a completion the caller cannot see. Driven through
+    /// [`pw_dir`] directly because an entry too large for [`BUFLEN`] cannot be
+    /// conjured out of the real database.
+    ///
+    /// `ERANGE` is read from the kernel's `asm-generic/errno-base.h` rather
+    /// than written here, since the whole point is that the number is the
+    /// libc's and not ours.
+    // [spec:libedit:sem:filecomplete.fn-tilde-expand-fn/test]
+    #[test]
+    fn any_non_zero_return_reads_as_no_such_user() {
+        let erange = c_int::try_from(cheader::defines(&["asm-generic/errno-base.h"])["ERANGE"])
+            .expect("ERANGE");
+
+        let home = CString::new("/home/example").expect("a path");
+        let mut found = Passwd::ZEROED;
+        found.pw_dir = home.as_ptr().cast_mut();
+        let result: *mut Passwd = &raw mut found;
+
+        // The control: this exact entry, returned successfully, does expand.
+        assert_eq!(
+            pw_dir(0, result).as_deref(),
+            Some(b"/home/example".as_slice())
+        );
+
+        // And the same entry, reported through any failing return, does not —
+        // even though everything needed to expand it is right there.
+        assert_eq!(pw_dir(erange, result), None, "ERANGE");
+        assert_eq!(pw_dir(-1, result), None, "a negative return");
+        assert_eq!(pw_dir(2, result), None, "ENOENT");
+
+        // The zero-return-with-NULL-result case the rule also names, which is
+        // how glibc reports a genuine absence.
+        assert_eq!(pw_dir(0, core::ptr::null_mut()), None);
+
+        // An entry with no home directory at all is not an empty expansion.
+        let mut homeless = Passwd::ZEROED;
+        assert_eq!(pw_dir(0, &raw mut homeless), None);
+    }
+
+    /// A name that cannot be in any database is *no such user* rather than a
+    /// panic or an empty expansion — including one carrying an interior NUL,
+    /// which cannot reach here from the C's `char *` but can from a Rust
+    /// caller.
+    #[test]
+    fn a_name_no_database_can_hold_is_no_such_user() {
+        assert_eq!(home_dir_by_name("no-such-user-4b8f2c1e"), None);
+        assert_eq!(home_dir_by_name("has\0an interior nul"), None);
+        assert_eq!(home_dir_by_name(""), None);
+        // The uid space's top value is reserved as "nobody/invalid" by
+        // convention and is not allocated to a real account.
+        assert_eq!(home_dir_by_uid(u32::MAX), None);
+    }
+
+    /// The layout, against the live name service rather than against a
+    /// compiler: every name the enumeration hands out has to resolve by name,
+    /// which it can only do if `pw_name` and `pw_dir` are being read from the
+    /// offsets the libc wrote them to.
+    ///
+    /// Vacuous where the database is empty — a container with no `/etc/passwd`
+    /// and no NSS backend — and that is the honest outcome there, since the
+    /// C's own `~` expansion would answer nothing too.
+    #[test]
+    fn every_name_the_enumeration_hands_out_resolves_by_name() {
+        setpwent();
+        // Bounded: `getpwent` walks every backend, and a directory service can
+        // hold a great many accounts.
+        let names: Vec<Vec<u8>> = core::iter::from_fn(getpwent_name).take(64).collect();
+        endpwent();
+
+        let mut absolute = 0;
+        for raw in &names {
+            let Ok(name) = core::str::from_utf8(raw) else {
+                continue;
+            };
+            assert!(!name.is_empty(), "the enumeration yielded an empty name");
+            let home = home_dir_by_name(name)
+                .unwrap_or_else(|| panic!("{name} was enumerated but does not resolve"));
+            if home.first() == Some(&b'/') {
+                absolute += 1;
+            }
+        }
+        assert!(
+            names.is_empty() || absolute > 0,
+            "no account in the database has an absolute home directory"
+        );
+    }
+}
