@@ -123,7 +123,12 @@ pub mod searcher;
 pub mod parser {
     /// ncurses-compatible compiled terminfo format parsing (term(5))
     pub mod compiled;
-    mod names;
+    /// The capability name tables, and the termcap-to-terminfo lookup.
+    ///
+    /// Public because the lookup is the point: `settc`, `echotc` and
+    /// `EL_SETTC` take a name a user typed, and what users type is termcap.
+    /// A crate-private table could not answer that.
+    pub mod names;
 }
 
 /// Returns true if the named terminal supports basic ANSI escape codes.

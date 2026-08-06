@@ -1413,12 +1413,27 @@ children (
                 id nshterm-tests
                 title "Test the crate we now own, which arrived with a test-to-production ratio of 0.015"
                 deps (nshterm-extract)
+                sealed true
                 log (
                     {
                         at 2026-08-05T12:16:48.605511787Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Debt inherited at extraction, measured by the test-footprint gate: crates/nshterm/src/parser has a test-to-production ratio of 0.015 against a floor of 0.200. Bypassed at the extraction commit because it was true of term 1.2.1 before we touched it and fixing it was not that node's job. It is our problem now.\n\nWhat actually came across: 9 tests and 28 compiled terminfo fixtures under tests/data (linux and its variants, rxvt and its variants, screen, vt100, xterm, xterm-256color, dumb). They pass. The compiled parser gets a real workout from those fixtures; parm::expand does not, and that is the gap that matters.\n\nparm::expand is the one to aim at. The complexity gate puts it at cyclomatic 130 against a threshold of 50 -- it is an interpreter for terminfo's parameterised-string language, with a stack, variables, arithmetic, conditionals and printf-style formatting. Almost none of that is covered. It is also where nshterm-padding lands, so tests come first or that change is unverifiable.\n\nWorth knowing when writing them: ncurses' own test suite and the terminfo(5) grammar are the reference, and the C's `tputs`/`tgoto` behaviour is already specified in our rules -- sem:terminal.tgoto-fn and sem:terminal.tputs-fn -- so those give concrete expectations rather than guesses. The conformance harness cannot help here: it exercises libedit's surface, and nothing in the current driver reaches a parameterised capability.\n\nDo not lower the floor to make this pass. The ratio is a fact about a crate we intend to publish."
+                    }
+
+                    {
+                        at 2026-08-06T18:13:18.991487927Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T18:15:40.285537671Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
