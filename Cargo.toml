@@ -5,11 +5,14 @@ members = ["crates/nshedit", "crates/nshedit-abi", "crates/nshedit-plat", "crate
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
-# 1.99 is where `c_variadic` stabilises, which `crates/nshedit-abi` needs to
-# declare `el_set`, `el_get`, `el_wset`, `el_wget`, `history` and `history_w`
-# the way `histedit.h` declares them. Until 1.99 ships, `rust-toolchain.toml`
-# pins a dated nightly; delete that file when it does. See `abi-varargs`.
-rust-version = "1.99"
+# The floor for everything except the ABI crate, and the same value nshterm
+# already declared for itself: edition 2024, nothing newer.
+#
+# `crates/nshedit-abi` needs 1.99 for `c_variadic` and declares that itself.
+# Carrying its requirement up here made the whole workspace unbuildable on
+# stable, which locked out consumers of the *library* -- the Rust port of dash
+# uses `nshedit` directly and needs none of the C ABI or its varargs.
+rust-version = "1.85"
 license = "BSD-3-Clause"
 repository = "https://github.com/necessary-nu/libedit"
 authors = ["Brendan Molloy <brendan@necessary.nu>"]
