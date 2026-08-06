@@ -2667,3 +2667,6 @@ fn bad_echotc_value(el: &mut EditLine, silent: bool, arg: &[u32], what: &str) {
     msg.extend_from_slice(format!("' for {what}.\n").as_bytes());
     write_errfile(el, &msg);
 }
+
+#[cfg(test)]
+mod test;

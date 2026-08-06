@@ -125,6 +125,21 @@ children (
                 title "Write tests for the terminal layer from its sem rules; there are none to port"
                 deps (terminal-translate platform-build)
                 sealed true
+                log (
+                    {
+                        at 2026-08-06T23:29:46.200708863Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Two findings from writing these, both about documents rather than code.\n\nTHE RULE PROSE FOR sem:tty.tty-printchar-fn IS WRONG ABOUT THE C. It says the `i % 5 == 0` newline \"fires on i == 0, so the output starts with a blank line\". In src/tty.c the newline check comes after the fprintf of the entry, not before it, so the output starts \"intr ^A \\n\" and the grouping is offset by one. There is no leading blank line. The port matches the C; only the rule is wrong. Not corrected here: six other test nodes were mid-flight against the current spec when this was found, and bumping a rule version cascades every node implementing it to stale. It belongs in a spec-correction pass with the others, and the test written for it pins the C's real output with the offset explained.\n\nTTY_STTY'S DISPLAY WRAP DOUBLE-COUNTS. The wrap test is `len + cu >= width`, and `len` already includes the group label, so a width-20 terminal wraps where hand-arithmetic says it fits. Worse, a wrapped line resumes at `st + cu` rather than at `st` — the entry just emitted is counted a second time — so a fresh line with room for two entries immediately wraps again. That is why narrow `stty` output is one entry per line. Carried faithfully from the C. This was the one expectation written from reading rather than running that turned out wrong, and it is exactly the class of error a hand-computed expectation produces.\n\nThe tests need no terminfo database and never call terminal_init or terminal_set: every capability is installed through terminal_alloc directly, and every descriptor is forced below zero. A test that read TERM would answer differently on each machine, which is the failure mode this layer invites."
+                    }
+
+                    {
+                        at 2026-08-06T23:29:54.224249112Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
 
             {

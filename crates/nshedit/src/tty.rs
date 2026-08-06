@@ -1902,3 +1902,6 @@ pub(crate) fn tty_get_signal_character(el: &mut EditLine, sig: i32) -> i32 {
         None => -1,
     }
 }
+
+#[cfg(test)]
+mod test;
