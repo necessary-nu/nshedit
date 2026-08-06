@@ -334,6 +334,18 @@ int main(int argc, char **argv)
 	}
 	workdir = argv[1];
 
+	/*
+	 * Line-buffered, so an abort cannot take the trace with it.
+	 *
+	 * stdout to a file is block-buffered by default, and a driver that dies
+	 * mid-run then loses every line still in the buffer — which made a panic
+	 * at operation 153 look like a failure at 146, the last one that happened
+	 * to have been flushed. A harness whose job is to say WHICH operation
+	 * diverged cannot afford that; the cost is one write per line on a run
+	 * that is already dominated by process startup.
+	 */
+	setvbuf(stdout, NULL, _IOLBF, 0);
+
 	loc = setlocale(LC_ALL, "");
 	op("setlocale");
 	printf("%s\n", loc ? loc : "(null)");

@@ -308,47 +308,63 @@ fn wcsstr(str: &[u32], pat: &[u32]) -> bool {
 /// `regcomp(&re, pat, 0)` then `regexec(&re, str, 0, NULL, 0) == 0`, with a
 /// pattern that fails to compile reported as "no match".
 ///
-/// ===================================================================
-/// PENDING — the one thing this module deliberately does not implement.
-/// ===================================================================
+/// # A deliberate change of dialect
 ///
-/// `cflags` is `0`, so the dialect is POSIX **basic** regular expressions:
+/// The C's `cflags` is `0`, so its dialect is POSIX **basic** regular
+/// expressions, where `+`, `?`, `|`, `(`, `)`, `{` and `}` are ordinary
+/// literals, grouping is `\(`…`\)`, repetition is `\{m,n\}`, and `\1`…`\9`
+/// are back-references. This uses the `regex` crate's dialect instead, which
+/// reads almost every one of those the other way round and has no
+/// back-references at all. That is a decision, taken on the record, not an
+/// approximation that slipped in: POSIX BRE is a dialect nobody wants to type
+/// and every other tool has moved away from.
 ///
-/// - operators are `.`, `*`, `[...]`, `^` (leading only) and `$` (trailing
-///   only);
-/// - `+`, `?`, `|`, `(`, `)`, `{` and `}` are **ordinary literals**, so `a+b`
-///   matches the three characters `a+b`;
-/// - grouping is `\(`…`\)`, bounded repetition `\{m,n\}`, back-references
-///   `\1`…`\9`, and alternation is absent from strict BRE (glibc adds `\|`);
-/// - `REG_NEWLINE` is off, so `.` matches `\n` and the anchors bind to the
-///   ends of the whole subject;
-/// - matching is leftmost-longest.
+/// # Why the blast radius is small
 ///
-/// Rust's `regex` crate reads every one of those the other way round, so
-/// substituting it would silently change what a user's search means.
-/// `plan/decisions/no-c-ffi.md` bars linking a C `regcomp`, and the
-/// workspace's dependency set is not this module's to extend, so the leg is
-/// left unimplemented rather than approximated. What would satisfy it:
+/// [`el_match_wcs`] tries `wcsstr` FIRST and returns on a hit, so every
+/// pattern that occurs literally in the subject is answered before this
+/// function is reached. What changes meaning is only a pattern that contains
+/// a metacharacter *and* does not occur literally — and of `el_match`'s four
+/// call sites, three do not carry patterns at all:
 ///
-/// - **`posix-regex`** — pure Rust, implements POSIX BRE and ERE directly.
-///   The closest fit, and the only option that needs no translation layer.
-/// - **`regex` plus a BRE→ERE rewriter** — mechanical (swap `\(`↔`(`,
-///   `\{`↔`{`, escape a literal `+?|(){}`, pass bracket expressions through,
-///   treat `^`/`$` as literal away from the ends). It is exact *except* for
-///   back-references, which the `regex` crate cannot express at all;
-///   `fancy-regex` can, at the cost of a second engine.
+/// - `el_wparse`'s `prog:` qualifier is a program name, `emacs` or `Xmodmap`;
+/// - `c_hmatch`'s pattern is `c_setpat`'s copy of the current line up to the
+///   cursor, which is a command the user typed, not a pattern they wrote.
+///   Regex there is a hazard rather than a feature: `ls *.c` in the buffer
+///   makes `*` an operator in a search the user never asked to be one.
 ///
-/// One thing that is *not* a problem: `nmatch` is 0 and `pmatch` is NULL, so
-/// only the boolean is used. Leftmost-longest versus leftmost-first changes
-/// which match is reported, never whether one exists, so any correct engine
-/// for the BRE *syntax* gives this function the right answer.
+/// The one site where somebody deliberately writes a pattern is vi's `/` and
+/// `?` through `cv_search`, and that is where the dialect is worth having.
+///
+/// # What does not change
+///
+/// A pattern the engine rejects is "no match", which is what the C does with
+/// a `regcomp` that failed — so a `.editrc` or a vi search carrying stray
+/// BRE punctuation degrades to no-match rather than to a panic or a wrong
+/// hit. And `nmatch` is 0 with `pmatch` NULL in the C, so only the boolean is
+/// ever used: leftmost-longest against leftmost-first decides which match is
+/// reported, never whether one exists.
+///
+/// Matching stays over code points rather than bytes, per the divergence
+/// [`el_match_wcs`] records. A `u32` that is not a scalar value — a lone
+/// surrogate, or the `EL_LITERAL` sentinel — cannot appear in a Rust `str`,
+/// so a subject or pattern containing one is reported as no match rather than
+/// being silently rewritten.
 fn bre_match(pat: &[u32], str: &[u32]) -> bool {
-    let _ = (pat, str);
-    todo!(
-        "POSIX BRE matching: needs a BRE-capable pure-Rust engine \
-         (see the comment on bre_match); the workspace has no regex \
-         dependency and adding one is not this module's decision"
-    )
+    let (Some(pattern), Some(subject)) = (scalars(pat), scalars(str)) else {
+        return false;
+    };
+    regex::Regex::new(&pattern).is_ok_and(|re| re.is_match(&subject))
+}
+
+/// A wide string as a Rust `String`, or `None` if it holds a value `char`
+/// forbids.
+///
+/// `None` rather than a replacement character: substituting U+FFFD would make
+/// two different sentinels compare equal, and this port stores sentinels in
+/// the same `u32` array as text (`docs/spec/port/src/literal.md`).
+fn scalars(w: &[u32]) -> Option<String> {
+    w.iter().copied().map(char::from_u32).collect()
 }
 
 // [spec:libedit:def:search.c-hmatch-fn]
@@ -1160,4 +1176,93 @@ pub(crate) fn cv_csearch(
 
     // 8.
     CC_CURSOR
+}
+
+#[cfg(test)]
+mod match_test {
+    use super::el_match_wcs;
+
+    fn w(s: &str) -> Vec<u32> {
+        s.chars().map(u32::from).collect()
+    }
+
+    fn m(pat: &str, subj: &str) -> bool {
+        el_match_wcs(&w(subj), &w(pat))
+    }
+
+    /// The substring fast path runs before any engine, which is what keeps
+    /// the dialect change off the three call sites that carry no pattern —
+    /// `el_wparse`'s `prog:` qualifier and `c_hmatch`'s copy of the line the
+    /// user is typing.
+    ///
+    /// Every case here contains punctuation the `regex` crate would read as
+    /// an operator, and each is answered literally because it occurs
+    /// literally.
+    #[test]
+    fn a_literal_is_answered_before_the_engine_sees_it() {
+        assert!(m("ls *.c", "ls *.c"));
+        assert!(m("a+b", "x a+b y"));
+        assert!(m("(ab)", "f(ab)g"));
+        assert!(m("a{2}", "a{2}"));
+        assert!(m("[unclosed", "an [unclosed thing"));
+        assert!(m("a|b", "a|b"));
+        // The empty pattern matches anything, which `c_setpat` relies on when
+        // the cursor sits at column zero.
+        assert!(m("", "anything"));
+        assert!(m("", ""));
+    }
+
+    /// The vi `/` and `?` case, which is the one site where somebody writes a
+    /// pattern deliberately. These are the `regex` crate's readings, and
+    /// several are where it and POSIX BRE disagree.
+    #[test]
+    fn a_pattern_that_is_not_literal_uses_the_engine() {
+        assert!(m("a.c", "abc"));
+        assert!(m("ab*c", "abbbc"));
+        assert!(m("^abc$", "abc"));
+        assert!(!m("^abc$", "xabc"));
+        assert!(m("[0-9]+", "port 8080"));
+        assert!(m("foo|bar", "a bar b"));
+        assert!(m("colou?r", "color"));
+        assert!(m("(ab)+", "ababab"));
+        assert!(m("a{2,3}", "aaa"));
+
+        // The visible half of the decision. POSIX BRE reads `a+b` as three
+        // literal characters, so it matches "a+b" and nothing else; this
+        // dialect reads `+` as a repeat, so it matches "aab" and not "a+b".
+        // The fast path cannot rescue either case, because neither subject
+        // contains the pattern literally.
+        assert!(m("a+b", "aab"), "this dialect reads + as a repeat");
+        assert!(!m("a+b", "xyz"));
+    }
+
+    /// A pattern the engine rejects is "no match", as a failed `regcomp` is
+    /// in the C — never a panic, and never a hit.
+    #[test]
+    fn an_uncompilable_pattern_does_not_match() {
+        assert!(!m("(unclosed", "anything at all"));
+        assert!(!m("a{", "b"));
+        assert!(!m("[z-a]", "q"));
+        // `\C` is not a valid escape, and this is the `.inputrc` line that
+        // reaches `el_match` through `el_wparse`'s `prog:` qualifier — it
+        // used to abort the process.
+        assert!(!m("\\C-a", "conformance"));
+    }
+
+    /// Matching is over code points. A `u32` that is not a scalar value —
+    /// a lone surrogate, or the `EL_LITERAL` sentinel — has no `char`, so it
+    /// is no match rather than being folded into U+FFFD, which would make two
+    /// different sentinels compare equal.
+    #[test]
+    fn a_non_scalar_value_is_no_match_rather_than_a_replacement() {
+        assert!(el_match_wcs(&w("café"), &w("caf.")));
+        assert!(
+            el_match_wcs(&[0x61, 0xD800], &[0xD800]),
+            "the literal path still works"
+        );
+        assert!(
+            !el_match_wcs(&[0x61, 0xD800], &w("a.")),
+            "but the engine gets nothing"
+        );
+    }
 }

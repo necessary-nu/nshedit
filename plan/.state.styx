@@ -124,4 +124,5 @@ assertions (
     {id conformance-driver-el, kind @doing, author "brendan@necessary.nu", at 2026-08-06T18:27:49.981410028Z}
     {id abi-elset-dispatch, kind @complete, author "brendan@necessary.nu", at 2026-08-06T20:06:32.92018607Z}
     {id terminal-change-size, kind @complete, author "brendan@necessary.nu", at 2026-08-06T20:06:33.062661507Z}
+    {id conformance-driver-readline, kind @doing, author "brendan@necessary.nu", at 2026-08-06T20:23:02.204982987Z}
 )

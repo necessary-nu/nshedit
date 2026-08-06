@@ -1316,6 +1316,14 @@ children (
                 id conformance-driver-readline
                 title "Differential driver for the readline layer, with GNU readline as a second reference"
                 deps (conformance-differential)
+                log (
+                    {
+                        at 2026-08-06T20:23:02.204982987Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

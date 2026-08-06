@@ -71,10 +71,11 @@ use nshedit::el::{CFile, EditLine};
 use nshedit::filecomplete::{self, FilenameCompletionState};
 use nshedit::histedit::{
     CC_EOF, CC_ERROR, CC_NORM, CC_REFRESH, H_CLEAR, H_CURR, H_DELDATA, H_ENTER, H_FIRST, H_GETSIZE,
-    H_LAST, H_LOAD, H_NEXT, H_NEXT_EVDATA, H_NEXT_EVENT, H_NEXT_STR, H_NSAVE_FP, H_PREV,
-    H_PREV_EVENT, H_PREV_STR, H_REPLACE, H_SAVE, H_SET, H_SETSIZE, HistEvent, History,
+    H_LAST, H_LOAD, H_NEXT, H_NEXT_EVDATA, H_NEXT_EVENT, H_NEXT_STR, H_PREV, H_PREV_EVENT,
+    H_PREV_STR, H_REPLACE, H_SAVE, H_SET, H_SETSIZE, HistEvent, History,
 };
 use nshedit::tty::{C_EOF, C_REPRINT, TS_IO};
+use std::os::fd::AsRawFd;
 
 use crate::cstdio;
 
@@ -2907,7 +2908,7 @@ pub unsafe extern "C" fn write_history(filename: *const c_char) -> c_int {
 // [spec:libedit:sem:readline.append-history-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_int {
-    let mut ev = HistEvent {
+    let ev = HistEvent {
         num: 0,
         str: ptr::null(),
     };
@@ -2918,7 +2919,7 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
             Ok(p) => p,
             Err(e) => return e,
         };
-        let fp = match std::fs::File::options()
+        let mut fp = match std::fs::File::options()
             .append(true)
             .create(true)
             .open(&path)
@@ -2940,17 +2941,41 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
         // `Box<File>` cast to `CFile` would be handed to the C library as a
         // `FILE *`.
         //
-        // The route out is `nshedit::history::history_save_fd`, which exists
-        // for exactly this case and now has a narrow handle to be given. Not
-        // taken here: it is `history_save_fp` with the caller's stream
-        // replaced by a descriptor, and switching to it changes what
-        // `append_history` writes and when, which is a behaviour change this
-        // node did not carry. Until then a NULL cookie still fails the cookie
-        // write and surfaces as the errno below.
-        let cookie: CFile = ptr::null_mut();
+        // The route out is `nshedit::history::history_save_fd`, and this takes
+        // it. A NULL cookie used to go over instead, so `H_NSAVE_FP` failed
+        // its cookie write, `append_history` returned EINVAL and the file it
+        // had just opened was closed empty — measured by
+        // `conformance/driver/readline_api.c`, which is what turned "a gap
+        // recorded here" into "this function does not work".
+        //
+        // `history_save_fd` is `history_save_fp` with the caller's stream
+        // replaced by a descriptor, which is exactly the shape this function
+        // has: it opened the file ITSELF, so there is no application-owned
+        // `FILE *` to respect and nothing on `no-c-ffi`'s enumeration to reach
+        // for. That distinction is the whole reason the decision permits this
+        // and not `fdopen`.
+        //
+        // The descriptor is borrowed: `fp` still owns it and closes it below,
+        // as the C's `fclose` does.
+        //
+        // Seek it to the end first, and this is load-bearing rather than
+        // tidiness. `history_save_fd` decides whether to write the
+        // `_HiStOrY_V2_` cookie from `ftell(fp) == 0`, faithfully to the C.
+        // The C reaches it through `fopen(filename, "a")`, and glibc
+        // positions an append stream at EOF, so `ftell` reports the size. A
+        // raw `O_APPEND` descriptor instead sits at offset 0 until its first
+        // write — so without this, appending to a history file writes a
+        // SECOND cookie into the middle of it, which `history_load` then
+        // reads as an entry. Measured: the port did exactly that.
+        //
+        // `O_APPEND` already forces every write to the end, so seeking
+        // changes only what the position REPORTS, which is precisely the
+        // question `at_start` is asking.
+        let _ = ev;
+        let _ = fp.seek(SeekFrom::End(0));
         // As `write_history`: sampled, not cleared.
         let mark = crate::errno::mark();
-        let rc = history_va(H, &mut ev, H_NSAVE_FP, n as usize, cookie);
+        let rc = nshedit::history::history_save_fd(&mut *H, n as usize, fp.as_raw_fd());
         // The C captures `errno` before `fclose`, which can overwrite it.
         let e = if rc == -1 {
             crate::errno::publish(mark);
