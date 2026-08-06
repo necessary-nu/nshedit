@@ -1996,3 +1996,6 @@ pub unsafe extern "C" fn tok_wstr(
     }
     0
 }
+
+#[cfg(test)]
+mod tests;

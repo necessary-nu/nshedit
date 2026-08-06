@@ -629,6 +629,22 @@ children (
                     platform-build
                 )
                 sealed true
+                log (
+                    {
+                        at 2026-08-06T23:35:40.475369128Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-06T23:36:03.151628913Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Four things this pass found that are not test code, kept together because three of them are documents that have drifted behind the code and one is a real gap.\n\nA REAL FUNCTIONAL GAP IN THE NARROW el_get. There is no arm for EL_EDITOR, EL_WORDCHARS, EL_PROMPT, EL_RPROMPT, EL_PROMPT_ESC or EL_RPROMPT_ESC, so el_get answers -1 and writes nothing where the C answers 0 and writes a value. This is a divergence we introduced, not a defect of the C we reproduced, and the setter side handles the same ops — abi-elset-dispatch built the decode arm for el_set and stopped. Needs its own node under abi-surface; the test written for it documents the current answer with a comment saying so rather than asserting the C's.\n\nTHE eln.rs MODULE HEADER IS FALSE. It says el_set and el_get \"dispatch on no op ... every op falls to the C's default arm and comes back -1\". That was true before abi-elset-dispatch and has not been true since: el_set_va has the forwarded set, the five list ops, EL_HIST, the prompt family and the EL_EDITOR/EL_WORDCHARS decode, and el_get_va forwards nine. A reader trusting the header would conclude the narrow API is a stub.\n\ndocs/errata.md CARRIES THE SAME DRIFT. ERR-core-api-09 still reads \"open — not carried out ... el_set returns -1 for every op\", but the NULL rejections it prescribes are implemented and are now asserted. ERR-core-api-29 still reads \"the narrow el_get's half is still a comment only — that dispatch is a blanket -1 stub\", but EL_GETTC is in FORWARDED_TO_WGET and reads `li` back. Both statuses are wrong about the tree.\n\nsem:histedit.el-beep-fn MISDESCRIBES THE C. It says the terminal layer emits a visible-bell capability, otherwise the audible bell string, and writes nothing if neither is available. src/terminal.c:864 tests only T_bl and writes a literal 0x07 otherwise: there is no visible-bell branch and it never writes nothing. The port follows the C; the rule is wrong. Left uncorrected for now because five other test nodes were mid-flight against the current spec and a rule-version bump cascades their nodes to stale. It belongs with sem:tty.tty-printchar-fn, which terminal-tests found wrong the same way, in one spec-correction pass.\n\nTwo measurements that had to be made rather than reasoned about. EL_SETFP cannot be handed a fabricated FILE *: el_init_fd stores the three streams verbatim without touching them, but el_wset routes through cstdio::fileno_of, which calls the real fileno(3) and dereferences. The only testable argument is NULL; distinct sentinel streams have to go in through the constructor and come back through EL_GETFP. And EL_SAFEREAD answers 256 — the raw FIXIO bit, not a boolean; EL_SIGNAL only looks like it round-trips because HANDLE_SIGNALS is 0x001."
+                        after_done true
+                    }
+                )
             }
 
             {

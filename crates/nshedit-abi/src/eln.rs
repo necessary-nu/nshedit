@@ -862,3 +862,6 @@ pub unsafe extern "C" fn el_replacestr(el: *mut EditLine, str_: *const c_char) -
     let w = unsafe { decode_through_lgcyconv(el, str_) };
     unsafe { el_wreplacestr(el, w) }
 }
+
+#[cfg(test)]
+mod tests;

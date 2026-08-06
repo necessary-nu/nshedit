@@ -1370,3 +1370,6 @@ fn write_errfile(el: &EditLine, bytes: &[u8]) {
     let mut out = ManuallyDrop::new(unsafe { File::from_raw_fd(el.el_errfd) });
     let _ = out.write_all(bytes);
 }
+
+#[cfg(test)]
+mod tests;
