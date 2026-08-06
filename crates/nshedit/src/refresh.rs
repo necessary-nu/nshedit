@@ -1430,6 +1430,7 @@ mod test {
     /// `re_insert` opens the gap right-to-left and the cells that fall off the
     /// end of the row are discarded rather than growing it — the row is a
     /// fixed-width screen line, not a string.
+    // [spec:libedit:sem:refresh.re-insert-fn/test]
     #[test]
     fn inserting_into_a_row_shifts_the_tail_right_and_drops_what_overflows() {
         let mut d = row("abcd");
@@ -1446,6 +1447,7 @@ mod test {
     /// The clamp is to what fits from `dat` onwards, and it is observable in
     /// the shift: two cells at column 6 of an eight-cell row have nowhere to
     /// move to, so the row's existing content is left exactly where it was.
+    // [spec:libedit:sem:refresh.re-insert-fn/test]
     #[test]
     fn inserting_clamps_to_the_room_left_in_the_row() {
         let mut d = row("abcdefgh");
@@ -1456,6 +1458,7 @@ mod test {
     /// Both guards return before the terminator write, so a non-positive count
     /// and the negative count a `dat` past `dlen` manufactures leave the row
     /// completely alone. Nothing here may index outside it.
+    // [spec:libedit:sem:refresh.re-insert-fn/test]
     #[test]
     fn inserting_nothing_touches_no_cell_at_all() {
         let mut d = row("abcd");
@@ -1472,6 +1475,7 @@ mod test {
     /// `re_delete` slides the tail down and terminates the row, but the cells
     /// it vacated keep stale copies — the row still reads correctly only
     /// because the string's own NUL slides down with it.
+    // [spec:libedit:sem:refresh.re-delete-fn/test]
     #[test]
     fn deleting_from_a_row_slides_the_tail_down_over_stale_cells() {
         let mut d = row("abcdef");
@@ -1488,6 +1492,7 @@ mod test {
     /// A deletion reaching the end of the row is a truncation: the row is cut
     /// at `dat` with no shifting, and the early return means even the
     /// terminator slot is left as it was.
+    // [spec:libedit:sem:refresh.re-delete-fn/test]
     #[test]
     fn deleting_to_the_end_of_the_row_just_truncates_it() {
         let mut d = row("abcdef");
@@ -1506,6 +1511,7 @@ mod test {
     /// emulates a scroll by rotating the virtual rows instead. ERR-terminal-47
     /// is that `el_display` — the image of what is physically on screen — is
     /// deliberately NOT rotated with it.
+    // [spec:libedit:sem:refresh.re-nextline-fn/test]
     #[test]
     fn the_next_line_rotates_only_the_virtual_rows_at_the_bottom() {
         let mut el = blank_editline();

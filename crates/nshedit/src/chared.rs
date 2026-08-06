@@ -1395,6 +1395,7 @@ mod test {
     /// `w`, `b` and `e` stop at the boundary between a word and adjacent
     /// punctuation. A predicate that merely returned "truthy" would pass every
     /// differential trace and break that stop.
+    // [spec:libedit:sem:chared.cv-isword-fn/test]
     #[test]
     fn the_vi_word_test_separates_words_from_punctuation() {
         let mut el = blank_editline();
@@ -1418,6 +1419,7 @@ mod test {
     /// `cv__isWord` is the coarse sibling — exactly 0 or 1 — which is what
     /// makes vi's `W`, `B` and `E` treat punctuation as part of the
     /// surrounding word where the lowercase forms split it out.
+    // [spec:libedit:sem:chared.cv-is-word-fn/test]
     #[test]
     fn the_vi_big_word_test_puts_everything_non_space_in_one_class() {
         let mut el = blank_editline();
@@ -1432,6 +1434,7 @@ mod test {
     /// `ce__isword` is the emacs test and is a `||`, so it is exactly 0 or 1
     /// and never the raw `iswalnum` value — which the C's `c__next_word` and
     /// `c__prev_word` use as a boolean and nothing compares for equality.
+    // [spec:libedit:sem:chared.ce-isword-fn/test]
     #[test]
     fn the_emacs_word_test_is_boolean() {
         let mut el = blank_editline();
@@ -1447,6 +1450,7 @@ mod test {
     /// `c_hpos` is the column within the current line, so it counts back to
     /// the last newline and not to the start of the buffer. A buffer with an
     /// embedded newline is what tells the two apart.
+    // [spec:libedit:sem:chared.c-hpos-fn/test]
     #[test]
     fn hpos_is_the_column_within_the_line_not_the_buffer() {
         let mut el = el_with("abc", 0);
@@ -1468,6 +1472,7 @@ mod test {
 
     /// `c_delafter` clamps to what is actually there rather than deleting
     /// past `lastchar`, and a count of zero is a no-op.
+    // [spec:libedit:sem:chared.c-delafter-fn/test]
     #[test]
     fn delete_after_clamps_to_the_end_of_the_line() {
         let mut el = el_with("abcdef", 2);
@@ -1488,6 +1493,8 @@ mod test {
     /// ERR-buffer-02 and -03 record that neither guards its end of the
     /// buffer in the C — both callers happen to check first. Whatever they do
     /// here, they must not corrupt the line.
+    // [spec:libedit:sem:chared.c-delafter1-fn/test]
+    // [spec:libedit:sem:chared.c-delbefore1-fn/test]
     #[test]
     fn the_single_character_deletes_stay_inside_the_buffer() {
         let mut el = el_with("abc", 1);
@@ -1514,6 +1521,8 @@ mod test {
 
     /// vi's `w` and `b` over a line mixing words, punctuation and spaces.
     /// The stops are what the three-valued predicate buys.
+    // [spec:libedit:sem:chared.cv-next-word-fn/test]
+    // [spec:libedit:sem:chared.cv-prev-word-fn/test]
     #[test]
     fn the_vi_word_walkers_stop_at_class_boundaries() {
         let line = "foo.bar baz";
@@ -1540,6 +1549,7 @@ mod test {
     /// leads with a `p++` so the character already under the cursor cannot end
     /// the word. The same three-valued class equality applies, so `e` stops on
     /// the last letter of `foo` where `E` runs on to the end of `foo.bar`.
+    // [spec:libedit:sem:chared.cv-endword-fn/test]
     #[test]
     fn the_end_of_word_walker_lands_on_the_last_character_of_the_run() {
         let line = "foo.bar baz";
@@ -1579,6 +1589,7 @@ mod test {
     /// `cv_undo`, `cv_yank` and `em_kill_region` index against. ERR-buffer-20:
     /// `c_redo.lim` is deliberately left at its old offset, so the redo
     /// buffer's usable limit does not grow with its allocation.
+    // [spec:libedit:sem:chared.ch-enlargebufs-fn/test]
     #[test]
     fn enlarging_the_buffers_doubles_them_and_leaves_the_redo_limit_behind() {
         let mut el = blank_editline();
@@ -1613,6 +1624,8 @@ mod test {
 
     /// `ch_resizefun` and `ch_aliasfun` are unconditional stores that cannot
     /// fail, and `None` — the C's NULL — switches the hook back off.
+    // [spec:libedit:sem:chared.ch-resizefun-fn/test]
+    // [spec:libedit:sem:chared.ch-aliasfun-fn/test]
     #[test]
     fn the_hook_setters_store_the_pair_and_none_clears_it() {
         unsafe extern "C" fn resize(_el: *mut EditLine, _a: *mut c_void) {}
@@ -1640,6 +1653,7 @@ mod test {
     /// contract: it runs last, after `el_line.limit` has been published, so an
     /// application re-deriving its saved positions sees the enlarged capacity
     /// and not the pre-call one.
+    // [spec:libedit:sem:chared.ch-resizefun-fn/test]
     #[test]
     fn the_resize_hook_runs_with_the_new_limit_already_published() {
         unsafe extern "C" fn record(el: *mut EditLine, a: *mut c_void) {

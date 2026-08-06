@@ -198,6 +198,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-06T23:16:20.117007766Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "This node's seventeen tests were written and never claimed. The port gate counts a rule as verified only when a `/test` facet for it appears in a file the target impl's `include` globs match; the tests carried none, so thirteen chared rules and six refresh rules still read as unverified after a commit whose whole purpose was to verify them. Fixed by annotating the existing tests: 402 to 416, no new test code.\n\nThe mechanic, measured rather than assumed, because getting this wrong is silent in both directions. A line of the form `// [spec:libedit:sem:chared.cv-next-word-fn/test]` placed inside a `#[cfg(test)] mod` in a crate source file, directly above the `#[test]` attribute, moves the count by one. The same line without the `/test` suffix moves it by zero. The discriminating experiment was adding exactly one such line above one test and watching 402 become 403.\n\nFourteen of the nineteen came back. The five that did not have no test at all and stay that way rather than being papered over: chared.cv-delfini-fn, chared.c-gets-fn, refresh.re-printstr-fn, refresh.re-putliteral-fn and refresh.re-clear-lines-fn. prompt.prompt-default-fn and prompt.prompt-get-fn are in the same position. Seven rules in this concern remain uncovered and the count now reports that instead of hiding it.\n\nThe lesson generalises to every remaining *-tests node: writing the test is half the job, and the half that does not announce itself when skipped."
+                        after_done true
+                    }
                 )
             }
 
