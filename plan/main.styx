@@ -270,6 +270,45 @@ children (
                     }
                 )
             }
+
+            {
+                id history-record-blob
+                title "Give a history entry an owned (text, blob) record, so the app data can be persisted at all"
+                priority 1
+                kind @feat
+            }
+
+            {
+                id history-format-native
+                title "A native history file: COBS-framed postcard records, appendable, greppable, locale-free"
+                priority 1
+                kind @feat
+                deps (history-record-blob)
+            }
+
+            {
+                id history-format-sniff
+                title "Detect the format on read so no user ever migrates a history file by hand"
+                priority 1
+                kind @feat
+                deps (history-format-native)
+            }
+
+            {
+                id bsd-feature
+                title "Take vis and unvis from the bsd crate behind a `bsd` feature, and delete our copies"
+                priority 1
+                kind @refactor
+                deps (history-format-sniff)
+            }
+
+            {
+                id history-listing-escape
+                title "Escape the `history` listing for display without needing the whole vis engine"
+                priority 1
+                kind @feat
+                deps (history-record-blob)
+            }
         )
     }
 
