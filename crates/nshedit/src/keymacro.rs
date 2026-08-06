@@ -1153,3 +1153,211 @@ fn write_fd(fd: i32, bytes: &[u8]) {
     let mut out = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
     let _ = out.write_all(bytes);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::el::blank_editline;
+    use crate::read::{el_wpush, read_init};
+
+    fn w(s: &str) -> Vec<u32> {
+        s.chars().map(u32::from).collect()
+    }
+
+    /// An editor with the read subsystem up and no streams. The three
+    /// descriptors a `calloc`ed `EditLine` carries are 0 — the process's
+    /// standard input — and the diagnostics below would land there; -1 is this
+    /// crate's "no stream". `el_infd` at -1 also makes the tty unreadable, so
+    /// [`el_wgetc`] reports end of file the moment the macro queue runs dry,
+    /// which is what gives the walk a deterministic bottom.
+    fn el() -> EditLine {
+        let mut el = blank_editline();
+        el.el_infd = -1;
+        el.el_outfd = -1;
+        el.el_errfd = -1;
+        assert_eq!(read_init(&mut el), 0);
+        el
+    }
+
+    fn bind(el: &mut EditLine, key: &str, cmd: i32) {
+        let val = keymacro_map_cmd(el, cmd);
+        keymacro_add(el, &w(key), &val, XK_CMD);
+    }
+
+    /// Walk the trie the way `node_trav` does but without reading input:
+    /// follow the sibling chain for each character, then descend `next`.
+    fn walk<'a>(el: &'a EditLine, key: &str) -> Option<&'a KeymacroNodeT> {
+        let key = w(key);
+        let mut node = el.el_keymacro.map.as_deref()?;
+        for (i, &c) in key.iter().enumerate() {
+            while node.ch != c {
+                node = node.sibling.as_deref()?;
+            }
+            if i + 1 == key.len() {
+                return Some(node);
+            }
+            node = node.next.as_deref()?;
+        }
+        None
+    }
+
+    /// The command a complete key resolves to, or `None`. A node is a binding
+    /// only when it has no children: `node_trav` tests `next` before it looks
+    /// at `type`, which is what hides a short key behind a longer one.
+    fn bound(el: &EditLine, key: &str) -> Option<i32> {
+        match walk(el, key) {
+            Some(n) if n.next.is_none() => match n.val {
+                KeymacroValueT::Cmd(c) => Some(i32::from(c)),
+                KeymacroValueT::Str(_) => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Deleting a key deletes every longer key that has it as a prefix, and
+    /// the only thing this function ever reports is the empty-key rejection —
+    /// "was anything actually deleted?" is discarded before any caller sees
+    /// it, so an unbound key and a successful delete are the same 0.
+    // [spec:libedit:sem:keymacro.keymacro-delete-fn/test]
+    #[test]
+    fn deleting_a_key_takes_every_longer_key_with_it() {
+        let mut el = el();
+
+        // Step 2: an empty trie is 0, not an error.
+        assert_eq!(keymacro_delete(&mut el, &w("a")), 0);
+
+        bind(&mut el, "abc", 11);
+        bind(&mut el, "abd", 12);
+        bind(&mut el, "xy", 13);
+        assert_eq!(bound(&el, "abc"), Some(11));
+
+        assert_eq!(keymacro_delete(&mut el, &w("ab")), 0);
+        assert_eq!(bound(&el, "abc"), None);
+        assert_eq!(bound(&el, "abd"), None);
+        assert!(walk(&el, "a").is_none(), "the prefix node is pruned too");
+        assert_eq!(bound(&el, "xy"), Some(13), "an unrelated key is untouched");
+
+        // The same 0 for a key that was never bound.
+        assert_eq!(keymacro_delete(&mut el, &w("zz")), 0);
+        assert_eq!(bound(&el, "xy"), Some(13));
+
+        // Step 1, the function's only -1, and it changes nothing.
+        assert_eq!(keymacro_delete(&mut el, &[]), -1);
+        assert_eq!(keymacro_delete(&mut el, &[0]), -1, "a bare terminator too");
+        assert_eq!(bound(&el, "xy"), Some(13));
+    }
+
+    /// Unlinking before freeing is load-bearing and silent when it is wrong:
+    /// `node__put` follows sibling links, so a victim released while still
+    /// pointing at the rest of its level takes that level with it. Deleting
+    /// the middle of a three-way chain is the shape that catches it — a
+    /// differential would need three keys sharing a prefix and a lookup of
+    /// each afterwards to notice.
+    // [spec:libedit:sem:keymacro.node-delete-fn/test]
+    #[test]
+    fn deleting_one_sibling_leaves_the_rest_of_the_chain() {
+        let mut el = el();
+        bind(&mut el, "ab", 1);
+        bind(&mut el, "ac", 2);
+        bind(&mut el, "ad", 3);
+
+        assert_eq!(keymacro_delete(&mut el, &w("ac")), 0);
+        assert_eq!(bound(&el, "ab"), Some(1));
+        assert_eq!(bound(&el, "ad"), Some(3));
+        assert_eq!(bound(&el, "ac"), None);
+
+        // The head of the chain, where the link slot being rewritten is the
+        // parent's `next` rather than a sibling field.
+        assert_eq!(keymacro_delete(&mut el, &w("ab")), 0);
+        assert_eq!(bound(&el, "ad"), Some(3));
+        assert!(walk(&el, "a").is_some(), "the level still has a member");
+
+        // The last one takes the parent with it, and the prune runs to the
+        // root: a node kept alive only by children it no longer has is freed.
+        assert_eq!(keymacro_delete(&mut el, &w("ad")), 0);
+        assert!(el.el_keymacro.map.is_none());
+    }
+
+    /// ERR-input-32, the destructive half of the shadowing rule. Binding
+    /// `"ab"` and then `"abc"` leaves the shorter binding allocated but
+    /// unreachable, because `node__try` step 3 does not touch `type` — and
+    /// deleting the longer key then prunes the node that carried the shorter
+    /// one rather than restoring it. Both are gone, and nothing says so.
+    #[test]
+    fn a_shadowed_binding_is_pruned_rather_than_restored() {
+        let mut el = el();
+        bind(&mut el, "ab", 7);
+        assert_eq!(bound(&el, "ab"), Some(7));
+
+        bind(&mut el, "abc", 8);
+        assert_eq!(bound(&el, "abc"), Some(8));
+        assert_eq!(bound(&el, "ab"), None, "the shorter key is shadowed");
+        // Still there, and still holding its command — just unreachable.
+        let ab = walk(&el, "ab").expect("the node survives");
+        assert!(matches!(ab.val, KeymacroValueT::Cmd(7)));
+
+        assert_eq!(keymacro_delete(&mut el, &w("abc")), 0);
+        assert_eq!(bound(&el, "ab"), None, "the prune took the shadowed one");
+        assert!(el.el_keymacro.map.is_none());
+    }
+
+    /// The other direction of the shadowing rule: binding a key that is a
+    /// proper prefix of existing longer keys frees the whole child level and
+    /// every payload under it (`node__try` step 2a). The file header warns
+    /// about it; nothing at run time does.
+    #[test]
+    fn binding_a_prefix_destroys_every_longer_key_under_it() {
+        let mut el = el();
+        bind(&mut el, "abcd", 1);
+        bind(&mut el, "abce", 2);
+        bind(&mut el, "abz", 3);
+
+        bind(&mut el, "abc", 9);
+        assert_eq!(bound(&el, "abc"), Some(9));
+        assert_eq!(bound(&el, "abcd"), None);
+        assert_eq!(bound(&el, "abce"), None);
+        assert_eq!(bound(&el, "abz"), Some(3), "a sibling level is untouched");
+    }
+
+    /// A prefix of a bound sequence is not the binding: the walk blocks for
+    /// another character instead, and there is no "partial match" return code
+    /// to say so. When the next character does not continue the sequence the
+    /// answer is `XK_STR` with an *empty* payload — the same code a real
+    /// macro binding uses (ERR-input-33), so a caller that does not test the
+    /// payload reads a dead end as a macro — and every character consumed on
+    /// the way in is dropped with no pushback.
+    ///
+    /// The characters come from the macro queue, which `el_wgetc` drains
+    /// before it touches the tty; with `el_infd` closed off the queue running
+    /// dry is end of file, which is the `XK_NOD` below.
+    // [spec:libedit:sem:keymacro.node-trav-fn/test]
+    #[test]
+    fn a_prefix_of_a_bound_sequence_is_not_the_binding() {
+        let mut el = el();
+        bind(&mut el, "abc", 42);
+
+        // The whole sequence: the leaf answers, and a command binding keeps
+        // the character that completed it rather than clearing `ch`.
+        el_wpush(&mut el, Some(&w("bc")));
+        let mut ch = u32::from(b'a');
+        let mut val = KeymacroValueT::Str(Vec::new());
+        assert_eq!(keymacro_get(&mut el, &mut ch, &mut val), XK_CMD);
+        assert!(matches!(val, KeymacroValueT::Cmd(42)));
+        assert_eq!(ch, u32::from(b'c'));
+
+        // A dead end one character in, reported as an empty macro.
+        el_wpush(&mut el, Some(&w("bx")));
+        let mut ch = u32::from(b'a');
+        assert_eq!(keymacro_get(&mut el, &mut ch, &mut val), XK_STR);
+        assert!(
+            matches!(&val, KeymacroValueT::Str(s) if s.is_empty()),
+            "no match and a real empty macro are the same answer"
+        );
+
+        // The proper prefix itself: no more input, so the walk reports end of
+        // file rather than the interior node it is standing on.
+        el_wpush(&mut el, Some(&w("b")));
+        let mut ch = u32::from(b'a');
+        assert_eq!(keymacro_get(&mut el, &mut ch, &mut val), XK_NOD);
+    }
+}

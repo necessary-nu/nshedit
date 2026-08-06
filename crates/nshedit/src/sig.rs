@@ -450,3 +450,211 @@ pub(crate) fn sig_clr(el: &mut EditLine) {
         let _ = plat::sigmask_set(&oset);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::el::blank_editline;
+
+    /// Signal dispositions are process-wide, so the tests below cannot run at
+    /// the same time as each other — `cargo test` runs them on threads of one
+    /// process — and every one of them must put back what it installed before
+    /// it returns. This is that serialisation. Nothing else in the crate's
+    /// tests touches a disposition; if something ever does, it belongs behind
+    /// this lock too.
+    ///
+    /// The poison is stepped over deliberately: a panic in one test would
+    /// otherwise turn the other's report into "poisoned mutex" and hide the
+    /// assertion that actually failed.
+    static SIGNALS: Mutex<()> = Mutex::new(());
+
+    fn serialised() -> std::sync::MutexGuard<'static, ()> {
+        SIGNALS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Every signal here is `SIGWINCH`, whose default disposition is *ignore*.
+    /// A test that leaves a disposition unrestored — or one that reaches the
+    /// re-raise in [`sig_handler`] — therefore cannot kill the test runner,
+    /// which is not true of any other member of the seven.
+    const PROBE: i32 = signo::SIGWINCH;
+
+    /// An editor with signal state allocated and no streams: the three
+    /// descriptors a `calloc`ed `EditLine` carries are 0, and `el_infd` at -1
+    /// is also what makes `el_resize` a no-op, since `TIOCGWINSZ` cannot
+    /// answer and the loaded capability values are zero.
+    fn el() -> EditLine {
+        let mut el = blank_editline();
+        el.el_infd = -1;
+        el.el_outfd = -1;
+        el.el_errfd = -1;
+        assert_eq!(sig_init(&mut el), 0);
+        el
+    }
+
+    fn saw(el: &EditLine) -> i32 {
+        el.el_signal
+            .as_deref()
+            .expect("sig_init ran")
+            .sig_no
+            .load(Ordering::Relaxed)
+    }
+
+    fn slots(el: &EditLine) -> [bool; ALLSIGSNO] {
+        let sig = el.el_signal.as_deref().expect("sig_init ran");
+        std::array::from_fn(|i| sig.sig_action[i].is_some())
+    }
+
+    /// Whether libedit's own handler is the current disposition for `PROBE`,
+    /// asking the only layer that can compare handler identity. The probe is
+    /// undone before it returns, so it is safe to call between assertions.
+    fn ours_is_installed() -> bool {
+        match plat::install_handler(PROBE, &SigSet::of(&[PROBE])) {
+            plat::Installed::AlreadyOurs => true,
+            plat::Installed::Displaced(osa) => {
+                assert!(plat::restore_handler(PROBE, osa), "the probe must undo");
+                false
+            }
+            plat::Installed::Failed => panic!("sigaction failed"),
+        }
+    }
+
+    /// Arming publishes the registration the installed trampoline records
+    /// through — the port's counterpart of the C's file-static `sel` — and
+    /// fills one slot per signal with the disposition it displaced.
+    ///
+    /// The part that is neither in the C nor visible to a differential is the
+    /// idempotence guard. `sig_set` is legitimately re-issued without an
+    /// intervening `sig_clr`, because the handler de-installs itself for the
+    /// signal that fired and the read loop re-arms; recording *our own*
+    /// handler as "the previous one" on that second pass is what would make
+    /// `sig_clr` install libedit's handler permanently. The only way to see
+    /// that is to arm twice, clear, and ask what is installed.
+    // [spec:libedit:sem:sig.sig-set-fn/test]
+    #[test]
+    fn arming_twice_still_restores_the_application_disposition() {
+        let _guard = serialised();
+        let mut el = el();
+
+        sig_set(&mut el);
+        assert_eq!(slots(&el), [true; ALLSIGSNO], "one slot per trapped signal");
+        assert!(ours_is_installed());
+
+        // The registration reaches the trampoline: a real delivery lands in
+        // `sig_no`, which is the handler's only channel to the read loop.
+        assert!(plat::raise(PROBE));
+        assert_eq!(saw(&el), PROBE);
+
+        // The re-arm. Every slot must still hold the *application's*
+        // disposition, not ours.
+        sig_set(&mut el);
+        assert_eq!(slots(&el), [true; ALLSIGSNO]);
+
+        sig_clr(&mut el);
+        assert_eq!(slots(&el), [false; ALLSIGSNO], "each slot is consumed");
+        assert!(
+            !ours_is_installed(),
+            "a re-arm recorded our own handler as the previous one"
+        );
+
+        // `sig_clr` also drops the registration, which the C never does — its
+        // `sel` dangles for the rest of the process after `el_end`.
+        el.el_signal
+            .as_deref()
+            .expect("sig_init ran")
+            .sig_no
+            .store(0, Ordering::Relaxed);
+        assert!(plat::raise(PROBE));
+        assert_eq!(saw(&el), 0, "the trampoline still had somewhere to write");
+
+        sig_end(&mut el);
+    }
+
+    /// The deferred handler body de-installs itself for the signal it ran
+    /// for: it consumes that one slot, puts the displaced disposition back,
+    /// and leaves the other six alone. That is why the read loop re-arms with
+    /// `sig_set` after a `SIGWINCH` or `SIGCONT`, and it is the whole
+    /// observable contract — the number reaches the read loop, the tty work
+    /// happens before the previous disposition takes effect, and the previous
+    /// handler still runs.
+    ///
+    /// A signal that is not in the table restores nothing. The C's scan stops
+    /// on the array's `-1` terminator with the index one past the end and
+    /// then reads and writes `sig_action[7]` (ERR-terminal-12); the lookup
+    /// here is total. Signal 0 stands in for that case because it is not a
+    /// signal at all, so the re-raise cannot deliver anything — picking a
+    /// live signal outside the seven would mean picking one whose default
+    /// action does not terminate the test runner, on every target.
+    // [spec:libedit:sem:sig.sig-handler-fn/test]
+    #[test]
+    fn the_handler_body_deinstalls_itself_for_the_signal_that_fired() {
+        let _guard = serialised();
+        let mut el = el();
+        sig_set(&mut el);
+
+        sig_handler(&mut el, PROBE);
+        assert_eq!(saw(&el), PROBE, "the read loop's channel");
+        assert!(
+            !ours_is_installed(),
+            "the handler must restore the disposition it displaced"
+        );
+        // `SIGWINCH` is the last of the seven, so only the tail is consumed.
+        assert_eq!(
+            slots(&el),
+            [true, true, true, true, true, true, false],
+            "one slot consumed, the other six untouched"
+        );
+
+        // The re-arm the read loop issues: the same original is displaced and
+        // saved again.
+        sig_set(&mut el);
+        assert_eq!(slots(&el), [true; ALLSIGSNO]);
+
+        // A second body for the same signal, with nothing left saved. The C
+        // would hand `SIG_ERR` to `sigaction` here (ERR-terminal-13); the
+        // definition is to leave the disposition alone.
+        sig_handler(&mut el, PROBE);
+        sig_handler(&mut el, PROBE);
+        assert!(!ours_is_installed());
+
+        // Not in the table: nothing is restored and no slot is touched.
+        let before = slots(&el);
+        sig_handler(&mut el, 0);
+        assert_eq!(slots(&el), before);
+        assert_eq!(saw(&el), 0, "step 3 stores whatever it was called with");
+
+        sig_clr(&mut el);
+        assert!(!ours_is_installed());
+        sig_end(&mut el);
+    }
+
+    /// `sig_end` must restore before it frees. The C does neither in that
+    /// order — it frees the state while its own handler may still be the
+    /// installed disposition for up to seven signals, so the next delivery is
+    /// a use-after-free of both the state and the `EditLine`
+    /// (ERR-terminal-18). Here it is a property of the function rather than
+    /// of caller discipline, which is what covers the paths that never reach
+    /// `read_finish`: a `longjmp` out of a read, an `el_end` from an
+    /// application handler, `EL_SIGNAL` toggled off mid-read.
+    #[test]
+    fn tearing_down_without_a_read_finish_still_restores_the_dispositions() {
+        let _guard = serialised();
+        let mut el = el();
+        sig_set(&mut el);
+        assert!(ours_is_installed());
+
+        sig_end(&mut el);
+        assert!(el.el_signal.is_none());
+        assert!(!ours_is_installed(), "sig_end left our handler installed");
+
+        // And the no-state paths, where the C dereferences NULL outright.
+        sig_set(&mut el);
+        sig_clr(&mut el);
+        sig_handler(&mut el, PROBE);
+        sig_end(&mut el);
+        assert!(!ours_is_installed());
+    }
+}

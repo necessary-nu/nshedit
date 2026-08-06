@@ -1179,3 +1179,330 @@ pub fn el_wgets<'a>(el: &'a mut EditLine, nread: Option<&mut i32>) -> Option<&'a
         Some(&el.el_line.buffer[..el.el_line.lastchar])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use std::os::fd::AsRawFd;
+
+    use super::*;
+    use crate::el::blank_editline;
+
+    thread_local! {
+        /// What [`feed`] hands back, one call at a time. Thread local because
+        /// the test runner runs tests on threads of its own and the hook has
+        /// nowhere else to reach — the C's `el_rfunc_t` carries no user data,
+        /// which is the same constraint the real callback lives under.
+        static FEED: RefCell<VecDeque<(c_int, u32)>> =
+            const { RefCell::new(VecDeque::new()) };
+    }
+
+    /// A test `EL_GETCFN` hook. An exhausted queue is end of file, which is
+    /// what every loop below terminates on.
+    unsafe extern "C" fn feed(_el: *mut EditLine, cp: *mut u32) -> c_int {
+        match FEED.with(|q| q.borrow_mut().pop_front()) {
+            Some((rv, ch)) => {
+                // SAFETY: `cp` is the caller's `wchar_t`, which every call site
+                // in this module passes as a live exclusive borrow.
+                unsafe { *cp = ch };
+                rv
+            }
+            None => 0,
+        }
+    }
+
+    /// Queue `s`, one successful character per call, then end of file.
+    fn feed_chars(s: &str) {
+        FEED.with(|q| {
+            let mut q = q.borrow_mut();
+            q.clear();
+            q.extend(s.chars().map(|c| (1, u32::from(c))));
+        });
+    }
+
+    /// Append a failed read to whatever [`feed_chars`] queued.
+    fn feed_error() {
+        FEED.with(|q| q.borrow_mut().push_back((-1, 0)));
+    }
+
+    fn w(s: &str) -> Vec<u32> {
+        s.chars().map(u32::from).collect()
+    }
+
+    /// An editor with the read subsystem up, a line buffer with the slack
+    /// `ch_init` leaves above `lastchar`, and no streams: the three
+    /// descriptors a `calloc`ed `EditLine` carries are 0, the process's
+    /// standard input, and -1 is this crate's "no stream".
+    fn el() -> EditLine {
+        let mut el = blank_editline();
+        el.el_infd = -1;
+        el.el_outfd = -1;
+        el.el_errfd = -1;
+        el.el_line.buffer = vec![0u32; 256];
+        el.el_line.limit = 255;
+        assert_eq!(read_init(&mut el), 0);
+        el
+    }
+
+    fn macros(el: &mut EditLine) -> &mut Macros {
+        &mut el.el_read.as_deref_mut().expect("read_init ran").macros
+    }
+
+    fn getc(el: &mut EditLine) -> (i32, u32) {
+        let mut c = 0;
+        let rv = el_wgetc(el, &mut c);
+        (rv, c)
+    }
+
+    /// The setter takes anything and reports success unconditionally, and the
+    /// getter is its exact inverse — so the builtin's address never escapes,
+    /// whether it was never replaced or was installed deliberately. An
+    /// application therefore cannot tell "the builtin is in place" from "I put
+    /// the builtin back", and `EL_GETCFN` round-trips losslessly.
+    // [spec:libedit:sem:read.el-read-setfn-fn/test]
+    // [spec:libedit:sem:read.el-read-getfn-fn/test]
+    #[test]
+    fn the_builtin_reader_is_reported_as_absent_however_it_was_installed() {
+        let mut el = el();
+        let rd = el.el_read.as_deref_mut().expect("read_init ran");
+
+        assert!(
+            el_read_getfn(rd).is_none(),
+            "read_init installs the builtin"
+        );
+
+        assert_eq!(el_read_setfn(rd, Some(feed as ElRfuncT)), 0);
+        let got = el_read_getfn(rd).expect("a client hook is handed back");
+        assert!(std::ptr::fn_addr_eq(got, feed as ElRfuncT));
+
+        // The C's `EL_BUILTIN_GETCFN`, a NULL `el_rfunc_t`.
+        assert_eq!(el_read_setfn(rd, None), 0);
+        assert!(el_read_getfn(rd).is_none());
+
+        // And the same answer for the builtin installed by address.
+        assert_eq!(el_read_setfn(rd, Some(feed as ElRfuncT)), 0);
+        assert_eq!(el_read_setfn(rd, Some(read_char as ElRfuncT)), 0);
+        assert!(
+            el_read_getfn(rd).is_none(),
+            "the builtin's address is never handed out"
+        );
+    }
+
+    /// The would-block recovery **permanently clears** `O_NONBLOCK` on the
+    /// caller's descriptor — normally the process's shared standard input —
+    /// saving and restoring nothing. That is ERR-input-21, and reproducing it
+    /// is the specified behaviour rather than an oversight; nothing else in
+    /// the library compensates.
+    ///
+    /// `EINTR` is the arm that actually runs today (`EL_SAFEREAD` was
+    /// realistically enabled for nothing else) and it is a pure "retry me"
+    /// with no side effect at all. Everything else is unrecoverable.
+    // [spec:libedit:sem:read.read-fixio-fn/test]
+    #[test]
+    fn the_would_block_recovery_clears_nonblock_and_never_puts_it_back() {
+        let f = std::fs::File::open("/dev/null").expect("/dev/null");
+        let fd = f.as_raw_fd();
+        let orig = plat::fcntl_getfl(fd).expect("F_GETFL");
+
+        assert!(plat::fcntl_setfl(fd, orig | plat::O_NDELAY), "F_SETFL");
+        assert_ne!(plat::fcntl_getfl(fd).expect("F_GETFL") & plat::O_NDELAY, 0);
+
+        assert_eq!(read__fixio(fd, EWOULDBLOCK), 0);
+        assert_eq!(
+            plat::fcntl_getfl(fd).expect("F_GETFL") & plat::O_NDELAY,
+            0,
+            "the flag is cleared on the caller's descriptor and left cleared"
+        );
+
+        // The C's `case -1:` label shares this arm. It is never a real errno
+        // value; it exists so the compiler cannot prove the block unreachable
+        // when every other label is preprocessed away.
+        assert!(plat::fcntl_setfl(fd, orig | plat::O_NDELAY), "F_SETFL");
+        assert_eq!(read__fixio(fd, -1), 0);
+        assert_eq!(plat::fcntl_getfl(fd).expect("F_GETFL") & plat::O_NDELAY, 0);
+
+        // `EINTR` touches nothing, so a descriptor left non-blocking stays so.
+        assert!(plat::fcntl_setfl(fd, orig | plat::O_NDELAY), "F_SETFL");
+        assert_eq!(read__fixio(fd, EINTR), 0);
+        assert_ne!(
+            plat::fcntl_getfl(fd).expect("F_GETFL") & plat::O_NDELAY,
+            0,
+            "the retry arm has no side effects"
+        );
+        assert!(plat::fcntl_setfl(fd, orig), "F_SETFL");
+
+        // Anything else is unrecoverable, and so is a would-block on a
+        // descriptor `fcntl` cannot answer for — which is the only way the
+        // C's both-sub-blocks-absent -1 is still reachable.
+        assert_eq!(read__fixio(fd, EBADF), -1);
+        assert_eq!(read__fixio(fd, EIO), -1);
+        assert_eq!(read__fixio(-1, EWOULDBLOCK), -1);
+    }
+
+    /// Despite the "level" vocabulary the queue is **FIFO**: a push writes at
+    /// the back while `el_wgetc` always reads the front, so text pushed while
+    /// a macro is draining is queued behind the remainder of that macro
+    /// rather than spliced in ahead of it (ERR-input-42).
+    /// `sem:histedit.el-wpush-fn` claims the opposite and is wrong. This is
+    /// the assertion that fails if somebody "fixes" this into a stack.
+    // [spec:libedit:sem:read.el-wpush-fn/test]
+    #[test]
+    fn pushed_macros_are_consumed_oldest_first() {
+        let mut el = el();
+        el_wpush(&mut el, Some(&w("ab")));
+        el_wpush(&mut el, Some(&w("cd")));
+
+        assert_eq!(getc(&mut el), (1, u32::from(b'a')));
+        // A push mid-drain does not disturb the read cursor and does not jump
+        // the queue: `offset` belongs to the entry being drained and only
+        // `read_pop` and `read_clearmacros` reset it.
+        el_wpush(&mut el, Some(&w("ef")));
+        assert_eq!(macros(&mut el).offset, 1);
+        for c in "bcdef".chars() {
+            assert_eq!(getc(&mut el), (1, u32::from(c)));
+        }
+        assert_eq!(macros(&mut el).level, -1);
+
+        // An empty string is not a failure: it takes a slot and is popped
+        // unread, which is observable only as the slot it occupies.
+        el_wpush(&mut el, Some(&[]));
+        assert_eq!(macros(&mut el).level, 0);
+        assert_eq!(getc(&mut el).0, 0, "nothing to read, and no tty either");
+
+        // `wcsdup` stops at the first NUL, so an embedded one truncates.
+        el_wpush(&mut el, Some(&[u32::from(b'x'), 0, u32::from(b'y')]));
+        assert_eq!(macros(&mut el).r#macro[0], w("x"));
+    }
+
+    /// The queue holds at most `EL_MAXMACRO` entries — levels 0 through 9 —
+    /// and the overflow is silent: the function returns void, so the beep is
+    /// the only signal a caller gets, and a NULL string produces exactly the
+    /// same one. The C notes that a full queue and a failed `wcsdup` are
+    /// observationally identical; only the first is reachable here.
+    #[test]
+    fn the_macro_queue_drops_the_eleventh_push() {
+        let mut el = el();
+        for i in 0..EL_MAXMACRO {
+            el_wpush(&mut el, Some(&w("z")));
+            assert_eq!(macros(&mut el).level, i as i32);
+        }
+        el_wpush(&mut el, Some(&w("overflow")));
+        assert_eq!(macros(&mut el).level, (EL_MAXMACRO - 1) as i32);
+        assert_eq!(macros(&mut el).r#macro.len(), EL_MAXMACRO);
+
+        // The C's NULL `str`, a live call site in `read_getcmd`: the beep and
+        // nothing else.
+        el_wpush(&mut el, None);
+        assert_eq!(macros(&mut el).r#macro.len(), EL_MAXMACRO);
+    }
+
+    /// The FRONT entry is what leaves, `offset` is reset so the new front is
+    /// read from its first character, and popping an empty queue does
+    /// nothing. The C has no guard there: it frees `macro[0]` a second time
+    /// and drives `level` to -2 (ERR-input-17). Both live call sites satisfy
+    /// the precondition, so the guard is what keeps a latent hazard latent.
+    // [spec:libedit:sem:read.read-pop-fn/test]
+    #[test]
+    fn popping_takes_the_front_and_tolerates_an_empty_queue() {
+        let mut el = el();
+        let ma = macros(&mut el);
+        read_pop(ma);
+        assert_eq!(ma.level, -1, "not -2");
+        assert!(ma.r#macro.is_empty());
+        assert_eq!(ma.offset, 0);
+
+        el_wpush(&mut el, Some(&w("ab")));
+        el_wpush(&mut el, Some(&w("cd")));
+        let ma = macros(&mut el);
+        ma.offset = 1;
+        read_pop(ma);
+        assert_eq!(ma.level, 0);
+        assert_eq!(ma.offset, 0, "the new front is read from the start");
+        assert_eq!(ma.r#macro[0], w("cd"), "the front left, not the back");
+
+        // The last one: nothing shifts, and the queue tests as empty again.
+        read_pop(ma);
+        assert_eq!(ma.level, -1);
+        assert!(ma.r#macro.is_empty());
+    }
+
+    /// The unedited read path calls the hook **directly**, never through
+    /// `el_wgetc`: the macro queue is not consulted, so `el_wpush` has no
+    /// effect here at all, and `read_errno` is never written. The line
+    /// terminator is kept in the buffer and counted in `*nread`.
+    ///
+    /// `*nread` is never negative on this path — end of file, an interrupted
+    /// read and an empty line are all 0 with a NULL return — so a
+    /// `NO_TTY`/`EDIT_DISABLED` caller cannot use the -1 convention the
+    /// editing path provides.
+    // [spec:libedit:sem:read.noedit-wgets-fn/test]
+    #[test]
+    fn the_unedited_read_keeps_the_newline_and_ignores_the_macro_queue() {
+        let mut el = el();
+        let rd = el.el_read.as_deref_mut().expect("read_init ran");
+        assert_eq!(el_read_setfn(rd, Some(feed as ElRfuncT)), 0);
+
+        el_wpush(&mut el, Some(&w("PUSHED")));
+        feed_chars("hi\nrest");
+        let mut nread = -7;
+        assert_eq!(noedit_wgets(&mut el, &mut nread), Some(&w("hi\n")[..]));
+        assert_eq!(nread, 3, "the newline is counted");
+        assert_eq!(macros(&mut el).level, 0, "the pushed macro was not touched");
+        assert_eq!(el.el_read.as_deref().expect("read_init ran").read_errno, 0);
+
+        // End of file with nothing read: NULL and zero, not -1.
+        el.el_line.lastchar = 0;
+        feed_chars("");
+        let mut nread = -7;
+        assert_eq!(noedit_wgets(&mut el, &mut nread), None);
+        assert_eq!(nread, 0);
+
+        // A carriage return ends the line too, and is likewise kept.
+        el.el_line.lastchar = 0;
+        feed_chars("ab\rcd");
+        let mut nread = 0;
+        assert_eq!(noedit_wgets(&mut el, &mut nread), Some(&w("ab\r")[..]));
+        assert_eq!(nread, 3);
+
+        // Unbuffered mode stops after a single character, terminator or not.
+        el.el_line.lastchar = 0;
+        el.el_flags |= UNBUFFERED;
+        feed_chars("xyz");
+        let mut nread = 0;
+        assert_eq!(noedit_wgets(&mut el, &mut nread), Some(&w("x")[..]));
+        assert_eq!(nread, 1);
+        el.el_flags &= !UNBUFFERED;
+    }
+
+    /// ERR-input-27, a data-loss path with `reproduce` for a disposition: a
+    /// read that fails while `errno` reads `EINTR` discards the **entire**
+    /// partial line, not merely the character that failed. The test is on the
+    /// global `errno` rather than on anything the hook returned, so a client
+    /// callback that reports -1 with a stale `EINTR` still lying there
+    /// triggers the discard — and any other `errno` keeps the line.
+    #[test]
+    fn an_interrupted_read_throws_away_the_whole_partial_line() {
+        let mut el = el();
+        let rd = el.el_read.as_deref_mut().expect("read_init ran");
+        assert_eq!(el_read_setfn(rd, Some(feed as ElRfuncT)), 0);
+
+        feed_chars("abc");
+        feed_error();
+        errno::set_errno(EINTR);
+        let mut nread = -7;
+        assert_eq!(noedit_wgets(&mut el, &mut nread), None);
+        assert_eq!(nread, 0);
+        assert_eq!(el.el_line.lastchar, 0);
+
+        // The same failure under any other errno keeps what was read.
+        el.el_line.lastchar = 0;
+        feed_chars("abc");
+        feed_error();
+        errno::set_errno(EIO);
+        let mut nread = 0;
+        assert_eq!(noedit_wgets(&mut el, &mut nread), Some(&w("abc")[..]));
+        assert_eq!(nread, 3);
+        errno::set_errno(0);
+    }
+}

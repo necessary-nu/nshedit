@@ -273,6 +273,21 @@ children (
                 title "Write tests for input dispatch and binding from their sem rules; there are none to port"
                 deps (input-translate platform-build)
                 sealed true
+                log (
+                    {
+                        at 2026-08-06T23:38:06.53014336Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Every expectation here was read off the Rust and cross-checked against src/read.c and src/parse.c before being written down, so none of them failed on the first run. That is a weaker signal than it sounds — a test that never fails may never have been able to — so two mutations were made and reverted to prove the tests bite: dropping the sibling relink in node__delete fails deleting_one_sibling_leaves_the_rest_of_the_chain, and dropping the restore_handler call in sig_clr fails all three signal tests.\n\nFive values that intuition would have got wrong, recorded because they are what the tests are for.\n\nmap_get_editor on a freshly initialised editor reports vi, not emacs. sem:map.map-get-editor-fn says a fresh EditLine has type == 0 == MAP_EMACS, which is true of the calloc, but map_init ends in map_init_vi because el.h defines VIDEFAULT. The rule describes the struct, not the constructor.\n\n\\U+00041x consumes nine characters, not eight: the fifth hex digit is consumed inside the loop and ERR-input-37's tail still eats one more. \\18 consumes two, not four, because the --p walks back onto the last digit actually taken. M- at end of string is two literal characters rather than an error — the in[2] != '\\0' test fails and it falls through to the verbatim arm twice. \\400 is -1 rather than a truncation.\n\nread_pop removes the front. The C confirms it: el_free(ma->macro[0]) then a shift down. That is what makes the queue FIFO despite the `level` vocabulary, and it is the point of ERR-input-42.\n\nTHE SIGNAL TESTS AND WHY THEY CANNOT KILL THE RUNNER. Dispositions are process-wide and cargo test runs on threads of one process, so the three hold a static Mutex, stepping over poison so a panic in one does not mask another's assertion. Every one uses SIGWINCH, whose default action is ignore, so a test that leaves a disposition unrestored or reaches sig_handler's re-raise cannot take the process down. The untabled-signal case (ERR-terminal-12) uses signal 0, which is not a signal at all and cannot be delivered; any live signal outside the seven would mean betting on a survivable default action on every target.\n\nONE PLACE THE PORT'S FIX IS NOT A SUPERSET OF THE C. sig_clr calls plat::clear_signal_slot() unconditionally, so with two armed EditLines the first to clear unpublishes the second's registration. sem:sig.sig-set-fn already makes serialising the caller's job, exactly as the C does, and this is ERR-terminal-55's territory — but the C never clears `sel` at all, so the port gives it one more way to bite. Documented rather than filed: it is a consequence of having a slot to clear."
+                    }
+
+                    {
+                        at 2026-08-06T23:38:12.812999138Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
 
             {

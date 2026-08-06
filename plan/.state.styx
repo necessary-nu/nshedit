@@ -132,4 +132,5 @@ assertions (
     {id buffer-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T22:52:15.681276245Z}
     {id terminal-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:29:54.224249112Z}
     {id core-api-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:35:40.475369128Z}
+    {id input-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:38:12.812999138Z}
 )

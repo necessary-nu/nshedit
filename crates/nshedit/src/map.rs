@@ -1902,4 +1902,157 @@ mod tests {
             2
         );
     }
+
+    /// An editor whose maps are allocated and filled the way `el_init` leaves
+    /// them, with the three descriptors closed off. A `calloc`ed `EditLine`
+    /// carries 0 in all three, which is the process's standard input, and
+    /// several of the functions below print on their error paths.
+    fn mapped_editline() -> EditLine {
+        let mut el = crate::el::blank_editline();
+        el.el_infd = -1;
+        el.el_outfd = -1;
+        el.el_errfd = -1;
+        assert_eq!(map_init(&mut el), 0);
+        el
+    }
+
+    fn w(s: &str) -> Vec<u32> {
+        s.chars().map(u32::from).collect()
+    }
+
+    /// `type` is the sole source of truth for the mode *name*, while the
+    /// bindings live in the heap tables — so a caller that hand-edits a
+    /// binding still reads back the mode it last selected. That asymmetry is
+    /// the whole content of the rule, and no differential can see it, because
+    /// `el_get(EL_EDITOR)` and the keymap are separate observations.
+    ///
+    /// The shipped default is vi: `el.h` defines VIDEFAULT, so `map_init`
+    /// ends in `map_init_vi`.
+    // [spec:libedit:sem:map.map-get-editor-fn/test]
+    #[test]
+    fn the_editor_name_comes_from_the_mode_tag_and_not_from_the_bindings() {
+        let mut el = mapped_editline();
+        let mut name: &[u32] = &[];
+        assert_eq!(map_get_editor(&mut el, &mut name), 0);
+        assert_eq!(name, EDITOR_VI, "map_init ends in map_init_vi");
+
+        assert_eq!(map_set_editor(&mut el, &w("emacs")), 0);
+        assert_eq!(map_get_editor(&mut el, &mut name), 0);
+        assert_eq!(name, EDITOR_EMACS);
+
+        // Rebinding every slot in the live map does not move the name.
+        el.el_map.key.fill(ED_UNASSIGNED);
+        assert_eq!(map_get_editor(&mut el, &mut name), 0);
+        assert_eq!(name, EDITOR_EMACS);
+
+        // The switch's fall-through, which ERR-modes-71 records as dead: only
+        // a caller that hand-sets `type` reaches it, and the out-parameter is
+        // left holding whatever it held.
+        el.el_map.r#type = 42;
+        assert_eq!(map_get_editor(&mut el, &mut name), -1);
+        assert_eq!(name, EDITOR_EMACS, "the out-parameter is not touched");
+    }
+
+    /// The set is an owned copy that stops at the first NUL, and the getter
+    /// hands back what is stored — including the legitimate "nothing", which
+    /// is the state between `map_init` and the mode init that follows it and
+    /// means "the built-in defaults are in use" rather than "empty"
+    /// (ERR-core-api-30). Both report success either way, so the report is no
+    /// evidence at all.
+    ///
+    /// The C's aliasing hazard has no counterpart here and that is the point
+    /// of ERR-modes-15: the C frees the old set before duplicating the
+    /// argument, so feeding `map_get_wordchars`'s own pointer back in is a
+    /// use-after-free. Round-tripping the value is safe here by construction.
+    // [spec:libedit:sem:map.map-set-wordchars-fn/test]
+    // [spec:libedit:sem:map.map-get-wordchars-fn/test]
+    #[test]
+    fn the_word_character_set_round_trips_and_may_legitimately_be_absent() {
+        let mut el = crate::el::blank_editline();
+        let mut got: Option<Vec<u32>> = Some(w("stale"));
+        assert_eq!(map_get_wordchars(&mut el, &mut got), 0);
+        assert_eq!(got, None, "absent is reported as success, not as empty");
+
+        let mut el = mapped_editline();
+        assert_eq!(map_get_wordchars(&mut el, &mut got), 0);
+        assert_eq!(got.as_deref(), Some(&WORDCHARS_VI[..]), "vi's default");
+
+        assert_eq!(map_set_wordchars(&mut el, &w("abc")), 0);
+        assert_eq!(map_get_wordchars(&mut el, &mut got), 0);
+        assert_eq!(got.as_deref(), Some(&w("abc")[..]));
+
+        // `wcsdup` stops at the terminator, so an embedded NUL truncates the
+        // stored set rather than being carried into it.
+        assert_eq!(
+            map_set_wordchars(&mut el, &[b'a'.into(), 0, b'b'.into()]),
+            0
+        );
+        assert_eq!(map_get_wordchars(&mut el, &mut got), 0);
+        assert_eq!(got.as_deref(), Some(&w("a")[..]));
+
+        // A mode switch reinstalls the mode default over whatever was set.
+        assert_eq!(map_set_editor(&mut el, &w("emacs")), 0);
+        assert_eq!(map_get_wordchars(&mut el, &mut got), 0);
+        assert_eq!(got.as_deref(), Some(&WORDCHARS_EMACS[..]));
+    }
+
+    // Two distinguishable `ElFuncT` values. The map stores the pointer raw
+    // and never calls it here; what matters is that the two rows are separate
+    // rows.
+    unsafe extern "C" fn fn_a(_el: *mut EditLine, _c: u32) -> ElActionT {
+        1
+    }
+    unsafe extern "C" fn fn_b(_el: *mut EditLine, _c: u32) -> ElActionT {
+        2
+    }
+
+    /// The new entry's index *is* its command number, continuing the
+    /// generated numbering, and that is what `bind` stores in a keymap slot.
+    /// There is no uniqueness check: a name that collides with an existing
+    /// one is accepted and the later row becomes permanently unreachable by
+    /// name, because `parse_cmd` returns the first match. That is not an
+    /// error and nothing reports it — the only way to see it is to add the
+    /// duplicate and ask `parse_cmd`.
+    // [spec:libedit:sem:map.map-addfunc-fn/test]
+    #[test]
+    fn an_added_function_is_numbered_by_its_index_and_may_be_shadowed() {
+        let mut el = mapped_editline();
+        let base = el.el_map.nfunc;
+        assert_eq!(base, EL_NUM_FCNS);
+
+        assert_eq!(map_addfunc(&mut el, &w("mine"), &w("help"), fn_a), 0);
+        assert_eq!(el.el_map.nfunc, base + 1);
+        assert_eq!(el.el_map.help[base].func, base as i32);
+        assert_eq!(el.el_map.help[base].description, w("help"));
+        assert_eq!(
+            parse_cmd(&mut el, &w("mine")),
+            base as i32,
+            "the index is the command number bind will store"
+        );
+
+        // A second row under the same name: accepted, numbered normally, and
+        // unreachable through the only lookup there is.
+        assert_eq!(map_addfunc(&mut el, &w("mine"), &w("other"), fn_b), 0);
+        assert_eq!(el.el_map.nfunc, base + 2);
+        assert_eq!(el.el_map.help[base + 1].func, (base + 1) as i32);
+        assert_eq!(
+            parse_cmd(&mut el, &w("mine")),
+            base as i32,
+            "first match wins, so the duplicate is unreachable by name"
+        );
+
+        // The name and help are copied, not borrowed: the caller's storage is
+        // not retained, and the copies stop at the first NUL as `wcsdup` does.
+        assert_eq!(
+            map_addfunc(&mut el, &[b'x'.into(), 0, b'y'.into()], &w("h"), fn_a),
+            0
+        );
+        assert_eq!(parse_cmd(&mut el, &w("x")), (base + 2) as i32);
+        assert_eq!(parse_cmd(&mut el, &w("xy")), -1);
+
+        // `nfunc` is what bounds the lookup, so a row above it is invisible
+        // even though the vector still holds it.
+        el.el_map.nfunc = base;
+        assert_eq!(parse_cmd(&mut el, &w("mine")), -1);
+    }
 }

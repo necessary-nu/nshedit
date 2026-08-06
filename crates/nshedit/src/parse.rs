@@ -507,3 +507,222 @@ pub(crate) fn parse_cmd(el: &mut EditLine, cmd: &[u32]) -> i32 {
     }
     -1
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::el::blank_editline;
+
+    /// A wide string from ASCII source text, as every caller of this module
+    /// has after tokenising an editrc line.
+    fn w(s: &str) -> Vec<u32> {
+        s.chars().map(u32::from).collect()
+    }
+
+    /// [`parse__escape`] over `s`: the value it returned and how many
+    /// characters it consumed. The consumed count is half the contract — the
+    /// cursor is how `parse__string` finds the next escape — and it is where
+    /// both of this function's frozen defects show.
+    fn esc(s: &str) -> (i32, usize) {
+        let v = w(s);
+        let mut p: &[u32] = &v;
+        let rv = parse__escape(&mut p);
+        (rv, v.len() - p.len())
+    }
+
+    /// [`parse__string`] over `s`, with the output buffer the C requires.
+    fn dec(s: &str) -> Option<Vec<u32>> {
+        let r#in = w(s);
+        let mut out = vec![0u32; r#in.len() + 1];
+        parse__string(&mut out, &r#in).map(<[u32]>::to_vec)
+    }
+
+    /// The dispatch table is the entire editrc vocabulary, and a name paired
+    /// with the wrong handler survives any differential that sources a file
+    /// whose lines all parse: `settc` and `telltc` transposed would still be
+    /// seven names looked up by exact `wcscmp`. Pinning the pairing is the
+    /// only way to catch that.
+    ///
+    /// The comment block at the head of `parse.c` lists `gettc` and omits
+    /// `telltc`. The comment is wrong; the table is what runs.
+    // [spec:libedit:sem:parse.func-fn/test]
+    #[test]
+    fn each_command_name_reaches_its_own_handler() {
+        let expected: [(&str, ParseFuncT); 7] = [
+            ("bind", map_bind),
+            ("echotc", terminal_echotc),
+            ("edit", cmd_editmode),
+            ("history", cmd_history),
+            ("telltc", terminal_telltc),
+            ("settc", terminal_settc),
+            ("setty", tty_stty),
+        ];
+        assert_eq!(CMDS.len(), expected.len(), "seven commands, no more");
+        for (row, (name, func)) in CMDS.iter().zip(expected) {
+            assert_eq!(row.name, name);
+            assert!(std::ptr::fn_addr_eq(row.func, func), "{name}");
+        }
+        assert!(
+            !CMDS.iter().any(|c| c.name == "gettc"),
+            "there is no gettc command and never was"
+        );
+
+        // The handler protocol, which is the rest of what this type is: 0 for
+        // success and -1 for failure, negated on the way out. `edit` with no
+        // operand is the cheapest -1 in the table — `el_editmode` rejects any
+        // `argv` that is not exactly two words before it touches anything.
+        let mut el = blank_editline();
+        // The three descriptors a `calloc`ed `EditLine` leaves at 0 are the
+        // process's standard input; -1 is this crate's "no stream", so a
+        // handler that reports an error writes nowhere.
+        el.el_errfd = -1;
+        el.el_outfd = -1;
+        let edit = w("edit");
+        assert_eq!(
+            el_wparse(&mut el, 1, &[&edit]),
+            1,
+            "a handler's -1 reaches the caller as +1"
+        );
+        let gettc = w("gettc");
+        assert_eq!(
+            el_wparse(&mut el, 1, &[&gettc]),
+            -1,
+            "an unknown name is -1, which is what stops el_source"
+        );
+    }
+
+    /// The blanket "there must be at least two characters here" test runs
+    /// before the form is decided, so a one-character literal at the end of a
+    /// string is rejected while the same character followed by anything is
+    /// not (ERR-input-36). This is why `setty erase=X` stores `(cc_t)-1` and
+    /// `setty erase=^H` works, and it is invisible to any differential that
+    /// only feeds well-formed editrc lines.
+    ///
+    /// The empty input is the C's `p[1]` read past the terminator
+    /// (ERR-input-11), defined here as the same -1 with the cursor unmoved.
+    // [spec:libedit:sem:parse.parse-escape-fn/test]
+    #[test]
+    fn a_lone_trailing_character_is_a_malformed_escape() {
+        assert_eq!(esc(""), (-1, 0));
+        assert_eq!(esc("a"), (-1, 0));
+        assert_eq!(esc("ax"), (i32::from(b'a'), 1));
+        assert_eq!(esc("^"), (-1, 0));
+        assert_eq!(esc("\\"), (-1, 0));
+    }
+
+    /// The named escapes are lower case only, so `\E` is not ESC — it falls
+    /// through to "anything else after a backslash is itself" and yields
+    /// `'E'`. The same fall-through is what makes `\M` a literal `M`, which
+    /// is the documented way to defeat [`parse__string`]'s meta form.
+    #[test]
+    fn the_named_escapes_are_lower_case_only() {
+        assert_eq!(esc("\\a").0, 0x07);
+        assert_eq!(esc("\\e").0, 0x1b);
+        assert_eq!(esc("\\r").0, 0x0d);
+        assert_eq!(esc("\\E"), (i32::from(b'E'), 2));
+        assert_eq!(esc("\\M"), (i32::from(b'M'), 2));
+        assert_eq!(esc("\\\\"), (0x5c, 2));
+    }
+
+    /// At most three octal digits, stopping at the first character that is
+    /// not `0`-`7`; three digits reach 0777, and everything above 0377 is
+    /// rejected outright rather than truncated. `\18` is value 1 followed by
+    /// a literal `8`, so the cursor must stop after two characters.
+    #[test]
+    fn an_octal_escape_stops_at_three_digits_and_rejects_the_overflow() {
+        assert_eq!(esc("\\101"), (0x41, 4));
+        assert_eq!(esc("\\377"), (0xff, 4));
+        assert_eq!(esc("\\18"), (1, 2));
+        assert_eq!(esc("\\400"), (-1, 0), "0400 is above a byte");
+        assert_eq!(esc("\\777"), (-1, 0));
+        // Four digits are three digits and a literal: 0101 then `1`.
+        assert_eq!(esc("\\1011"), (0x41, 4));
+    }
+
+    /// The `^` form masks with 0237, which clears bits 5 and 6 and keeps bit
+    /// 7 — so `^a` and `^A` are the same control character, and a character
+    /// above U+007F keeps its high bit rather than being rejected.
+    #[test]
+    fn the_control_form_masks_rather_than_validates() {
+        assert_eq!(esc("^A"), (0x01, 2));
+        assert_eq!(esc("^a"), (0x01, 2));
+        assert_eq!(esc("^?"), (0x7f, 2), "DEL is the one special case");
+        assert_eq!(esc("^@"), (0x00, 2), "^@ is an embedded NUL");
+        assert_eq!(esc("^\u{e9}"), (0x89, 2));
+    }
+
+    /// `\U+` needs four upper-case hex digits and takes an optional fifth,
+    /// and it consumes **one character more than the escape text** — the
+    /// character after the digits is eaten and discarded (ERR-input-37). That
+    /// is defined C behaviour that is merely wrong, so it is frozen rather
+    /// than fixed, and nothing but a unit test looks at it.
+    ///
+    /// End of string inside the digit run is -1 (ERR-input-10 defined): the C
+    /// counts its lookup table's own terminator as a digit worth sixteen and
+    /// walks off the input, which is undefined and is not reproduced.
+    #[test]
+    fn a_unicode_escape_eats_the_character_after_it() {
+        assert_eq!(esc("\\U+0041x"), (0x41, 8), "the trailing x is consumed");
+        assert_eq!(esc("\\U+00041x"), (0x41, 9), "five digits, then the x");
+        assert_eq!(esc("\\U+0041"), (-1, 0), "no character left to discard");
+        assert_eq!(esc("\\U+41zz"), (-1, 0), "the first four are mandatory");
+        assert_eq!(esc("\\U0041x"), (-1, 0), "the plus is mandatory");
+        assert_eq!(esc("\\u+0041x"), (i32::from(b'u'), 2), "upper case only");
+        assert_eq!(esc("\\U+abcdx"), (-1, 0), "the hex table has no lower case");
+        assert_eq!(
+            esc("\\U+D800x"),
+            (0xd800, 8),
+            "the only validation is the 0x10FFFF ceiling, so surrogates pass"
+        );
+    }
+
+    /// The meta form is capital `M`, a literal `-`, and a character after it:
+    /// it emits ESC and steps past the `M-` only, so what follows goes round
+    /// the loop again and may be another escape or another `M-`. An `M` that
+    /// is not part of one is verbatim, and a trailing `M-` is not an error.
+    // [spec:libedit:sem:parse.parse-string-fn/test]
+    #[test]
+    fn the_meta_form_prefixes_an_escape_and_rescans_the_rest() {
+        assert_eq!(dec("M-a"), Some(vec![0x1b, u32::from(b'a')]));
+        assert_eq!(dec("M-^A"), Some(vec![0x1b, 0x01]));
+        assert_eq!(dec("M-M-a"), Some(vec![0x1b, 0x1b, u32::from(b'a')]));
+        assert_eq!(dec("M"), Some(vec![u32::from(b'M')]));
+        assert_eq!(
+            dec("M-"),
+            Some(vec![u32::from(b'M'), u32::from(b'-')]),
+            "a trailing M- decodes verbatim rather than failing"
+        );
+        assert_eq!(
+            dec("\\M-a"),
+            Some(vec![u32::from(b'M'), u32::from(b'-'), u32::from(b'a')]),
+            "an escaped M is a literal M, which defeats the meta form"
+        );
+    }
+
+    /// The decoded string is a length and not a C string: `^@`, `\0` and
+    /// `\U+0000` all decode to 0, and only the returned length distinguishes
+    /// an embedded NUL from the end of the text. The terminator the C writes
+    /// is still there, one past the last character, which is why `map_bind`
+    /// reading the result back as a C string truncates.
+    #[test]
+    fn an_embedded_nul_is_kept_and_only_the_length_reveals_it() {
+        let r#in = w("^@a");
+        let mut out = vec![0xdead_beefu32; r#in.len() + 1];
+        let got = parse__string(&mut out, &r#in).expect("well formed");
+        assert_eq!(got, [0, u32::from(b'a')]);
+        assert_eq!(out[2], 0, "the C's terminator, past the returned slice");
+        assert_eq!(dec("\\0x"), Some(vec![0, u32::from(b'x')]));
+    }
+
+    /// One malformed escape fails the whole string, and the loop stops there.
+    /// That is what closes ERR-input-12: with `\U+` at end of string defined
+    /// as -1 rather than left consuming past the terminator, there is no
+    /// resumption through adjacent memory to reproduce.
+    #[test]
+    fn a_malformed_escape_fails_the_whole_string() {
+        assert_eq!(dec("\\"), None);
+        assert_eq!(dec("ab\\"), None);
+        assert_eq!(dec("a\\U+0041"), None);
+        assert_eq!(dec("\\400"), None);
+    }
+}
