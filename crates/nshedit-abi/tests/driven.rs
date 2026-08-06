@@ -37,7 +37,7 @@
 //! meant to be read from `nplan port status` rather than from here.
 
 // ---------------------------------------------------------------------------
-// conformance/driver/hist_tok.c — 48 rules
+// conformance/driver/hist_tok.c — 49 rules
 // ---------------------------------------------------------------------------
 // [spec:libedit:sem:chartype.ct-conv-cbuff-resize-fn/test]  crates/nshedit/src/chartype.rs:104
 // [spec:libedit:sem:chartype.ct-conv-wbuff-resize-fn/test]  crates/nshedit/src/chartype.rs:138
@@ -85,11 +85,12 @@
 // [spec:libedit:sem:tokenizer.fun-tok-end-fn/test]  crates/nshedit/src/tokenizer.rs:250
 // [spec:libedit:sem:tokenizer.fun-tok-finish-fn/test]  crates/nshedit/src/tokenizer.rs:174
 // [spec:libedit:sem:tokenizer.fun-tok-init-fn/test]  crates/nshedit/src/tokenizer.rs:202
+// [spec:libedit:sem:tokenizer.fun-tok-line-fn/test]  crates/nshedit/src/tokenizer.rs:274
 // [spec:libedit:sem:tokenizer.fun-tok-reset-fn/test]  crates/nshedit/src/tokenizer.rs:233
 // [spec:libedit:sem:tokenizer.fun-tok-str-fn/test]  crates/nshedit/src/tokenizer.rs:530
 
 // ---------------------------------------------------------------------------
-// conformance/driver/el_api.c — 107 rules
+// conformance/driver/el_api.c — 121 rules
 // ---------------------------------------------------------------------------
 // [spec:libedit:sem:chared.c-delbefore-fn/test]  crates/nshedit/src/chared.rs:407
 // [spec:libedit:sem:chared.c-insert-fn/test]  crates/nshedit/src/chared.rs:278
@@ -104,8 +105,16 @@
 // [spec:libedit:sem:chartype.ct-chr-class-fn/test]  crates/nshedit/src/chartype.rs:547
 // [spec:libedit:sem:chartype.ct-visual-char-fn/test]  crates/nshedit/src/chartype.rs:470
 // [spec:libedit:sem:chartype.ct-visual-string-fn/test]  crates/nshedit/src/chartype.rs:377
+// [spec:libedit:sem:el.editline.el-getenv-fn/test]  crates/nshedit/src/el.rs:446
+// [spec:libedit:sem:el.el-editmode-fn/test]  crates/nshedit/src/el.rs:1294
+// [spec:libedit:sem:el.el-end-fn/test]  crates/nshedit/src/el.rs:933
+// [spec:libedit:sem:el.el-init-fd-fn/test]  crates/nshedit/src/el.rs:900
+// [spec:libedit:sem:el.el-init-internal-fn/test]  crates/nshedit/src/el.rs:547
 // [spec:libedit:sem:el.el-reset-fn/test]  crates/nshedit/src/el.rs:1022
+// [spec:libedit:sem:el.el-resize-fn/test]  crates/nshedit/src/el.rs:1217
+// [spec:libedit:sem:el.el-source-fn/test]  crates/nshedit/src/el.rs:1053
 // [spec:libedit:sem:el.el-wline-fn/test]  crates/nshedit-abi/src/histedit.rs:1574
+// [spec:libedit:sem:el.secure-getenv-fn/test]  crates/nshedit/src/el.rs:304
 // [spec:libedit:sem:eln.el-get-fn/test]  crates/nshedit-abi/src/eln.rs:520
 // [spec:libedit:sem:eln.el-insertstr-fn/test]  crates/nshedit-abi/src/eln.rs:698
 // [spec:libedit:sem:eln.el-line-fn/test]  crates/nshedit-abi/src/eln.rs:605
@@ -118,7 +127,6 @@
 // [spec:libedit:sem:histedit.el-deletestr-fn/test]  crates/nshedit-abi/src/histedit.rs:640
 // [spec:libedit:sem:histedit.el-end-fn/test]  crates/nshedit-abi/src/histedit.rs:492
 // [spec:libedit:sem:histedit.el-init-fn/test]  crates/nshedit-abi/src/histedit.rs:440
-// [spec:libedit:sem:histedit.el-insertstr-fn/test]  crates/nshedit-abi/src/histedit.rs:640
 // [spec:libedit:sem:histedit.el-resize-fn/test]  crates/nshedit-abi/src/histedit.rs:616
 // [spec:libedit:sem:histedit.el-source-fn/test]  crates/nshedit-abi/src/histedit.rs:600
 // [spec:libedit:sem:histedit.el-winsertstr-fn/test]  crates/nshedit-abi/src/histedit.rs:1618
@@ -158,6 +166,11 @@
 // [spec:libedit:sem:map.map-print-key-fn/test]  crates/nshedit/src/map.rs:1337
 // [spec:libedit:sem:map.map-print-some-keys-fn/test]  crates/nshedit/src/map.rs:1379
 // [spec:libedit:sem:map.map-set-editor-fn/test]  crates/nshedit/src/map.rs:1265
+// [spec:libedit:sem:parse.el-wparse-fn/test]  crates/nshedit/src/parse.rs:236
+// [spec:libedit:sem:parse.parse-cmd-fn/test]  crates/nshedit/src/parse.rs:502
+// [spec:libedit:sem:parse.parse-escape-fn/test]  crates/nshedit/src/parse.rs:321
+// [spec:libedit:sem:parse.parse-line-fn/test]  crates/nshedit/src/parse.rs:179
+// [spec:libedit:sem:parse.parse-string-fn/test]  crates/nshedit/src/parse.rs:452
 // [spec:libedit:sem:prompt.prompt-end-fn/test]  crates/nshedit/src/prompt.rs:281
 // [spec:libedit:sem:prompt.prompt-init-fn/test]  crates/nshedit/src/prompt.rs:260
 // [spec:libedit:sem:read.read-clearmacros-fn/test]  crates/nshedit/src/read.rs:703
@@ -190,8 +203,10 @@
 // [spec:libedit:sem:terminal.terminal-setflags-fn/test]  crates/nshedit/src/terminal.rs:942
 // [spec:libedit:sem:terminal.terminal-settc-fn/test]  crates/nshedit/src/terminal.rs:2221
 // [spec:libedit:sem:terminal.terminal-telltc-fn/test]  crates/nshedit/src/terminal.rs:2152
+// [spec:libedit:sem:terminal.tgetent-fn/test]  crates/nshedit/src/terminal.rs:619
 // [spec:libedit:sem:terminal.tgetflag-fn/test]  crates/nshedit/src/terminal.rs:652
 // [spec:libedit:sem:terminal.tgetnum-fn/test]  crates/nshedit/src/terminal.rs:664
+// [spec:libedit:sem:terminal.tgetstr-fn/test]  crates/nshedit/src/terminal.rs:686
 // [spec:libedit:sem:tty.tty-bind-char-fn/test]  crates/nshedit/src/tty.rs:1153
 // [spec:libedit:sem:tty.tty-cookedmode-fn/test]  crates/nshedit/src/tty.rs:1409
 // [spec:libedit:sem:tty.tty-getty-fn/test]  crates/nshedit/src/tty.rs:806
@@ -261,16 +276,16 @@
 ///
 /// A rule reached by more than one driver is attributed to the first that
 /// reaches it, so these sum to the total. The overlap is large and that is
-/// expected — 205 of 205 rules are reached by more than one,
+/// expected — 220 of 220 rules are reached by more than one,
 /// because every driver goes through the same lifecycle and allocator paths.
 #[test]
 fn the_claim_list_is_what_coverage_measured() {
     // Regenerate with ./conformance/coverage.sh, verify with --check.
-    // 205 rules across 4 drivers, measured under -C instrument-coverage.
-    assert_eq!(CLAIMED, 205);
+    // 220 rules across 4 drivers, measured under -C instrument-coverage.
+    assert_eq!(CLAIMED, 220);
 }
 
 /// How many `/test` facets this file carries. The generator and the
 /// annotations above are written together, so a hand edit to either
 /// desynchronises them and `coverage.sh --check` says so.
-const CLAIMED: usize = 205;
+const CLAIMED: usize = 220;

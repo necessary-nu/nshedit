@@ -30,10 +30,12 @@ import sys
 ANNOTATION = re.compile(r"\[spec:libedit:(sem|def):([a-z0-9._-]+)\]")
 # The first line of a function definition, in every shape the port uses.
 FN = re.compile(r'\s*(pub(\(crate\))?\s+)?(unsafe\s+)?(extern\s+"C"\s+)?fn\s')
-# How far below an annotation its function may sit: the doc comment between
-# them can be long, but a gap this size means the annotation labels something
-# else and the pairing would be a guess.
-LOOKAHEAD = 12
+# Between an annotation and the item it labels there is only ever a doc
+# comment, another annotation, an attribute or a blank line. Anything else is
+# the item. Scanning for THAT rather than allowing a fixed number of lines is
+# what makes the pairing exact: `el_init` carries a fifteen-line doc comment
+# and a twelve-line window silently dropped it, along with a hundred others.
+SKIPPABLE = re.compile(r"\s*(//|#\[|$)")
 
 
 def executed_ranges(export_path):
@@ -69,10 +71,12 @@ def annotations(root):
             m = ANNOTATION.search(line)
             if not m:
                 continue
-            for j in range(i + 1, min(i + LOOKAHEAD, len(lines))):
+            for j in range(i + 1, len(lines)):
+                if SKIPPABLE.match(lines[j]):
+                    continue
                 if FN.match(lines[j]):
                     found.append((m.group(2), real, rel, j + 1))
-                    break
+                break
     return found
 
 

@@ -34,3 +34,6 @@ stamp-h1
 # Coverage profiles from conformance/coverage.sh, which some cargo
 # invocations drop in the working directory rather than under target/.
 *.profraw
+
+# Python bytecode from conformance/driven.py.
+__pycache__/

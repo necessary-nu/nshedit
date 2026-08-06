@@ -1311,6 +1311,7 @@ children (
                 id conformance-driver-el
                 title "Differential driver for the el_* non-interactive surface, the largest untested area"
                 deps (conformance-differential)
+                sealed true
                 log (
                     {
                         at 2026-08-05T10:59:11.080143617Z
@@ -1325,6 +1326,13 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-08-06T21:46:42.984500652Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -1332,12 +1340,20 @@ children (
                 id conformance-driver-readline
                 title "Differential driver for the readline layer, with GNU readline as a second reference"
                 deps (conformance-differential)
+                sealed true
                 log (
                     {
                         at 2026-08-06T20:23:02.204982987Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T21:46:43.026910006Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
