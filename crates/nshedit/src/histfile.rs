@@ -65,7 +65,9 @@
 //! *positively identified* rather than being whatever failed to look like
 //! something else.
 
-use bstr::{BString, ByteSlice};
+use bstr::BString;
+#[cfg(feature = "bsd")]
+use bstr::ByteSlice;
 use std::io::{self, Write};
 
 /// Identifies a native history file. Checked, not assumed: a file that does
@@ -214,7 +216,10 @@ pub fn detect(head: &[u8]) -> Format {
 pub fn read_any(bytes: &[u8]) -> (Vec<Record>, Option<Error>) {
     match detect(bytes) {
         Format::Native => read_all(bytes),
+        #[cfg(feature = "bsd")]
         Format::LibeditV2 => read_libedit(bytes),
+        #[cfg(not(feature = "bsd"))]
+        Format::LibeditV2 => (Vec::new(), Some(Error::UnrecognisedFormat)),
         Format::Unknown => (Vec::new(), Some(Error::UnrecognisedFormat)),
     }
 }
@@ -226,6 +231,7 @@ pub fn read_any(bytes: &[u8]) -> (Vec<Record>, Option<Error>) {
 /// has nowhere to put one. `H_SAVE` writes `ev.str` and drops the entry's
 /// `void *data`, so a libedit file never carried application data to begin
 /// with.
+#[cfg(feature = "bsd")]
 fn read_libedit(bytes: &[u8]) -> (Vec<Record>, Option<Error>) {
     let mut out = Vec::new();
     let mut fault = None;
@@ -248,28 +254,10 @@ fn read_libedit(bytes: &[u8]) -> (Vec<Record>, Option<Error>) {
     (out, fault)
 }
 
-/// One vis-encoded line, decoded.
-///
-/// The single seam onto `vis(3)`, so the `bsd` feature is one `cfg` rather
-/// than a scattering of them. Note this is the DECODER, which
-/// `bsd::vis::decode` implements with no libc in it at all — the encoder is
-/// the half that reaches `isgraph`/`mbtowc`/`wctomb`.
+/// One vis-encoded line, decoded. The single seam onto `vis(3)`.
 #[cfg(feature = "bsd")]
 fn unvis_line(line: &[u8]) -> Option<Vec<u8>> {
     bsd::vis::decode(line, bsd::vis::Flags::NONE).ok()
-}
-
-/// Without the `bsd` feature there is no decoder, so a libedit file is
-/// readable only if it happens to contain no escapes. Refusing outright would
-/// be worse: a file of plain ASCII commands with no spaces decodes correctly
-/// by doing nothing, and there is no reason to withhold it.
-#[cfg(not(feature = "bsd"))]
-fn unvis_line(line: &[u8]) -> Option<Vec<u8>> {
-    if line.contains(&b'\\') {
-        None
-    } else {
-        Some(line.to_vec())
-    }
 }
 
 /// Writes the header frame. Call once, when creating the file; appending to
@@ -640,10 +628,10 @@ mod test {
         assert_eq!(read_any(b"echo plain\n").1, Some(Error::UnrecognisedFormat));
     }
 
-    /// Reading is not behind the feature. Without `bsd` a libedit file with
-    /// no escapes in it still opens, because nothing needs decoding.
+    /// The simplest legacy file: no escapes, so nothing to undo.
     #[test]
-    fn an_unescaped_legacy_file_reads_without_the_bsd_feature() {
+    #[cfg(feature = "bsd")]
+    fn an_unescaped_legacy_file_reads_back() {
         let libedit: &[u8] = b"_HiStOrY_V2_\nls\npwd\n";
         let (back, fault) = read_any(libedit);
         assert_eq!(fault, None);
@@ -671,18 +659,14 @@ mod test {
         let texts: Vec<&[u8]> = back.iter().map(|r| r.text.as_slice()).collect();
         assert_eq!(texts, vec![&b"good one"[..], &b"good two"[..]]);
     }
-    /// Without `bsd` there is no decoder, so an escaped legacy file is
-    /// reported rather than half-read. The alternative would be handing back
-    /// `echo\\040plain` as though that were the command someone ran, which
-    /// is a wrong answer dressed as a right one.
+    /// Without `bsd` there is no vis, so a libedit file is a format this
+    /// build does not read.
     #[test]
     #[cfg(not(feature = "bsd"))]
-    fn an_escaped_legacy_file_is_refused_without_the_bsd_feature() {
+    fn a_legacy_file_is_unreadable_without_the_bsd_feature() {
         let libedit: &[u8] = b"_HiStOrY_V2_\nls\necho\\040plain\n";
         let (back, fault) = read_any(libedit);
-        assert!(matches!(fault, Some(Error::BadRecord(_))), "{fault:?}");
-        // The line that needed no decoding is still returned.
-        assert_eq!(back.len(), 1);
-        assert_eq!(back[0].text, b"ls");
+        assert_eq!(fault, Some(Error::UnrecognisedFormat));
+        assert!(back.is_empty());
     }
 }
