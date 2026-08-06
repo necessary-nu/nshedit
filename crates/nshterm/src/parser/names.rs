@@ -1,11 +1,15 @@
 #![allow(non_upper_case_globals, missing_docs)]
 #![cfg_attr(rustfmt, rustfmt_skip)]
 
-// TODO(nshterm): two columns here, long names and capnames. ncurses' `Caps` has
-// three — the termcap two-letter code is the one `term` dropped. Without it a
-// caller cannot resolve `cl` to `clear`, which is what libedit's `settc`,
-// `echotc` and `EL_SETTC` accept from users and from `.editrc`.
-// See plan node `nshterm-termcap-names`.
+// Three columns, in ncurses' own order and generated from its `include/Caps`:
+// the long name, the terminfo capname, and the termcap two-letter code. The
+// third is the one `term` 1.2.1 dropped, and libedit needs it — `settc`,
+// `echotc` and `EL_SETTC` all take a name a user typed, at a prompt or in
+// `.editrc`, and those are termcap codes.
+//
+// Every capability has a termcap code — measured: 0 of 497 rows in `Caps` 6.5
+// carry `-` in that column. The codes are not unique, though; see
+// `capname_for_termcap`.
 
 pub static boolfnames: &[&str] = &["auto_left_margin",
                                    "auto_right_margin",
@@ -101,7 +105,7 @@ pub static numfnames: &[&str] = &["columns",
 pub static numnames: &[&str] =
     &["cols", "it", "lines", "lm", "xmc", "pb", "vt", "wsl", "nlab", "lh", "lw", "ma", "wnum",
       "colors", "pairs", "ncv", "bufsz", "spinv", "spinh", "maddr", "mjump", "mcs", "mls",
-      "npins", "orc", "orl", "orhi", "orvi", "cps", "widcs", "btns", "bitwin", "bitype", "UTug",
+      "npins", "orc", "orl", "orhi", "orvi", "cps", "widcs", "btns", "bitwin", "bitype", "OTug",
       "OTdC", "OTdN", "OTdB", "OTdT", "OTkn"];
 
 pub static stringfnames: &[&str] = &["back_tab",
@@ -555,5 +559,233 @@ pub static stringnames: &[&str] =
       "s3ds", "smglr", "smgtb", "birep", "binel", "bicr", "colornm", "defbi", "endbi", "setcolor",
       "slines", "dispc", "smpch", "rmpch", "smsc", "rmsc", "pctrm", "scesc", "scesa", "ehhlm",
       "elhlm", "elohlm", "erhlm", "ethlm", "evhlm", "sgr1", "slength", "OTi2", "OTrs", "OTnl",
-      "OTbs", "OTko", "OTma", "OTG2", "OTG3", "OTG1", "OTG4", "OTGR", "OTGL", "OTGU", "OTGD",
+      "OTbc", "OTko", "OTma", "OTG2", "OTG3", "OTG1", "OTG4", "OTGR", "OTGL", "OTGU", "OTGD",
       "OTGH", "OTGV", "OTGC", "meml", "memu", "box1"];
+
+pub static boolcodes: &[&str] =
+    &["bw", "am", "xb", "xs", "xn", "eo", "gn", "hc", "km", "hs", "in", "da", "db", "mi",
+      "ms", "os", "es", "xt", "hz", "ul", "xo", "nx", "5i", "HC", "NR", "NP", "ND", "cc",
+      "ut", "hl", "YA", "YB", "YC", "YD", "YE", "YF", "YG", "bs", "ns", "nc", "MT", "NL",
+      "pt", "xr"];
+
+pub static numcodes: &[&str] =
+    &["co", "it", "li", "lm", "sg", "pb", "vt", "ws", "Nl", "lh", "lw", "ma", "MW", "Co",
+      "pa", "NC", "Ya", "Yb", "Yc", "Yd", "Ye", "Yf", "Yg", "Yh", "Yi", "Yj", "Yk", "Yl",
+      "Ym", "Yn", "BT", "Yo", "Yp", "ug", "dC", "dN", "dB", "dT", "kn"];
+
+pub static stringcodes: &[&str] =
+    &["bt", "bl", "cr", "cs", "ct", "cl", "ce", "cd", "ch", "CC", "cm", "do", "ho", "vi",
+      "le", "CM", "ve", "nd", "ll", "up", "vs", "dc", "dl", "ds", "hd", "as", "mb", "md",
+      "ti", "dm", "mh", "im", "mk", "mp", "mr", "so", "us", "ec", "ae", "me", "te", "ed",
+      "ei", "se", "ue", "vb", "ff", "fs", "i1", "is", "i3", "if", "ic", "al", "ip", "kb",
+      "ka", "kC", "kt", "kD", "kL", "kd", "kM", "kE", "kS", "k0", "k1", "k;", "k2", "k3",
+      "k4", "k5", "k6", "k7", "k8", "k9", "kh", "kI", "kA", "kl", "kH", "kN", "kP", "kr",
+      "kF", "kR", "kT", "ku", "ke", "ks", "l0", "l1", "la", "l2", "l3", "l4", "l5", "l6",
+      "l7", "l8", "l9", "mo", "mm", "nw", "pc", "DC", "DL", "DO", "IC", "SF", "AL", "LE",
+      "RI", "SR", "UP", "pk", "pl", "px", "ps", "pf", "po", "rp", "r1", "r2", "r3", "rf",
+      "rc", "cv", "sc", "sf", "sr", "sa", "st", "wi", "ta", "ts", "uc", "hu", "iP", "K1",
+      "K3", "K2", "K4", "K5", "pO", "rP", "ac", "pn", "kB", "SX", "RX", "SA", "RA", "XN",
+      "XF", "eA", "LO", "LF", "@1", "@2", "@3", "@4", "@5", "@6", "@7", "@8", "@9", "@0",
+      "%1", "%2", "%3", "%4", "%5", "%6", "%7", "%8", "%9", "%0", "&1", "&2", "&3", "&4",
+      "&5", "&6", "&7", "&8", "&9", "&0", "*1", "*2", "*3", "*4", "*5", "*6", "*7", "*8",
+      "*9", "*0", "#1", "#2", "#3", "#4", "%a", "%b", "%c", "%d", "%e", "%f", "%g", "%h",
+      "%i", "%j", "!1", "!2", "!3", "RF", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8",
+      "F9", "FA", "FB", "FC", "FD", "FE", "FF", "FG", "FH", "FI", "FJ", "FK", "FL", "FM",
+      "FN", "FO", "FP", "FQ", "FR", "FS", "FT", "FU", "FV", "FW", "FX", "FY", "FZ", "Fa",
+      "Fb", "Fc", "Fd", "Fe", "Ff", "Fg", "Fh", "Fi", "Fj", "Fk", "Fl", "Fm", "Fn", "Fo",
+      "Fp", "Fq", "Fr", "cb", "MC", "ML", "MR", "Lf", "SC", "DK", "RC", "CW", "WG", "HU",
+      "DI", "QD", "TO", "PU", "fh", "PA", "WA", "u0", "u1", "u2", "u3", "u4", "u5", "u6",
+      "u7", "u8", "u9", "op", "oc", "Ic", "Ip", "sp", "Sf", "Sb", "ZA", "ZB", "ZC", "ZD",
+      "ZE", "ZF", "ZG", "ZH", "ZI", "ZJ", "ZK", "ZL", "ZM", "ZN", "ZO", "ZP", "ZQ", "ZR",
+      "ZS", "ZT", "ZU", "ZV", "ZW", "ZX", "ZY", "ZZ", "Za", "Zb", "Zc", "Zd", "Ze", "Zf",
+      "Zg", "Zh", "Zi", "Zj", "Zk", "Zl", "Zm", "Zn", "Zo", "Zp", "Zq", "Zr", "Zs", "Zt",
+      "Zu", "Zv", "Zw", "Zx", "Zy", "Km", "Mi", "RQ", "Gm", "AF", "AB", "xl", "dv", "ci",
+      "s0", "s1", "s2", "s3", "ML", "MT", "Xy", "Zz", "Yv", "Yw", "Yx", "Yy", "Yz", "YZ",
+      "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "Xh", "Xl", "Xo", "Xr", "Xt", "Xv",
+      "sA", "YI", "i2", "rs", "nl", "bc", "ko", "ma", "G2", "G3", "G1", "G4", "GR", "GL",
+      "GU", "GD", "GH", "GV", "GC", "ml", "mu", "bx"];
+
+/// The terminfo capname a termcap two-letter code refers to.
+///
+/// This is the conversion libedit needs and `term` 1.2.1 could not do.
+/// `settc`, `echotc` and `EL_SETTC` all take a name a user typed — at a
+/// prompt, or in `.editrc` — and what users type is termcap: `cl`, not
+/// `clear`. Everything else in this crate is keyed by capname, so this is the
+/// one place that translation happens.
+///
+/// Both directions are linear over ~500 entries, and run once for each name
+/// someone types, which is not a rate worth indexing for.
+///
+/// # Three codes are ambiguous
+///
+/// The termcap namespace collides with itself, and ncurses resolves it by
+/// knowing which type it wants. This searches booleans, then numbers, then
+/// strings, so:
+///
+/// ```text
+/// MT   bool OTMT   wins over  str smgtb
+/// ma   num  ma     wins over  str OTma
+/// ML   str  smgl   wins over  str smglr
+/// ```
+///
+/// Measured against `Caps` 6.5, and those three are the whole list. All of
+/// them are obsolete or margin-setting capabilities that `settc` and `echotc`
+/// are not plausibly asked for, so the order is a choice rather than a
+/// problem — but it IS a choice, and a caller that knows the type should
+/// index the `*codes` array it wants directly instead of asking here.
+#[must_use]
+pub fn capname_for_termcap(code: &str) -> Option<&'static str> {
+    if code.is_empty() {
+        return None;
+    }
+    for (codes, names) in [
+        (boolcodes, boolnames),
+        (numcodes, numnames),
+        (stringcodes, stringnames),
+    ] {
+        if let Some(i) = codes.iter().position(|&c| c == code) {
+            return Some(names[i]);
+        }
+    }
+    None
+}
+
+/// The termcap two-letter code for a terminfo capname, where one exists.
+///
+/// The inverse of [`capname_for_termcap`], for reporting a capability back to
+/// a user in the vocabulary they used.
+#[must_use]
+pub fn termcap_for_capname(name: &str) -> Option<&'static str> {
+    for (names, codes) in [
+        (boolnames, boolcodes),
+        (numnames, numcodes),
+        (stringnames, stringcodes),
+    ] {
+        if let Some(i) = names.iter().position(|&n| n == name) {
+            return (!codes[i].is_empty()).then_some(codes[i]);
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// The three columns are one table in ncurses' `Caps` and must stay one
+    /// here: an index into `stringnames` is an index into the compiled
+    /// terminfo file's string table, so a length that drifts silently
+    /// mislabels every capability after the drift.
+    #[test]
+    fn the_columns_are_the_same_length() {
+        assert_eq!(boolnames.len(), boolfnames.len());
+        assert_eq!(boolnames.len(), boolcodes.len());
+        assert_eq!(numnames.len(), numfnames.len());
+        assert_eq!(numnames.len(), numcodes.len());
+        assert_eq!(stringnames.len(), stringfnames.len());
+        assert_eq!(stringnames.len(), stringcodes.len());
+        // ncurses 6.5's own counts.
+        assert_eq!((boolnames.len(), numnames.len(), stringnames.len()), (44, 39, 414));
+    }
+
+    /// The codes libedit's own `settc`/`echotc` documentation names, and the
+    /// ones a `.editrc` is most likely to carry.
+    #[test]
+    fn the_codes_users_actually_type_resolve() {
+        for (code, capname) in [
+            ("cl", "clear"),
+            ("ce", "el"),
+            ("cd", "ed"),
+            ("cm", "cup"),
+            ("ho", "home"),
+            ("nd", "cuf1"),
+            ("up", "cuu1"),
+            ("so", "smso"),
+            ("se", "rmso"),
+            ("us", "smul"),
+            ("ue", "rmul"),
+            ("md", "bold"),
+            ("me", "sgr0"),
+            ("bl", "bel"),
+            ("co", "cols"),
+            ("li", "lines"),
+            ("am", "am"),
+            ("pt", "OTpt"),
+        ] {
+            assert_eq!(
+                capname_for_termcap(code),
+                Some(capname),
+                "termcap {code} should be terminfo {capname}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_mapping_round_trips() {
+        for code in ["cl", "cm", "co", "li", "am", "ce"] {
+            let name = capname_for_termcap(code).unwrap();
+            assert_eq!(termcap_for_capname(name), Some(code));
+        }
+    }
+
+    /// An unknown name is `None`, and the empty string is not a wildcard.
+    ///
+    /// Every capability turns out to HAVE a termcap code — 0 of 497 `Caps`
+    /// rows carry `-`, measured — so the empty case is input validation
+    /// rather than the common case I first assumed it was. `setaf` is `AF`,
+    /// not absent.
+    #[test]
+    fn an_unknown_name_is_not_a_wildcard() {
+        assert_eq!(capname_for_termcap(""), None);
+        assert_eq!(capname_for_termcap("no-such-code"), None);
+        assert_eq!(termcap_for_capname(""), None);
+        assert_eq!(termcap_for_capname("no_such_capability"), None);
+        assert_eq!(termcap_for_capname("setaf"), Some("AF"));
+        assert!(
+            [boolcodes, numcodes, stringcodes]
+                .iter()
+                .all(|t| t.iter().all(|c| !c.is_empty())),
+            "a generated code is empty, so the empty-string guard now matters"
+        );
+    }
+
+    /// Three termcap codes name two capabilities each, so which one wins is a
+    /// choice this pins rather than an accident. Measured against `Caps` 6.5;
+    /// these three are the whole list.
+    #[test]
+    fn the_ambiguous_codes_resolve_the_way_the_search_order_says() {
+        assert_eq!(capname_for_termcap("MT"), Some("OTMT")); // over smgtb
+        assert_eq!(capname_for_termcap("ma"), Some("ma")); // over OTma
+        assert_eq!(capname_for_termcap("ML"), Some("smgl")); // over smglr
+
+        let mut seen = std::collections::HashMap::new();
+        let mut clashes = Vec::new();
+        for table in [boolcodes, numcodes, stringcodes] {
+            for &code in table {
+                if seen.insert(code, ()).is_some() {
+                    clashes.push(code);
+                }
+            }
+        }
+        clashes.sort_unstable();
+        assert_eq!(clashes, ["ML", "MT", "ma"]);
+    }
+
+    /// Two capabilities `term` 1.2.1 misspelled by one character each, so
+    /// neither could ever be found by name. Both are checked against
+    /// ncurses' `Caps`, which is where the generated columns come from.
+    #[test]
+    fn the_two_misspelled_capnames_are_correct() {
+        // Caps: magic_cookie_glitch_ul  OTug  num  ug  — was `UTug`.
+        assert!(numnames.contains(&"OTug"));
+        assert!(!numnames.contains(&"UTug"));
+        assert_eq!(capname_for_termcap("ug"), Some("OTug"));
+
+        // Caps: backspace_if_not_bs  OTbc  str  bc  — was `OTbs`, which is a
+        // real capname, but a BOOLEAN one, so the string table carried a
+        // duplicate of a different capability's name.
+        assert_eq!(stringnames[397], "OTbc");
+        assert_eq!(capname_for_termcap("bc"), Some("OTbc"));
+        assert!(boolnames.contains(&"OTbs"));
+    }
+}

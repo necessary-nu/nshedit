@@ -1391,6 +1391,22 @@ children (
                 id nshterm-termcap-names
                 title "Carry the termcap column ncurses has and term dropped, so legacy two-letter names resolve"
                 deps (nshterm-extract)
+                sealed true
+                log (
+                    {
+                        at 2026-08-06T17:52:27.851752133Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T17:56:16.549001086Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
             }
 
             {
