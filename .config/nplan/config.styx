@@ -31,9 +31,17 @@ platforms (
         platform "rust"
         files (crates/**/*.rs)
         checks {
+            // Named packages, not `--all`. `cargo fmt --all` is documented
+            // to format workspace members AND their local path-based
+            // dependencies, and `crates/nshedit`'s optional `bsd` dependency
+            // is a path into a sibling checkout somebody else is editing —
+            // so `--all` made this gate a coin flip on their timing, and
+            // "fix" would have rewritten their files. There is no
+            // `cargo fmt --exclude`. `tests/workspace_hygiene.rs` fails if
+            // this list stops matching the workspace members.
             format {
-                cmd "cargo fmt --all -- --check"
-                fix "cargo fmt --all"
+                cmd "cargo fmt -p nshedit -p nshedit-abi -p nshedit-plat -p nshterm -- --check"
+                fix "cargo fmt -p nshedit -p nshedit-abi -p nshedit-plat -p nshterm"
             }
             lint {
                 cmd "cargo clippy --workspace --all-targets -- -D warnings"
