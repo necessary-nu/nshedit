@@ -56,6 +56,12 @@ build port   "$PORT_LIB_DIR"       nshedit
 prepare_work
 mkdir -p -- "$WORK/data"
 
+# stderr goes to its own file, never into the trace. The oracle's
+# `rl_initialize` writes `bind: Invalid command \`rl_complete\'.` there, and
+# merging it in shifted every following line — which made the join report two
+# port deaths that had not happened. A trace this reads line by line cannot
+# share a stream with anything that writes when it feels like it.
+#
 # stdin is /dev/null, not the harness's. `el_gets` blocks until it has a line,
 # so an inherited terminal or pipe makes it wait forever — both sides hung on
 # ERR-core-api-11 until this was added, which was the harness's fault and not
@@ -69,7 +75,7 @@ for which in oracle port; do
         LC_ALL=C TERM=dumb "TERMINFO=$WORK/terminfo" "HOME=$WORK/home" \
         "TMPDIR=$WORK/tmp" COLUMNS=80 LINES=24 PATH=/usr/bin:/bin \
         "$OUT_DIR/ub.$which" "$WORK/data" \
-        < /dev/null > "$REPORT/$which.trace" 2>&1
+        < /dev/null > "$REPORT/$which.trace" 2> "$REPORT/$which.stderr"
     printf 'conformance: %s driver exited %d\n' "$which" "$?" >&2
 done
 

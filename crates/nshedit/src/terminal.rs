@@ -2357,7 +2357,7 @@ pub fn terminal_gettc(el: &mut EditLine, argc: i32, argv: &[*mut c_char]) -> i32
     // be NULL when the capability is absent and which any later
     // `terminal_set`/`terminal_settc` invalidates — which is why the stored
     // value carries the terminator the C's does (see `terminal_alloc_bytes`).
-    if let Some(idx) = TSTR.iter().position(|t| t.name.as_bytes() == what) {
+    if let Some(idx) = resolve_cap(&what, |n| TSTR.iter().position(|t| t.name.as_bytes() == n)) {
         let p = match el.el_terminal.t_str.get(idx) {
             Some(Some(v)) => v.as_ptr().cast::<c_char>().cast_mut(),
             _ => std::ptr::null_mut(),
@@ -2369,7 +2369,7 @@ pub fn terminal_gettc(el: &mut EditLine, argc: i32, argv: &[*mut c_char]) -> i32
     }
 
     // Step 3.
-    let Some(idx) = TVAL.iter().position(|t| t.name.as_bytes() == what) else {
+    let Some(idx) = resolve_cap(&what, |n| TVAL.iter().position(|t| t.name.as_bytes() == n)) else {
         return -1;
     };
 

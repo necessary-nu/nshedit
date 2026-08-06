@@ -226,6 +226,14 @@ static void ub_history_expand_null_out(void)
 	(void)history_expand(line, NULL);
 }
 
+/* No erratum: `_rl_abort_internal` does not return in the C — it longjmps or
+ * exits — so a differential driver cannot call it without losing the rest of
+ * its own trace. Moved here from readline_api.c after it did exactly that. */
+static void ub_abort_internal(void)
+{
+	(void)_rl_abort_internal();
+}
+
 /* No erratum either. `tilde_expand(NULL)` reaches `strlen` in the C. */
 static void ub_tilde_null(void)
 {
@@ -289,6 +297,7 @@ int main(int argc, char **argv)
 	probe("ERR-core-api-11", "el_gets NULL count", ub_gets_null_count);
 	probe("(unregistered)", "history_expand NULL out", ub_history_expand_null_out);
 	probe("(unregistered)", "tilde_expand(NULL)", ub_tilde_null);
+	probe("(unregistered)", "_rl_abort_internal", ub_abort_internal);
 
 	/* `++seq` and `seq - 1` in one argument list is unsequenced, which is
 	 * the same class of defect this file exists to find. Count first. */

@@ -52,9 +52,10 @@ use nshedit::chartype::{CtBufferT, ct_decode_string, ct_encode_string};
 use nshedit::histedit::{EditLine, LineInfo};
 
 use crate::histedit::{
-    EL_CLIENTDATA, EL_EDITMODE, EL_EDITOR, EL_GETCFN, EL_PREP_TERM, EL_SAFEREAD, EL_SETFP,
-    EL_SIGNAL, EL_TERMINAL, EL_UNBUFFERED, EL_WORDCHARS, el_wget_va, el_wgetc, el_wgets,
-    el_winsertstr, el_wline, el_wparse, el_wpush, el_wreplacestr, el_wset_va,
+    EL_BIND, EL_CLIENTDATA, EL_ECHOTC, EL_EDITMODE, EL_EDITOR, EL_GETCFN, EL_GETFP, EL_GETTC,
+    EL_PREP_TERM, EL_SAFEREAD, EL_SETFP, EL_SETTC, EL_SETTY, EL_SIGNAL, EL_TELLTC, EL_TERMINAL,
+    EL_UNBUFFERED, EL_WORDCHARS, el_wget_va, el_wgetc, el_wgets, el_winsertstr, el_wline,
+    el_wparse, el_wpush, el_wreplacestr, el_wset_va,
 };
 use core::ffi::VaList;
 
@@ -464,6 +465,30 @@ const FORWARDED_TO_WSET: &[c_int] = &[
     EL_SETFP,
 ];
 
+/// The C's `const char *argv[20]` bounds the collection loop at
+/// `__arraycount(argv) - 1`, so eighteen caller arguments plus the command
+/// word. ERR-core-api-07 records that `el_wset`'s cap is nineteen and that
+/// the two differ; both are reproduced rather than reconciled.
+const MAX_LIST_ARGS: usize = 19;
+
+/// The command word the C writes into `wargv[0]` for each list op, or `None`
+/// when `op` is not one of them.
+fn list_op_command(op: c_int) -> Option<&'static [u32]> {
+    const BIND: &[u32] = &[0x62, 0x69, 0x6e, 0x64];
+    const TELLTC: &[u32] = &[0x74, 0x65, 0x6c, 0x6c, 0x74, 0x63];
+    const SETTC: &[u32] = &[0x73, 0x65, 0x74, 0x74, 0x63];
+    const ECHOTC: &[u32] = &[0x65, 0x63, 0x68, 0x6f, 0x74, 0x63];
+    const SETTY: &[u32] = &[0x73, 0x65, 0x74, 0x74, 0x79];
+    Some(match op {
+        EL_BIND => BIND,
+        EL_TELLTC => TELLTC,
+        EL_SETTC => SETTC,
+        EL_ECHOTC => ECHOTC,
+        EL_SETTY => SETTY,
+        _ => return None,
+    })
+}
+
 /// [`el_set`]'s dispatch, out of the variadic frame.
 ///
 /// # Safety
@@ -473,6 +498,59 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         // SAFETY: the tail is untouched and carries what this op declares,
         // which is the same argument the wide arm reads.
         return unsafe { el_wset_va(el, op, ap) };
+    }
+
+    // The list ops. The C cannot forward these to `el_wset` — it says so in
+    // a comment — because the decoded vector is a `wchar_t **` and there is
+    // no portable way to pass one back through a `...`. So its narrow arm
+    // reimplements the body, and so does this.
+    //
+    // ERR-core-api-07 lives here: the loop runs `i < __arraycount(argv) - 1`
+    // over a `const char *argv[20]`, so at most EIGHTEEN caller arguments are
+    // read, and `el_wset`'s own cap is nineteen. Both are reproduced. A
+    // caller that passes no NULL sentinel is the undefined half of that
+    // entry, and the cap is what bounds it.
+    if let Some(cmd) = list_op_command(op) {
+        let mut owned: Vec<Vec<u32>> = Vec::new();
+        for _ in 1..MAX_LIST_ARGS {
+            // SAFETY: the op's tail is a NULL-terminated run of byte strings.
+            let p = unsafe { ap.next_arg::<*const c_char>() };
+            if p.is_null() {
+                break;
+            }
+            // SAFETY: `p` is non-null and NUL-terminated.
+            let Some(bytes) = (unsafe { bytes_upto_nul(p) }) else {
+                return -1;
+            };
+            let el_ptr: *mut EditLine = el;
+            // SAFETY: `el_ptr` is live for the call.
+            let conv = unsafe { &mut (*el_ptr).el_lgcyconv };
+            // C: `ct_decode_argv`, whose NULL return is -1 without calling
+            // the handler.
+            let Some(w) = ct_decode_string(Some(bytes), conv) else {
+                return -1;
+            };
+            let mut v = Vec::with_capacity(w.len() + 1);
+            v.extend_from_slice(w);
+            v.push(0);
+            owned.push(v);
+        }
+
+        // C: `wargv[0] = L"bind"` and friends, overwriting the NULL the
+        // collection loop left at index 0. `argc` is `i`, the number of
+        // arguments read plus the command word.
+        let mut argv: Vec<&[u32]> = Vec::with_capacity(owned.len() + 1);
+        argv.push(cmd);
+        argv.extend(owned.iter().map(|v| &v[..v.len() - 1]));
+        let argc = argv.len() as c_int;
+
+        return match op {
+            EL_BIND => nshedit::map::map_bind(el, argc, &argv),
+            EL_TELLTC => nshedit::terminal::terminal_telltc(el, argc, &argv),
+            EL_SETTC => nshedit::terminal::terminal_settc(el, argc, &argv),
+            EL_ECHOTC => nshedit::terminal::terminal_echotc(el, argc, &argv),
+            _ => nshedit::tty::tty_stty(el, argc, &argv),
+        };
     }
 
     // C: decode, then hand the wide string to the same core item the wide arm
@@ -542,6 +620,19 @@ const FORWARDED_TO_WGET: &[c_int] = &[
     EL_PREP_TERM,
     EL_GETCFN,
     EL_CLIENTDATA,
+    // Two more than the set on the way in, and neither is a narrowing.
+    //
+    // `EL_GETTC`'s narrow arm in the C builds a `char *argv[3]` and calls
+    // `terminal_gettc` — which is the wide arm's body as well, because
+    // `terminal_gettc` takes narrow `char *` in both APIs. There is nothing
+    // to convert. `rl_get_screen_size` goes through it, and until this it
+    // took the default arm and wrote through neither out-parameter:
+    // `rl_get_screen_size(&rows, &cols)` left both at whatever the caller
+    // had, where the C answers 24 and 80. Found by the readline driver.
+    EL_GETTC,
+    // `EL_GETFP` is `(int, FILE **)` and the C's narrow arm is
+    // `el_wget(el, op, what, fpp)` with both read straight through.
+    EL_GETFP,
 ];
 
 /// [`el_get`]'s dispatch, out of the variadic frame.

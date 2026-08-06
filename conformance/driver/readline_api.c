@@ -564,6 +564,228 @@ static void section_variables(void)
 	op("rl_point/rl_end");       printf("%d %d\n", rl_point, rl_end);
 }
 
+
+/* --------------------------------------------------------------------- */
+/* 8. Completion                                                          */
+/* --------------------------------------------------------------------- */
+
+/*
+ * A generator of the shape readline defines: called with the same text and an
+ * increasing state, returning a fresh string each time and NULL to stop. This
+ * is what `completion_matches` and `rl_completion_matches` are built to
+ * consume, and driving them through one written here rather than through a
+ * real completer keeps the answer independent of what happens to be on disk.
+ */
+/* `strdup` is POSIX, not C11, and this compiles with -std=c11; two lines
+ * here beats a feature-test macro that changes what else is declared. */
+static char *dup_str(const char *s)
+{
+	size_t n = strlen(s) + 1;
+	char *p = malloc(n);
+	if (p != NULL)
+		memcpy(p, s, n);
+	return p;
+}
+
+static char *fixed_generator(const char *text, int state)
+{
+	static const char *pool[] = { "alpha", "alphabet", "alpine", "beta", NULL };
+	while (pool[state] != NULL) {
+		if (strncmp(pool[state], text, strlen(text)) == 0)
+			return dup_str(pool[state++]);
+		state++;
+	}
+	return NULL;
+}
+
+/* A generator that returns nothing, which is the path where the caller has to
+ * cope with a NULL match list rather than an empty one. */
+static char *empty_generator(const char *text, int state)
+{
+	(void)text;
+	(void)state;
+	return NULL;
+}
+
+/*
+ * The match SET, sorted, never the order the library left them in.
+ *
+ * ERR-readline-01: the C sorts with `strcmp` cast to qsort's comparator type,
+ * so the comparator is handed the ADDRESSES of the elements and orders them
+ * by pointer representation. `plan/decisions/conformance-policy.md` lists it
+ * among the forks that default to reproduce, and the port does reproduce it —
+ * which makes the resulting order unmatchable by construction, because the
+ * two sides sort by addresses from two different allocators.
+ *
+ * So this compares what the two libraries agree on and can agree on: which
+ * strings came back. Index 0 is the common prefix and stays where it is; it
+ * is computed from adjacent pairs of the sorted array, so it is part of what
+ * the defect corrupts and worth watching.
+ */
+static void show_matches(const char *label, char **m)
+{
+	int i, n;
+	op(label);
+	if (m == NULL) {
+		printf("(null)\n");
+		return;
+	}
+	for (n = 0; m[n] != NULL; n++)
+		;
+	if (n > 2)
+		qsort(m + 1, (size_t)(n - 1), sizeof(m[0]), cmp_str);
+	printf("[");
+	for (i = 0; m[i] != NULL; i++) {
+		if (i)
+			putchar(' ');
+		/* `pesc`, not `sesc`: the filename completer returns absolute
+		 * paths, and the two sides run in different work directories,
+		 * so a raw path can never compare equal. */
+		pesc(m[i]);
+		free(m[i]);
+	}
+	printf("] n=%d\n", i);
+	free(m);
+}
+
+static void section_completion(void)
+{
+	/* The common prefix readline puts at index 0 is the interesting part:
+	 * "alp" for the three alpha* entries, the word itself for one match. */
+	show_matches("completion_matches alp",
+	    completion_matches((char *)"alp", fixed_generator));
+	show_matches("rl_completion_matches alp",
+	    rl_completion_matches("alp", fixed_generator));
+	show_matches("rl_completion_matches alpha",
+	    rl_completion_matches("alpha", fixed_generator));
+	show_matches("rl_completion_matches b",
+	    rl_completion_matches("b", fixed_generator));
+	show_matches("rl_completion_matches empty",
+	    rl_completion_matches("", fixed_generator));
+	show_matches("rl_completion_matches miss",
+	    rl_completion_matches("zzz", fixed_generator));
+	show_matches("rl_completion_matches none",
+	    rl_completion_matches("a", empty_generator));
+
+	/* The filename completer through the readline name, over the directory
+	 * section 5 made. */
+	{
+		char buf[512];
+		snprintf(buf, sizeof(buf), "%s/comp/a", workdir);
+		show_matches("rl_completion_matches file",
+		    rl_completion_matches(buf, rl_filename_completion_function));
+	}
+
+	/* The display path, with a well-formed list. Output goes to
+	 * rl_outstream, which is /dev/null, so only the return matters. */
+	{
+		char *m[] = { (char *)"alp", (char *)"alpha", (char *)"alpine", NULL };
+		op("rl_display_match_list");
+		rl_display_match_list(m, 2, 6);
+		printf("void\n");
+	}
+
+	/* username_completion_function reads the passwd database. The answer
+	 * depends on the host, but both libraries read the same one, so the
+	 * comparison holds; only its shape enters the trace. */
+	{
+		char *first = username_completion_function("r", 0);
+		op("username_completion r");
+		printf("%s\n", first ? "matched" : "(null)");
+		free(first);
+	}
+}
+
+/* --------------------------------------------------------------------- */
+/* 9. The line buffer and the keymaps                                     */
+/* --------------------------------------------------------------------- */
+
+static int a_command(int count, int key)
+{
+	(void)count;
+	(void)key;
+	return 0;
+}
+
+static void show_line(const char *label)
+{
+	op(label);
+	printf("point=%d end=%d buf=", rl_point, rl_end);
+	sesc(rl_line_buffer);
+	putchar('\n');
+}
+
+static void section_line_and_keymaps(void)
+{
+	Keymap km, bare;
+	char *copy;
+
+	show_line("line initial");
+	op("rl_insert_text abc");   printf("%d\n", rl_insert_text("abc"));
+	show_line("after insert");
+	op("rl_insert_text def");   printf("%d\n", rl_insert_text("def"));
+	show_line("after second insert");
+
+	op("rl_copy_text 0..3");    copy = rl_copy_text(0, 3); sesc(copy); putchar('\n'); free(copy);
+	/* ERR-readline-06: `strlcpy(out, src, len)` with `len == 0` writes
+	 * NOTHING — strlcpy's third argument is the destination size — so the C
+	 * hands back an uninitialised buffer. Only whether it allocated is
+	 * comparable; the bytes are indeterminate and differ run to run. */
+	op("rl_copy_text 2..2 len");
+	copy = rl_copy_text(2, 2);
+	printf("%s\n", copy ? "allocated" : "(null)");
+	free(copy);
+	op("rl_delete_text 1..3");  printf("%d\n", rl_delete_text(1, 3));
+	show_line("after delete");
+	op("rl_replace_line");      rl_replace_line("replaced", 0); printf("void\n");
+	show_line("after replace");
+	op("rl_kill_text 0..2");    printf("%d\n", rl_kill_text(0, 2));
+	show_line("after kill");
+	op("rl_on_new_line");       printf("%d\n", rl_on_new_line());
+	op("rl_free_line_state");   rl_free_line_state(); printf("void\n");
+
+	op("rl_set_prompt");        printf("%d\n", rl_set_prompt("> "));
+	op("rl_save_prompt");       rl_save_prompt(); printf("void\n");
+	op("rl_set_prompt 2");      printf("%d\n", rl_set_prompt("$ "));
+	op("rl_restore_prompt");    rl_restore_prompt(); printf("void\n");
+	op("rl_prompt after");      sesc(rl_prompt); putchar('\n');
+
+	{
+		int rows = -1, cols = -1;
+		op("rl_get_screen_size");   rl_get_screen_size(&rows, &cols);
+		printf("rows=%d cols=%d\n", rows, cols);
+		op("rl_set_screen_size");   rl_set_screen_size(30, 100); printf("void\n");
+		rows = cols = -1;
+		op("rl_get_screen_size 2");  rl_get_screen_size(&rows, &cols);
+		printf("rows=%d cols=%d\n", rows, cols);
+		/* Both out-parameters NULL: the C writes through neither. */
+		op("rl_get_screen_size NULL"); rl_get_screen_size(NULL, NULL); printf("void\n");
+	}
+
+	op("rl_add_defun");         printf("%d\n", rl_add_defun("a-command", a_command, -1));
+	op("rl_add_defun bound");   printf("%d\n", rl_add_defun("b-command", a_command, 'B'));
+	op("rl_bind_key");          printf("%d\n", rl_bind_key('A', a_command));
+	op("rl_bind_key NULL fn");  printf("%d\n", rl_bind_key('C', NULL));
+
+	op("rl_get_keymap");        km = rl_get_keymap(); printf("%d\n", km != NULL);
+	op("rl_make_bare_keymap");  bare = rl_make_bare_keymap(); printf("%d\n", bare != NULL);
+	op("rl_set_keymap");        rl_set_keymap(km); printf("void\n");
+	op("rl_set_keymap_name");   printf("%d\n", rl_set_keymap_name("named", bare));
+	op("rl_generic_bind");      printf("%d\n", rl_generic_bind(0, "\\C-x", "text", km));
+	op("rl_bind_key_in_map");   printf("%d\n", rl_bind_key_in_map('D', a_command, km));
+	op("rl_set_key");           printf("%d\n", rl_set_key("\\C-y", a_command, km));
+
+	op("rl_stuff_char");        printf("%d\n", rl_stuff_char('z'));
+	op("rl_message");           rl_message("ignored %d", 1); printf("void\n");
+	op("rl_ding");              printf("%d\n", rl_ding());
+	op("rl_crlf");              printf("%d\n", rl_crlf());
+	/* `_rl_abort_internal` is deliberately absent: in the C it does not
+	 * return, so calling it here kills the oracle mid-run and truncates the
+	 * trace at whatever operation happened to be next. It sits in
+	 * conformance/aux/ub_corpus.c, where a process that dies is the
+	 * measurement rather than a lost run. */
+}
+
 /* --------------------------------------------------------------------- */
 
 int main(int argc, char **argv)
@@ -608,6 +830,8 @@ int main(int argc, char **argv)
 	section_file();
 	section_expansion();
 	section_binding();
+	section_completion();
+	section_line_and_keymaps();
 	section_variables();
 
 	fclose(devnull);
