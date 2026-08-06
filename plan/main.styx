@@ -276,6 +276,22 @@ children (
                 title "Give a history entry an owned (text, blob) record, so the app data can be persisted at all"
                 priority 1
                 kind @feat
+                deps (history-format-native)
+                log (
+                    {
+                        at 2026-08-06T15:13:40.085393283Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T15:14:33.507851758Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "REVERSED the dep between this node and history-format-native, ten minutes after authoring it the wrong way round. This now depends on the container rather than the container depending on it.\n\nTwo things I had not looked at when I wrote the original edge:\n\n1. `crates/nshedit/src/history.rs` is 2583 lines of literal wave-2 port, holding entries on raw pointers with `Strdup`/`h_free` and a circular intrusive list. Changing `HentryGen`'s representation is an invasive refactor of a file whose own translate node is still open, and it would fight the port rather than build on it.\n\n2. More decisive: the blob has no meaning on the C ABI path at all. `HentryGen.data` is a `*mut c_void` the caller owns and libedit hands back untouched — there is no length, so there is nothing to serialize even in principle. A caller reaching us through `histedit.h` cannot supply a persistable blob, and inventing a length for it would be making up an ABI libedit does not have.\n\nSo the blob is a Rust-native concern, for nsh, and the entry change is the WIRING step, not the foundation. The container — records, framing, the reader — is standalone, has no dependency on how entries are held in memory, and is testable on its own. Building it first also means the format is settled before anything invasive touches the port.\n\nThe practical effect on order: history-format-native is now the ready node and this one follows it. Nothing else in the group moves."
+                    }
+                )
             }
 
             {
@@ -283,7 +299,14 @@ children (
                 title "A native history file: COBS-framed postcard records, appendable, greppable, locale-free"
                 priority 1
                 kind @feat
-                deps (history-record-blob)
+                log (
+                    {
+                        at 2026-08-06T15:14:40.509826279Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

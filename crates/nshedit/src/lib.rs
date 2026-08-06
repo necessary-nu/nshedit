@@ -124,6 +124,7 @@ pub mod sig;
 
 // History storage and search.
 pub mod hist;
+pub mod histfile;
 pub mod history;
 pub mod search;
 

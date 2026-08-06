@@ -108,4 +108,6 @@ assertions (
     {id abi-headers, kind @complete, author "brendan@necessary.nu", at 2026-08-05T18:55:37.953341935Z}
     {id conformance-header-diff, kind @complete, author "brendan@necessary.nu", at 2026-08-05T18:55:40.16488204Z}
     {id abi-soname, kind @complete, author "brendan@necessary.nu", at 2026-08-06T14:15:41.566972783Z}
+    {id history-record-blob, kind @doing, author "brendan@necessary.nu", at 2026-08-06T15:13:40.085393283Z}
+    {id history-format-native, kind @doing, author "brendan@necessary.nu", at 2026-08-06T15:14:40.509826279Z}
 )
