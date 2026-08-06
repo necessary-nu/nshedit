@@ -49,8 +49,6 @@ use crate::histedit::{
     H_PREV, H_PREV_EVENT, H_PREV_STR, H_REPLACE, H_SAVE, H_SAVE_FP, H_SET, H_SETSIZE, H_SETUNIQUE,
     HistEvent, HistEventGen, HistEventW,
 };
-use crate::unvis::strnunvis;
-use crate::vis::{VIS_WHITE, strnvis};
 
 // ---------------------------------------------------------------------------
 // The `#ifdef NARROWCHAR` block: everything `history.c` redefines between its
@@ -1666,7 +1664,6 @@ fn history_load<C: HistChar>(h: &mut HistoryGen<C>, fname: &str) -> i32 {
         return i;
     }
 
-    // The reused scratch decode buffer.
     let mut max_size: usize = 1024;
     let mut ptr: Vec<u8> = Vec::new();
     if ptr.try_reserve_exact(max_size).is_err() {
@@ -1674,6 +1671,7 @@ fn history_load<C: HistChar>(h: &mut HistoryGen<C>, fname: &str) -> i32 {
     }
     ptr.resize(max_size, 0);
 
+    // The reused scratch decode buffer.
     // ERR-encoding-11, fixed as the errata directs: the C's function-`static`
     // `ct_buffer_t` leaks for the process lifetime and makes this function
     // non-thread-safe. An owned per-call buffer is not ABI-observable — the
@@ -1736,14 +1734,11 @@ fn history_load<C: HistChar>(h: &mut HistoryGen<C>, fname: &str) -> i32 {
         // never longer than its input, so the bound never fires — but it is
         // enforced rather than assumed. `ENOSPC` would land on the same
         // decoded-prefix policy as a bad escape.
-        ptr.fill(0);
+        // `decode` reports rather than truncating, and on a bad escape the
+        // C's policy is the successfully decoded prefix — which `decode_into`
+        // writes but does not measure, so the zero-fill-and-scan stays.
         let dlen = ptr.len();
-        let _ = strnunvis(
-            ptr.as_mut_ptr().cast::<c_char>(),
-            dlen,
-            line.as_ptr().cast::<c_char>(),
-        );
-        let decoded_len = ptr.iter().position(|&b| b == 0).unwrap_or(ptr.len());
+        let decoded_len = crate::histfile::vis_decode_into(&mut ptr[..dlen], &line);
 
         // **The narrow/wide fork.** Wide: `mbstowcs` into the conversion
         // buffer, and NULL — `ptr` is not a valid multibyte string in the
@@ -1864,13 +1859,6 @@ fn history_save_out<C: HistChar>(
         return i;
     }
 
-    let mut max_size: usize = 1024;
-    let mut ptr: Vec<u8> = Vec::new();
-    if ptr.try_reserve_exact(max_size).is_err() {
-        return i;
-    }
-    ptr.resize(max_size, 0);
-
     // ERR-encoding-11, as in `history_load`: an owned per-call buffer instead
     // of the C's function-`static` one.
     let mut conv = CtBufferT {
@@ -1938,36 +1926,21 @@ fn history_save_out<C: HistChar>(
             break;
         };
 
-        // C: `len = strlen(str) * 4 + 1`, the worst-case `vis` expansion, and
-        // then `strvis`, which bounds-checks nothing. ERR-history-07's
-        // sibling: the engine's own guarantee is 16 bytes per input byte, so
-        // the sizing is that and the call is the bounded `strnvis`, making
-        // the bound enforced rather than assumed. Neither the buffer size nor
-        // the growth step is observable.
-        let need = bytes.len().saturating_mul(16).saturating_add(1);
-        if need > max_size {
-            let want = (need + 1024) & !1023usize;
-            if ptr.try_reserve(want - ptr.len()).is_err() {
-                i = -1;
-                break;
-            }
-            ptr.resize(want, 0);
-            max_size = want;
-        }
-
         // `VIS_WHITE` is the on-disk flag: space, tab, newline and backslash
         // become three-digit octal escapes, everything else graphic passes
         // through, and no encoded entry can ever contain a literal LF.
-        let n = strnvis(
-            ptr.as_mut_ptr().cast::<c_char>(),
-            ptr.len(),
-            bytes.as_ptr().cast::<c_char>(),
-            VIS_WHITE,
-        );
-        if n < 0 {
+        //
+        // The C sizes a buffer at `strlen(str) * 4 + 1` and calls the
+        // unbounded `strvis` into it — ERR-history-07's sibling, an
+        // assumption a locale can break into a heap smash. `encode` returns
+        // what it produced, so there is no size to get wrong. Neither the
+        // buffer nor the growth step was ever observable.
+        let Some(mut ptr) = crate::histfile::vis_encode(bytes, crate::histfile::VisFlags::WHITE)
+        else {
             i = -1;
             break;
-        }
+        };
+        let n = ptr.len();
 
         // C: `fprintf(fp, "%s\n", ptr)` — one line per entry. ERR-history-21:
         // the return is ignored, so `ENOSPC`, `EIO` and a full pipe are
@@ -1979,8 +1952,8 @@ fn history_save_out<C: HistChar>(
         // sink that is a `FILE *` do one `fputs` per entry, as the C does one
         // `fprintf`. The slot is always there: `strnvis` wrote its NUL into
         // it.
-        ptr[n as usize] = b'\n';
-        let _ = out.write_all(&ptr[..n as usize + 1]);
+        ptr.push(b'\n');
+        let _ = out.write_all(&ptr[..n + 1]);
 
         i = i.saturating_add(1);
         retval = hg(h.h_prev, h.h_ref, &mut ev);

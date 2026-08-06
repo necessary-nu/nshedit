@@ -323,12 +323,20 @@ children (
                 priority 1
                 kind @feat
                 deps (history-format-native)
+                sealed true
                 log (
                     {
                         at 2026-08-06T15:41:48.357108383Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T16:29:19.250531244Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -339,6 +347,14 @@ children (
                 priority 1
                 kind @refactor
                 deps (history-format-sniff)
+                log (
+                    {
+                        at 2026-08-06T16:30:15.816904788Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

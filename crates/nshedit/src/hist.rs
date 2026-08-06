@@ -1,6 +1,6 @@
 //! Ported from `src/hist.c`; rules live in `docs/spec/port/src/hist.md`.
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use std::ffi::CStr;
 use std::io::Write;
 use std::mem::ManuallyDrop;
@@ -17,8 +17,6 @@ use crate::histedit::{
 use crate::histedit::{HistEvent, HistEventW};
 use crate::history::{HistoryArg, HistoryW, history_w};
 use crate::map::MAP_VI;
-use crate::vis::VIS_NL;
-use crate::vis::strnvis;
 
 // Constants the C reaches through its headers. None of `el.h`, `map.h`,
 // `histedit.h` or `vis.h` has a Rust home that publishes these yet, so they
@@ -291,8 +289,6 @@ pub(crate) fn hist_command(el: &mut EditLine, argc: i32, argv: *const *const u32
     // so `argc == 0` would read `argv[1]` off the end; defined here as the
     // list form, the same thing `argc == 1` gets.
     if argc <= 1 || unsafe { wcs_eq_ascii(arg(1), "list") } {
-        let mut maxlen: usize = 0;
-        let mut buf: Vec<u8> = Vec::new();
         let mut hno: i32 = 1;
 
         // Oldest first: `HIST_LAST` then repeated `HIST_PREV`, stopping at the
@@ -320,52 +316,29 @@ pub(crate) fn hist_command(el: &mut EditLine, argc: i32, argv: *const *const u32
             if src.last() == Some(&b'\n') {
                 src.pop();
             }
-            let len = src.len();
-            // `strnvis` needs the C's NUL-terminated source.
-            src.push(0);
-
-            // C: `len = len * 4 + 1`, the worst-case escaped size, then grow
-            // `buf` by `len + 1024` whenever it no longer fits. `maxlen`
-            // never shrinks, so the buffer grows monotonically across the
-            // listing. ERR-history-07, defined here: the C's `4` is an
-            // assumption that one input byte never escapes to more than four
-            // output bytes, and `strvis` bounds-checks nothing, so a locale
-            // that breaks the assumption smashes the heap. The sizing is the
-            // engine's own internal guarantee of 16 bytes per input byte, and
-            // the call is the bounded `strnvis`, so the bound is enforced
-            // rather than assumed.
-            let need = len.saturating_mul(16).saturating_add(1);
-            if need >= maxlen {
-                maxlen = need.saturating_add(1024);
-                if buf.try_reserve(maxlen.saturating_sub(buf.len())).is_err() {
-                    // C: `el_free(buf); return -1;` — `buf` drops here.
-                    return -1;
-                }
-                buf.resize(maxlen, 0);
-            }
-
             // C: `strvis(buf, ptr, VIS_NL)`. `VIS_NL` and not `VIS_WHITE`:
             // this is a human-readable listing, not `history.c`'s on-disk
             // format, and the only escaping the format needs is the newline
             // that would otherwise split an entry across printed lines.
             // Spaces and tabs stay literal on purpose.
-            let n = strnvis(
-                buf.as_mut_ptr().cast::<c_char>(),
-                buf.len(),
-                src.as_ptr().cast::<c_char>(),
-                VIS_NL,
-            );
-            if n < 0 {
-                // Unreachable under the sizing above except on an internal
-                // allocation failure, which gets the same -1 as ERR-history-06.
+            //
+            // The C sizes a destination at `len * 4 + 1` and calls the
+            // unbounded `strvis` into it — ERR-history-07, an assumption that
+            // one input byte never escapes past four, which a locale can
+            // break into a heap smash. Nothing here sizes anything: `encode`
+            // returns what it produced. That also rules out the other way to
+            // get this wrong, which `bsd::vis::encode_into` does have —
+            // measured, it truncates mid-escape rather than reporting, and
+            // half of a `\040` is a different character.
+            let Some(buf) = crate::histfile::vis_encode(&src, crate::histfile::VisFlags::NL) else {
                 return -1;
-            }
+            };
 
             // C: `fprintf(el->el_outfile, "%d\t%s\n", hno++, buf)`. The number
             // is a fresh 1-based counter over this walk, not `ev.num`, and
             // nothing ever reads it back. Write errors are not checked.
             let mut out = format!("{hno}\t").into_bytes();
-            out.extend_from_slice(&buf[..n as usize]);
+            out.extend_from_slice(&buf);
             out.push(b'\n');
             write_outfile(el, &out);
             hno += 1;

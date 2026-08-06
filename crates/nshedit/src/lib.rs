@@ -103,8 +103,15 @@ pub(crate) mod locale;
 // Encoding and escaping.
 pub mod chartype;
 pub mod literal;
-pub mod unvis;
-pub mod vis;
+/// `vis(3)`/`unvis(3)`, re-exported from the `bsd` crate.
+///
+/// Our own 1,860-line translation used to live here. It is gone: the sibling
+/// libbsd port has the same functions with a safe API, and keeping two
+/// translations of one NetBSD source in one workspace meant two things to fix
+/// whenever either was wrong. The conformance differential covered the swap —
+/// 247 and 246 operations, identical under both locales.
+#[cfg(feature = "bsd")]
+pub use bsd::vis;
 
 // Terminal capability and tty control.
 pub mod terminal;

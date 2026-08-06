@@ -405,6 +405,64 @@ fn cobs_decode(frame: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+// ---------------------------------------------------------------------------
+// The `bsd` seam
+// ---------------------------------------------------------------------------
+//
+// Every use of vis(3) in this crate goes through these two, so the feature is
+// four `cfg`s in one place rather than scattered through the history paths.
+// `None` means "this build has no vis", which the callers turn into the C's
+// own failure return — never into unescaped output, which would be a wrong
+// answer rather than a missing one.
+
+/// `strvis(dst, src, flags)`, allocating.
+///
+/// Not `bsd::vis::encode_into`: measured, that truncates mid-escape when the
+/// destination is short rather than reporting, and half of a `\040` is a
+/// different character. Returning what was produced removes the size to get
+/// wrong — which is also ERR-history-07, the C's `len * 4 + 1` assumption
+/// that a locale can break into a heap smash.
+#[cfg(feature = "bsd")]
+pub(crate) fn vis_encode(src: &[u8], flags: bsd::vis::Flags) -> Option<Vec<u8>> {
+    Some(bsd::vis::encode(src, flags, b""))
+}
+
+#[cfg(not(feature = "bsd"))]
+pub(crate) fn vis_encode(_src: &[u8], _flags: VisFlags) -> Option<Vec<u8>> {
+    None
+}
+
+/// `strnunvis(dst, dlen, src)`. `dst` is zeroed first and the decoded length
+/// found by scanning, because a bad escape leaves the successfully decoded
+/// prefix — the C's policy — and `decode_into` writes that prefix without
+/// measuring it.
+#[cfg(feature = "bsd")]
+pub(crate) fn vis_decode_into(dst: &mut [u8], src: &[u8]) -> usize {
+    dst.fill(0);
+    let _ = bsd::vis::decode_into(dst, src, bsd::vis::Flags::NONE);
+    dst.iter().position(|&b| b == 0).unwrap_or(dst.len())
+}
+
+#[cfg(not(feature = "bsd"))]
+pub(crate) fn vis_decode_into(_dst: &mut [u8], _src: &[u8]) -> usize {
+    0
+}
+
+/// Stands in for `bsd::vis::Flags` when the feature is off, so the call sites
+/// need no `cfg` of their own.
+#[cfg(not(feature = "bsd"))]
+#[derive(Copy, Clone)]
+pub(crate) struct VisFlags(pub u32);
+
+#[cfg(not(feature = "bsd"))]
+impl VisFlags {
+    pub(crate) const NL: Self = Self(0x0010);
+    pub(crate) const WHITE: Self = Self(0x0004 | 0x0008 | 0x0010);
+}
+
+#[cfg(feature = "bsd")]
+pub(crate) use bsd::vis::Flags as VisFlags;
+
 #[cfg(test)]
 mod test {
     use super::*;

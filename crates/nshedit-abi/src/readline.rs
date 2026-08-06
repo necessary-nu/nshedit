@@ -150,7 +150,7 @@ const TCSADRAIN: c_int = 1;
 /// C: `#define VIS_WHITE (VIS_SP | VIS_TAB | VIS_NL)`, the `vis.h` flag pair
 /// `rl_add_defun` renders a key byte with. The core's copies are
 /// `pub(crate)`.
-const VIS_WHITE: c_int = 0x0008 | 0x0010 | 0x0020;
+const VIS_WHITE: c_int = 0x0004 | 0x0008 | 0x0010;
 /// C: `#define VIS_NOSLASH 0x0040`.
 const VIS_NOSLASH: c_int = 0x0040;
 
@@ -3956,7 +3956,17 @@ pub unsafe extern "C" fn rl_add_defun(
         el_set_va(E, EL_ADDFN, name, name, rl_bind_wrapper as *const c_void);
         // strvis form: control characters as `^X`, other non-printables as
         // `\nnn`, whitespace encoded, no backslash doubling.
-        nshedit::vis::vis(dest.as_mut_ptr(), c, VIS_WHITE | VIS_NOSLASH, 0);
+        let vised = nshedit::vis::encode_one(
+            c as u8,
+            0,
+            nshedit::vis::Flags((VIS_WHITE | VIS_NOSLASH) as u32),
+            b"",
+        );
+        // The C's `char dest[8]`. One byte cannot encode past four, but the
+        // copy is bounded rather than assumed.
+        for (slot, &b) in dest.iter_mut().zip(&vised[..vised.len().min(7)]) {
+            *slot = b as c_char;
+        }
         el_set_va(E, EL_BIND, dest.as_ptr(), name, ptr::null::<c_char>());
         // Both `el_set` results are discarded, so a failed registration or
         // binding is not reported.
@@ -4996,5 +5006,40 @@ pub unsafe extern "C" fn completion_matches(
             list.push(p);
         }
         finish_match_list(list)
+    }
+}
+
+#[cfg(test)]
+mod vis_flags_test {
+    use super::{VIS_NOSLASH, VIS_WHITE};
+
+    /// `rl_add_defun` builds the key-binding string it hands `EL_BIND` by
+    /// `vis`ing the character, so a wrong flag binds the function to a
+    /// different key than libedit would.
+    ///
+    /// This declared `0x0008 | 0x0010 | 0x0020` until the `bsd` crate's own
+    /// constants forced the comparison — `VIS_TAB | VIS_NL | VIS_SAFE`, both
+    /// missing `VIS_SP` and carrying a flag that does not belong. No
+    /// conformance driver calls `rl_add_defun`, so nothing else would have
+    /// caught it.
+    #[test]
+    fn vis_white_is_what_vis_h_says() {
+        // src/vis.h:47-50 — VIS_SP | VIS_TAB | VIS_NL.
+        assert_eq!(VIS_WHITE, 0x0004 | 0x0008 | 0x0010);
+        assert_eq!(VIS_NOSLASH, 0x0040);
+    }
+
+    /// The consequence, end to end: binding a space must produce `\040`. With
+    /// the old value `VIS_SP` was absent, so the space passed through as
+    /// itself and the binding went to a different key entirely.
+    #[test]
+    fn a_space_encodes_to_an_octal_escape() {
+        let out = nshedit::vis::encode_one(
+            b' ',
+            0,
+            nshedit::vis::Flags((VIS_WHITE | VIS_NOSLASH) as u32),
+            b"",
+        );
+        assert_eq!(out, b"\\040");
     }
 }

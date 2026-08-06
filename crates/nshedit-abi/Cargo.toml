@@ -24,7 +24,7 @@ name = "nshedit"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-nshedit.workspace = true
+nshedit = { workspace = true, features = ["bsd"] }
 nshedit-plat.workspace = true
 
 [dev-dependencies]

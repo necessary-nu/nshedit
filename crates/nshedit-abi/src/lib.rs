@@ -167,20 +167,6 @@ mod errno {
             publish(m);
             assert_eq!(get(), nshedit::errno::EINVAL);
         }
-
-        /// End to end, on the promise `sem:vis.istrsenvisx-fn` makes: a
-        /// destination too small for the encoding fails with `ENOSPC` in the
-        /// C's `errno`. `"a b"` needs four bytes with its terminator.
-        #[test]
-        fn a_failing_vis_call_reaches_the_c_errno() {
-            set(0);
-            let mut dst = [0i8; 8];
-            let m = mark();
-            let n = nshedit::vis::strnvis(dst.as_mut_ptr(), 2, c"a b".as_ptr(), 0);
-            publish(m);
-            assert_eq!(n, -1);
-            assert_eq!(get(), nshedit::errno::ENOSPC);
-        }
     }
 }
 
