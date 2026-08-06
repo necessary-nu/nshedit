@@ -537,6 +537,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-06T18:30:29.574929547Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "REOPENING. I completed this node earlier today on insufficient evidence, and the first run of the new el_api conformance driver disproved it.\n\nWhat I checked: `grep -rn 'todo!\\|unimplemented!'` over every crate, which returned one site in search.rs, plus the wave-2 gate reading 650/650. Both were true and neither was sufficient.\n\nWhat the driver measured: 22 of 88 operations diverge, and the shape says one cause rather than twenty. Every el_set and el_get returns -1 on the port where the oracle returns 0 — except `EL_EDITOR bogus`, which both reject, so the entry point is reached and the argument is seen.\n\n    0003 EL_EDITOR emacs      oracle rc=0    port rc=-1\n    0007 EL_EDITOR bogus      oracle rc=-1   port rc=-1\n    0009 EL_SIGNAL 1          oracle rc=0    port rc=-1\n    0022 EL_GET terminal      oracle rc=0 <dumb>   port rc=-1 <(null)>\n\nThe cause is written down in the code, at crates/nshedit-abi/src/eln.rs:434: \"Step 2 and the whole dispatch are unwritten, so every op takes the C's default arm.\" The comment then specifies, in detail and correctly, what each arm owes — it is a deliberate, well-documented stub awaiting the varargs work, not an oversight.\n\nWhy no gate caught it. It has a body, it returns a value, and the value is right for an unsupported op, so stub-scan does not fire. The wave-2 gate measures whether an ANNOTATION is present, and `[spec:libedit:def:eln.el-set-fn]` sits on the function — so 650/650 counts a stub as translated. That is the gap this whole wave-3 exercise exists to close, and it is worth stating that the gate cannot close it on its own: only executing the code does.\n\nTwo things follow.\n\nThe narrow el_set/el_get dispatch is the remaining work on this node, and abi-varargs is what unblocks it — the arms read their arguments with `ap.next_arg::<T>()`, which is why they were left until c_variadic landed. It has landed.\n\nMore generally: completing a translate node needs evidence that the code RUNS, not that it exists. The six siblings I closed alongside this one were closed on the same reasoning and deserve the same suspicion. conformance-driver-readline and conformance-driver-ub are the instruments for that, and this is now a reason to build them rather than a nice-to-have."
+                        after_done true
+                    }
                 )
             }
 
@@ -1219,6 +1227,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Recommended as the next driver by the agent that built the first one, and the reasoning holds: this is the largest surface still untested, and none of it needs a tty.\n\nCover: el_init_fd against pipes; el_set and el_get across EVERY op, since the wide varargs dispatch is essentially untested — H_FUNC proved the eleven-slot path exactly once; EL_EDITOR, EL_BIND, EL_HIST; el_source against a controlled .editrc; el_parse.\n\nThat reaches map, parse, keymacro and chared, four concerns whose translate leaves are complete and whose behaviour has never been executed against the C.\n\nIt will also force the abi-file-surface decision from a second direction: EL_SETFP hits the same FILE * wall as H_SAVE_FP, so this driver will produce a second cluster of divergences with a single cause. Expect that rather than treating it as new.\n\nReuse conformance/lib.sh's pinned environment as-is. It builds the environment with env -i rather than overlaying, so an inherited EDITRC cannot leak in — which matters more for this driver than the last one, since el_source reads EDITRC and HOME directly. The four variables the C reads through el_getenv are EDITRC (src/el.c:610), HOME (:614), TERM (src/terminal.c:906) and EDITOR (src/vi.c:1112).\n\nFollow the existing conventions: trace lines are `NNNN <26-char operation label> <result>`, never a raw pointer, never a path, never strerror text — errno numeric only. Anything address-derived gets reduced to a boolean, the way H_FUNC's ref did. Run it under both LC_ALL=C.UTF-8 and LC_ALL=C; the two produce materially different results and that is real coverage rather than a repeat.\n\nAdd it to conformance/determinism.sh's list, which runs every driver three times per library per locale from a wiped directory and requires byte-identical output.\n\nAnd the standing rule from the first run: DO NOT fix the Rust to make the diff go away. Report each divergence with its governing rule and whether the register already holds it as a frozen defect."
+                    }
+
+                    {
+                        at 2026-08-06T18:27:49.981410028Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
                     }
                 )
             }

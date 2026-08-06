@@ -121,4 +121,5 @@ assertions (
     {id nshterm-env-guard, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:33:06.246888397Z}
     {id nshterm-termcap-names, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:56:16.549001086Z}
     {id nshterm-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T18:15:40.285537671Z}
+    {id conformance-driver-el, kind @doing, author "brendan@necessary.nu", at 2026-08-06T18:27:49.981410028Z}
 )
