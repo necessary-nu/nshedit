@@ -326,10 +326,7 @@ pub(crate) fn hist_command(el: &mut EditLine, argc: i32, argv: *const *const u32
             // unbounded `strvis` into it — ERR-history-07, an assumption that
             // one input byte never escapes past four, which a locale can
             // break into a heap smash. Nothing here sizes anything: `encode`
-            // returns what it produced. That also rules out the other way to
-            // get this wrong, which `bsd::vis::encode_into` does have —
-            // measured, it truncates mid-escape rather than reporting, and
-            // half of a `\040` is a different character.
+            // returns what it produced, so there is no destination to size.
             let Some(buf) = crate::histfile::vis_encode(&src, crate::histfile::VisFlags::NL) else {
                 return -1;
             };

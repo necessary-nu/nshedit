@@ -3956,12 +3956,10 @@ pub unsafe extern "C" fn rl_add_defun(
         el_set_va(E, EL_ADDFN, name, name, rl_bind_wrapper as *const c_void);
         // strvis form: control characters as `^X`, other non-printables as
         // `\nnn`, whitespace encoded, no backslash doubling.
-        let vised = nshedit::vis::encode_one(
-            c as u8,
-            0,
-            nshedit::vis::Flags((VIS_WHITE | VIS_NOSLASH) as u32),
-            b"",
-        );
+        let vised = nshedit::vis::Encoder::new(nshedit::vis::Flags::from_bits(
+            (VIS_WHITE | VIS_NOSLASH) as u32,
+        ))
+        .encode_byte(c as u8, 0);
         // The C's `char dest[8]`. One byte cannot encode past four, but the
         // copy is bounded rather than assumed.
         for (slot, &b) in dest.iter_mut().zip(&vised[..vised.len().min(7)]) {
@@ -5034,12 +5032,10 @@ mod vis_flags_test {
     /// itself and the binding went to a different key entirely.
     #[test]
     fn a_space_encodes_to_an_octal_escape() {
-        let out = nshedit::vis::encode_one(
-            b' ',
-            0,
-            nshedit::vis::Flags((VIS_WHITE | VIS_NOSLASH) as u32),
-            b"",
-        );
+        let out = nshedit::vis::Encoder::new(nshedit::vis::Flags::from_bits(
+            (VIS_WHITE | VIS_NOSLASH) as u32,
+        ))
+        .encode_byte(b' ', 0);
         assert_eq!(out, b"\\040");
     }
 }

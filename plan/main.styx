@@ -974,6 +974,7 @@ children (
                 priority 0
                 kind @feat
                 deps (abi-varargs)
+                sealed true
                 log (
                     {
                         at 2026-08-06T18:39:05.244741977Z
@@ -988,12 +989,20 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-08-06T20:06:32.92018607Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
             {
                 id terminal-change-size
                 title "Fix terminal_change_size, which fails where the C succeeds, so every settc co/li reports an error"
+                sealed true
                 log (
                     {
                         at 2026-08-06T19:37:18.431211169Z
@@ -1014,6 +1023,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "CAUSE FOUND, and it is a deliberate decision that is right for output and wrong for input.\n\ncrates/nshedit/src/terminal.rs:297, TVAL, against src/terminal.c's tval:\n\n    C     am  pt  li     co     km  xt  xn\n    port  am  pt  lines  cols   km  xt  xenl\n\nThe port substituted terminfo capnames for the C's termcap codes. terminal.rs:244 says so and calls it deliberate, citing sem:terminal.terminal-telltc-fn as recording it as a user-visible substitution.\n\nThat explains every observation exactly. settc co 132 looks up co, TVAL holds cols, the lookup misses, terminal_settc reports Bad capability and returns -1, and el_wparse negates it to 1. The four entries that agree — am, pt, km, xt — agree because those two spellings coincide. li and co are the only two whose spellings differ AND that the driver exercises, which is why the divergence is exactly two operations.\n\nThe decision is defensible for OUTPUT. telltc prints capability names, and printing terminfo names in a port that reads terminfo is a reasonable thing to choose.\n\nIt is wrong for INPUT. settc and echotc take a name a user typed, at a prompt or in a .editrc, and what users type is termcap — that is what libedit's own documentation shows and what every .editrc already on disk contains. A user whose .editrc says settc co 132 gets Bad capability from us and silence from libedit.\n\nThe fix already exists as of today. nshterm-termcap-names added nshterm::parser::names::capname_for_termcap, generated from ncurses' include/Caps, precisely so a user-typed termcap code can be resolved. terminal_settc and terminal_echotc should try the argument as a termcap code and translate before reporting Bad capability. TVAL can keep terminfo names, so telltc's output is unchanged and the recorded decision stands.\n\nNote the scope is wider than the two operations the driver caught: every numeric and string capability whose termcap and terminfo spellings differ is affected on the settc and echotc paths, which is most of them. The driver found two because its corpus exercises two.\n\nOnce fixed, rename this node — the id says terminal-change-size, which was my first and wrong diagnosis."
+                    }
+
+                    {
+                        at 2026-08-06T20:06:33.062661507Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }

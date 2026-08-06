@@ -417,14 +417,14 @@ fn cobs_decode(frame: &[u8]) -> Option<Vec<u8>> {
 
 /// `strvis(dst, src, flags)`, allocating.
 ///
-/// Not `bsd::vis::encode_into`: measured, that truncates mid-escape when the
-/// destination is short rather than reporting, and half of a `\040` is a
-/// different character. Returning what was produced removes the size to get
-/// wrong — which is also ERR-history-07, the C's `len * 4 + 1` assumption
-/// that a locale can break into a heap smash.
+/// Allocating rather than `Encoder::encode_into`: what the callers need is
+/// "however long it turns out to be", and sizing a destination is the thing
+/// ERR-history-07 records the C getting wrong — its `len * 4 + 1` is an
+/// assumption a locale can break into a heap smash. Returning the bytes
+/// removes the size to get wrong rather than bounding it better.
 #[cfg(feature = "bsd")]
 pub(crate) fn vis_encode(src: &[u8], flags: bsd::vis::Flags) -> Option<Vec<u8>> {
-    Some(bsd::vis::encode(src, flags, b""))
+    Some(bsd::vis::Encoder::new(flags).encode(src))
 }
 
 #[cfg(not(feature = "bsd"))]

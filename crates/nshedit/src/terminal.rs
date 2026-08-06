@@ -233,6 +233,40 @@ const fn cs(name: &'static str, long_name: &'static str) -> Termcapstr {
 }
 
 /// Table-literal shorthand for [`Termcapval`], as [`cs`].
+/// Resolves a name a *user* typed to an index in one of the capability
+/// tables, accepting either spelling.
+///
+/// libedit's own tables are keyed by termcap two-letter code — `co`, `li`,
+/// `cl` — and this port's by terminfo capname — `cols`, `lines`, `clear`.
+/// That substitution is deliberate and `sem:terminal.terminal-telltc-fn`
+/// records it, because `telltc` PRINTS these names and printing terminfo
+/// names from a port that reads terminfo is the honest thing to do.
+///
+/// It is the wrong answer for input. `settc` and `echotc` take a name
+/// somebody typed, at a prompt or in a `.editrc`, and what people type is
+/// termcap: that is what libedit's own documentation shows and what every
+/// `.editrc` already on disk contains. Before this, `settc co 132` — a line
+/// straight out of the manual — was answered with "Bad capability".
+///
+/// So the capname is tried first, then the argument is retried as a termcap
+/// code through [`nshterm`], whose mapping is generated from ncurses'
+/// `include/Caps`. Accepting both means a `.editrc` written against this port
+/// keeps working as well as one written against libedit, and it costs a
+/// linear scan of ~500 entries on a path that runs once per line of a
+/// configuration file.
+///
+/// The bytes are compared directly first, so a capability name that is not
+/// valid UTF-8 still matches a table entry exactly as it did before; only the
+/// termcap fallback needs a `str`.
+fn resolve_cap(what: &[u8], find: impl Fn(&[u8]) -> Option<usize>) -> Option<usize> {
+    if let Some(i) = find(what) {
+        return Some(i);
+    }
+    let code = std::str::from_utf8(what).ok()?;
+    let capname = nshterm::parser::names::capname_for_termcap(code)?;
+    find(capname.as_bytes())
+}
+
 const fn cv(name: &'static str, long_name: &'static str) -> Termcapval {
     Termcapval { name, long_name }
 }
@@ -2203,7 +2237,7 @@ pub fn terminal_settc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     let how = truncate7(encode(el, argv[2]));
 
     // Step 3: the strings first.
-    if let Some(idx) = TSTR.iter().position(|t| t.name.as_bytes() == what) {
+    if let Some(idx) = resolve_cap(&what, |n| TSTR.iter().position(|t| t.name.as_bytes() == n)) {
         match std::str::from_utf8(&how) {
             Ok(s) => terminal_alloc(el, idx, Some(s)),
             // Encoded bytes that are not UTF-8 cannot cross `terminal_alloc`'s
@@ -2215,7 +2249,7 @@ pub fn terminal_settc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     }
 
     // Step 4: the numeric ones second.
-    let Some(idx) = TVAL.iter().position(|t| t.name.as_bytes() == what) else {
+    let Some(idx) = resolve_cap(&what, |n| TVAL.iter().position(|t| t.name.as_bytes() == n)) else {
         let cmd = encode(el, argv[0]);
         let mut msg = cmd;
         msg.extend_from_slice(b": Bad capability `");
@@ -2435,7 +2469,9 @@ pub fn terminal_echotc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     // database. Note the fallback is reached only when the *name* is unknown:
     // a known name whose slot is empty does not fall back.
     let narrow = encode(el, &arg);
-    let scap: Option<Vec<u8>> = match TSTR.iter().position(|t| t.name.as_bytes() == narrow) {
+    let scap: Option<Vec<u8>> = match resolve_cap(&narrow, |n| {
+        TSTR.iter().position(|t| t.name.as_bytes() == n)
+    }) {
         Some(idx) => cap_owned(el, idx),
         None => std::str::from_utf8(&narrow)
             .ok()
