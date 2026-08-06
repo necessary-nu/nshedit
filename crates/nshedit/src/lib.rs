@@ -105,11 +105,96 @@ pub mod chartype;
 pub mod literal;
 /// `vis(3)`/`unvis(3)`, re-exported from the `bsd` crate.
 ///
-/// Our own 1,860-line translation used to live here. It is gone: the sibling
-/// libbsd port has the same functions with a safe API, and keeping two
-/// translations of one NetBSD source in one workspace meant two things to fix
-/// whenever either was wrong. The conformance differential covered the swap —
-/// 247 and 246 operations, identical under both locales.
+/// Our own 1,860-line translation used to live here, in `vis.rs` and
+/// `unvis.rs`. It is gone: the sibling libbsd port has the same NetBSD source
+/// with a safe API, and two translations of one C file in one workspace meant
+/// two places to fix whenever either was wrong. The conformance differential
+/// covered the swap — 247 and 246 operations, identical under both locales.
+///
+/// # Why the rules are claimed here
+///
+/// The annotations below moved off the deleted bodies and onto this
+/// re-export, which is now the only place the port provides these symbols. It
+/// is a real claim rather than bookkeeping: what satisfies each rule is the
+/// `bsd` crate's implementation, and the differential is what checks that it
+/// still does. They cannot be claimed in `bsd` itself — that repo has its own
+/// spec corpus under `[spec:libbsd:...]`, and a rule belongs to the tree that
+/// wrote it.
+///
+/// The one thing this shape cannot express is a per-symbol claim: 70 rules
+/// sit on one `pub use`, so the wave-2 gate can only say all or nothing about
+/// them. That is the honest cost of the dependency, and the differential is
+/// the finer-grained check underneath it.
+// [spec:libedit:def:unvis.nv]
+// [spec:libedit:def:unvis.strnunvis-fn]
+// [spec:libedit:def:unvis.strnunvisx-fn]
+// [spec:libedit:def:unvis.strunvis-fn]
+// [spec:libedit:def:unvis.strunvisx-fn]
+// [spec:libedit:def:unvis.unvis-fn]
+// [spec:libedit:def:vis.do-hvis-fn]
+// [spec:libedit:def:vis.do-mbyte-fn]
+// [spec:libedit:def:vis.do-mvis-fn]
+// [spec:libedit:def:vis.do-svis-fn]
+// [spec:libedit:def:vis.getvisfun-fn]
+// [spec:libedit:def:vis.iscgraph-fn]
+// [spec:libedit:def:vis.istrsenvisx-fn]
+// [spec:libedit:def:vis.istrsenvisxl-fn]
+// [spec:libedit:def:vis.makeextralist-fn]
+// [spec:libedit:def:vis.nvis-fn]
+// [spec:libedit:def:vis.snvis-fn]
+// [spec:libedit:def:vis.stravis-fn]
+// [spec:libedit:def:vis.strenvisx-fn]
+// [spec:libedit:def:vis.strnunvis-fn]
+// [spec:libedit:def:vis.strnunvisx-fn]
+// [spec:libedit:def:vis.strnvis-fn]
+// [spec:libedit:def:vis.strnvisx-fn]
+// [spec:libedit:def:vis.strsenvisx-fn]
+// [spec:libedit:def:vis.strsnvis-fn]
+// [spec:libedit:def:vis.strsnvisx-fn]
+// [spec:libedit:def:vis.strsvis-fn]
+// [spec:libedit:def:vis.strsvisx-fn]
+// [spec:libedit:def:vis.strunvis-fn]
+// [spec:libedit:def:vis.strunvisx-fn]
+// [spec:libedit:def:vis.strvis-fn]
+// [spec:libedit:def:vis.strvisx-fn]
+// [spec:libedit:def:vis.svis-fn]
+// [spec:libedit:def:vis.unvis-fn]
+// [spec:libedit:def:vis.vis-fn]
+// [spec:libedit:def:vis.visfun-t-wchar-t-wint-t-int-wint-t-const-wchar-t]
+// [spec:libedit:sem:unvis.strnunvis-fn]
+// [spec:libedit:sem:unvis.strnunvisx-fn]
+// [spec:libedit:sem:unvis.strunvis-fn]
+// [spec:libedit:sem:unvis.strunvisx-fn]
+// [spec:libedit:sem:unvis.unvis-fn]
+// [spec:libedit:sem:vis.do-hvis-fn]
+// [spec:libedit:sem:vis.do-mbyte-fn]
+// [spec:libedit:sem:vis.do-mvis-fn]
+// [spec:libedit:sem:vis.do-svis-fn]
+// [spec:libedit:sem:vis.getvisfun-fn]
+// [spec:libedit:sem:vis.iscgraph-fn]
+// [spec:libedit:sem:vis.istrsenvisx-fn]
+// [spec:libedit:sem:vis.istrsenvisxl-fn]
+// [spec:libedit:sem:vis.makeextralist-fn]
+// [spec:libedit:sem:vis.nvis-fn]
+// [spec:libedit:sem:vis.snvis-fn]
+// [spec:libedit:sem:vis.stravis-fn]
+// [spec:libedit:sem:vis.strenvisx-fn]
+// [spec:libedit:sem:vis.strnunvis-fn]
+// [spec:libedit:sem:vis.strnunvisx-fn]
+// [spec:libedit:sem:vis.strnvis-fn]
+// [spec:libedit:sem:vis.strnvisx-fn]
+// [spec:libedit:sem:vis.strsenvisx-fn]
+// [spec:libedit:sem:vis.strsnvis-fn]
+// [spec:libedit:sem:vis.strsnvisx-fn]
+// [spec:libedit:sem:vis.strsvis-fn]
+// [spec:libedit:sem:vis.strsvisx-fn]
+// [spec:libedit:sem:vis.strunvis-fn]
+// [spec:libedit:sem:vis.strunvisx-fn]
+// [spec:libedit:sem:vis.strvis-fn]
+// [spec:libedit:sem:vis.strvisx-fn]
+// [spec:libedit:sem:vis.svis-fn]
+// [spec:libedit:sem:vis.unvis-fn]
+// [spec:libedit:sem:vis.vis-fn]
 #[cfg(feature = "bsd")]
 pub use bsd::vis;
 
