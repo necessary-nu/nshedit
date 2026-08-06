@@ -959,6 +959,22 @@ children (
                     }
                 )
             }
+
+            {
+                id abi-elset-dispatch
+                title "Write the narrow el_set/el_get dispatch, which is a stub returning -1 for every op"
+                priority 0
+                kind @feat
+                deps (abi-varargs)
+                log (
+                    {
+                        at 2026-08-06T18:39:05.244741977Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Measured by conformance/driver/el_api.c on its first run: 22 of 88 operations diverge, and every one is an el_set or el_get returning -1 where the oracle returns 0.\n\n    0003 EL_EDITOR emacs   oracle rc=0          port rc=-1\n    0007 EL_EDITOR bogus   oracle rc=-1         port rc=-1\n    0022 EL_GET terminal   oracle rc=0 <dumb>   port rc=-1 <(null)>\n\nLine 0007 is the useful one: both reject it, so the entry point is reached and the argument is read. Only the dispatch is missing.\n\ncrates/nshedit-abi/src/eln.rs:429 says so itself — \"Step 2 and the whole dispatch are unwritten, so every op takes the C's default arm\" — and the comment below it already specifies what each arm owes, in the order the arguments are read, with the core items it calls. That comment is the spec for this node; it was written when c_variadic was not yet available, which is why the arms were left. It is available now.\n\nThe differential is RED until this lands, and that is deliberate rather than something to route around: the harness reporting that the port does not match is the harness working.\n\nThis is also why the six sibling translate nodes closed alongside core-api-translate deserve re-checking. All of them were closed on a grep for `todo!()` plus the wave-2 gate at 650/650, and neither catches a stub that has a real body and a correct-looking return. conformance-driver-readline and conformance-driver-ub are the instruments for that."
+                    }
+                )
+            }
         )
         log (
             {
