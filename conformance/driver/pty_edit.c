@@ -25,12 +25,11 @@
  *
  *   - The parent accumulates every byte and prints once. How a read happens
  *     to split is invisible; only the total matters.
- *   - Each key is followed by a drain that waits for quiet rather than for a
- *     fixed time, so a slow child produces the same bytes as a fast one. The
- *     threshold is short (30ms) because it is a threshold for SILENCE, not a
- *     budget for the child: a reaction that has started keeps the drain
- *     going. determinism.sh runs this driver three times per library per
- *     locale and is what proves the number is not too small.
+ *   - Each key waits for its reaction to BEGIN, then reads until it stops.
+ *     See `type` for why both halves are needed and what residual race is
+ *     left. determinism.sh runs this driver three times per library per
+ *     locale, which is worth having and is NOT enough on its own: the race
+ *     this shipped with survived three clean runs and showed up on a fourth.
  *   - The window size is set explicitly, TERM is the harness's pinned `dumb`,
  *     and nothing consults the clock.
  *
@@ -174,13 +173,55 @@ static void drain(int master, int quiet_ms)
 	}
 }
 
-/* Types one key sequence and waits for the editor to finish reacting. */
+/*
+ * Waits up to `ms` for the first byte of a reaction and collects it.
+ * Returns 0 if nothing arrived.
+ */
+static int await_byte(int master, int ms)
+{
+	struct pollfd p = { .fd = master, .events = POLLIN };
+	if (poll(&p, 1, ms) <= 0)
+		return 0;
+	unsigned char buf[4096];
+	ssize_t n = read(master, buf, sizeof(buf));
+	if (n <= 0)
+		return 0;
+	if (collected_len + (size_t)n <= sizeof(collected)) {
+		memcpy(collected + collected_len, buf, (size_t)n);
+		collected_len += (size_t)n;
+	}
+	return 1;
+}
+
+/*
+ * Types one key sequence and waits for the editor to finish reacting.
+ *
+ * Two phases, and the first one is the fix for a race this driver shipped
+ * with. Draining straight into a quiet window assumed the child had already
+ * started writing; when it had not — one descheduling is enough — the window
+ * expired against silence, the operation recorded nothing, and the NEXT
+ * operation collected both reactions. The traces stayed byte-identical
+ * overall and the diff still failed, because it compares per operation.
+ *
+ * So: wait for the reaction to BEGIN with a generous timeout, then read until
+ * it stops. Every key in the script produces output — checked, the only empty
+ * line in a passing trace is the final drain after the child has exited — so
+ * the generous timeout is never actually spent.
+ *
+ * This narrows the race rather than removing it: a long enough gap in the
+ * MIDDLE of a reaction would still cut one short. Removing it entirely needs
+ * a synchronisation barrier the pty does not offer — the child sits inside
+ * `el_gets` between keys and has nowhere to emit a marker from. The quiet
+ * window is 60ms against a child whose reaction is microseconds of work.
+ */
 static void type(int master, const char *keys)
 {
 	size_t n = strlen(keys);
 	if (write(master, keys, n) < 0)
 		return;
-	drain(master, 30);
+	if (!await_byte(master, 2000))
+		return;
+	drain(master, 60);
 }
 
 /*
