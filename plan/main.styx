@@ -1328,6 +1328,22 @@ children (
                 id conformance-pty
                 title "Drive both libraries through a real pty and diff the emitted byte streams"
                 deps (conformance-differential platform-build)
+                sealed true
+                log (
+                    {
+                        at 2026-08-06T22:24:23.5533045Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T22:33:00.320456038Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
             }
 
             {

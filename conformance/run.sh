@@ -22,6 +22,9 @@
 #   8. soname.sh              install, then load: a consumer linked against a
 #                             real libedit before we existed is run against
 #                             our install and has to start
+#      (the differential covers four drivers now, one of which is a real pty:
+#       conformance/driver/pty_edit.c forks a child onto it, types a scripted
+#       editing session, and diffs the bytes a terminal would have received)
 #   9. ub.sh                  the calls the C has no defined answer for. NOT a
 #                             differential: the port must survive, and what
 #                             the oracle does is reported rather than matched

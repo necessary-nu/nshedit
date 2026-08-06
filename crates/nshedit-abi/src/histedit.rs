@@ -241,7 +241,7 @@ static EDITOR_VI: [u32; 3] = wide(b"vi\0");
 /// `F` must be a function-pointer type, and the slot must really hold a
 /// function of that exact signature — which is the op's own contract with the
 /// caller, and undefined in the C too when it is broken.
-unsafe fn fn_arg<F: Copy>(ap: &mut VaList<'_>) -> Option<F> {
+pub(crate) unsafe fn fn_arg<F: Copy>(ap: &mut VaList<'_>) -> Option<F> {
     assert_eq!(size_of::<Option<F>>(), size_of::<*mut c_void>());
     // SAFETY: the caller's contract, above.
     let p = unsafe { ap.next_arg::<*mut c_void>() };

@@ -44,7 +44,7 @@ pub(crate) const UNBUFFERED: i32 = 0x008;
 /// reason the history bridge routes through its conversion path. Note the
 /// wide setter only clears it in a single-byte locale, which
 /// `sem:el.el-wset-fn` records as a defect.
-pub(crate) const NARROW_HISTORY: i32 = 0x040;
+pub const NARROW_HISTORY: i32 = 0x040;
 pub(crate) const NO_RESET: i32 = 0x080;
 /// Selects the EINTR-recovery path in the read loop; `el_get` reports this
 /// bit raw rather than as a boolean, which `sem:histedit.el-get-fn` records.

@@ -115,11 +115,11 @@
 // [spec:libedit:sem:el.el-source-fn/test]  crates/nshedit/src/el.rs:1053
 // [spec:libedit:sem:el.el-wline-fn/test]  crates/nshedit-abi/src/histedit.rs:1574
 // [spec:libedit:sem:el.secure-getenv-fn/test]  crates/nshedit/src/el.rs:304
-// [spec:libedit:sem:eln.el-get-fn/test]  crates/nshedit-abi/src/eln.rs:598
-// [spec:libedit:sem:eln.el-insertstr-fn/test]  crates/nshedit-abi/src/eln.rs:789
-// [spec:libedit:sem:eln.el-line-fn/test]  crates/nshedit-abi/src/eln.rs:696
-// [spec:libedit:sem:eln.el-parse-fn/test]  crates/nshedit-abi/src/eln.rs:358
-// [spec:libedit:sem:eln.el-set-fn/test]  crates/nshedit-abi/src/eln.rs:433
+// [spec:libedit:sem:eln.el-get-fn/test]  crates/nshedit-abi/src/eln.rs:640
+// [spec:libedit:sem:eln.el-insertstr-fn/test]  crates/nshedit-abi/src/eln.rs:831
+// [spec:libedit:sem:eln.el-line-fn/test]  crates/nshedit-abi/src/eln.rs:738
+// [spec:libedit:sem:eln.el-parse-fn/test]  crates/nshedit-abi/src/eln.rs:362
+// [spec:libedit:sem:eln.el-set-fn/test]  crates/nshedit-abi/src/eln.rs:437
 // [spec:libedit:sem:hist.hist-command-fn/test]  crates/nshedit/src/hist.rs:272
 // [spec:libedit:sem:hist.hist-end-fn/test]  crates/nshedit/src/hist.rs:96
 // [spec:libedit:sem:hist.hist-init-fn/test]  crates/nshedit/src/hist.rs:69
@@ -215,20 +215,22 @@
 // [spec:libedit:sem:tty.tty-setup-fn/test]  crates/nshedit/src/tty.rs:868
 
 // ---------------------------------------------------------------------------
-// conformance/driver/readline_api.c — 87 rules
+// conformance/driver/readline_api.c — 89 rules
 // ---------------------------------------------------------------------------
 // [spec:libedit:sem:chared.el-deletestr1-fn/test]  crates/nshedit/src/chared.rs:1093
 // [spec:libedit:sem:chared.el-wreplacestr-fn/test]  crates/nshedit/src/chared.rs:1155
-// [spec:libedit:sem:eln.el-replacestr-fn/test]  crates/nshedit-abi/src/eln.rs:810
+// [spec:libedit:sem:eln.el-replacestr-fn/test]  crates/nshedit-abi/src/eln.rs:852
 // [spec:libedit:sem:filecomplete.completion-matches-fn/test]  crates/nshedit/src/filecomplete.rs:720
 // [spec:libedit:sem:filecomplete.fn-display-match-list-fn/test]  crates/nshedit/src/filecomplete.rs:839
 // [spec:libedit:sem:filecomplete.fn-filename-completion-function-fn/test]  crates/nshedit-abi/src/filecomplete.rs:554
 // [spec:libedit:sem:filecomplete.fn-tilde-expand-fn/test]  crates/nshedit-abi/src/filecomplete.rs:527
+// [spec:libedit:sem:hist.hist-set-fn/test]  crates/nshedit/src/hist.rs:128
 // [spec:libedit:sem:histedit.el-deletestr1-fn/test]  crates/nshedit-abi/src/histedit.rs:659
 // [spec:libedit:sem:histedit.el-init-fd-fn/test]  crates/nshedit-abi/src/histedit.rs:472
 // [spec:libedit:sem:histedit.el-wreplacestr-fn/test]  crates/nshedit-abi/src/histedit.rs:1628
 // [spec:libedit:sem:histedit.history-fn/test]  crates/nshedit-abi/src/histedit.rs:698
 // [spec:libedit:sem:histedit.history-init-fn/test]  crates/nshedit-abi/src/histedit.rs:671
+// [spec:libedit:sem:prompt.prompt-set-fn/test]  crates/nshedit/src/prompt.rs:302
 // [spec:libedit:sem:readline.add-history-fn/test]  crates/nshedit-abi/src/readline.rs:3052
 // [spec:libedit:sem:readline.append-history-fn/test]  crates/nshedit-abi/src/readline.rs:2917
 // [spec:libedit:sem:readline.clear-history-fn/test]  crates/nshedit-abi/src/readline.rs:3180
@@ -306,24 +308,92 @@
 // [spec:libedit:sem:terminal.terminal-gettc-fn/test]  crates/nshedit/src/terminal.rs:2343
 
 // ---------------------------------------------------------------------------
-// conformance/aux/ub_corpus.c — 1 rules
+// conformance/driver/pty_edit.c — 65 rules
 // ---------------------------------------------------------------------------
+// [spec:libedit:sem:chared.c-delbefore1-fn/test]  crates/nshedit/src/chared.rs:451
+// [spec:libedit:sem:chared.c-next-word-fn/test]  crates/nshedit/src/chared.rs:569
+// [spec:libedit:sem:chared.c-prev-word-fn/test]  crates/nshedit/src/chared.rs:524
+// [spec:libedit:sem:chared.ce-isword-fn/test]  crates/nshedit/src/chared.rs:477
+// [spec:libedit:sem:chartype.ct-visual-width-fn/test]  crates/nshedit/src/chartype.rs:437
+// [spec:libedit:sem:common.ed-insert-fn/test]  crates/nshedit/src/common.rs:209
+// [spec:libedit:sem:common.ed-kill-line-fn/test]  crates/nshedit/src/common.rs:355
+// [spec:libedit:sem:common.ed-move-to-beg-fn/test]  crates/nshedit/src/common.rs:397
+// [spec:libedit:sem:common.ed-move-to-end-fn/test]  crates/nshedit/src/common.rs:374
+// [spec:libedit:sem:common.ed-newline-fn/test]  crates/nshedit/src/common.rs:655
+// [spec:libedit:sem:common.ed-next-char-fn/test]  crates/nshedit/src/common.rs:468
+// [spec:libedit:sem:common.ed-next-history-fn/test]  crates/nshedit/src/common.rs:790
+// [spec:libedit:sem:common.ed-prev-char-fn/test]  crates/nshedit/src/common.rs:525
+// [spec:libedit:sem:common.ed-prev-history-fn/test]  crates/nshedit/src/common.rs:750
+// [spec:libedit:sem:common.ed-prev-word-fn/test]  crates/nshedit/src/common.rs:504
+// [spec:libedit:sem:common.ed-transpose-chars-fn/test]  crates/nshedit/src/common.rs:432
+// [spec:libedit:sem:eln.el-gets-fn/test]  crates/nshedit-abi/src/eln.rs:290
+// [spec:libedit:sem:emacs.em-capitol-case-fn/test]  crates/nshedit/src/emacs.rs:332
+// [spec:libedit:sem:emacs.em-delete-or-list-fn/test]  crates/nshedit/src/emacs.rs:56
+// [spec:libedit:sem:emacs.em-delete-prev-char-fn/test]  crates/nshedit/src/emacs.rs:554
+// [spec:libedit:sem:emacs.em-kill-line-fn/test]  crates/nshedit/src/emacs.rs:177
+// [spec:libedit:sem:emacs.em-lower-case-fn/test]  crates/nshedit/src/emacs.rs:376
+// [spec:libedit:sem:emacs.em-next-word-fn/test]  crates/nshedit/src/emacs.rs:273
+// [spec:libedit:sem:emacs.em-upper-case-fn/test]  crates/nshedit/src/emacs.rs:301
+// [spec:libedit:sem:emacs.em-yank-fn/test]  crates/nshedit/src/emacs.rs:130
+// [spec:libedit:sem:hist.hist-get-fn/test]  crates/nshedit/src/hist.rs:154
+// [spec:libedit:sem:histedit.el-wgets-fn/test]  crates/nshedit-abi/src/histedit.rs:849
 // [spec:libedit:sem:histedit.history-end-fn/test]  crates/nshedit-abi/src/histedit.rs:684
+// [spec:libedit:sem:histedit.wcsdup-fn/test]  crates/nshedit-abi/src/histedit.rs:849
+// [spec:libedit:sem:keymacro.keymacro-get-fn/test]  crates/nshedit/src/keymacro.rs:193
+// [spec:libedit:sem:keymacro.node-trav-fn/test]  crates/nshedit/src/keymacro.rs:368
+// [spec:libedit:sem:prompt.prompt-default-r-fn/test]  crates/nshedit/src/prompt.rs:85
+// [spec:libedit:sem:prompt.prompt-print-fn/test]  crates/nshedit/src/prompt.rs:93
+// [spec:libedit:sem:read.el-wgetc-fn/test]  crates/nshedit/src/read.rs:740
+// [spec:libedit:sem:read.el-wgets-fn/test]  crates/nshedit/src/read.rs:949
+// [spec:libedit:sem:read.read-char-fn/test]  crates/nshedit/src/read.rs:491
+// [spec:libedit:sem:read.read-getcmd-fn/test]  crates/nshedit/src/read.rs:306
+// [spec:libedit:sem:refresh.re-addc-fn/test]  crates/nshedit/src/refresh.rs:156
+// [spec:libedit:sem:refresh.re-clear-eol-fn/test]  crates/nshedit/src/refresh.rs:607
+// [spec:libedit:sem:refresh.re-copy-and-pad-fn/test]  crates/nshedit/src/refresh.rs:1050
+// [spec:libedit:sem:refresh.re-fastaddc-fn/test]  crates/nshedit/src/refresh.rs:1268
+// [spec:libedit:sem:refresh.re-fastputc-fn/test]  crates/nshedit/src/refresh.rs:1175
+// [spec:libedit:sem:refresh.re-goto-bottom-fn/test]  crates/nshedit/src/refresh.rs:480
+// [spec:libedit:sem:refresh.re-putc-fn/test]  crates/nshedit/src/refresh.rs:275
+// [spec:libedit:sem:refresh.re-refresh-cursor-fn/test]  crates/nshedit/src/refresh.rs:1084
+// [spec:libedit:sem:refresh.re-refresh-fn/test]  crates/nshedit/src/refresh.rs:329
+// [spec:libedit:sem:refresh.re-strncopy-fn/test]  crates/nshedit/src/refresh.rs:584
+// [spec:libedit:sem:refresh.re-update-line-fn/test]  crates/nshedit/src/refresh.rs:642
+// [spec:libedit:sem:terminal.terminal-clear-eol-fn/test]  crates/nshedit/src/terminal.rs:1489
+// [spec:libedit:sem:terminal.terminal-flush-fn/test]  crates/nshedit/src/terminal.rs:2119
+// [spec:libedit:sem:terminal.terminal-move-to-char-fn/test]  crates/nshedit/src/terminal.rs:1225
+// [spec:libedit:sem:terminal.terminal-move-to-line-fn/test]  crates/nshedit/src/terminal.rs:1190
+// [spec:libedit:sem:terminal.terminal-overwrite-fn/test]  crates/nshedit/src/terminal.rs:1330
+// [spec:libedit:sem:terminal.terminal-putc-fn/test]  crates/nshedit/src/terminal.rs:2088
+// [spec:libedit:sem:terminal.terminal-writec-fn/test]  crates/nshedit/src/terminal.rs:2133
+// [spec:libedit:sem:tty.tty-end-fn/test]  crates/nshedit/src/tty.rs:1014
+// [spec:libedit:sem:tty.tty-get-flag-fn/test]  crates/nshedit/src/tty.rs:1234
+// [spec:libedit:sem:tty.tty-getchar-fn/test]  crates/nshedit/src/tty.rs:1116
+// [spec:libedit:sem:tty.tty-getspeed-fn/test]  crates/nshedit/src/tty.rs:1050
+// [spec:libedit:sem:tty.tty-setchar-fn/test]  crates/nshedit/src/tty.rs:1138
+// [spec:libedit:sem:tty.tty-setty-fn/test]  crates/nshedit/src/tty.rs:837
+// [spec:libedit:sem:tty.tty-setup-flags-fn/test]  crates/nshedit/src/tty.rs:1825
+// [spec:libedit:sem:tty.tty-update-char-fn/test]  crates/nshedit/src/tty.rs:1284
+// [spec:libedit:sem:tty.tty-update-flag-fn/test]  crates/nshedit/src/tty.rs:1246
+// [spec:libedit:sem:tty.tty-update-flags-fn/test]  crates/nshedit/src/tty.rs:1259
+
+// ---------------------------------------------------------------------------
+// conformance/aux/ub_corpus.c — 0 rules
+// ---------------------------------------------------------------------------
 
 /// The drivers, and the count each one earns.
 ///
 /// A rule reached by more than one driver is attributed to the first that
 /// reaches it, so these sum to the total. The overlap is large and that is
-/// expected — 258 of 258 rules are reached by more than one,
+/// expected — 324 of 324 rules are reached by more than one,
 /// because every driver goes through the same lifecycle and allocator paths.
 #[test]
 fn the_claim_list_is_what_coverage_measured() {
     // Regenerate with ./conformance/coverage.sh, verify with --check.
-    // 258 rules across 4 drivers, measured under -C instrument-coverage.
-    assert_eq!(CLAIMED, 258);
+    // 324 rules across 5 drivers, measured under -C instrument-coverage.
+    assert_eq!(CLAIMED, 324);
 }
 
 /// How many `/test` facets this file carries. The generator and the
 /// annotations above are written together, so a hand edit to either
 /// desynchronises them and `coverage.sh --check` says so.
-const CLAIMED: usize = 258;
+const CLAIMED: usize = 324;

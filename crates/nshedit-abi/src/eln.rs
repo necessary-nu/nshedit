@@ -44,18 +44,22 @@
 //! is the dispatch itself, and each arm's obligations are enumerated on the
 //! two functions below.
 
-use core::ffi::{CStr, c_char, c_int};
+use core::ffi::{CStr, c_char, c_int, c_void};
 use core::ptr;
 use std::cell::RefCell;
 
 use nshedit::chartype::{CtBufferT, ct_decode_string, ct_encode_string};
+use nshedit::el::NARROW_HISTORY;
+use nshedit::hist::HistFunT;
 use nshedit::histedit::{EditLine, LineInfo};
+use nshedit::prompt::ElPfuncT;
 
 use crate::histedit::{
     EL_BIND, EL_CLIENTDATA, EL_ECHOTC, EL_EDITMODE, EL_EDITOR, EL_GETCFN, EL_GETFP, EL_GETTC,
-    EL_PREP_TERM, EL_SAFEREAD, EL_SETFP, EL_SETTC, EL_SETTY, EL_SIGNAL, EL_TELLTC, EL_TERMINAL,
-    EL_UNBUFFERED, EL_WORDCHARS, el_wget_va, el_wgetc, el_wgets, el_winsertstr, el_wline,
-    el_wparse, el_wpush, el_wreplacestr, el_wset_va,
+    EL_HIST, EL_PREP_TERM, EL_PROMPT, EL_PROMPT_ESC, EL_RPROMPT, EL_RPROMPT_ESC, EL_SAFEREAD,
+    EL_SETFP, EL_SETTC, EL_SETTY, EL_SIGNAL, EL_TELLTC, EL_TERMINAL, EL_UNBUFFERED, EL_WORDCHARS,
+    el_wget_va, el_wgetc, el_wgets, el_winsertstr, el_wline, el_wparse, el_wpush, el_wreplacestr,
+    el_wset_va,
 };
 use core::ffi::VaList;
 
@@ -563,6 +567,44 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
     // a convenience: `sem:eln.el-set-fn` requires every conversion to use the
     // WIDE half, so no `el_set` invalidates a `const char *` a caller is still
     // holding from `el_gets`, `el_line` or `el_get`.
+    // `EL_HIST` calls `hist_set` directly rather than going through
+    // `el_wset`, and then sets `NARROW_HISTORY` UNCONDITIONALLY. That is the
+    // flag's only set site: `el_wset` never sets it and clears it when
+    // `MB_CUR_MAX == 1`. ERR-core-api-16, disposition reproduce — a program
+    // that installs its history through the narrow entry point gets narrow
+    // history whatever the locale says, and one that uses the wide entry
+    // point gets it cleared.
+    if op == EL_HIST {
+        // SAFETY: the op's arguments are a `hist_fun_t` and an opaque cookie.
+        let f = unsafe { crate::histedit::fn_arg::<HistFunT>(&mut ap) };
+        let ptr = unsafe { ap.next_arg::<*mut c_void>() };
+        let rv = nshedit::hist::hist_set(el, f, ptr);
+        el.el_flags |= NARROW_HISTORY;
+        return rv;
+    }
+
+    // The prompt ops. Not forwardable, and the reason is one argument: the
+    // narrow arm passes `wide = 0` where `el_wset` passes 1, which is the
+    // only difference between them and decides how `prompt_print` measures
+    // what it draws.
+    //
+    // The escape character arrives as a character CODE, not a byte to
+    // decode — `el_pfunc_t` is narrow in both APIs, so nothing here is
+    // converted. `EL_PROMPT`/`EL_RPROMPT` pass 0 for it unconditionally,
+    // which erases one installed earlier through the `_ESC` form
+    // (ERR-core-api-36, reproduced inside `prompt_set`).
+    if op == EL_PROMPT || op == EL_RPROMPT || op == EL_PROMPT_ESC || op == EL_RPROMPT_ESC {
+        // SAFETY: the op's first argument is an `el_pfunc_t`, per the header.
+        let f = unsafe { crate::histedit::fn_arg::<ElPfuncT>(&mut ap) };
+        let esc = if op == EL_PROMPT_ESC || op == EL_RPROMPT_ESC {
+            // SAFETY: the op's second argument is an `int`.
+            unsafe { ap.next_arg::<c_int>() as u32 }
+        } else {
+            0
+        };
+        return nshedit::prompt::prompt_set(el, f, esc, op, 0);
+    }
+
     if op == EL_EDITOR || op == EL_WORDCHARS {
         // SAFETY: the op's argument is null or a NUL-terminated byte string.
         let p = unsafe { ap.next_arg::<*const c_char>() };

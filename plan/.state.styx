@@ -128,4 +128,5 @@ assertions (
     {id history-regex, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:03:50.160526017Z}
     {id conformance-driver-ub, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:09:53.61550356Z}
     {id encoding-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T22:17:06.032786455Z}
+    {id conformance-pty, kind @complete, author "brendan@necessary.nu", at 2026-08-06T22:33:00.320456038Z}
 )
