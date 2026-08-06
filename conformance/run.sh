@@ -22,6 +22,9 @@
 #   8. soname.sh              install, then load: a consumer linked against a
 #                             real libedit before we existed is run against
 #                             our install and has to start
+#   9. ub.sh                  the calls the C has no defined answer for. NOT a
+#                             differential: the port must survive, and what
+#                             the oracle does is reported rather than matched
 #
 # Each stage prints its own report and the summary at the end says which
 # passed. A non-zero exit means at least one stage found something; read the
@@ -67,6 +70,7 @@ stage "conformance-differential" "$CONF_DIR/differential.sh"
 stage "vis vs libbsd"            "$CONF_DIR/vis-cross.sh"
 stage "conformance-header-diff"  "$CONF_DIR/header-diff.sh"
 stage "conformance-soname"       "$CONF_DIR/soname.sh"
+stage "conformance-ub"           "$CONF_DIR/ub.sh"
 
 printf '\n########## summary ##########\n'
 for i in "${!names[@]}"; do

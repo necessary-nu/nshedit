@@ -291,12 +291,20 @@ children (
                 id history-regex
                 title "Choose and integrate a basic-regex engine for history search"
                 deps (history-translate)
+                sealed true
                 log (
                     {
                         at 2026-08-05T08:19:37.774689188Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Two facts from src/search.c:118-163 that narrow the engine choice, both missing from the comment on `bre_match`:\n\n1. The regex leg is a FALLBACK, not the primary path. `el_match` opens with `if (wcsstr(str, pat) != 0) return 1;` — a plain wide substring test — and only reaches `regcomp`/`regexec` when the literal substring is absent. Interactive history search is overwhelmingly literal, so engine choice governs a cold path, not a hot one. A heavier or slower engine is affordable here.\n\n2. Matching happens on ENCODED BYTES, not code points. Both operands go through `ct_encode_string(..., &conv)` before `regcomp`/`regexec`, so the C matches in the locale's multibyte encoding. A byte-oriented engine is therefore the faithful choice; a `char`-oriented one would diverge on any multibyte pattern. This also means bracket expressions and `.` operate on bytes, so `.` matches one byte of a UTF-8 sequence, not one character.\n\nFailure semantics: `regcomp` returning non-zero yields `rv = 0` — an unparseable pattern is simply \"no match\", never an error to the caller. cflags is 0, so POSIX BRE with no REG_NEWLINE and no REG_ICASE.\n\nAlso confirmed and NOT a defect: `pat` and `str` are encoded through the same static `conv` buffer, so the second `ct_encode_string` overwrites the first. This is safe only because POSIX `regcomp` copies the pattern rather than retaining the pointer. Worth an errata note as a latent trap for any port that swaps in an engine holding a borrow on the pattern."
+                    }
+
+                    {
+                        at 2026-08-06T21:03:50.160526017Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
@@ -377,12 +385,20 @@ children (
                 priority 1
                 kind @refactor
                 deps (history-format-sniff)
+                sealed true
                 log (
                     {
                         at 2026-08-06T16:30:15.816904788Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T21:03:51.085345115Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -1330,6 +1346,22 @@ children (
                 id conformance-driver-ub
                 title "Forked UB corpus, where the oracle is expected to die and the port to define"
                 deps (conformance-differential)
+                sealed true
+                log (
+                    {
+                        at 2026-08-06T21:04:21.640484547Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T21:09:53.61550356Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
             }
 
             {

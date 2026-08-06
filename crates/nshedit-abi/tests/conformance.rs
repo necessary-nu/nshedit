@@ -292,3 +292,26 @@ fn vis_matches_libbsd() {
     run_script("build-oracle.sh", &[]);
     run_script("vis-cross.sh", &[]);
 }
+
+/// `conformance-driver-ub`: the calls the C has no defined answer for.
+///
+/// The other stages are differentials. This one cannot be: every case comes
+/// from an entry in `docs/errata.md` whose disposition is `define`, which
+/// says the C is undefined and the port is not — so agreement is the wrong
+/// test and a diff would report every success as a failure.
+///
+/// Asserted: the port survives all 20 cases. Reported but not asserted: what
+/// the oracle does, which matters because a case the C also survives proves
+/// nothing about the port. It currently dies on 11 of the 20, each in a
+/// forked child, so the corpus can be judged rather than trusted.
+///
+/// Passes. Two of the cases had no erratum at all and were found by running
+/// it — `history_expand(line, NULL)` and `tilde_expand(NULL)`, both of which
+/// the C stores through or reads without checking.
+#[test]
+fn undefined_behaviour_is_defined() {
+    let _stages = stage_lock();
+    require_port_cdylib();
+    run_script("build-oracle.sh", &[]);
+    run_script("ub.sh", &[]);
+}

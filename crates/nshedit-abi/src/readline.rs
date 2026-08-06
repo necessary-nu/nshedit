@@ -2289,6 +2289,13 @@ unsafe fn truncate_at(tmp: *mut c_char, c: u8) {
 // [spec:libedit:sem:readline.history-expand-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn history_expand(str_: *mut c_char, output: *mut *mut c_char) -> c_int {
+    // The C writes through `output` on every path without ever checking it,
+    // so a NULL out-parameter is a null store — measured, it segfaults.
+    // Rejected here instead: there is nowhere to put the answer, so there is
+    // no answer to give. Unregistered UB, found by `conformance/ub.sh`.
+    if output.is_null() {
+        return -1;
+    }
     let mut ret: c_int = 0;
     // SAFETY: `str_` is a NUL-terminated string owned by the caller and
     // `output` is live.
@@ -3644,20 +3651,38 @@ pub unsafe extern "C" fn rl_display_match_list(matches: *mut *mut c_char, len: c
         if len < 0 || max < 0 {
             return;
         }
-        let num = len as usize;
-
+        // ERR-completion-02's disposition is "treat it as a caller error and
+        // reject it", and `len` is the caller's claim about an array only the
+        // caller can measure. What actually bounds it is the NULL terminator
+        // the readline contract puts there — `rl_completion_matches` and
+        // `completion_matches` both produce one — so the walk stops at the
+        // first NULL rather than trusting the count.
+        //
+        // Without this, `rl_display_match_list(matches, 99, 6)` over a
+        // two-element array read 100 pointers and died. Measured by
+        // `conformance/ub.sh`, where the C dies on it too; this is the half
+        // the erratum says must not.
+        //
         // The core takes owned strings and sorts them in place, so the
         // caller's array is permuted afterwards to match — which is what the
         // C's in-place `qsort` leaves behind.
-        let mut owned: Vec<String> = Vec::with_capacity(num + 1);
-        for i in 0..=num {
+        let claimed = len as usize;
+        let mut owned: Vec<String> = Vec::with_capacity(claimed + 1);
+        for i in 0..=claimed {
             let p = *matches.add(i);
-            owned.push(if p.is_null() {
-                String::new()
-            } else {
-                String::from_utf8_lossy(c_bytes(p)).into_owned()
-            });
+            if p.is_null() {
+                // Index 0 is the common prefix and may legitimately be empty;
+                // a NULL past it ends the list.
+                if i == 0 {
+                    owned.push(String::new());
+                    continue;
+                }
+                break;
+            }
+            owned.push(String::from_utf8_lossy(c_bytes(p)).into_owned());
         }
+        // `owned[0]` is the prefix, so the count of entries is what follows.
+        let num = owned.len().saturating_sub(1);
 
         filecomplete::fn_display_match_list(
             &mut *E,
