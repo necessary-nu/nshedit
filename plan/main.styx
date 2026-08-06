@@ -45,6 +45,21 @@ children (
                 title "Write tests for the encoding primitives from their sem rules; there are none to port"
                 deps (encoding-translate conformance-differential)
                 sealed true
+                log (
+                    {
+                        at 2026-08-06T22:13:03.302176251Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T22:17:06.032786455Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
             }
 
             {

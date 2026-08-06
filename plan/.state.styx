@@ -127,4 +127,5 @@ assertions (
     {id conformance-driver-readline, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:46:43.026910006Z}
     {id history-regex, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:03:50.160526017Z}
     {id conformance-driver-ub, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:09:53.61550356Z}
+    {id encoding-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T22:17:06.032786455Z}
 )

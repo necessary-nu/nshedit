@@ -696,7 +696,7 @@ pub(crate) fn el_init_internal(
 /// - `el_tty.t_t` is an array of structs carrying a `&'static str` name, and
 ///   `tty_init` `memcpy`s the compiled-in `ttyperm` table over the whole
 ///   thing before anything reads it.
-fn blank_editline() -> EditLine {
+pub(crate) fn blank_editline() -> EditLine {
     EditLine {
         el_prog: Vec::new(),
         el_infile: ptr::null_mut(),

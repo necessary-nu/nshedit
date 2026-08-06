@@ -341,3 +341,167 @@ fn encode_onto(out: &mut Vec<u8>, c: u32) {
 // `ct_visual_width`, to decide whether a double-width character must be pushed
 // to the next line. One implementation, and it is locale-aware as libc's is:
 // in the C locale nothing above U+007E has a width at all.
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::el::{EditLine, blank_editline};
+
+    /// `literal_add` takes the sequence as `buf[..end]` and the VISIBLE
+    /// character as `buf[end]`, so a call needs one more element than `end`.
+    fn add(el: &mut EditLine, seq: &[u32], visible: u32) -> (u32, i32) {
+        let mut buf: Vec<u32> = seq.to_vec();
+        buf.push(0); // the slot `end` indexes
+        buf.push(visible);
+        let mut w = 0;
+        let r = literal_add(el, &buf, seq.len(), &mut w);
+        (r, w)
+    }
+
+    /// Every success carries bit 31 and an index below it, which is what lets
+    /// the screen image hold sentinels and real characters in one `u32`.
+    #[test]
+    fn a_sentinel_is_the_marker_bit_or_an_index() {
+        let mut el = blank_editline();
+        let (a, wa) = add(
+            &mut el,
+            &[0x1b, b'[' as u32, b'1' as u32, b'm' as u32],
+            b'X' as u32,
+        );
+        let (b, wb) = add(
+            &mut el,
+            &[0x1b, b'[' as u32, b'0' as u32, b'm' as u32],
+            b'Y' as u32,
+        );
+
+        assert_eq!(wa, 1, "the visible character's width is reported");
+        assert_eq!(wb, 1);
+        assert_eq!(a, EL_LITERAL, "first index is 0");
+        assert_eq!(b, EL_LITERAL | 1);
+        assert!(a & EL_LITERAL != 0 && b & EL_LITERAL != 0);
+        // No genuine scalar value collides: Unicode stops at U+10FFFF.
+        assert!(a > 0x10_FFFF && b > 0x10_FFFF);
+    }
+
+    /// The bytes come back exactly, sequence then visible character, and the
+    /// C's trailing NUL is not stored — the length is the length.
+    #[test]
+    fn the_stored_bytes_are_the_sequence_then_the_visible_character() {
+        let mut el = blank_editline();
+        let (r, _) = add(
+            &mut el,
+            &[0x1b, b'[' as u32, b'1' as u32, b'm' as u32],
+            b'X' as u32,
+        );
+        assert_eq!(literal_get(&mut el, r), b"\x1b[1mX");
+    }
+
+    /// `literal_get` is defined where the C asserts, because the assert
+    /// vanishes under `NDEBUG` — which distro packagers commonly define.
+    #[test]
+    fn a_reference_with_no_marker_bit_yields_nothing() {
+        let mut el = blank_editline();
+        let (r, _) = add(&mut el, &[0x1b], b'X' as u32);
+        assert_eq!(literal_get(&mut el, r & !EL_LITERAL), b"");
+        assert_eq!(literal_get(&mut el, 0), b"", "add's failure return");
+        assert_eq!(literal_get(&mut el, b'a' as u32), b"");
+    }
+
+    /// Past the in-use prefix, not merely past the allocation. Reachable in
+    /// ordinary operation rather than only by caller error: ERR-terminal-09
+    /// has `el_display` still holding the previous frame's sentinels after
+    /// `literal_clear`.
+    #[test]
+    fn a_stale_sentinel_yields_nothing_rather_than_old_bytes() {
+        let mut el = blank_editline();
+        let (r, _) = add(&mut el, &[0x1b], b'X' as u32);
+        assert_eq!(literal_get(&mut el, r), b"\x1bX");
+
+        literal_clear(&mut el);
+        assert_eq!(
+            literal_get(&mut el, r),
+            b"",
+            "the index survived the clear; the bytes must not"
+        );
+        assert_eq!(literal_get(&mut el, EL_LITERAL | 99), b"");
+    }
+
+    /// `end + 1` must be in bounds: the visible character is read from
+    /// `buf[end]`, and there is no character to measure without it.
+    #[test]
+    fn a_missing_visible_character_fails_with_width_minus_one() {
+        let mut el = blank_editline();
+        let buf = [0x1b, b'[' as u32];
+        let mut w = 0;
+        assert_eq!(literal_add(&mut el, &buf, buf.len(), &mut w), 0);
+        assert_eq!(w, -1);
+
+        // Empty buffer, same shape.
+        let mut w = 0;
+        assert_eq!(literal_add(&mut el, &[], 0, &mut w), 0);
+        assert_eq!(w, -1);
+    }
+
+    /// A visible character with no width is not a literal: `wcwidth` says -1
+    /// and nothing is stored.
+    #[test]
+    fn a_visible_character_with_no_width_is_refused() {
+        let mut el = blank_editline();
+        // A lone surrogate has no width in any charset.
+        let (r, w) = add(&mut el, &[0x1b], 0xD800);
+        assert_eq!(r, 0);
+        assert!(w < 0, "width was {w}");
+        assert_eq!(el.el_literal.l_idx, 0, "nothing was stored");
+    }
+
+    /// The table grows by a fixed four slots, not by doubling. Observable
+    /// only through `l_len`, which the `sem` rules index by.
+    #[test]
+    fn the_table_grows_by_four() {
+        let mut el = blank_editline();
+        assert_eq!((el.el_literal.l_idx, el.el_literal.l_len), (0, 0));
+        for i in 1..=9usize {
+            add(&mut el, &[0x1b], b'X' as u32);
+            assert_eq!(el.el_literal.l_idx, i);
+            assert_eq!(
+                el.el_literal.l_len,
+                i.div_ceil(4) * 4,
+                "after {i} adds the allocation should be the next multiple of four"
+            );
+        }
+    }
+
+    /// `literal_clear` is a no-op on an untouched table — the C's guard tests
+    /// `l_len`, not `l_idx` — and resets both counters otherwise.
+    #[test]
+    fn clear_is_a_no_op_when_nothing_was_allocated() {
+        let mut el = blank_editline();
+        literal_clear(&mut el);
+        assert_eq!((el.el_literal.l_idx, el.el_literal.l_len), (0, 0));
+
+        add(&mut el, &[0x1b], b'X' as u32);
+        assert_eq!((el.el_literal.l_idx, el.el_literal.l_len), (1, 4));
+        literal_end(&mut el);
+        assert_eq!((el.el_literal.l_idx, el.el_literal.l_len), (0, 0));
+        assert!(el.el_literal.l_buf.is_empty());
+    }
+
+    /// The index can never reach `MB_FILL_CHAR`.
+    ///
+    /// `terminal__putc` tests `c == MB_FILL_CHAR` BEFORE `c & EL_LITERAL`,
+    /// and `MB_FILL_CHAR` is `0xFFFF_FFFF` — which has bit 31 set. A literal
+    /// parked at index `0x7FFF_FFFF` would be swallowed as multibyte padding
+    /// and never printed, so `literal_add` refuses that index rather than
+    /// issuing a sentinel the caller cannot distinguish.
+    #[test]
+    fn the_unusable_top_index_is_never_issued() {
+        assert_eq!(EL_LITERAL | LITERAL_INDEX_MAX, MB_FILL_CHAR - 1);
+        assert_ne!(EL_LITERAL | LITERAL_INDEX_MAX, MB_FILL_CHAR);
+
+        let mut el = blank_editline();
+        // Past the bound the add fails rather than wrapping into the marker.
+        el.el_literal.l_idx = LITERAL_INDEX_MAX as usize + 1;
+        let (r, _) = add(&mut el, &[0x1b], b'X' as u32);
+        assert_eq!(r, 0);
+    }
+}
