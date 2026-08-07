@@ -7,7 +7,7 @@ rust-version = "1.85"
 # which is MIT OR Apache-2.0, copyright The Rust Project Developers.
 license = "MIT OR Apache-2.0"
 description = "Reads the terminfo database: capability lookup and parameterised string expansion, without linking a C library."
-repository = "https://github.com/necessary-nu/libedit"
+repository = "https://github.com/necessary-nu/nshedit"
 authors = ["The Rust Project Developers", "Brendan Molloy <brendan@necessary.nu>"]
 keywords = ["terminfo", "terminal", "termcap", "tty"]
 categories = ["command-line-interface", "parser-implementations"]

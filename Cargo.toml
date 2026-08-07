@@ -14,7 +14,7 @@ edition = "2024"
 # uses `nshedit` directly and needs none of the C ABI or its varargs.
 rust-version = "1.85"
 license = "BSD-3-Clause"
-repository = "https://github.com/necessary-nu/libedit"
+repository = "https://github.com/necessary-nu/nshedit"
 authors = ["Brendan Molloy <brendan@necessary.nu>"]
 
 [workspace.dependencies]
