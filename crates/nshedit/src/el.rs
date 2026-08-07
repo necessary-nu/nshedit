@@ -54,6 +54,9 @@ pub(crate) const FROM_ELLINE: i32 = 0x200;
 
 use crate::chared::{CKillT, CRedoT, CUndoT, CVcmdT, ElCharedT, ch_end, ch_init, ch_reset};
 use crate::chartype::{CtBufferT, ct_decode_string, ct_encode_string};
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use crate::hist::{EditorHistory, ElHistoryT, HistSource, hist_end, hist_init};
 use crate::histedit::{HistEventW, LineInfo};
 use crate::keymacro::{ElKeymacroT, KeymacroValueT, keymacro_end, keymacro_init};
@@ -259,30 +262,43 @@ impl EditLine {
     /// editor built on the library directly has no history at all — `^P`,
     /// `^N`, vi's `k` and `j`, and `^R` all do nothing.
     ///
-    /// [`crate::history::HistoryW`] implements [`EditorHistory`], so the
-    /// built-in store works without the caller writing anything:
+    /// # The editor borrows the history; it does not take it
+    ///
+    /// They have independent lifetimes and a shell depends on that: `set +o
+    /// emacs` ends the editor and keeps the history, and the C says the same
+    /// thing by making `el_history.ref` a client cookie `el_end` never frees.
+    /// So this takes a shared handle rather than a value, and dropping the
+    /// editor leaves the caller's history intact.
+    ///
+    /// [`crate::history::OwnedHistoryW`] implements [`EditorHistory`], so the
+    /// built-in store needs no adapter:
     ///
     /// ```no_run
+    /// # use std::cell::RefCell;
+    /// # use std::rc::Rc;
     /// # use nshedit::el::EditLine;
     /// # use nshedit::history::OwnedHistoryW;
     /// # fn f(el: &mut EditLine) {
-    /// el.set_history(OwnedHistoryW::with_size(100));
+    /// let history = Rc::new(RefCell::new(OwnedHistoryW::with_size(100)));
+    /// el.set_history(history.clone());
+    /// // `el` may now be dropped; `history` outlives it and keeps its entries.
     /// # }
     /// ```
     ///
-    /// Replaces whatever was attached, C or Rust. Passing the editor its
-    /// history transfers ownership; [`EditLine::history_mut`] borrows it back.
-    pub fn set_history(&mut self, history: impl EditorHistory + 'static) {
-        self.el_history.src = HistSource::Rust(Box::new(history));
+    /// Replaces whatever was attached, C or Rust.
+    pub fn set_history(&mut self, history: Rc<RefCell<dyn EditorHistory>>) {
+        self.el_history.src = HistSource::Rust(history);
     }
 
     /// The attached Rust history, if one was set by [`EditLine::set_history`].
     ///
-    /// Answers `None` for a history installed through the C ABI, which is an
-    /// opaque cookie this crate cannot safely hand out.
-    pub fn history_mut(&mut self) -> Option<&mut dyn EditorHistory> {
-        match &mut self.el_history.src {
-            HistSource::Rust(h) => Some(&mut **h),
+    /// A second handle to the caller's own history, not the editor's copy —
+    /// there is no copy. Answers `None` for a history installed through the C
+    /// ABI, which is an opaque cookie this crate cannot safely hand out.
+    #[must_use]
+    pub fn history(&self) -> Option<Rc<RefCell<dyn EditorHistory>>> {
+        match &self.el_history.src {
+            HistSource::Rust(h) => Some(Rc::clone(h)),
             _ => None,
         }
     }

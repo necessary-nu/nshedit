@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use super::*;
 use crate::chared::ch_init;
 use crate::common::{ed_next_history, ed_prev_history};
@@ -53,7 +56,7 @@ impl Recorder {
     fn line(&self, i: usize) -> Option<HistLine> {
         self.entries.get(i).map(|s| HistLine {
             num: i32::try_from(i).unwrap_or(i32::MAX) + 1,
-            text: wide(s),
+            text: HistText::Wide(wide(s)),
         })
     }
 }
@@ -81,18 +84,16 @@ impl EditorHistory for Recorder {
     }
 }
 
-/// Reads back what the editor asked a `Recorder` for. `history_mut` hands out
-/// `&mut dyn`, which cannot be downcast without `Any`, and adding `Any` to the
-/// public trait to satisfy a test would be the test dictating the API.
-fn asked_of(el: &EditLine) -> Vec<&'static str> {
-    match &el.el_history.src {
-        HistSource::Rust(h) => {
-            let ptr: *const dyn EditorHistory = &**h;
-            // SAFETY: every caller installs a `Recorder` immediately above.
-            unsafe { &*ptr.cast::<Recorder>() }.asked.clone()
-        }
-        _ => unreachable!("the test installed a Rust history"),
-    }
+/// Attaches a `Recorder` holding `entries` and keeps a handle on it, which is
+/// what the editor borrowing rather than owning makes possible: the test can
+/// still read what the editor asked for.
+fn attach(el: &mut EditLine, entries: &[&'static str]) -> Rc<RefCell<Recorder>> {
+    let h = Rc::new(RefCell::new(Recorder {
+        entries: entries.to_vec(),
+        ..Recorder::default()
+    }));
+    el.set_history(h.clone());
+    h
 }
 
 /// The state that used to be unreachable: a history installed by a caller that
@@ -106,12 +107,14 @@ fn a_rust_history_attaches_where_only_the_c_abi_could() {
         "a fresh editor has no history, as the C's NULL ref says"
     );
 
-    el.set_history(Recorder {
-        entries: vec!["one"],
-        ..Recorder::default()
-    });
+    let h = attach(&mut el, &["one"]);
     assert!(el.el_history.src.is_attached());
-    assert!(el.history_mut().is_some(), "and the caller gets it back");
+    assert!(el.history().is_some(), "and the caller gets a handle back");
+
+    // The lifetimes are independent, which is the requirement a shell has:
+    // `set +o emacs` ends the editor and keeps the history.
+    drop(el);
+    assert_eq!(h.borrow().entries, vec!["one"], "the history outlived it");
 }
 
 /// `^P` is the whole reason this exists. It walked a history that no Rust
@@ -120,10 +123,7 @@ fn a_rust_history_attaches_where_only_the_c_abi_could() {
 #[test]
 fn previous_history_recalls_the_newest_entry() {
     let mut el = editor();
-    el.set_history(Recorder {
-        entries: vec!["newest", "middle", "oldest"],
-        ..Recorder::default()
-    });
+    attach(&mut el, &["newest", "middle", "oldest"]);
     el.el_state.argument = 1;
 
     assert_eq!(ed_prev_history(&mut el, 0), CC_REFRESH);
@@ -148,10 +148,7 @@ fn previous_history_recalls_the_newest_entry() {
 #[test]
 fn walking_past_the_oldest_entry_beeps_rather_than_failing() {
     let mut el = editor();
-    el.set_history(Recorder {
-        entries: vec!["only"],
-        ..Recorder::default()
-    });
+    attach(&mut el, &["only"]);
     el.el_state.argument = 1;
 
     assert_eq!(ed_prev_history(&mut el, 0), CC_REFRESH);
@@ -166,16 +163,13 @@ fn walking_past_the_oldest_entry_beeps_rather_than_failing() {
 #[test]
 fn the_editor_asks_only_for_the_four_walks() {
     let mut el = editor();
-    el.set_history(Recorder {
-        entries: vec!["a", "b", "c"],
-        ..Recorder::default()
-    });
+    let recorder = attach(&mut el, &["a", "b", "c"]);
     el.el_state.argument = 1;
     ed_prev_history(&mut el, 0);
     ed_prev_history(&mut el, 0);
     ed_next_history(&mut el, 0);
 
-    let asked = asked_of(&el);
+    let asked = recorder.borrow().asked.clone();
     assert!(
         asked
             .iter()
@@ -208,18 +202,18 @@ fn the_builtin_store_walks_through_the_seam() {
     assert!(h.enter(&wide("second typed")));
 
     let newest = h.first().expect("a store with two entries has a first");
-    assert_eq!(newest.text, wide("second typed"));
+    assert_eq!(newest.text, HistText::Wide(wide("second typed")));
     assert_eq!(
         newest.num, 2,
         "the store numbers entries as it created them"
     );
 
     let older = h.next().expect("and one behind it");
-    assert_eq!(older.text, wide("first typed"));
+    assert_eq!(older.text, HistText::Wide(wide("first typed")));
     assert!(h.next().is_none(), "and nothing behind that");
 
     let mut el = editor();
-    el.set_history(h);
+    el.set_history(Rc::new(RefCell::new(h)));
     el.el_state.argument = 1;
     assert_eq!(ed_prev_history(&mut el, 0), CC_REFRESH);
     assert_eq!(text(&el), "second typed");
@@ -238,6 +232,44 @@ fn the_owned_store_forwards_the_settings_it_advertises() {
         !h.enter(&wide("same")),
         "and the second is suppressed rather than failing"
     );
-    assert_eq!(h.first().unwrap().text, wide("same"));
+    assert_eq!(h.first().unwrap().text, HistText::Wide(wide("same")));
     assert!(h.next().is_none(), "the duplicate was not stored");
+}
+
+/// A byte-oriented store, which is what a shell actually has: dash keeps a
+/// `HistoryGen<c_char>` and the C sets `NARROW_HISTORY` for it. The seam takes
+/// the bytes and decodes them here, through the same `ct_decode_string` the
+/// C's narrow path uses, so neither side transcodes twice.
+struct ByteStore(Vec<&'static [u8]>);
+
+impl EditorHistory for ByteStore {
+    fn first(&mut self) -> Option<HistLine> {
+        self.0.first().map(|b| HistLine {
+            num: 1,
+            text: HistText::Narrow(b.to_vec()),
+        })
+    }
+    fn last(&mut self) -> Option<HistLine> {
+        self.first()
+    }
+    fn next(&mut self) -> Option<HistLine> {
+        None
+    }
+    fn prev(&mut self) -> Option<HistLine> {
+        None
+    }
+}
+
+/// A narrow store reaches the editor without NARROW_HISTORY being set, because
+/// each entry carries its own width. The flag exists to tell the C's two
+/// instantiations apart and has nothing to say about a Rust store.
+#[test]
+fn a_byte_oriented_history_is_decoded_rather_than_refused() {
+    let mut el = editor();
+    el.set_history(Rc::new(RefCell::new(ByteStore(vec![b"echo hi"]))));
+    el.el_state.argument = 1;
+
+    assert_eq!(el.el_flags & crate::el::NARROW_HISTORY, 0);
+    assert_eq!(ed_prev_history(&mut el, 0), CC_REFRESH);
+    assert_eq!(text(&el), "echo hi");
 }

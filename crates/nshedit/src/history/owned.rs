@@ -8,7 +8,7 @@
 use core::ptr;
 
 use super::{HistoryArg, HistoryW, history_w, history_wend, history_winit};
-use crate::hist::{EditorHistory, HistLine};
+use crate::hist::{EditorHistory, HistLine, HistText};
 use crate::histedit::{
     H_ENTER, H_FIRST, H_LAST, H_NEXT, H_PREV, H_SETSIZE, H_SETUNIQUE, HistEventW,
 };
@@ -116,7 +116,11 @@ impl OwnedHistoryW {
                 p = p.add(1);
             }
         }
-        Some(HistLine { num: ev.num, text })
+        // `HistoryW` is the wide instantiation, so no decode is owed.
+        Some(HistLine {
+            num: ev.num,
+            text: HistText::Wide(text),
+        })
     }
 }
 
@@ -160,7 +164,7 @@ mod test {
 
         let mut h = OwnedHistoryW::with_size(4);
         assert!(h.enter(&wide("stays")));
-        assert_eq!(h.first().unwrap().text, wide("stays"));
+        assert_eq!(h.first().unwrap().text, HistText::Wide(wide("stays")));
     }
 
     /// The store is a ring: past `max`, the oldest entry falls off rather than
@@ -171,8 +175,8 @@ mod test {
         for s in ["one", "two", "three"] {
             assert!(h.enter(&wide(s)));
         }
-        assert_eq!(h.first().unwrap().text, wide("three"));
-        assert_eq!(h.next().unwrap().text, wide("two"));
+        assert_eq!(h.first().unwrap().text, HistText::Wide(wide("three")));
+        assert_eq!(h.next().unwrap().text, HistText::Wide(wide("two")));
         assert!(h.next().is_none(), "\"one\" was evicted");
     }
 
@@ -188,9 +192,9 @@ mod test {
         assert!(h.enter(&wide("b")));
         assert!(h.enter(&wide("a")), "but not one with a line in between");
 
-        assert_eq!(h.first().unwrap().text, wide("a"));
-        assert_eq!(h.next().unwrap().text, wide("b"));
-        assert_eq!(h.next().unwrap().text, wide("a"));
+        assert_eq!(h.first().unwrap().text, HistText::Wide(wide("a")));
+        assert_eq!(h.next().unwrap().text, HistText::Wide(wide("b")));
+        assert_eq!(h.next().unwrap().text, HistText::Wide(wide("a")));
     }
 
     /// The four walks move where their names say, and `last` is the oldest
@@ -201,10 +205,10 @@ mod test {
         for s in ["oldest", "middle", "newest"] {
             h.enter(&wide(s));
         }
-        assert_eq!(h.first().unwrap().text, wide("newest"));
-        assert_eq!(h.last().unwrap().text, wide("oldest"));
-        assert_eq!(h.prev().unwrap().text, wide("middle"));
-        assert_eq!(h.next().unwrap().text, wide("oldest"));
+        assert_eq!(h.first().unwrap().text, HistText::Wide(wide("newest")));
+        assert_eq!(h.last().unwrap().text, HistText::Wide(wide("oldest")));
+        assert_eq!(h.prev().unwrap().text, HistText::Wide(wide("middle")));
+        assert_eq!(h.next().unwrap().text, HistText::Wide(wide("oldest")));
         assert!(h.next().is_none(), "and nothing past the oldest");
     }
 

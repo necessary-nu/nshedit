@@ -1,11 +1,13 @@
 //! Ported from `src/hist.c`; rules live in `docs/spec/port/src/hist.md`.
 
 use core::ffi::{c_int, c_void};
+use std::cell::RefCell;
 use std::ffi::CStr;
 use std::io::Write;
 use std::mem::ManuallyDrop;
 use std::os::fd::FromRawFd;
 use std::ptr;
+use std::rc::Rc;
 
 use crate::chared::ch_enlargebufs;
 use crate::chartype::{ct_decode_string, ct_encode_string};
@@ -35,6 +37,24 @@ use crate::map::MAP_VI;
 /// unchecked.
 pub type HistFunT = unsafe extern "C" fn(*mut c_void, *mut HistEventW, c_int, ...) -> c_int;
 
+/// An entry's text, in whichever width the store keeps.
+///
+/// Both exist because both are real. The C has two instantiations of its
+/// history and `NARROW_HISTORY` records which one an editor was given; a
+/// byte-oriented store is what a shell actually has, and demanding wide text
+/// from one would mean it transcoding on the way out and the editor
+/// transcoding back. [`Narrow`](HistText::Narrow) is decoded here through the
+/// same `ct_decode_string` the C's narrow path already uses, so the two agree
+/// on what an undecodable byte means.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HistText {
+    /// One character per `u32`, no terminator. What the editor's line buffer
+    /// holds, so this arm costs nothing.
+    Wide(Vec<u32>),
+    /// Bytes in the current locale's encoding, no terminator.
+    Narrow(Vec<u8>),
+}
+
 /// One entry, as the editor asks for it: the event number and the text.
 ///
 /// The C hands back a borrowed `wchar_t *` in a shared `HistEventW` that the
@@ -44,8 +64,8 @@ pub type HistFunT = unsafe extern "C" fn(*mut c_void, *mut HistEventW, c_int, ..
 pub struct HistLine {
     /// C: `ev.num`. `vi_to_history_line` computes an event number from it.
     pub num: i32,
-    /// The entry, one `char` per `u32`, with no terminator.
-    pub text: Vec<u32>,
+    /// The entry.
+    pub text: HistText,
 }
 
 /// A history the editor can walk, for callers that are not the C ABI.
@@ -102,13 +122,23 @@ pub enum HistSource {
         /// it.
         cookie: *mut c_void,
     },
-    /// A Rust implementation, owned by the editor.
+    /// A Rust implementation, **shared** with the caller rather than owned by
+    /// the editor.
     ///
-    /// Owned rather than borrowed on purpose: a borrow would put a lifetime
-    /// parameter on [`EditLine`], which is threaded through every signature
-    /// in this crate, to buy something a caller can get back through
-    /// [`EditLine::history_mut`].
-    Rust(Box<dyn EditorHistory>),
+    /// The sharing is the requirement, not a convenience. A history outlives
+    /// the editor that reads it: the C's `el_history.ref` is a client cookie
+    /// and `el_end` explicitly does not free it, and a shell relies on that —
+    /// `set +o emacs` ends the editor and keeps the history, so the two have
+    /// genuinely independent lifetimes. A setter taking the history by value
+    /// cannot express that.
+    ///
+    /// `Rc<RefCell<_>>` rather than a borrow because a borrow would put a
+    /// lifetime parameter on [`EditLine`], which is threaded through every
+    /// signature in this crate. The editor takes its handle out before
+    /// borrowing, and calls the history from exactly one place, so the
+    /// `RefCell` is never re-entered — a caller that reaches back into its own
+    /// history from inside one of these methods is the one way to panic here.
+    Rust(Rc<RefCell<dyn EditorHistory>>),
 }
 
 impl HistSource {
@@ -481,7 +511,9 @@ pub(crate) fn hist_command(el: &mut EditLine, argc: i32, argv: *const *const u32
     // cookie because it has nothing else to go on; here the implementation
     // answers for itself, and the default is the same -1 the narrow store
     // gives, so an implementation that ignores `.editrc` is not penalised.
-    if let HistSource::Rust(h) = &mut el.el_history.src {
+    if let HistSource::Rust(h) = &el.el_history.src {
+        let h = Rc::clone(h);
+        let mut h = h.borrow_mut();
         return if size {
             h.set_size(num)
         } else {
@@ -652,30 +684,51 @@ fn hist_convert_str(el: &mut EditLine, r#fn: i32, arg: *mut c_void) -> Option<&[
 /// what lets `hist_get` survive the `ch_enlargebufs` in its own step 4
 /// (ERR-history-28).
 fn hist_fun(el: &mut EditLine, r#fn: i32, arg: *mut c_void) -> Option<Vec<u32>> {
-    if el.el_flags & NARROW_HISTORY != 0 {
-        return hist_convert_str(el, r#fn, arg).map(<[u32]>::to_vec);
-    }
-
-    // The Rust seam. It answers the same four walks and writes the same
-    // shared `ev.num`, so `vi_to_history_line` reads it back exactly as it
-    // does from the C dispatcher. The variadic `arg` has nowhere to go and
-    // needs none: every call libedit makes through this hook passes NULL.
-    if let HistSource::Rust(h) = &mut el.el_history.src {
-        let line = match r#fn {
-            H_FIRST => h.first(),
-            H_LAST => h.last(),
-            H_NEXT => h.next(),
-            H_PREV => h.prev(),
-            // Nothing else reaches here: `hist_command` handles the two
-            // settings itself and no other opcode is issued by the editor.
-            _ => None,
+    // The Rust seam is checked before the width split, not after it. Each
+    // entry carries its own width in [`HistText`], so a byte-oriented Rust
+    // store needs neither `NARROW_HISTORY` nor the C's two instantiations —
+    // and a narrow editor with a Rust history would otherwise fall into
+    // `hist_convert_str`, which can only reach a C dispatcher.
+    if let HistSource::Rust(h) = &el.el_history.src {
+        // The handle comes out first: the borrow of `el` has to end before
+        // the decode below, which needs `el_scratch`.
+        let h = Rc::clone(h);
+        let line = {
+            let mut h = h.borrow_mut();
+            match r#fn {
+                H_FIRST => h.first(),
+                H_LAST => h.last(),
+                H_NEXT => h.next(),
+                H_PREV => h.prev(),
+                // Loud rather than silent. `hist_command` handles the two
+                // settings itself and no editor path issues any other opcode
+                // — measured, not assumed: H_CURR, H_SET, H_PREV_STR and
+                // H_NEXT_STR exist but nothing outside `history.rs` names
+                // them, and the search commands walk through `hist_first` and
+                // `hist_next` like everything else. If that ever stops being
+                // true, an unmapped opcode would make an editing command
+                // quietly do nothing, which is the worst way to find out.
+                other => {
+                    debug_assert!(false, "no EditorHistory mapping for opcode {other}");
+                    None
+                }
+            }
         }?;
         el.el_history.ev.num = line.num;
         // The C's `ev.str` borrows from the store and stays valid until the
         // entry is replaced. There is no such pointer here, and the one
         // reader of the cookie wants `num`, so the field is left alone rather
         // than made to dangle.
-        return Some(line.text);
+        return Some(match line.text {
+            HistText::Wide(w) => w,
+            // The same decode the C's narrow path takes, so an undecodable
+            // byte means here what it means there.
+            HistText::Narrow(b) => ct_decode_string(Some(&b), &mut el.el_scratch)?.to_vec(),
+        });
+    }
+
+    if el.el_flags & NARROW_HISTORY != 0 {
+        return hist_convert_str(el, r#fn, arg).map(<[u32]>::to_vec);
     }
 
     // C: `HIST_FUN_INTERNAL` — the call writes the shared event cookie, and
