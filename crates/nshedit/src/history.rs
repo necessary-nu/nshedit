@@ -2555,5 +2555,7 @@ pub fn history(h: *mut History, ev: &mut HistEvent, fun: i32, arg: HistoryArg<'_
     history_gen::<c_char>(h, ev, fun, arg)
 }
 
+mod native;
 mod owned;
+pub use native::NativeHistory;
 pub use owned::OwnedHistoryW;

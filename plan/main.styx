@@ -391,6 +391,7 @@ children (
                 priority 1
                 kind @feat
                 deps (history-format-native)
+                sealed true
                 log (
                     {
                         at 2026-08-06T15:13:40.085393283Z
@@ -404,6 +405,20 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "REVERSED the dep between this node and history-format-native, ten minutes after authoring it the wrong way round. This now depends on the container rather than the container depending on it.\n\nTwo things I had not looked at when I wrote the original edge:\n\n1. `crates/nshedit/src/history.rs` is 2583 lines of literal wave-2 port, holding entries on raw pointers with `Strdup`/`h_free` and a circular intrusive list. Changing `HentryGen`'s representation is an invasive refactor of a file whose own translate node is still open, and it would fight the port rather than build on it.\n\n2. More decisive: the blob has no meaning on the C ABI path at all. `HentryGen.data` is a `*mut c_void` the caller owns and libedit hands back untouched — there is no length, so there is nothing to serialize even in principle. A caller reaching us through `histedit.h` cannot supply a persistable blob, and inventing a length for it would be making up an ABI libedit does not have.\n\nSo the blob is a Rust-native concern, for nsh, and the entry change is the WIRING step, not the foundation. The container — records, framing, the reader — is standalone, has no dependency on how entries are held in memory, and is testable on its own. Building it first also means the format is settled before anything invasive touches the port.\n\nThe practical effect on order: history-format-native is now the ready node and this one follows it. Nothing else in the group moves."
+                    }
+
+                    {
+                        at 2026-08-07T01:11:28.341009831Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "CARRIED OUT AS A NEW STORE RATHER THAN A CHANGE TO HentryGen, which is what the reversed-dep decision on this node already argued for and what the seam built since then made cheap.\n\nThe blob has no meaning on the C ABI path — HentryGen.data is a bare *mut c_void with no length, so there is nothing to serialize even in principle, and inventing a length would be making up an ABI libedit does not have. That has not changed. What changed is that history-rust-seam gave the core an EditorHistory trait, so a Rust-native store is now something an editor can be handed rather than something that would have to displace the ported one.\n\nSo NativeHistory holds histfile::Record directly: what is in memory is exactly what is written to disk, and the round trip is one type rather than a conversion. It implements EditorHistory, so attaching one is set_history and nothing else. history.rs's 2,583 lines of literal port are untouched, and history-idiomatize is still free to rewrite them.\n\nTHREE PLACES IT DELIBERATELY DIVERGES FROM THE C STORE, each because the C's answer is a trap rather than a design.\n\nSize 0 means unbounded, not \"retain nothing\". The C store starts at max == 0 and trims on every insert, so a fresh one silently discards everything until H_SETSIZE — which cost a red test while writing OwnedHistoryW and would cost every caller one. A bound is something a caller asks for.\n\nText is bytes, not wide. The store, the file format and a shell all speak bytes; making the store wide would mean transcoding on the way out and the editor transcoding back. HistText::Narrow means the editor decodes once at its own edge.\n\nUniqueness compares text and ignores the blob. Two entries with the same text and different blobs are the same line typed twice, so the repeat is suppressed and the newer blob goes with it. That is a real loss and it is deliberate: the alternative is keeping a duplicate line because a blob differed, which is worse for the user and surprising. Recorded here rather than left to be discovered.\n\nA walk with no previous position answers nothing rather than guessing at the front, which is what the C's cursor-on-the-list-header state does.\n\nEleven tests, including a blob holding all 256 byte values through a save and load — the case that says why the format is COBS-framed rather than line-oriented — and undecodable entry text round-tripping unchanged, which is what locale-free means."
+                    }
+
+                    {
+                        at 2026-08-07T01:11:35.697332771Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
