@@ -25,6 +25,7 @@ use std::mem::ManuallyDrop;
 use std::os::fd::FromRawFd;
 
 use crate::chared::{NOP, ch_enlargebufs, ch_reset};
+use crate::chartype::{ct_enc_width, ct_encode_string};
 use crate::el::{EDIT_DISABLED, EditLine, ElActionT, FIXIO, HANDLE_SIGNALS, NO_TTY, UNBUFFERED};
 use crate::errno;
 use crate::fcns::{ED_INSERT, ED_SEQUENCE_LEAD_IN, VI_DELETE_PREV_CHAR};
@@ -1180,6 +1181,59 @@ pub fn el_wgets<'a>(el: &'a mut EditLine, nread: Option<&mut i32>) -> Option<&'a
     }
 }
 
+/// Read a line as bytes, encoded in the current locale.
+///
+/// The byte-oriented counterpart to [`el_wgets`], and the one a shell wants:
+/// it hands back what the user typed in the encoding the rest of the program
+/// speaks, with `nread` counting bytes rather than wide characters.
+///
+/// This is `eln.c`'s `el_gets`, hoisted into the core because every Rust
+/// consumer otherwise reimplements it — encode through `el_lgcyconv`, then
+/// rewrite the wide count as a byte count — and the buffer choice is not
+/// obvious. Getting it wrong breaks the caller's lifetime contract silently.
+///
+/// The returned slice borrows `el_lgcyconv`, so the next [`el_gets`],
+/// `el_line`, `el_get(EL_EDITOR)` or `el_get(EL_WORDCHARS)` on this editor
+/// invalidates it. The borrow of `el` says so; the C ABI's version cannot and
+/// documents it in prose instead.
+///
+/// # The count and the string can disagree
+///
+/// `nread` counts the encoding of exactly the wide characters the read
+/// reported, and the string runs to the wide terminator. Those agree on the
+/// buffered path, which terminates at the reported length, and not under
+/// `EL_UNBUFFERED`, where the returned bytes run past the reported count into
+/// characters left over from an earlier, longer line (ERR-core-api-26,
+/// reproduced). A caller that trusts the count is right in both cases; one
+/// that trusts the terminator is not.
+///
+/// A character the locale cannot encode contributes nothing to the count, so
+/// that it matches the encoder dropping it. The measurement is clamped to the
+/// line rather than trusting the count to be inside it — the C ABI's copy
+/// walks `*nread` characters from the buffer start whatever `*nread` says.
+pub fn el_gets<'a>(el: &'a mut EditLine, nread: Option<&mut i32>) -> Option<&'a [u8]> {
+    let mut nrb = 0;
+    let nread: &mut i32 = match nread {
+        Some(n) => n,
+        None => &mut nrb,
+    };
+
+    // Copied out rather than kept borrowed: the encode below needs
+    // `el_lgcyconv` mutably and the wide line is a view of the same editor.
+    // The C reaches around that with two raw pointers into one object; a line
+    // is one allocation per keypress-terminated read, which is not where this
+    // library spends anything.
+    let line: Vec<u32> = el_wgets(el, Some(nread))?.to_vec();
+
+    // Exactly `*nread` characters are measured, which is not the length of
+    // the string encoded below. See the note above.
+    let counted = usize::try_from(*nread).unwrap_or(0).min(line.len());
+    let bytes: usize = line[..counted].iter().copied().map(ct_enc_width).sum();
+    *nread = i32::try_from(bytes).unwrap_or(i32::MAX);
+
+    ct_encode_string(Some(&line), &mut el.el_lgcyconv)
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -1504,5 +1558,66 @@ mod tests {
         assert_eq!(noedit_wgets(&mut el, &mut nread), Some(&w("abc")[..]));
         assert_eq!(nread, 3);
         errno::set_errno(0);
+    }
+
+    /// `el_gets` is the byte-oriented entry point a shell wants, and until now
+    /// only `nshedit-abi` had one — every direct Rust consumer reimplemented
+    /// the encode-and-recount from `eln.c`. Under `NO_TTY` the read path
+    /// bypasses `el_wgetc` entirely and reaches the descriptor, which is what
+    /// makes it drivable here.
+    #[test]
+    fn the_byte_reader_returns_the_line_and_a_byte_count() {
+        let mut el = el();
+        el.el_flags |= NO_TTY;
+        el.el_read.as_deref_mut().unwrap().read_char = Some(feed);
+        feed_chars("echo hi\n");
+
+        let mut nread = 0;
+        let line = el_gets(&mut el, Some(&mut nread)).expect("a line was typed");
+        assert_eq!(line, b"echo hi\n");
+        assert_eq!(nread, 8, "bytes, not wide characters");
+    }
+
+    /// A multi-byte character makes the two counts differ, which is the whole
+    /// reason the rewrite exists: `el_wgets` would have reported 3.
+    #[test]
+    fn the_count_is_bytes_where_the_wide_one_would_be_characters() {
+        let mut el = el();
+        el.el_flags |= NO_TTY;
+        el.el_read.as_deref_mut().unwrap().read_char = Some(feed);
+        feed_chars("aé\n");
+
+        let mut nread = 0;
+        let line = el_gets(&mut el, Some(&mut nread)).expect("a line was typed");
+        // Whatever the harness locale encodes to, the count is the length of
+        // what came back rather than the number of characters read.
+        assert_eq!(nread as usize, line.len());
+        assert!(line.ends_with(b"\n"));
+    }
+
+    /// End of input is `None` with a zero count, the same shape `el_wgets`
+    /// reports, so a caller need not learn a second convention.
+    #[test]
+    fn the_byte_reader_reports_end_of_input_as_no_line() {
+        let mut el = el();
+        el.el_flags |= NO_TTY;
+        el.el_read.as_deref_mut().unwrap().read_char = Some(feed);
+        feed_chars("");
+
+        let mut nread = -7;
+        assert!(el_gets(&mut el, Some(&mut nread)).is_none());
+        assert_eq!(nread, 0, "and the count is the read's, not the rewrite's");
+    }
+
+    /// The out-parameter is optional here where the C ABI's `el_gets`
+    /// dereferences it the moment a line comes back (ERR-core-api-11).
+    #[test]
+    fn the_byte_reader_tolerates_no_count_at_all() {
+        let mut el = el();
+        el.el_flags |= NO_TTY;
+        el.el_read.as_deref_mut().unwrap().read_char = Some(feed);
+        feed_chars("x\n");
+
+        assert_eq!(el_gets(&mut el, None).expect("a line"), b"x\n");
     }
 }

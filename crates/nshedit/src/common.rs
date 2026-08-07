@@ -841,7 +841,7 @@ pub(crate) fn ed_search_prev_history(el: &mut EditLine, c: u32) -> ElActionT {
         hist_save_line(el);
     }
     // 6.
-    if el.el_history.r#ref.is_null() {
+    if !el.el_history.src.is_attached() {
         return CC_ERROR;
     }
     // 7. Position on event 1, the newest entry.
@@ -908,7 +908,7 @@ pub(crate) fn ed_search_next_history(el: &mut EditLine, c: u32) -> ElActionT {
         return CC_ERROR;
     }
     // 5.
-    if el.el_history.r#ref.is_null() {
+    if !el.el_history.src.is_attached() {
         return CC_ERROR;
     }
     // 6.

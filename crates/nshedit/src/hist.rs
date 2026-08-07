@@ -35,6 +35,100 @@ use crate::map::MAP_VI;
 /// unchecked.
 pub type HistFunT = unsafe extern "C" fn(*mut c_void, *mut HistEventW, c_int, ...) -> c_int;
 
+/// One entry, as the editor asks for it: the event number and the text.
+///
+/// The C hands back a borrowed `wchar_t *` in a shared `HistEventW` that the
+/// next call overwrites. This owns its text instead, because the borrow is
+/// unrepresentable across a trait object and the editor copies it anyway —
+/// [`hist_fun`] already ends in `to_vec`.
+pub struct HistLine {
+    /// C: `ev.num`. `vi_to_history_line` computes an event number from it.
+    pub num: i32,
+    /// The entry, one `char` per `u32`, with no terminator.
+    pub text: Vec<u32>,
+}
+
+/// A history the editor can walk, for callers that are not the C ABI.
+///
+/// The editor performs exactly four operations on a history — the C issues
+/// them as `H_FIRST`, `H_LAST`, `H_NEXT` and `H_PREV`, each with no trailing
+/// argument, which is why [`HistFunT`]'s variadic tail is unused by every
+/// call libedit itself makes. Those four are the whole of what recall and
+/// search need.
+///
+/// The two settings below reach only the `history size` and `history unique`
+/// builtins in an `.editrc`. They default to -1, the same answer the C gives
+/// for a narrow store, so an implementation that does not care about `.editrc`
+/// need not write them.
+pub trait EditorHistory {
+    /// The most recent entry.
+    fn first(&mut self) -> Option<HistLine>;
+    /// The oldest entry.
+    fn last(&mut self) -> Option<HistLine>;
+    /// One step towards the oldest, from wherever the last call left off.
+    fn next(&mut self) -> Option<HistLine>;
+    /// One step towards the most recent.
+    fn prev(&mut self) -> Option<HistLine>;
+
+    /// `history size N`. 0 on success, -1 if unsupported.
+    fn set_size(&mut self, _entries: i32) -> i32 {
+        -1
+    }
+    /// `history unique N`. 0 on success, -1 if unsupported.
+    fn set_unique(&mut self, _on: bool) -> i32 {
+        -1
+    }
+}
+
+/// Where an [`EditLine`] gets its entries.
+///
+/// The C has two fields for this — a `void *ref` cookie and a variadic
+/// `hist_fun_t` — and "no history" is the pair being NULL. That encoding can
+/// only hold a C function pointer, and stable Rust cannot *define* a `...`
+/// function (rust-lang/rust#44930), so the only values that could ever reach
+/// it were the `history`/`history_w` symbols `nshedit-abi` exports. A program
+/// linking `nshedit` directly therefore had no way to attach a history at all,
+/// and its editor had no recall and no search.
+pub enum HistSource {
+    /// Nothing attached. Recall and search report an empty history.
+    None,
+    /// The C ABI's dispatcher and the opaque cookie it is called with. This
+    /// is what `el_set(el, EL_HIST, history, h)` installs, and its shape is
+    /// frozen by the ABI.
+    CAbi {
+        /// C: `el_history.fun`.
+        fun: HistFunT,
+        /// C: `el_history.ref`, handed back untouched. `el_end` does not free
+        /// it.
+        cookie: *mut c_void,
+    },
+    /// A Rust implementation, owned by the editor.
+    ///
+    /// Owned rather than borrowed on purpose: a borrow would put a lifetime
+    /// parameter on [`EditLine`], which is threaded through every signature
+    /// in this crate, to buy something a caller can get back through
+    /// [`EditLine::history_mut`].
+    Rust(Box<dyn EditorHistory>),
+}
+
+impl HistSource {
+    /// Whether a history is attached at all.
+    ///
+    /// C: `el->el_history.ref != NULL`, which is the guard every recall path
+    /// tests before walking. Note it tests the cookie and not the function,
+    /// so `el_set(EL_HIST, history, NULL)` reads as detached *here* while
+    /// still dispatching from the paths that have no such guard — the C is
+    /// inconsistent about that pair and this reproduces it rather than
+    /// tidying it, because `vi_history_word` is one of the unguarded paths.
+    pub fn is_attached(&self) -> bool {
+        match self {
+            HistSource::None => false,
+            HistSource::CAbi { cookie, .. } => !cookie.is_null(),
+            HistSource::Rust(_) => true,
+        }
+    }
+}
+
 // [spec:libedit:def:hist.el-history-t]
 /// The `EditLine`'s view of the history: a stash for the line being edited,
 /// plus the hook that reaches the actual history object.
@@ -53,11 +147,9 @@ pub struct ElHistoryT {
     pub last: usize,
     /// Event we are looking for.
     pub eventno: i32,
-    /// C: `void *ref` — argument for the history functions, a client cookie
-    /// libedit stores and hands back untouched. `el_end` does not free it.
-    pub r#ref: *mut c_void,
-    /// Event access.
-    pub fun: Option<HistFunT>,
+    /// Where entries come from. C: the `ref`/`fun` pair, which is one of the
+    /// three states this enum names and cannot express the third.
+    pub src: HistSource,
     /// Event cookie. `ev.str` is borrowed from the history entry the last
     /// operation returned.
     pub ev: HistEventW,
@@ -67,8 +159,7 @@ pub struct ElHistoryT {
 // [spec:libedit:sem:hist.hist-init-fn]
 /// C: `libedit_private int hist_init(EditLine *el)`
 pub(crate) fn hist_init(el: &mut EditLine) -> i32 {
-    el.el_history.fun = None;
-    el.el_history.r#ref = ptr::null_mut();
+    el.el_history.src = HistSource::None;
 
     // `el_calloc(EL_BUFSIZ, sizeof(wchar_t))`. The C's NULL on failure is an
     // empty stash here; `try_reserve` is what keeps the failure a failure
@@ -121,9 +212,8 @@ pub(crate) fn hist_end(el: &mut EditLine) {
 /// Public only so `nshedit-abi` can write `el_wset`'s `EL_HIST` arm, and
 /// hidden because a Rust caller cannot supply the argument: [`HistFunT`] is
 /// C-variadic, and stable Rust cannot *define* a `...` function
-/// (rust-lang/rust#44930). The only values that can reach this slot are the
-/// `history`/`history_w` symbols `nshedit-abi` exports. Idiomatization owes
-/// the core a history interface that is not a varargs dispatch.
+/// (rust-lang/rust#44930). A Rust caller wants [`EditLine::set_history`],
+/// which takes an [`EditorHistory`] and needs no variadic anything.
 #[doc(hidden)]
 pub fn hist_set(el: &mut EditLine, fun: Option<HistFunT>, ptr: *mut c_void) -> i32 {
     // ERR-history-04, defined here: the C accepts a NULL `fun` alongside a
@@ -137,8 +227,14 @@ pub fn hist_set(el: &mut EditLine, fun: Option<HistFunT>, ptr: *mut c_void) -> i
         return -1;
     }
 
-    el.el_history.r#ref = ptr;
-    el.el_history.fun = fun;
+    // C: both fields are written unconditionally, and a NULL `fun` is what
+    // makes the pair uncallable. The cookie is carried whatever it is —
+    // including NULL, which the guards read as detached and the unguarded
+    // paths do not. See [`HistSource::is_attached`].
+    el.el_history.src = match fun {
+        Some(fun) => HistSource::CAbi { fun, cookie: ptr },
+        None => HistSource::None,
+    };
 
     // Not touched, as in the C: `buf`, `sz`, `last`, `eventno` and `ev`. A
     // stale `eventno` is resolved against the new store by the next
@@ -192,7 +288,7 @@ pub(crate) fn hist_get(el: &mut EditLine) -> ElActionT {
     // Branch B — fetch from the history store. Note the C has no guard on a
     // negative `eventno` (ERR-history-26): the walk below never runs, `hp`
     // stays on event 1, and the epilogue rewrites the field to 1.
-    if el.el_history.r#ref.is_null() {
+    if !el.el_history.src.is_attached() {
         return CC_ERROR;
     }
 
@@ -270,7 +366,7 @@ pub(crate) fn hist_get(el: &mut EditLine) -> ElActionT {
 /// `terminal_telltc`, …), handed straight through from the tokenizer, and
 /// nothing here owns it.
 pub(crate) fn hist_command(el: &mut EditLine, argc: i32, argv: *const *const u32) -> i32 {
-    if el.el_history.r#ref.is_null() {
+    if !el.el_history.src.is_attached() {
         return -1;
     }
 
@@ -381,6 +477,18 @@ pub(crate) fn hist_command(el: &mut EditLine, argc: i32, argv: *const *const u32
         return -1;
     }
 
+    // A Rust history is asked rather than punned. The C reinterprets the
+    // cookie because it has nothing else to go on; here the implementation
+    // answers for itself, and the default is the same -1 the narrow store
+    // gives, so an implementation that ignores `.editrc` is not penalised.
+    if let HistSource::Rust(h) = &mut el.el_history.src {
+        return if size {
+            h.set_size(num)
+        } else {
+            h.set_unique(num != 0)
+        };
+    }
+
     // The wide path. `ref` was installed through the wide `el_wset(EL_HIST,
     // …)`, where the C's assumption holds for libedit's own store and this is
     // the defined behaviour to preserve: `history size 100` in an `.editrc`
@@ -399,12 +507,10 @@ pub(crate) fn hist_command(el: &mut EditLine, argc: i32, argv: *const *const u32
     };
     // C: `ev` is an uninitialised local, filled by the callee and discarded,
     // so the error string is thrown away.
-    history_w(
-        el.el_history.r#ref.cast::<HistoryW>(),
-        &mut ev,
-        op,
-        HistoryArg::Num(num),
-    )
+    let HistSource::CAbi { cookie, .. } = el.el_history.src else {
+        return -1;
+    };
+    history_w(cookie.cast::<HistoryW>(), &mut ev, op, HistoryArg::Num(num))
 }
 
 // [spec:libedit:def:hist.hist-enlargebuf-fn]
@@ -475,7 +581,13 @@ fn hist_convert_str(el: &mut EditLine, r#fn: i32, arg: *mut c_void) -> Option<&[
     // on call sites having tested `ref`. [`hist_set`] rejects the pair that
     // makes those two disagree, so this can only be the "no history at all"
     // state, which every caller already reads as an empty history.
-    let fun = el.el_history.fun?;
+    //
+    // A [`HistSource::Rust`] history is never narrow — `NARROW_HISTORY` is
+    // set only by the narrow `el_set` and the readline layer, both of which
+    // install a C dispatcher — so [`hist_fun`] never routes one here.
+    let HistSource::CAbi { fun, cookie } = el.el_history.src else {
+        return None;
+    };
 
     // ERR-history-03, defined here: the C declares a `HistEventW` and lets
     // the narrow store write a `HistEvent` through it, then reinterprets
@@ -488,12 +600,11 @@ fn hist_convert_str(el: &mut EditLine, r#fn: i32, arg: *mut c_void) -> Option<&[
         num: 0,
         str: ptr::null(),
     };
-    let r#ref = el.el_history.r#ref;
-    // SAFETY: `fun` and `ref` were installed together by `hist_set`, which is
-    // the C's own precondition for this call; `ev` outlives it.
+    // SAFETY: `fun` and `cookie` were installed together by `hist_set`, which
+    // is the C's own precondition for this call; `ev` outlives it.
     let rv = unsafe {
         fun(
-            r#ref,
+            cookie,
             ptr::from_mut(&mut ev).cast::<HistEventW>(),
             r#fn as c_int,
             arg,
@@ -545,15 +656,38 @@ fn hist_fun(el: &mut EditLine, r#fn: i32, arg: *mut c_void) -> Option<Vec<u32>> 
         return hist_convert_str(el, r#fn, arg).map(<[u32]>::to_vec);
     }
 
+    // The Rust seam. It answers the same four walks and writes the same
+    // shared `ev.num`, so `vi_to_history_line` reads it back exactly as it
+    // does from the C dispatcher. The variadic `arg` has nowhere to go and
+    // needs none: every call libedit makes through this hook passes NULL.
+    if let HistSource::Rust(h) = &mut el.el_history.src {
+        let line = match r#fn {
+            H_FIRST => h.first(),
+            H_LAST => h.last(),
+            H_NEXT => h.next(),
+            H_PREV => h.prev(),
+            // Nothing else reaches here: `hist_command` handles the two
+            // settings itself and no other opcode is issued by the editor.
+            _ => None,
+        }?;
+        el.el_history.ev.num = line.num;
+        // The C's `ev.str` borrows from the store and stays valid until the
+        // entry is replaced. There is no such pointer here, and the one
+        // reader of the cookie wants `num`, so the field is left alone rather
+        // than made to dangle.
+        return Some(line.text);
+    }
+
     // C: `HIST_FUN_INTERNAL` — the call writes the shared event cookie, and
     // that write is what `vi_to_history_line` reads back as `ev.num`.
-    let fun = el.el_history.fun?;
-    let r#ref = el.el_history.r#ref;
+    let HistSource::CAbi { fun, cookie } = el.el_history.src else {
+        return None;
+    };
     // SAFETY: as in `hist_convert_str`; the cookie is part of the `EditLine`
     // and outlives the call.
     let rv = unsafe {
         fun(
-            r#ref,
+            cookie,
             ptr::from_mut(&mut el.el_history.ev),
             r#fn as c_int,
             arg,
@@ -722,3 +856,6 @@ unsafe fn wcs_to_vec(p: *const u32) -> Vec<u32> {
     // SAFETY: `len` characters were just read, and the string is contiguous.
     unsafe { core::slice::from_raw_parts(p, len) }.to_vec()
 }
+
+#[cfg(test)]
+mod test;

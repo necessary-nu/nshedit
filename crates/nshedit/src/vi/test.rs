@@ -2,6 +2,7 @@ use super::*;
 use crate::chared::ch_init;
 use crate::common::ed_insert;
 use crate::el::blank_editline;
+use crate::hist::HistSource;
 use crate::histedit::CC_NEWLINE;
 use crate::histedit::{H_FIRST, HistEventW};
 use crate::map::ElFuncT;
@@ -1174,7 +1175,10 @@ unsafe extern "C" fn hist_hook(_ref: *mut c_void, ev: *mut HistEventW, op: c_int
 #[test]
 fn history_word_appends_a_word_from_the_previous_entry() {
     let mut el = el_with("ab", 1);
-    el.el_history.fun = Some(hist_hook);
+    el.el_history.src = HistSource::CAbi {
+        fun: hist_hook,
+        cookie: ptr::null_mut(),
+    };
     assert_eq!(vi_history_word(&mut el, 0), CC_REFRESH);
     assert_eq!(text(&el), "ab three");
     assert_eq!(el.el_line.cursor, 8);
@@ -1185,7 +1189,10 @@ fn history_word_appends_a_word_from_the_previous_entry() {
     );
 
     let mut el = el_with("ab", 1);
-    el.el_history.fun = Some(hist_hook);
+    el.el_history.src = HistSource::CAbi {
+        fun: hist_hook,
+        cookie: ptr::null_mut(),
+    };
     el.el_state.doingarg = 1;
     el.el_state.argument = 2;
     assert_eq!(vi_history_word(&mut el, 0), CC_REFRESH);
@@ -1199,7 +1206,10 @@ fn history_word_appends_a_word_from_the_previous_entry() {
 #[test]
 fn history_word_refuses_a_count_the_entry_cannot_satisfy() {
     let mut el = el_with("ab", 1);
-    el.el_history.fun = Some(hist_hook);
+    el.el_history.src = HistSource::CAbi {
+        fun: hist_hook,
+        cookie: ptr::null_mut(),
+    };
     el.el_state.doingarg = 1;
     el.el_state.argument = 9;
 

@@ -138,4 +138,5 @@ assertions (
     {id readline-compat-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:46:10.547653579Z}
     {id platform-plat-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:53:49.980781496Z}
     {id platform-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:53:50.518121992Z}
+    {id history-rust-seam, kind @complete, author "brendan@necessary.nu", at 2026-08-07T00:21:06.800956637Z}
 )

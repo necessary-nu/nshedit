@@ -478,6 +478,37 @@ children (
                 kind @feat
                 deps (history-record-blob)
             }
+
+            {
+                id history-rust-seam
+                title "Give the core a history interface a Rust caller can actually fill, because today only the C ABI can"
+                priority 0
+                kind @fix
+                deps (history-translate)
+                sealed true
+                log (
+                    {
+                        at 2026-08-07T00:01:33.218350516Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "THE EDITOR HAS NO HISTORY FOR THE ONLY CONSUMER WE HAVE. hist_set is the sole way to attach one and it takes hist_fun_t, `unsafe extern \"C\" fn(*mut c_void, *mut HistEventW, c_int, ...) -> c_int`. Stable Rust cannot define a variadic function, so the only values that can reach that slot are the history/history_w symbols nshedit-abi exports — and nsh links nshedit directly, not the ABI crate. Recall and search do nothing: ^P, ^N, k, j, ^R. fc is unaffected, because it reads the History object itself and never asks the editor.\n\nWHY IT SAT. history-idiomatize is P3 and deps on history-tests, which is also P3 and still todo, so the computed frontier never surfaced it. hist_set's own doc says \"idiomatization owes the core a history interface that is not a varargs dispatch\", which reads as a tidy-up rather than as the library failing at what it exists for. Nothing in the plan recorded the consumer requirement. This node is P0 and deps only on history-translate, deliberately: it must not sit behind a P3 test node.\n\nTHE SEAM IS MUCH SMALLER THAN THE VARARGS SIGNATURE SUGGESTS, measured rather than assumed. The hook is dispatched from exactly two places, both in hist.rs — hist_convert_str for the narrow store and hist_fun for the wide one. The editor issues exactly four operations through it: H_FIRST, H_LAST, H_NEXT, H_PREV, at hist.rs:577-592. All four pass a null trailing argument. The variadic-ness is unused by every call the editor makes; it exists only because the C ABI's history() happens to be variadic. And nshedit::history::History already exists as a native Rust type — it simply cannot be attached.\n\nSHAPE. ElHistoryT holds a source enum: the C-ABI (fun, ref) pair for nshedit-abi, or a boxed Rust hook for everyone else. The two dispatch sites match on it. hist_convert_str stays C-only, since a Rust consumer is never NARROW_HISTORY. Public surface is one trait with four methods returning the event number and the text, an EditLine setter, and an impl for History.\n\nOWNERSHIP: Box<dyn>, not a borrow. A borrow would put a lifetime parameter on EditLine, and EditLine is threaded through every signature in the crate — the cost lands everywhere, to buy something the caller can get back through an accessor. EditLine is already an owning aggregate; one more owned field is consistent with what it is."
+                    }
+
+                    {
+                        at 2026-08-07T00:20:58.56732249Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "THE SAME HOLE EXISTS THREE TIMES, and dash — the first consumer to link nshedit directly rather than through the C ABI — found all three. The pattern is one thing, not three: the core's Rust API is complete for nshedit-abi and has gaps for a direct Rust caller, and two of the three gaps fail silently at runtime rather than failing to compile.\n\n1. el_set(EL_HIST) / hist_set. The subject of this node. Fixed by HistSource plus EditLine::set_history.\n\n2. el_init. It derives all three descriptors through a `fileno` stub that answers -1 unconditionally, because a FILE * is the C library's object and no-c-ffi.md reserves reaching into one for the ABI crate, which does it properly through cstdio::fileno_of. So an editor built through the core's el_init has stdin, stdout and stderr all at -1: every read is EBADF, el_wgets reports that as end of file (ERR-input-24), and the editor exits before a key is pressed. dash produced '\\r\\n' against the reference's '$ echo hi\\r\\nhi\\r\\n$ exit\\r\\n'. Not a bug in the stub — the bug is that el_init is public, looks like the entry point, and is silent. The doc even said \"a fileno of -1 is stored undiagnosed and construction still reports success\", which describes the C's weak reporting faithfully while here the -1 is unconditional. Now #[doc(hidden)] with the consequence spelled out, the way hist_set already was, so el_init_fd is the Rust entry point. dash on a pty in vi mode is now byte-identical to C dash against real libedit.\n\n3. el_gets. The core had only el_wgets, so every Rust consumer reimplements eln.c: encode wide to narrow through el_lgcyconv and rewrite *nread from a wide count to a byte count. Added to read.rs beside el_wgets. It copies the wide line out rather than reaching around the borrow with two raw pointers into one object as the C does — one allocation per line read, which is not where this library spends anything. The count and the string can disagree under EL_UNBUFFERED (ERR-core-api-26) and the doc says which to trust.\n\nWHAT TO DO WITH THE PATTERN. Auditing the rest of the core's `pub` surface for the same shape belongs in core-api-idiomatize: anything that is public, plausibly an entry point, and only correct when called from nshedit-abi. hist_set and el_init are now both hidden; the question is what else is. A doc-hidden item that a Rust caller cannot use correctly is the right answer, and the wrong one is leaving it visible with a doc comment describing the C.\n\nMEASURED WHILE WRITING THE TESTS, because both would be got wrong from intuition. OwnedHistoryW::new retains NOTHING until it is given a size — the store's max starts at 0 and history_def_enter trims to max on every insert, so an entry vanishes before the next call. with_size exists so the trap has a one-call answer. And H_ENTER returns 1 for a real insert and 0 when H_UNIQUE suppressed it, both \"success\", with -1 only for a NULL handle (ERR-history-25); the wrapper answers a bool for \"stored\" rather than passing that inversion on.\n\ned_prev_history has no CC_ERROR path at all. Walking past the oldest entry sets a flag, retries hist_get, discards the second answer (ERR-history-31) and returns CC_REFRESH_BEEP. The test expected CC_ERROR and was wrong."
+                    }
+
+                    {
+                        at 2026-08-07T00:21:06.800956637Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
+            }
         )
     }
 

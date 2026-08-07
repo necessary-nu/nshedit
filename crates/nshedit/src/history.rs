@@ -2554,3 +2554,6 @@ pub fn history_end(h: *mut History) {
 pub fn history(h: *mut History, ev: &mut HistEvent, fun: i32, arg: HistoryArg<'_, c_char>) -> i32 {
     history_gen::<c_char>(h, ev, fun, arg)
 }
+
+mod owned;
+pub use owned::OwnedHistoryW;

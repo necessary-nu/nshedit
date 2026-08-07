@@ -54,7 +54,7 @@ pub(crate) const FROM_ELLINE: i32 = 0x200;
 
 use crate::chared::{CKillT, CRedoT, CUndoT, CVcmdT, ElCharedT, ch_end, ch_init, ch_reset};
 use crate::chartype::{CtBufferT, ct_decode_string, ct_encode_string};
-use crate::hist::{ElHistoryT, hist_end, hist_init};
+use crate::hist::{EditorHistory, ElHistoryT, HistSource, hist_end, hist_init};
 use crate::histedit::{HistEventW, LineInfo};
 use crate::keymacro::{ElKeymacroT, KeymacroValueT, keymacro_end, keymacro_init};
 use crate::literal::{ElLiteralT, literal_end, literal_init};
@@ -247,6 +247,45 @@ pub struct EditLine {
     /// this stays nullable. `sem:el.editline.el-getenv-fn`
     /// lists the four lookups that must route through it.
     pub el_getenv: Option<FuncT>,
+}
+
+impl EditLine {
+    /// Attach a history the editor can recall from and search.
+    ///
+    /// This is the Rust-facing counterpart to `el_set(el, EL_HIST, history,
+    /// h)`, and the only one a program that does not link `nshedit-abi` can
+    /// use: the C route takes a [`crate::hist::HistFunT`], which is variadic,
+    /// and stable Rust cannot define a variadic function. Without this an
+    /// editor built on the library directly has no history at all — `^P`,
+    /// `^N`, vi's `k` and `j`, and `^R` all do nothing.
+    ///
+    /// [`crate::history::HistoryW`] implements [`EditorHistory`], so the
+    /// built-in store works without the caller writing anything:
+    ///
+    /// ```no_run
+    /// # use nshedit::el::EditLine;
+    /// # use nshedit::history::OwnedHistoryW;
+    /// # fn f(el: &mut EditLine) {
+    /// el.set_history(OwnedHistoryW::with_size(100));
+    /// # }
+    /// ```
+    ///
+    /// Replaces whatever was attached, C or Rust. Passing the editor its
+    /// history transfers ownership; [`EditLine::history_mut`] borrows it back.
+    pub fn set_history(&mut self, history: impl EditorHistory + 'static) {
+        self.el_history.src = HistSource::Rust(Box::new(history));
+    }
+
+    /// The attached Rust history, if one was set by [`EditLine::set_history`].
+    ///
+    /// Answers `None` for a history installed through the C ABI, which is an
+    /// opaque cookie this crate cannot safely hand out.
+    pub fn history_mut(&mut self) -> Option<&mut dyn EditorHistory> {
+        match &mut self.el_history.src {
+            HistSource::Rust(h) => Some(&mut **h),
+            _ => None,
+        }
+    }
 }
 
 /// C: `MB_CUR_MAX`, for the one place in `el.c` that reads it.
@@ -503,9 +542,25 @@ fn fileno(_stream: CFile) -> i32 {
 /// [`CFile`]: they are borrowed for the whole lifetime of the editor, never
 /// duplicated and never closed, so there is nothing here to own.
 ///
-/// The C's failure reporting is weak in ways the body must keep — a `fileno`
-/// of -1 is stored undiagnosed and construction still reports success — and
-/// weaker still further in; see [`el_init_internal`].
+/// # Not the entry point. Use [`el_init_fd`]
+///
+/// Hidden for the same reason [`crate::hist::hist_set`] is: it is here so
+/// `nshedit-abi` has a Rust counterpart to call, and a Rust caller cannot use
+/// it correctly. A `FILE *` is the C library's object and
+/// `plan/decisions/no-c-ffi.md` reserves reaching into one for the ABI crate,
+/// which does it properly through `cstdio::fileno_of`. The [`fileno`] this
+/// calls is a stub that answers -1 unconditionally.
+///
+/// So an editor built here has all three descriptors at -1. Every read is
+/// `EBADF`, `el_wgets` reports that as end of file (ERR-input-24), and the
+/// editor exits before a key is pressed — no prompt, no echo, and no
+/// diagnostic, because the C stores a `fileno` of -1 undiagnosed and still
+/// reports success. That weak reporting is faithful and is exactly what makes
+/// this silent: in the C the -1 means "this stream had no descriptor", and
+/// here it means nothing at all.
+///
+/// A Rust caller has real descriptors already. [`el_init_fd`] takes them.
+#[doc(hidden)]
 pub fn el_init(prog: &str, fin: CFile, fout: CFile, ferr: CFile) -> Option<Box<EditLine>> {
     // The whole body, one tail call. Nothing is validated: the C's `fileno`
     // runs before any check, so a NULL stream is a null dereference
@@ -818,8 +873,7 @@ pub(crate) fn blank_editline() -> EditLine {
             sz: 0,
             last: 0,
             eventno: 0,
-            r#ref: ptr::null_mut(),
-            fun: None,
+            src: HistSource::None,
             ev: HistEventW {
                 num: 0,
                 str: ptr::null(),
