@@ -17,7 +17,6 @@ use crate::histedit::{
     CC_ERROR, CC_REFRESH, H_FIRST, H_LAST, H_NEXT, H_PREV, H_SETSIZE, H_SETUNIQUE,
 };
 use crate::histedit::{HistEvent, HistEventW};
-use crate::history::{HistoryArg, HistoryW, history_w};
 use crate::map::MAP_VI;
 
 // Constants the C reaches through its headers. None of `el.h`, `map.h`,
@@ -36,6 +35,25 @@ use crate::map::MAP_VI;
 /// `fn` pointer, so calls through it are `unsafe`, exactly as the C's are
 /// unchecked.
 pub type HistFunT = unsafe extern "C" fn(*mut c_void, *mut HistEventW, c_int, ...) -> c_int;
+
+/// The one history call `hist_command` makes that does **not** go through
+/// [`HistFunT`].
+///
+/// C: `history_w(el->el_history.ref, &ev, op, num)`, issued directly for
+/// `history size` and `history unique` in an `.editrc` — the dispatcher is
+/// deliberately bypassed and the opaque handle reinterpreted as libedit's own
+/// wide store, whatever it really is (ERR-history-05).
+///
+/// The core cannot make that call itself. Naming the wide store means naming
+/// `history_gen`, which is the C ABI's opcode dispatcher and belongs in
+/// `nshedit-abi` under `dec:libedit:idiomatic-core` — and `nshedit` cannot
+/// depend on `nshedit-abi`. So the pun stays on the ABI side of the boundary
+/// and reaches the core as a function pointer installed beside the dispatcher.
+///
+/// Non-variadic on purpose: the C's version carries one `int` and nothing
+/// else, so there is no reason to inherit a `...` that stable Rust cannot
+/// define. `op` is `H_SETSIZE` or `H_SETUNIQUE`; the answer is the C's.
+pub type HistSettingsT = unsafe extern "C" fn(*mut c_void, c_int, c_int) -> c_int;
 
 /// An entry's text, in whichever width the store keeps.
 ///
@@ -121,6 +139,12 @@ pub enum HistSource {
         /// C: `el_history.ref`, handed back untouched. `el_end` does not free
         /// it.
         cookie: *mut c_void,
+        /// The `.editrc` settings path, which the C reaches by punning
+        /// `cookie` rather than by dispatching. See [`HistSettingsT`].
+        ///
+        /// `None` leaves `history size` and `history unique` answering -1,
+        /// which is what a caller that installed a history without one gets.
+        settings: Option<HistSettingsT>,
     },
     /// A Rust implementation, **shared** with the caller rather than owned by
     /// the editor.
@@ -245,7 +269,12 @@ pub(crate) fn hist_end(el: &mut EditLine) {
 /// (rust-lang/rust#44930). A Rust caller wants [`EditLine::set_history`],
 /// which takes an [`EditorHistory`] and needs no variadic anything.
 #[doc(hidden)]
-pub fn hist_set(el: &mut EditLine, fun: Option<HistFunT>, ptr: *mut c_void) -> i32 {
+pub fn hist_set(
+    el: &mut EditLine,
+    fun: Option<HistFunT>,
+    ptr: *mut c_void,
+    settings: Option<HistSettingsT>,
+) -> i32 {
     // ERR-history-04, defined here: the C accepts a NULL `fun` alongside a
     // non-NULL `ptr` and every guard in this file then tests `ref` only, so
     // the next history access is a NULL indirect call. The rule says to
@@ -262,7 +291,11 @@ pub fn hist_set(el: &mut EditLine, fun: Option<HistFunT>, ptr: *mut c_void) -> i
     // including NULL, which the guards read as detached and the unguarded
     // paths do not. See [`HistSource::is_attached`].
     el.el_history.src = match fun {
-        Some(fun) => HistSource::CAbi { fun, cookie: ptr },
+        Some(fun) => HistSource::CAbi {
+            fun,
+            cookie: ptr,
+            settings,
+        },
         None => HistSource::None,
     };
 
@@ -524,28 +557,34 @@ pub(crate) fn hist_command(el: &mut EditLine, argc: i32, argv: *const *const u32
         };
     }
 
-    // The wide path. `ref` was installed through the wide `el_wset(EL_HIST,
-    // …)`, where the C's assumption holds for libedit's own store and this is
-    // the defined behaviour to preserve: `history size 100` in an `.editrc`
-    // works for a wide-API application.
+    // The wide path, which the C reaches by punning `ref` into its own wide
+    // store. That pun cannot live here: naming the wide store means naming
+    // `history_gen`, the C ABI's opcode dispatcher, and
+    // `dec:libedit:idiomatic-core` puts that in `nshedit-abi` — which this
+    // crate cannot depend on. So the call arrives as [`HistSettingsT`],
+    // installed alongside the dispatcher by whoever installed the history.
     //
-    // The remaining hole is a *custom* store installed through the wide entry
-    // point, where the C is type confused and the rule says to fail rather
-    // than invent a meaning. The core cannot tell that case from the builtin
-    // one: `el_history.ref` is an opaque `void *` and `el_history.fun` is an
-    // `extern "C"` pointer to the ABI crate's shim, which `nshedit` cannot
-    // name. Closing it needs `history.rs` to publish a way to recognise its
-    // own handle — see the note in this module's report.
-    let mut ev = HistEventW {
-        num: 0,
-        str: ptr::null(),
-    };
-    // C: `ev` is an uninitialised local, filled by the callee and discarded,
-    // so the error string is thrown away.
-    let HistSource::CAbi { cookie, .. } = el.el_history.src else {
+    // The behaviour is unchanged, including the part that is wrong: for
+    // libedit's own store the C's assumption holds and `history size 100` in
+    // an `.editrc` works, and for a *custom* store installed through the wide
+    // entry point the C is type confused. Recognising that case needs the
+    // store to publish a way to identify its own handle, which is a separate
+    // question from where the call lives — moving the pun does not close it
+    // and must not appear to.
+    let HistSource::CAbi {
+        cookie, settings, ..
+    } = el.el_history.src
+    else {
         return -1;
     };
-    history_w(cookie.cast::<HistoryW>(), &mut ev, op, HistoryArg::Num(num))
+    // No settings hook means the installer did not provide one, which reads
+    // the same way the narrow store does: the builtin is inoperative here.
+    let Some(settings) = settings else {
+        return -1;
+    };
+    // SAFETY: `settings` and `cookie` were installed together by `hist_set`,
+    // which is the same precondition the dispatch calls rely on.
+    unsafe { settings(cookie, op as c_int, num as c_int) }
 }
 
 // [spec:libedit:def:hist.hist-enlargebuf-fn]
@@ -620,7 +659,7 @@ fn hist_convert_str(el: &mut EditLine, r#fn: i32, arg: *mut c_void) -> Option<&[
     // A [`HistSource::Rust`] history is never narrow — `NARROW_HISTORY` is
     // set only by the narrow `el_set` and the readline layer, both of which
     // install a C dispatcher — so [`hist_fun`] never routes one here.
-    let HistSource::CAbi { fun, cookie } = el.el_history.src else {
+    let HistSource::CAbi { fun, cookie, .. } = el.el_history.src else {
         return None;
     };
 
@@ -736,7 +775,7 @@ fn hist_fun(el: &mut EditLine, r#fn: i32, arg: *mut c_void) -> Option<Vec<u32>> 
 
     // C: `HIST_FUN_INTERNAL` — the call writes the shared event cookie, and
     // that write is what `vi_to_history_line` reads back as `ev.num`.
-    let HistSource::CAbi { fun, cookie } = el.el_history.src else {
+    let HistSource::CAbi { fun, cookie, .. } = el.el_history.src else {
         return None;
     };
     // SAFETY: as in `hist_convert_str`; the cookie is part of the `EditLine`

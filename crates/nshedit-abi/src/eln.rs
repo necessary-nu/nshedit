@@ -577,7 +577,11 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         // SAFETY: the op's arguments are a `hist_fun_t` and an opaque cookie.
         let f = unsafe { crate::histedit::fn_arg::<HistFunT>(&mut ap) };
         let ptr = unsafe { ap.next_arg::<*mut c_void>() };
-        let rv = nshedit::hist::hist_set(el, f, ptr);
+        // The same settings hook the wide arm installs: `hist_command` reaches
+        // it whichever entry point set the history, and the narrow store's -1
+        // comes from the NARROW_HISTORY check ahead of it rather than from an
+        // absent hook.
+        let rv = nshedit::hist::hist_set(el, f, ptr, Some(crate::history::hist_settings));
         el.el_flags |= NARROW_HISTORY;
         return rv;
     }

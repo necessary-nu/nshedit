@@ -525,6 +525,8 @@ fn attach_c(el: &mut EditLine, fun: HistFunT) {
     el.el_history.src = HistSource::CAbi {
         fun,
         cookie: ptr::null_mut(),
+        // The `.editrc` settings path is the ABI's; nothing here drives it.
+        settings: None,
     };
 }
 

@@ -1178,6 +1178,8 @@ fn history_word_appends_a_word_from_the_previous_entry() {
     el.el_history.src = HistSource::CAbi {
         fun: hist_hook,
         cookie: ptr::null_mut(),
+        // The `.editrc` settings path is the ABI's; nothing here drives it.
+        settings: None,
     };
     assert_eq!(vi_history_word(&mut el, 0), CC_REFRESH);
     assert_eq!(text(&el), "ab three");
@@ -1192,6 +1194,8 @@ fn history_word_appends_a_word_from_the_previous_entry() {
     el.el_history.src = HistSource::CAbi {
         fun: hist_hook,
         cookie: ptr::null_mut(),
+        // The `.editrc` settings path is the ABI's; nothing here drives it.
+        settings: None,
     };
     el.el_state.doingarg = 1;
     el.el_state.argument = 2;
@@ -1209,6 +1213,8 @@ fn history_word_refuses_a_count_the_entry_cannot_satisfy() {
     el.el_history.src = HistSource::CAbi {
         fun: hist_hook,
         cookie: ptr::null_mut(),
+        // The `.editrc` settings path is the ABI's; nothing here drives it.
+        settings: None,
     };
     el.el_state.doingarg = 1;
     el.el_state.argument = 9;

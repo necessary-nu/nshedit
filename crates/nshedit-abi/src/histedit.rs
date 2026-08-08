@@ -1095,7 +1095,7 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // ERR-history-04, defined by the core: a NULL function with a
             // non-NULL handle is -1 here rather than the C's armed NULL
             // indirect call. Every other combination is the C's 0.
-            let rv = nshedit::hist::hist_set(el, f, ptr);
+            let rv = nshedit::hist::hist_set(el, f, ptr, Some(crate::history::hist_settings));
             // The flag clear is not conditional on `rv` in the C either.
             if nshedit::el::mb_cur_max() == 1 {
                 el.el_flags &= !NARROW_HISTORY;
