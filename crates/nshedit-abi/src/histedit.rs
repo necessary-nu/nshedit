@@ -66,16 +66,13 @@
 
 use core::ffi::{VaList, c_char, c_int, c_uchar, c_void};
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::ffi::CString;
 use std::os::unix::ffi::OsStringExt;
 
 use nshedit::chared::{ElAfuncT, ElZfuncT};
 use nshedit::el::{CFile, FuncT};
 use nshedit::hist::HistFunT;
-use nshedit::histedit::{
-    EditLine, ElRfuncT, HistEvent, History, HistoryW, LineInfo, Tokenizer, TokenizerW,
-};
+use nshedit::histedit::{ElRfuncT, HistEvent, LineInfo};
 use nshedit::history::{
     HistoryArg, HistoryEfunT, HistoryGfunT, HistorySfunT, HistoryVfunT, SaveStream,
 };
@@ -84,6 +81,7 @@ use nshedit::prompt::ElPfuncT;
 
 // Renamed on import so the signatures below read as `histedit.h` writes
 // them; see the note on `LineInfoWide`.
+use crate::adapter::{EditLine, History, HistoryHandle, HistoryW, Tokenizer, TokenizerW};
 use crate::cdecl::histedit::{HistEventWide as HistEventW, LineInfoWide as LineInfoW, WcharT};
 use crate::cstdio::{self, CFileWriter};
 
@@ -318,36 +316,7 @@ unsafe fn prog_name<'a>(p: *const c_char) -> Option<&'a str> {
     core::str::from_utf8(unsafe { cbytes(p) }?).ok()
 }
 
-// Storage for the two views this crate hands back as raw pointers, keyed by
-// the object they belong to.
-//
-// libedit handles are documented as not thread-safe and must not be shared
-// between threads, so thread-local storage is the whole synchronisation story
-// here — and it keeps the raw pointers inside out of any `Send` bound.
 thread_local! {
-    // `el_wline`'s `LineInfoW`. The C returns `&el->el_line` reinterpreted;
-    // `nshedit`'s `ElLineT` holds offsets, so the view is materialised here
-    // and owned per editor. Boxed so its address survives map growth.
-    static WLINE: RefCell<HashMap<usize, Box<LineInfoW>>> = RefCell::new(HashMap::new());
-    // `tok_wline`/`tok_wstr`'s `argv`. The C hands back an alias of the
-    // tokenizer's own array; `nshedit`'s slots are offsets into `wspace`, so
-    // the pointer array is materialised here and replaced — invalidating the
-    // previous one, exactly as the rule says — on every call.
-    static TOKARGV: RefCell<HashMap<usize, Vec<*const u32>>> = RefCell::new(HashMap::new());
-    // `tok_line`/`tok_str`'s `argv`, for the narrow tokenizer — the same job
-    // as `TOKARGV` over `const char *` instead of `const wchar_t *`. Two maps
-    // rather than one because the value type differs, which also means the two
-    // handle families cannot be confused by a shared key space.
-    static TOKARGV_N: RefCell<HashMap<usize, Vec<*const c_char>>> = RefCell::new(HashMap::new());
-    // `el_wget(EL_TERMINAL)`'s `const char *`. The C hands out
-    // `el_terminal.t_name`, a borrowed `char *` a later `terminal_set`
-    // replaces; `nshedit` keeps a `String`, which has no terminator, so the
-    // NUL-terminated copy is made here and owned per editor.
-    static TERMNAME: RefCell<HashMap<usize, CString>> = RefCell::new(HashMap::new());
-    // `el_wget(EL_WORDCHARS)`'s `const wchar_t *`, for the same reason:
-    // `nshedit::map::map_get_wordchars` hands back an owned `Vec<u32>` with no
-    // terminator, and the C hands back its own buffer.
-    static WORDCHARS: RefCell<HashMap<usize, Vec<u32>>> = RefCell::new(HashMap::new());
     // [`default_getenv`]'s last answer, kept alive until the next call through
     // it. That is `getenv(3)`'s own contract and is at least as strong as the
     // one `def:el.editline.el-getenv-fn` puts on the hook.
@@ -464,6 +433,7 @@ pub unsafe extern "C" fn el_init(
         cstdio::fileno_of(fout),
         cstdio::fileno_of(ferr),
     )
+    .and_then(EditLine::from_compatibility)
     .map_or(core::ptr::null_mut(), Box::into_raw)
 }
 
@@ -485,6 +455,7 @@ pub unsafe extern "C" fn el_init_fd(
         return core::ptr::null_mut();
     };
     nshedit::el::el_init_fd(prog, fin, fout, ferr, fdin, fdout, fderr)
+        .and_then(EditLine::from_compatibility)
         .map_or(core::ptr::null_mut(), Box::into_raw)
 }
 
@@ -495,18 +466,12 @@ pub unsafe extern "C" fn el_init_fd(
 pub unsafe extern "C" fn el_end(el: *mut EditLine) {
     // The one NULL-tolerant entry point in the editing API.
     if el.is_null() {
-        nshedit::el::el_end(None);
         return;
     }
-    // Every pointer this handle ever handed out is dangling after this — the
-    // `el_wline` view and the two `el_wget` copies included — so drop ours too.
-    WLINE.with_borrow_mut(|m| m.remove(&(el as usize)));
-    TERMNAME.with_borrow_mut(|m| m.remove(&(el as usize)));
-    WORDCHARS.with_borrow_mut(|m| m.remove(&(el as usize)));
     // SAFETY: the caller gives us a live handle from `el_init`/`el_init_fd`,
-    // which is exactly the `Box` those returned. A second `el_end` on the
-    // same handle is the C's double free and stays the caller's error.
-    nshedit::el::el_end(Some(unsafe { Box::from_raw(el) }));
+    // which is exactly the ABI-owned `Box` those returned. Its `Drop` tears
+    // down the temporary compatibility state and the native editor together.
+    drop(unsafe { Box::from_raw(el) });
 }
 
 // [spec:libedit:def:histedit.el-reset-fn]
@@ -687,7 +652,7 @@ pub unsafe extern "C" fn history_init() -> *mut History {
     // `H_END` frees it from inside `history` — and NULL is the C's allocation
     // failure. The retained maximum starts at 0, so `H_SETSIZE` is required
     // before any `H_ENTER` keeps anything.
-    nshedit::history::history_init()
+    HistoryHandle::from_compatibility(nshedit::history::history_init())
 }
 
 // [spec:libedit:def:histedit.history-end-fn]
@@ -698,7 +663,10 @@ pub unsafe extern "C" fn history_end(h: *mut History) {
     // `h` must be non-NULL; there is no check and calling it twice is a double
     // free. Every `HistEvent.str` from this handle is dangling afterwards
     // except those from `H_DEL`/`H_DELDATA`, which the caller owns.
-    nshedit::history::history_end(h);
+    if !h.is_null() {
+        // SAFETY: `h` is the ABI allocation returned by `history_init`.
+        drop(unsafe { Box::from_raw(h) });
+    }
 }
 
 /// C: `int history(History *, HistEvent *, int, ...);`
@@ -731,7 +699,10 @@ pub unsafe extern "C" fn tok_init(ifs: *const c_char) -> *mut Tokenizer {
     // `"\t \n"`; the caller keeps ownership of its string, and the tokenizer
     // owns everything it later hands back.
     // SAFETY: `ifs` is null or a NUL-terminated byte string.
-    nshedit::tokenizer::tok_init(unsafe { cstr(ifs) }).map_or(core::ptr::null_mut(), Box::into_raw)
+    let separators = unsafe { cstr(ifs) };
+    nshedit::tokenizer::tok_init(separators)
+        .map(|compatibility| Tokenizer::from_narrow(compatibility, separators))
+        .map_or(core::ptr::null_mut(), Box::into_raw)
 }
 
 // [spec:libedit:def:histedit.tok-end-fn]
@@ -742,9 +713,8 @@ pub unsafe extern "C" fn tok_end(tok: *mut Tokenizer) {
     // `tok` must be non-NULL (no check) and must be a `Tokenizer`; every
     // `argv` array and word pointer from this tokenizer dangles afterwards,
     // so the materialised array goes with it.
-    TOKARGV_N.with_borrow_mut(|m| m.remove(&(tok as usize)));
-    // SAFETY: `tok` is the handle `tok_init` returned, i.e. that `Box`.
-    nshedit::tokenizer::tok_end(unsafe { Box::from_raw(tok) });
+    // SAFETY: `tok` is the ABI allocation `tok_init` returned.
+    drop(unsafe { Box::from_raw(tok) });
 }
 
 // [spec:libedit:def:histedit.tok-reset-fn]
@@ -757,17 +727,6 @@ pub unsafe extern "C" fn tok_reset(tok: *mut Tokenizer) {
     // that publishes no word leaves the array unterminated (ERR-input-38).
     // SAFETY: `tok` must be non-NULL.
     nshedit::tokenizer::tok_reset(unsafe { &mut *tok });
-}
-
-/// [`publish_argv`]'s narrow twin — see there for why the array is
-/// materialised at all.
-fn publish_argv_n(tok: &Tokenizer, argc: c_int) -> *mut *const c_char {
-    let out = argv_ptrs(tok, argc);
-    TOKARGV_N.with_borrow_mut(|m| {
-        let slot = m.entry(core::ptr::from_ref(tok) as usize).or_default();
-        *slot = out;
-        slot.as_mut_ptr()
-    })
 }
 
 // [spec:libedit:def:histedit.tok-line-fn]
@@ -810,7 +769,7 @@ pub unsafe extern "C" fn tok_line(
         // On any non-zero return none of the four out-parameters is written.
         return rv;
     }
-    let words = publish_argv_n(tok, n);
+    let words = tok.publish_argv(n);
     // SAFETY: the success path writes both out-parameters, as in the C.
     unsafe {
         *argc = n;
@@ -840,7 +799,7 @@ pub unsafe extern "C" fn tok_str(
     if rv != 0 {
         return rv;
     }
-    let words = publish_argv_n(tok, n);
+    let words = tok.publish_argv(n);
     // SAFETY: the success path writes both out-parameters, as in the C.
     unsafe {
         *argc = n;
@@ -1412,9 +1371,9 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
         EL_TERMINAL => {
             // SAFETY: the op's argument is a `const char **`.
             let out = unsafe { ap.next_arg::<*mut c_void>() };
-            let key = core::ptr::from_mut(el) as usize;
             let mut name: Option<&str> = None;
             nshedit::terminal::terminal_get(el, &mut name);
+            let name = name.map(str::to_owned);
             // The C hands out `t_name` itself, a borrowed pointer a later
             // `terminal_set` replaces; the core's `String` carries no
             // terminator, so a NUL-terminated copy is owned here per editor.
@@ -1423,20 +1382,7 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // invalidated by a later one — where the C's survives until the
             // type is reloaded. A name containing an interior NUL, which the
             // C could not have produced, reports NULL.
-            let p = TERMNAME.with_borrow_mut(|m| {
-                match name.and_then(|s| CString::new(s).ok()) {
-                    Some(c) => {
-                        let slot = m.entry(key).or_default();
-                        *slot = c;
-                        slot.as_ptr()
-                    }
-                    // `t_name` is NULL until the first `terminal_set`.
-                    None => {
-                        m.remove(&key);
-                        core::ptr::null()
-                    }
-                }
-            });
+            let p = el.publish_terminal_name(name.as_deref());
             // The C has no NULL check here and neither has this.
             // SAFETY: the out-pointer read above.
             unsafe { *out.cast::<*const c_char>() = p };
@@ -1529,7 +1475,6 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             if out.is_null() {
                 return -1;
             }
-            let key = core::ptr::from_mut(el) as usize;
             let mut wordchars: Option<Vec<u32>> = None;
             let rv = nshedit::map::map_get_wordchars(el, &mut wordchars);
             if rv != 0 {
@@ -1542,18 +1487,7 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // reinstalled — by `EL_WORDCHARS`, `bind -v`/`bind -e`, an
             // `EL_EDITOR` switch or `el_end`, each of which frees it and any
             // of which the C's caller must not hold a pointer across.
-            let p = WORDCHARS.with_borrow_mut(|m| match wordchars {
-                Some(mut w) => {
-                    w.push(0);
-                    let slot = m.entry(key).or_default();
-                    *slot = w;
-                    slot.as_ptr()
-                }
-                None => {
-                    m.remove(&key);
-                    core::ptr::null()
-                }
-            });
+            let p = el.publish_word_characters(wordchars);
             // SAFETY: the out-pointer read above.
             unsafe { *out.cast::<*const u32>() = p };
             0
@@ -1617,26 +1551,7 @@ pub unsafe extern "C" fn el_wline(el: *mut EditLine) -> *const LineInfoW {
     // the same buffer growth anyway.
     // SAFETY: `el` must be non-NULL.
     let el = unsafe { &mut *el };
-    let key = (el as *mut EditLine) as usize;
-    let buffer = el.el_line.buffer.as_ptr();
-    let view = LineInfoW {
-        buffer,
-        // SAFETY: both offsets index the same live `buffer` allocation, and
-        // `lastchar` is allowed to be one past the last character.
-        cursor: unsafe { buffer.add(el.el_line.cursor) },
-        lastchar: unsafe { buffer.add(el.el_line.lastchar) },
-    };
-    WLINE.with_borrow_mut(|m| {
-        let slot = m.entry(key).or_insert_with(|| {
-            Box::new(LineInfoW {
-                buffer: core::ptr::null(),
-                cursor: core::ptr::null(),
-                lastchar: core::ptr::null(),
-            })
-        });
-        **slot = view;
-        core::ptr::from_ref::<LineInfoW>(&**slot)
-    })
+    el.publish_wide_line()
 }
 
 // [spec:libedit:def:histedit.el-winsertstr-fn]
@@ -1669,7 +1584,7 @@ pub unsafe extern "C" fn history_winit() -> *mut HistoryW {
     // `history_w`, which no borrow could express. NULL is the C's allocation
     // failure. The retained maximum starts at 0, so `H_SETSIZE` is required
     // before any `H_ENTER` keeps anything.
-    nshedit::history::history_winit()
+    HistoryHandle::from_compatibility(nshedit::history::history_winit())
 }
 
 // [spec:libedit:def:histedit.history-wend-fn]
@@ -1680,7 +1595,10 @@ pub unsafe extern "C" fn history_wend(h: *mut HistoryW) {
     // `h` must be non-NULL; there is no check and calling it twice is a
     // double free. Every `HistEventW.str` from this handle is dangling
     // afterwards except those from `H_DEL`/`H_DELDATA`, which the caller owns.
-    nshedit::history::history_wend(h);
+    if !h.is_null() {
+        // SAFETY: `h` is the ABI allocation returned by `history_winit`.
+        drop(unsafe { Box::from_raw(h) });
+    }
 }
 
 /// The varargs tail of `history_w`/`history`, walked and handed to the core as
@@ -1699,7 +1617,7 @@ pub unsafe extern "C" fn history_wend(h: *mut HistoryW) {
 /// `h` and `ev` must be a live handle and a writable event of this
 /// instantiation, and the tail must carry what the op code says.
 unsafe fn history_dispatch<C: nshedit::history::HistChar>(
-    h: *mut nshedit::history::HistoryGen<C>,
+    h: *mut HistoryHandle<C>,
     ev: *mut nshedit::histedit::HistEventGen<C>,
     op: c_int,
     mut ap: VaList<'_>,
@@ -1853,12 +1771,38 @@ unsafe fn history_dispatch<C: nshedit::history::HistChar>(
         _ => HistoryArg::None,
     };
 
+    // `H_END` consumes both allocations. The compatibility dispatcher owns
+    // its inner box for this call so it can preserve the exact event result;
+    // dropping the outer owner then releases the native store and ABI state.
+    if op == H_END {
+        if h.is_null() {
+            return nshedit::history::history_gen(core::ptr::null_mut(), ev, op, HistoryArg::None);
+        }
+        // SAFETY: `h` is live and uniquely owned by the C caller until this
+        // consuming operation returns.
+        let mut owner = unsafe { Box::from_raw(h) };
+        let compatibility = owner
+            .take_compatibility()
+            .expect("a live history owns its compatibility state");
+        let result =
+            nshedit::history::history_gen(Box::into_raw(compatibility), ev, op, HistoryArg::None);
+        drop(owner);
+        return result;
+    }
+
+    let compatibility = if h.is_null() {
+        core::ptr::null_mut()
+    } else {
+        // SAFETY: non-consuming dispatch through a live ABI owner.
+        unsafe { &mut *h }.compatibility_ptr()
+    };
+
     // Ownership on the way out, reproduced by the core and not touched here:
     // `H_DEL` and `H_DELDATA` hand the caller a string it owns and must free
     // (and which is NULL on an allocation failure); every other op's
     // `ev.str` points into libedit's storage or at a static message and must
     // not be freed.
-    nshedit::history::history_gen(h, ev, op, arg)
+    nshedit::history::history_gen(compatibility, ev, op, arg)
 }
 
 /// C: `int history_w(HistoryW *, HistEventW *, int, ...);`
@@ -1889,7 +1833,10 @@ pub unsafe extern "C" fn tok_winit(ifs: *const WcharT) -> *mut TokenizerW {
     // NULL selects the default `L"\t \n"`. The caller keeps ownership of its
     // string; the tokenizer owns everything it later hands back.
     // SAFETY: `ifs` is null or a NUL-terminated wide string.
-    nshedit::tokenizer::tok_winit(unsafe { wstr(ifs) }).map_or(core::ptr::null_mut(), Box::into_raw)
+    let separators = unsafe { wstr(ifs) };
+    nshedit::tokenizer::tok_winit(separators)
+        .map(|compatibility| TokenizerW::from_wide(compatibility, separators))
+        .map_or(core::ptr::null_mut(), Box::into_raw)
 }
 
 // [spec:libedit:def:histedit.tok-wend-fn]
@@ -1900,9 +1847,8 @@ pub unsafe extern "C" fn tok_wend(tok: *mut TokenizerW) {
     // `tok` must be non-NULL (no check) and must be a `TokenizerW`; every
     // `argv` array and word pointer from this tokenizer dangles afterwards,
     // so the materialised array goes with it.
-    TOKARGV.with_borrow_mut(|m| m.remove(&(tok as usize)));
-    // SAFETY: `tok` is the handle `tok_winit` returned, i.e. that `Box`.
-    nshedit::tokenizer::tok_wend(unsafe { Box::from_raw(tok) });
+    // SAFETY: `tok` is the ABI allocation `tok_winit` returned.
+    drop(unsafe { Box::from_raw(tok) });
 }
 
 // [spec:libedit:def:histedit.tok-wreset-fn]
@@ -1915,47 +1861,6 @@ pub unsafe extern "C" fn tok_wreset(tok: *mut TokenizerW) {
     // that publishes no word leaves the array unterminated (ERR-input-38).
     // SAFETY: `tok` must be non-NULL.
     nshedit::tokenizer::tok_wreset(unsafe { &mut *tok });
-}
-
-/// Resolve a tokenizer's `argv` offsets into the pointer array the C hands
-/// back, for either instantiation.
-///
-/// The C's `*argv = tok->argv` aliases the tokenizer's own array; `nshedit`
-/// stores offsets into `wspace` instead, so the pointer array is built here
-/// and owned per tokenizer. It is replaced on every successful call, which is
-/// the C's "invalidated by the next `tok_line`, `tok_str` or `tok_reset`".
-///
-/// Slot `argc` is materialised from whatever the tokenizer has there rather
-/// than forced to NULL, so `tok_reset`'s stale terminator survives into the
-/// array exactly as it does in the C (ERR-input-38).
-fn argv_ptrs<C: nshedit::tokenizer::TokChar>(
-    tok: &nshedit::tokenizer::TokenizerGen<C>,
-    argc: c_int,
-) -> Vec<*const C> {
-    let n = if argc > 0 { argc as usize } else { 0 };
-    let base = tok.wspace.as_ptr();
-    let mut out: Vec<*const C> = Vec::with_capacity(n + 1);
-    for i in 0..=n {
-        let p = match tok.argv.get(i).copied().flatten() {
-            // SAFETY: published slots are offsets into `wspace`, which is
-            // where `base` points and which is at least that long.
-            Some(off) => unsafe { base.add(off) },
-            None => core::ptr::null(),
-        };
-        out.push(p);
-    }
-    out
-}
-
-/// Materialise the `const wchar_t **` a successful `tok_wline`/`tok_wstr`
-/// hands back, and keep it alive until the next call on this tokenizer.
-fn publish_argv(tok: &TokenizerW, argc: c_int) -> *mut *const u32 {
-    let out = argv_ptrs(tok, argc);
-    TOKARGV.with_borrow_mut(|m| {
-        let slot = m.entry(core::ptr::from_ref(tok) as usize).or_default();
-        *slot = out;
-        slot.as_mut_ptr()
-    })
 }
 
 // [spec:libedit:def:histedit.tok-wline-fn]
@@ -1995,7 +1900,7 @@ pub unsafe extern "C" fn tok_wline(
         // On any non-zero return none of the four out-parameters is written.
         return rv;
     }
-    let words = publish_argv(tok, n);
+    let words = tok.publish_argv(n);
     // SAFETY: the success path writes both out-parameters, as in the C.
     unsafe {
         *argc = n;
@@ -2025,7 +1930,7 @@ pub unsafe extern "C" fn tok_wstr(
     if rv != 0 {
         return rv;
     }
-    let words = publish_argv(tok, n);
+    let words = tok.publish_argv(n);
     // SAFETY: the success path writes both out-parameters, as in the C.
     unsafe {
         *argc = n;

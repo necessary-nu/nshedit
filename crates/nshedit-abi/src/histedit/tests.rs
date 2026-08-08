@@ -57,10 +57,10 @@ fn output_of(el: *mut EditLine, tag: &str, body: impl FnOnce(*mut EditLine)) -> 
     let path = scratch_path(tag);
     let file = std::fs::File::create(&path).unwrap();
     // SAFETY: `el` is live for the whole of this function.
-    let saved = unsafe { (*el).el_outfd };
-    unsafe { (*el).el_outfd = file.as_raw_fd() };
+    let saved = unsafe { (&*el).el_outfd };
+    unsafe { (&mut *el).el_outfd = file.as_raw_fd() };
     body(el);
-    unsafe { (*el).el_outfd = saved };
+    unsafe { (&mut *el).el_outfd = saved };
     drop(file);
     let bytes = std::fs::read(&path).unwrap();
     let _ = std::fs::remove_file(&path);
@@ -136,8 +136,8 @@ fn the_bell_goes_to_the_output_descriptor() {
     let out = output_of(el, "beep", |el| unsafe { el_beep(el) });
     assert_eq!(out, [0x07]);
     // SAFETY: `el` is live.
-    assert_eq!(unsafe { (*el).el_cursor.h }, 5);
-    assert_eq!(unsafe { (*el).el_line.lastchar }, 0);
+    assert_eq!(unsafe { (&*el).el_cursor.h }, 5);
+    assert_eq!(unsafe { (&*el).el_line.lastchar }, 0);
     done(el);
 }
 
@@ -177,7 +177,7 @@ fn pushed_back_input_comes_back_first_in_first_out() {
     // The queue empties as the last character of each entry is taken, so
     // by now there is nothing left and the read falls through to the tty.
     // SAFETY: `el` is live.
-    assert!(unsafe { (*el).el_read.as_ref().unwrap().macros.r#macro.is_empty() });
+    assert!(unsafe { (&*el).el_read.as_ref().unwrap().macros.r#macro.is_empty() });
     let mut wc: u32 = 0xdead;
     // Descriptor -1 cannot be put into raw mode, and `el_wgetc` reports
     // that as end of file rather than as an error (ERR-input-24), leaving
@@ -200,7 +200,7 @@ fn pushing_nothing_is_reported_only_to_the_user() {
     });
     assert_eq!(out, [0x07]);
     // SAFETY: `el` is live.
-    let ma = unsafe { &(*el).el_read.as_ref().unwrap().macros };
+    let ma = unsafe { &(&*el).el_read.as_ref().unwrap().macros };
     assert!(ma.r#macro.is_empty());
     assert_eq!(ma.level, -1, "the level increment is undone");
     done(el);
@@ -247,7 +247,7 @@ fn the_flag_getters_report_bits_where_the_c_reported_bits() {
         assert_eq!(el_wset(el, EL_EDITMODE, 0 as c_int), 0);
         assert_eq!(el_wget(el, EL_EDITMODE, &raw mut out), 0);
         assert_eq!(out, 0);
-        assert_ne!((*el).el_flags & EDIT_DISABLED, 0);
+        assert_ne!((&*el).el_flags & EDIT_DISABLED, 0);
     }
     done(el);
 }
@@ -336,7 +336,7 @@ fn the_word_characters_survive_a_round_trip_and_an_editor_switch_resets_them() {
 /// `EL_PROMPT` passes a NULL escape-character pointer.
 #[test]
 fn the_escape_form_of_the_prompt_op_does_not_round_trip() {
-    unsafe extern "C" fn never_called(_: *mut EditLine) -> *mut u32 {
+    unsafe extern "C" fn never_called(_: *mut nshedit::el::EditLine) -> *mut u32 {
         core::ptr::null_mut()
     }
 
@@ -390,12 +390,12 @@ fn the_environment_accessor_of_a_fresh_handle_is_an_address_not_null() {
         let reported = hook.expect("never NULL, unlike the core's `None`");
         assert_eq!(el_wset(el, EL_GETENV, reported), 0);
         assert!(
-            (*el).el_getenv.is_none(),
+            (&*el).el_getenv.is_none(),
             "installing the reported default must not arm an indirect call"
         );
         // ERR-core-api-08: a NULL hook leaves the built-in in force.
         assert_eq!(el_wset(el, EL_GETENV, core::ptr::null::<c_void>()), 0);
-        assert!((*el).el_getenv.is_none());
+        assert!((&*el).el_getenv.is_none());
     }
     done(el);
 }
@@ -429,7 +429,7 @@ fn the_stream_ops_carry_the_streams_and_nothing_else() {
             el_wset(el, EL_SETFP, 2 as c_int, core::ptr::null::<c_void>()),
             0
         );
-        assert_eq!((*el).el_errfd, -1);
+        assert_eq!((&*el).el_errfd, -1);
         assert_eq!(el_wget(el, EL_GETFP, 2 as c_int, &raw mut back), 0);
         assert!(back.is_null());
 

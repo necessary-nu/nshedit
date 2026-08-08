@@ -39,16 +39,17 @@ use std::io::{Read, Seek, SeekFrom, Write};
 
 use nshedit::chartype::{CtBufferT, ct_decode_string};
 use nshedit::editline::readline::{HistEntry, HistdataT, HistoryState, Keymap, KeymapEntry};
-use nshedit::el::{CFile, EditLine};
+use nshedit::el::CFile;
 use nshedit::filecomplete::{self, FilenameCompletionState};
 use nshedit::histedit::{
     CC_EOF, CC_ERROR, CC_NORM, CC_REFRESH, H_CLEAR, H_CURR, H_DELDATA, H_ENTER, H_FIRST, H_GETSIZE,
     H_LAST, H_LOAD, H_NEXT, H_NEXT_EVDATA, H_NEXT_EVENT, H_NEXT_STR, H_PREV, H_PREV_EVENT,
-    H_PREV_STR, H_REPLACE, H_SAVE, H_SET, H_SETSIZE, HistEvent, History,
+    H_PREV_STR, H_REPLACE, H_SAVE, H_SET, H_SETSIZE, HistEvent,
 };
 use nshedit::tty::{C_EOF, C_REPRINT, TS_IO};
 use std::os::fd::AsRawFd;
 
+use crate::adapter::{EditLine, History};
 use crate::{cenv, clocale, cstdio};
 use bridge::{
     NO_TTY, em_kill_line, passwd_home_dir, re_putc, tty_end, tty_get_signal_character, tty_init,
@@ -1311,6 +1312,7 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
             fdout,
             fderr,
         )
+        .and_then(EditLine::from_compatibility)
         .map_or(ptr::null_mut(), Box::into_raw);
 
         if editmode == 0 {
@@ -1514,7 +1516,7 @@ pub unsafe extern "C" fn readline(p: *const c_char) -> *mut c_char {
             // application using both hooks loses the getc hook permanently
             // (ERR-readline-31, reproduced).
             let event_hook = rl_event_hook;
-            if event_hook.is_some() && !E.is_null() && (*E).el_flags & NO_TTY == 0 {
+            if event_hook.is_some() && !E.is_null() && (&*E).el_flags & NO_TTY == 0 {
                 el_set_va(E, EL_GETCFN, _rl_event_read_char as *const c_void);
                 USED_EVENT_HOOK = 1;
             }
@@ -3597,7 +3599,7 @@ pub unsafe extern "C" fn rl_callback_read_char() {
         let bytes = c_bytes(buf);
         let last = count as usize;
 
-        if count == 0 && !bytes.is_empty() && bytes[0] == (*E).el_tty.t_c[TS_IO][C_EOF] {
+        if count == 0 && !bytes.is_empty() && bytes[0] == (&*E).el_tty.t_c[TS_IO][C_EOF] {
             /* a lone EOF keystroke on an empty line */
             done = 1;
         }
@@ -3684,7 +3686,7 @@ pub unsafe extern "C" fn rl_redisplay() {
         // consumed and runs whatever is bound to it (ERR-readline-26). With no
         // reprint character configured a NUL byte is pushed, which `el_push`
         // treats as an empty push.
-        let a = [(*E).el_tty.t_c[TS_IO][C_REPRINT] as c_char, 0];
+        let a = [(&*E).el_tty.t_c[TS_IO][C_REPRINT] as c_char, 0];
         crate::eln::el_push(E, a.as_ptr());
         rl_forced_update_display();
     }
@@ -3833,14 +3835,14 @@ fn _rl_event_read_char(el: *mut EditLine, wc: *mut u32) -> c_int {
             }
             // The successful zero result is not EOF: it means no byte can be
             // read without blocking, so the busy loop invokes the hook again.
-            let Some(ready) = nshedit_plat::bytes_ready_to_read((*el).el_infd) else {
+            let Some(ready) = nshedit_plat::bytes_ready_to_read((&*el).el_infd) else {
                 return -1;
             };
             if ready == 0 {
                 num_read = 0;
                 continue;
             }
-            match read_one_byte((*el).el_infd, &mut ch) {
+            match read_one_byte((&*el).el_infd, &mut ch) {
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     num_read = 0;
                     continue;

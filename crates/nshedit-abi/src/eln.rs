@@ -37,9 +37,10 @@ use core::ptr;
 use nshedit::chartype::{ct_decode_string, ct_enc_width, ct_encode_char, ct_encode_string};
 use nshedit::el::NARROW_HISTORY;
 use nshedit::hist::HistFunT;
-use nshedit::histedit::{EditLine, LineInfo};
+use nshedit::histedit::LineInfo;
 use nshedit::prompt::ElPfuncT;
 
+use crate::adapter::EditLine;
 use crate::histedit::{
     EL_BIND, EL_CLIENTDATA, EL_ECHOTC, EL_EDITMODE, EL_EDITOR, EL_GETCFN, EL_GETFP, EL_GETTC,
     EL_HIST, EL_PREP_TERM, EL_PROMPT, EL_PROMPT_ESC, EL_RPROMPT, EL_RPROMPT_ESC, EL_SAFEREAD,
@@ -136,7 +137,7 @@ unsafe fn bytes_upto_nul<'a>(p: *const c_char) -> Option<&'a [u8]> {
 /// the next call that writes it.
 unsafe fn decode_through_lgcyconv(el: *mut EditLine, str_: *const c_char) -> *const u32 {
     let bytes = unsafe { bytes_upto_nul(str_) };
-    let conv = unsafe { &mut (*el).el_lgcyconv };
+    let conv = unsafe { &mut (&mut *el).el_lgcyconv };
     ct_decode_string(bytes, conv).map_or(ptr::null(), <[u32]>::as_ptr)
 }
 
@@ -290,7 +291,7 @@ pub unsafe extern "C" fn el_gets(el: *mut EditLine, nread: *mut c_int) -> *const
     } else {
         Some(unsafe { wide_upto_nul(tmp) })
     };
-    let conv = unsafe { &mut (*el).el_lgcyconv };
+    let conv = unsafe { &mut (&mut *el).el_lgcyconv };
     let out = ct_encode_string(s, conv).map_or(ptr::null(), |b| b.as_ptr().cast::<c_char>());
 
     crate::errno::publish(mark);
@@ -341,7 +342,7 @@ pub unsafe extern "C" fn el_parse(
             owned.push(None);
             continue;
         };
-        let conv = unsafe { &mut (*el).el_lgcyconv };
+        let conv = unsafe { &mut (&mut *el).el_lgcyconv };
         match ct_decode_string(Some(bytes), conv) {
             Some(w) => {
                 let mut v = Vec::with_capacity(w.len() + 1);
@@ -470,7 +471,7 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
             };
             let el_ptr: *mut EditLine = el;
             // SAFETY: `el_ptr` is live for the call.
-            let conv = unsafe { &mut (*el_ptr).el_lgcyconv };
+            let conv = unsafe { &mut (&mut *el_ptr).el_lgcyconv };
             // C: `ct_decode_argv`, whose NULL return is -1 without calling
             // the handler.
             let Some(w) = ct_decode_string(Some(bytes), conv) else {
@@ -720,16 +721,16 @@ pub unsafe extern "C" fn el_line(el: *mut EditLine) -> *const LineInfo {
     // by every caller, so two live `LineInfo` views of one editor are
     // impossible. The struct itself is stable; its three pointers are not.
     let winfo = unsafe { el_wline(el) };
-    let info: *mut LineInfo = unsafe { &raw mut (*el).el_lgcylinfo };
+    let info: *mut LineInfo = unsafe { &raw mut (&mut *el).el_lgcylinfo };
 
     // Step 2. `FROM_ELLINE` is set nowhere else in the library, so this fires
     // exactly when the application's resize callback calls back in, and
     // returns `info` with whatever it already holds, converting nothing and
     // not re-entering the callback.
-    if unsafe { (*el).el_flags } & FROM_ELLINE != 0 {
+    if unsafe { (&*el).el_flags } & FROM_ELLINE != 0 {
         return info;
     }
-    unsafe { (*el).el_flags |= FROM_ELLINE };
+    unsafe { (&mut *el).el_flags |= FROM_ELLINE };
 
     let (buffer, cursor, lastchar) =
         unsafe { ((*winfo).buffer, (*winfo).cursor, (*winfo).lastchar) };
@@ -744,7 +745,7 @@ pub unsafe extern "C" fn el_line(el: *mut EditLine) -> *const LineInfo {
     } else {
         Some(unsafe { wide_upto_nul(buffer) })
     };
-    let conv = unsafe { &mut (*el).el_lgcyconv };
+    let conv = unsafe { &mut (&mut *el).el_lgcyconv };
     let encoded = ct_encode_string(s, conv).map_or(ptr::null(), |b| b.as_ptr().cast::<c_char>());
     unsafe { (*info).buffer = encoded };
 
@@ -781,18 +782,18 @@ pub unsafe extern "C" fn el_line(el: *mut EditLine) -> *const LineInfo {
     // moved, so the call is observable and is kept. It runs *after* `info` is
     // fully populated, and a nested `el_line` from inside it takes the step-2
     // shortcut and receives exactly this `info`.
-    let resizefun = unsafe { (*el).el_chared.c_resizefun };
+    let resizefun = unsafe { (&*el).el_chared.c_resizefun };
     if let Some(f) = resizefun {
-        let arg = unsafe { (*el).el_chared.c_resizearg };
+        let arg = unsafe { (&*el).el_chared.c_resizearg };
         // SAFETY: `f` and `arg` were installed together by
         // `el_set(EL_RESIZE, f, arg)` against this very handle, and
         // `def:chared.el-zfunc-t-edit-line-void` makes `f` a C function taking
         // it. `el` is the caller's live `EditLine`.
-        unsafe { f(el, arg) };
+        unsafe { f((&mut *el).compatibility_ptr(), arg) };
     }
 
     // Step 6.
-    unsafe { (*el).el_flags &= !FROM_ELLINE };
+    unsafe { (&mut *el).el_flags &= !FROM_ELLINE };
     info
 }
 

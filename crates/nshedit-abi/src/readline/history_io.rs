@@ -306,7 +306,11 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
         let _ = fp.seek(SeekFrom::End(0));
         // As `write_history`: sampled, not cleared.
         let mark = crate::errno::mark();
-        let rc = nshedit::history::history_save_fd(&mut *H, n as usize, fp.as_raw_fd());
+        let rc = nshedit::history::history_save_fd(
+            (&mut *H).compatibility_mut(),
+            n as usize,
+            fp.as_raw_fd(),
+        );
         // The C captures `errno` before `fclose`, which can overwrite it.
         let e = if rc == -1 {
             crate::errno::publish(mark);

@@ -2351,6 +2351,14 @@ children (
                     native-impl ([spec:nshedit:req:abi.opaque-owner] [spec:nshedit:req:abi.surface-stability] [spec:nshedit:req:abi.behavioural-conformance])
                 }
                 deps (greenfield-read-driver)
+                log (
+                    {
+                        at 2026-08-08T19:23:39.991902894Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

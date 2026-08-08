@@ -36,6 +36,8 @@
 // observable behaviour.
 // [spec:nshedit:req:abi.complete-surface+1]
 
+// [spec:nshedit:req:abi.opaque-owner]
+mod adapter;
 pub mod cdecl;
 pub mod chartype;
 pub mod eln;

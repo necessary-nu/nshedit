@@ -52,7 +52,7 @@ fn feed(el: *mut EditLine, content: &[u8]) -> std::fs::File {
     let file = std::fs::File::open(&path).unwrap();
     let _ = std::fs::remove_file(&path);
     // SAFETY: `el` is live.
-    unsafe { (*el).el_infd = file.as_raw_fd() };
+    unsafe { (&mut *el).el_infd = file.as_raw_fd() };
     file
 }
 
@@ -122,7 +122,7 @@ fn a_character_with_no_single_byte_form_is_lost_not_queued() {
     );
     // SAFETY: `el` is live.
     assert!(
-        unsafe { (*el).el_read.as_ref().unwrap().macros.r#macro.is_empty() },
+        unsafe { (&*el).el_read.as_ref().unwrap().macros.r#macro.is_empty() },
         "no pushback: the character is not put back for the next read"
     );
     done(el);
@@ -147,7 +147,7 @@ fn a_line_comes_back_as_bytes_with_or_without_somewhere_to_report_its_length() {
     let el = editline();
     // SAFETY: `el` is live. Descriptor -1 could not be queried by
     // `tty_init`, so the unedited read path is already selected.
-    assert_ne!(unsafe { (*el).el_flags } & 0x002, 0, "NO_TTY");
+    assert_ne!(unsafe { (&*el).el_flags } & 0x002, 0, "NO_TTY");
 
     let _fd = feed(el, b"hi\nbye\n");
     let mut n: c_int = -99;
@@ -242,12 +242,15 @@ fn the_narrow_line_view_calls_the_resize_hook_once_and_survives_re_entry() {
         static CALLS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
         static NESTED: std::cell::Cell<*const LineInfo> =
             const { std::cell::Cell::new(ptr::null()) };
+        static CALLBACK_HANDLE: std::cell::Cell<*mut EditLine> =
+            const { std::cell::Cell::new(ptr::null_mut()) };
     }
 
-    unsafe extern "C" fn hook(el: *mut EditLine, _arg: *mut c_void) {
+    unsafe extern "C" fn hook(el: *mut nshedit::el::EditLine, _arg: *mut c_void) {
         CALLS.with(|c| c.set(c.get() + 1));
+        CALLBACK_HANDLE.with(|handle| handle.set(el.cast()));
         // SAFETY: `el` is the handle the hook was installed against.
-        let nested = unsafe { el_line(el) };
+        let nested = unsafe { el_line(el.cast()) };
         NESTED.with(|c| c.set(nested));
     }
 
@@ -266,9 +269,10 @@ fn the_narrow_line_view_calls_the_resize_hook_once_and_survives_re_entry() {
         "once, not once per nesting level"
     );
     assert_eq!(NESTED.with(std::cell::Cell::get), info);
+    assert_eq!(CALLBACK_HANDLE.with(std::cell::Cell::get), el);
     // SAFETY: `el` is live.
     assert_eq!(
-        unsafe { (*el).el_flags } & FROM_ELLINE,
+        unsafe { (&*el).el_flags } & FROM_ELLINE,
         0,
         "the guard is cleared on the way out"
     );
@@ -302,12 +306,12 @@ fn parsing_an_argument_vector_runs_one_editrc_command() {
     assert_eq!(run(&["edit", "off"]), 0);
     // SAFETY: `el` is live. EDIT_DISABLED is 0x004.
     assert_ne!(
-        unsafe { (*el).el_flags } & 0x004,
+        unsafe { (&*el).el_flags } & 0x004,
         0,
         "the builtin really ran"
     );
     assert_eq!(run(&["edit", "on"]), 0);
-    assert_eq!(unsafe { (*el).el_flags } & 0x004, 0);
+    assert_eq!(unsafe { (&*el).el_flags } & 0x004, 0);
 
     assert_eq!(run(&["nosuchcommand"]), -1);
     assert_eq!(run(&["edit"]), 1, "the builtin's -1, negated by el_wparse");
@@ -316,7 +320,7 @@ fn parsing_an_argument_vector_runs_one_editrc_command() {
         0,
         "not this program, so nothing runs — and that is not an error"
     );
-    assert_eq!(unsafe { (*el).el_flags } & 0x004, 0);
+    assert_eq!(unsafe { (&*el).el_flags } & 0x004, 0);
 
     // The guards `el_parse` adds because the C dereferences instead.
     // SAFETY: `el` is live; a zero or negative count reads no argv.
@@ -338,7 +342,7 @@ fn parsing_an_argument_vector_runs_one_editrc_command() {
 /// forwarded.
 #[test]
 fn the_narrow_setter_decodes_and_records_that_it_was_narrow() {
-    unsafe extern "C" fn never_called(_: *mut EditLine) -> *mut u32 {
+    unsafe extern "C" fn never_called(_: *mut nshedit::el::EditLine) -> *mut u32 {
         ptr::null_mut()
     }
 
@@ -354,7 +358,7 @@ fn the_narrow_setter_decodes_and_records_that_it_was_narrow() {
         assert_eq!(*out, u32::from(b'v'));
 
         assert_eq!(el_set(el, EL_WORDCHARS, wordchars.as_ptr()), 0);
-        assert_eq!((*el).el_map.wordchars.as_deref(), Some(&[0x5f, 0x40][..]));
+        assert_eq!((&*el).el_map.wordchars.as_deref(), Some(&[0x5f, 0x40][..]));
 
         // ERR-core-api-09, disposition define: the C hands the decode
         // result straight to `wcscmp`/`wcsdup` without checking it.
@@ -364,12 +368,12 @@ fn the_narrow_setter_decodes_and_records_that_it_was_narrow() {
         let p: ElPfuncT = never_called;
         assert_eq!(el_set(el, EL_PROMPT, p), 0);
         assert_eq!(
-            (*el).el_prompt.p_wide,
+            (&*el).el_prompt.p_wide,
             0,
             "the narrow setter is the only thing that stores 0 here"
         );
         assert_eq!(crate::histedit::el_wset(el, EL_PROMPT, p), 0);
-        assert_eq!((*el).el_prompt.p_wide, 1);
+        assert_eq!((&*el).el_prompt.p_wide, 1);
     }
     done(el);
 }
@@ -401,13 +405,13 @@ fn installing_history_through_the_narrow_setter_pins_the_bridge_narrow() {
     // called with; the function is never invoked here.
     unsafe {
         assert_eq!(el_set(el, EL_HIST, f, ptr::dangling_mut::<c_void>()), 0);
-        assert_ne!((*el).el_flags & NARROW_HISTORY, 0);
+        assert_ne!((&*el).el_flags & NARROW_HISTORY, 0);
 
         assert_eq!(
             crate::histedit::el_wset(el, EL_HIST, f, ptr::dangling_mut::<c_void>()),
             0
         );
-        let cleared = (*el).el_flags & NARROW_HISTORY == 0;
+        let cleared = (&*el).el_flags & NARROW_HISTORY == 0;
         assert_eq!(
             cleared,
             nshedit::el::mb_cur_max() == 1,
@@ -428,10 +432,10 @@ fn installing_history_through_the_narrow_setter_pins_the_bridge_narrow() {
 /// (ERR-core-api-17).
 #[test]
 fn the_narrow_getter_forwards_what_needs_no_conversion() {
-    unsafe extern "C" fn left(_: *mut EditLine) -> *mut u32 {
+    unsafe extern "C" fn left(_: *mut nshedit::el::EditLine) -> *mut u32 {
         ptr::null_mut()
     }
-    unsafe extern "C" fn right(_: *mut EditLine) -> *mut u32 {
+    unsafe extern "C" fn right(_: *mut nshedit::el::EditLine) -> *mut u32 {
         ptr::null_mut()
     }
 

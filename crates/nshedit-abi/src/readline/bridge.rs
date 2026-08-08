@@ -2,7 +2,7 @@
 
 use core::ffi::c_int;
 
-use nshedit::el::EditLine;
+use crate::adapter::EditLine;
 
 /// C: `#define NO_TTY 0x002` (`el.h`).
 pub(super) const NO_TTY: i32 = 0x002;

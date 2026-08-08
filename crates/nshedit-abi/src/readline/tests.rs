@@ -208,7 +208,7 @@ fn full_line_kill_keeps_position_globals() {
     // SAFETY: single-threaded under the lock; `E` is the fixture's editor.
     unsafe {
         assert_eq!(crate::eln::el_insertstr(E, c"some text".as_ptr()), 0);
-        assert_eq!((*E).el_line.lastchar, 9);
+        assert_eq!((&*E).el_line.lastchar, 9);
         rl_point = 3;
         rl_end = 9;
 
@@ -218,9 +218,9 @@ fn full_line_kill_keeps_position_globals() {
         let (point, end) = (rl_point, rl_end);
         assert_eq!(point, 3);
         assert_eq!(end, 9);
-        assert_eq!((*E).el_line.cursor, 0);
-        assert_eq!((*E).el_line.lastchar, 0);
-        let kill = &(*E).el_chared.c_kill;
+        assert_eq!((&*E).el_line.cursor, 0);
+        assert_eq!((&*E).el_line.lastchar, 0);
+        let kill = &(&*E).el_chared.c_kill;
         assert_eq!(&kill.buf[..kill.last], &b"some text".map(u32::from));
 
         rl_point = 0;
@@ -942,7 +942,7 @@ fn redisplaying_pushes_the_reprint_key_back_as_input() {
     // SAFETY: single-threaded under the lock; `el_tty` is a public field
     // of the fixture's own editor.
     unsafe {
-        (*E).el_tty.t_c[TS_IO][C_REPRINT] = 0x12;
+        (&mut *E).el_tty.t_c[TS_IO][C_REPRINT] = 0x12;
 
         rl_redisplay();
 
@@ -996,7 +996,7 @@ fn installing_a_callback_handler_replaces_rather_than_stacks() {
         assert_eq!(c_bytes(prompt), b"cb> ");
         let installed = rl_linefunc.map(|f| f as usize);
         assert_eq!(installed, Some(recording_linefunc as *const () as usize));
-        let flags = (*E).el_flags;
+        let flags = (&*E).el_flags;
         assert_ne!(flags & UNBUFFERED, 0);
 
         // The second install overwrites both without a word.
@@ -1026,7 +1026,7 @@ fn removing_a_callback_handler_leaves_the_prompt_behind() {
 
         let installed = rl_linefunc.map(|f| f as usize);
         assert_eq!(installed, None);
-        let flags = (*E).el_flags;
+        let flags = (&*E).el_flags;
         assert_eq!(flags & UNBUFFERED, 0);
 
         // Still the callback prompt, so a program alternating between
