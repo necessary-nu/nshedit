@@ -6,6 +6,7 @@
 //! built from this vocabulary; the ABI adapter translates at its boundary.
 
 // [spec:nshedit:req:core.line-commands]
+// [spec:nshedit:req:core.read-driver]
 
 mod command;
 mod keymap;
@@ -15,7 +16,7 @@ mod terminal;
 mod text;
 
 pub use command::{
-    Action, CommandName, Direction, EditTarget, KeymapMode, Motion, Outcome, Refresh,
+    Action, CommandName, Direction, EditTarget, KeymapMode, Motion, Outcome, Refresh, Signal,
     TextTransform, WordKind, YankPlacement,
 };
 pub use keymap::{Binding, KeyLookup, KeySequence};

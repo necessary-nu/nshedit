@@ -8,7 +8,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::domain::{CommandName, Direction, Outcome, Prompt, ScreenSize, Text, TextUnit};
+use crate::domain::{CommandName, Direction, Outcome, Prompt, ScreenSize, Signal, Text, TextUnit};
 
 use super::{CompletionCandidates, CompletionQuery, Editor, TerminalControl};
 
@@ -45,9 +45,16 @@ impl Effect for PromptEffect {
     type Response = EffectResult<Prompt>;
 }
 
-/// Ask the host for one logical input unit or end of input.
+// [spec:nshedit:req:core.read-driver]
+/// Ask the host for input, end of input, a signal, or a prefix timeout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct ReadEffect;
+pub enum ReadEffect {
+    /// Wait normally for fresh input.
+    #[default]
+    Input,
+    /// Wait long enough to disambiguate a key-sequence prefix.
+    KeySequence,
+}
 
 impl sealed::Sealed for ReadEffect {}
 
@@ -56,11 +63,17 @@ impl Effect for ReadEffect {
 }
 
 /// A successful host read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ReadOutcome {
-    /// One decoded or explicitly byte-preserving input unit.
-    Input(TextUnit),
-    /// The input source ended without another unit.
+    /// An owned byte chunk for the driver's incremental UTF-8 decoder.
+    Bytes(Box<[u8]>),
+    /// One unit already decoded by a compatibility boundary.
+    Unit(TextUnit),
+    /// A semantic signal observed by the host's safe platform layer.
+    Signal(Signal),
+    /// No continuation arrived before a key-prefix deadline.
+    TimedOut,
+    /// The input source ended without another byte or unit.
     EndOfInput,
 }
 
@@ -123,6 +136,20 @@ impl sealed::Sealed for ResizeEffect {}
 
 impl Effect for ResizeEffect {
     type Response = EffectResult<ScreenSize>;
+}
+
+// [spec:nshedit:req:core.read-driver]
+/// Ask the host to propagate a signal after the editor made the tty safe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SignalEffect {
+    /// The semantic signal whose previous disposition should run.
+    pub signal: Signal,
+}
+
+impl sealed::Sealed for SignalEffect {}
+
+impl Effect for SignalEffect {
+    type Response = EffectResult<()>;
 }
 
 /// Ask the host to complete the logical line at a checked cursor boundary.
@@ -333,7 +360,7 @@ mod tests {
         assert_eq!(prompt.request().side, PromptSide::Left);
         assert_eq!(editor.config(), EditorConfig::default());
         assert_eq!(
-            editor.suspend(ReadEffect).err(),
+            editor.suspend(ReadEffect::default()).err(),
             Some(EffectStateError::AlreadySuspended)
         );
 
@@ -341,14 +368,14 @@ mod tests {
             .resume(&prompt, Ok(Prompt::from("prompt> ")))
             .unwrap();
         assert_eq!(response, Ok(Prompt::from("prompt> ")));
-        assert!(editor.suspend(ReadEffect).is_ok());
+        assert!(editor.suspend(ReadEffect::default()).is_ok());
     }
 
     #[test]
     fn wrong_editor_cannot_resume_effect() {
         let mut first = editor();
         let mut second = editor();
-        let pending = first.suspend(ReadEffect).unwrap();
+        let pending = first.suspend(ReadEffect::default()).unwrap();
 
         assert_eq!(
             second.resume(&pending, Ok(ReadOutcome::EndOfInput)),
@@ -363,12 +390,12 @@ mod tests {
     #[test]
     fn stale_suspension_cannot_replace_current() {
         let mut editor = editor();
-        let old = editor.suspend(ReadEffect).unwrap();
+        let old = editor.suspend(ReadEffect::default()).unwrap();
         assert_eq!(
             editor.resume(&old, Ok(ReadOutcome::EndOfInput)),
             Ok(Ok(ReadOutcome::EndOfInput))
         );
-        let current = editor.suspend(ReadEffect).unwrap();
+        let current = editor.suspend(ReadEffect::default()).unwrap();
 
         assert_eq!(
             editor.resume(&old, Ok(ReadOutcome::EndOfInput)),
@@ -390,7 +417,10 @@ mod tests {
             },
             Ok(Prompt::from("prompt")),
         );
-        accepts(ReadEffect, Ok(ReadOutcome::Input(TextUnit::Scalar('x'))));
+        accepts(
+            ReadEffect::default(),
+            Ok(ReadOutcome::Unit(TextUnit::Scalar('x'))),
+        );
         accepts(
             HistoryNavigateEffect {
                 direction: Direction::Previous,
@@ -422,6 +452,12 @@ mod tests {
             Ok(Some(Text::from("ls -l"))),
         );
         accepts(ResizeEffect, Ok(ScreenSize::new(24, 80).unwrap()));
+        accepts(
+            SignalEffect {
+                signal: Signal::Interrupt,
+            },
+            Ok(()),
+        );
         let completion_editor = editor();
         let query = completion_editor
             .completion_query(&super::super::Tokenizer::default())
@@ -451,7 +487,7 @@ mod tests {
         editor.effects.next_sequence = u64::MAX;
 
         assert_eq!(
-            editor.suspend(ReadEffect).err(),
+            editor.suspend(ReadEffect::default()).err(),
             Some(EffectStateError::SequenceExhausted)
         );
     }

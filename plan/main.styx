@@ -2477,6 +2477,21 @@ children (
                     native-impl ([spec:nshedit:req:core.read-driver])
                 }
                 deps (greenfield-history greenfield-token-completion greenfield-terminal-render)
+                log (
+                    {
+                        at 2026-08-08T18:50:38.390247575Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T19:18:15.208994625Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "The native loop is a token-checked ReadDriver: owned byte chunks decode incrementally with invalid bytes preserved; key prefixes distinguish exact, ambiguous, prefix, timeout, and fallback reprocessing; repeat counts and macro replay are bounded; prompts, history, completion, resize, user commands, and signal propagation suspend as typed effects; rendering uses a safe Write. Cooked/Editing transitions bracket completion and signal propagation. Multi-key operators remain typed bindings, not a second C-shaped operator state machine. Recorded in [dec:libedit:native-read-driver], with [dec:libedit:native-line-state] corrected accordingly."
+                    }
+                )
             }
 
             {

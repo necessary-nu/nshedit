@@ -9,6 +9,26 @@ pub enum Direction {
     Next,
 }
 
+// [spec:nshedit:req:core.read-driver]
+/// A terminal-facing signal reported without exposing platform signal numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Signal {
+    /// The interactive interrupt request, normally `SIGINT`.
+    Interrupt,
+    /// The interactive quit request, normally `SIGQUIT`.
+    Quit,
+    /// Loss of the controlling session, normally `SIGHUP`.
+    Hangup,
+    /// A termination request, normally `SIGTERM`.
+    Terminate,
+    /// A job-control stop request, normally `SIGTSTP`.
+    Suspend,
+    /// Resumption after a job-control stop, normally `SIGCONT`.
+    Continue,
+    /// A terminal-size change, normally `SIGWINCH`.
+    Resize,
+}
+
 /// Which word-classification rule a motion uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WordKind {

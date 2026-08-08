@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-08T18:49:48.299730097Z
+last_sync_at 2026-08-08T19:21:04.945202764Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -243,5 +243,10 @@ impl_evidence (
         core.token-completion
     ), covered_claims (
         {impl_name native-impl, rule core.token-completion}
+    )}
+    {id greenfield-read-driver, covered_rules (
+        core.read-driver
+    ), covered_claims (
+        {impl_name native-impl, rule core.read-driver}
     )}
 )

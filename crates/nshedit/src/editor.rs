@@ -17,6 +17,9 @@ use crate::domain::{
 // [spec:nshedit:req:core.effect-hooks]
 pub mod effect;
 
+// [spec:nshedit:req:core.read-driver]
+mod driver;
+
 // [spec:nshedit:req:core.token-completion+1]
 mod completion;
 
@@ -31,6 +34,7 @@ mod token;
 pub use completion::{
     CompletionCandidate, CompletionCandidates, CompletionEdit, CompletionOutcome, CompletionQuery,
 };
+pub use driver::{Display, DriverError, Pending, ReadDriver, ReadInterrupt, ReadResult, ReadStep};
 pub use render::{BaudRate, CapabilityKind, RenderError, RenderSummary, TerminalProfile};
 pub use token::{
     Continuation, QuoteStyle, Token, TokenCursor, TokenIndex, TokenOffset, Tokenization,
