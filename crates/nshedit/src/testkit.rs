@@ -106,3 +106,19 @@ pub(crate) fn set_line(el: &mut EditLine, s: &str, at: usize) {
     el.el_line.lastchar = text.len();
     el.el_line.cursor = at;
 }
+
+/// The live line as text, bounded by `lastchar` rather than its spare buffer.
+pub(crate) fn text(el: &EditLine) -> String {
+    el.el_line.buffer[..el.el_line.lastchar]
+        .iter()
+        .filter_map(|&c| char::from_u32(c))
+        .collect()
+}
+
+/// The kill buffer as its length field describes it; it has no terminator.
+pub(crate) fn killed(el: &EditLine) -> String {
+    el.el_chared.c_kill.buf[..el.el_chared.c_kill.last]
+        .iter()
+        .filter_map(|&c| char::from_u32(c))
+        .collect()
+}

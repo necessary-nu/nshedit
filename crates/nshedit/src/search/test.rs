@@ -12,7 +12,7 @@ use crate::chared::DELETE;
 use crate::histedit::{CC_EOF, CC_NEWLINE};
 use crate::history::OwnedHistoryW;
 use crate::map::map_init_emacs;
-use crate::testkit::headless_editor;
+use crate::testkit::{headless_editor, text};
 
 /// The shared editor in emacs mode, which is where `^R`, `^S` and the
 /// incremental search are typed.
@@ -42,13 +42,6 @@ fn set_line(el: &mut EditLine, s: &str, at: usize) {
     el.el_line.buffer[w.len()] = 0;
     el.el_line.lastchar = w.len();
     el.el_line.cursor = at;
-}
-
-fn text(el: &EditLine) -> String {
-    el.el_line.buffer[..el.el_line.lastchar]
-        .iter()
-        .filter_map(|&c| char::from_u32(c))
-        .collect()
 }
 
 /// The pattern as `patlen` describes it — `patbuf` carries storage past that

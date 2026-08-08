@@ -4,7 +4,7 @@ use crate::hist::HistSource;
 use crate::histedit::CC_NEWLINE;
 use crate::histedit::{H_FIRST, HistEventW};
 use crate::map::ElFuncT;
-use crate::testkit::{headless_editor, set_line};
+use crate::testkit::{headless_editor, killed, set_line, text};
 use core::ffi::{c_int, c_void};
 use std::sync::OnceLock;
 
@@ -19,22 +19,6 @@ fn el_with(s: &str, at: usize) -> EditLine {
     el.el_map.current = ElMapCurrent::Alt;
     set_line(&mut el, s, at);
     el
-}
-
-fn text(el: &EditLine) -> String {
-    el.el_line.buffer[..el.el_line.lastchar]
-        .iter()
-        .filter_map(|&c| char::from_u32(c))
-        .collect()
-}
-
-/// The kill buffer as `c_kill.last` describes it; it carries no
-/// terminator, so the length field is the only thing that ends it.
-fn killed(el: &EditLine) -> String {
-    el.el_chared.c_kill.buf[..el.el_chared.c_kill.last]
-        .iter()
-        .filter_map(|&c| char::from_u32(c))
-        .collect()
 }
 
 /// Fill the kill buffer, so that a command which is supposed to *empty* it

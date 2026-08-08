@@ -5,18 +5,11 @@ use super::*;
 use crate::common::{ed_next_history, ed_prev_history};
 use crate::histedit::CC_REFRESH_BEEP;
 use crate::history::OwnedHistoryW;
-use crate::testkit::headless_editor;
+use crate::testkit::{headless_editor, text};
 
 /// An editor in the state `el_init` leaves behind, on an ordinary screen.
 fn editor() -> EditLine {
     headless_editor(80, 24)
-}
-
-fn text(el: &EditLine) -> String {
-    el.el_line.buffer[..el.el_line.lastchar]
-        .iter()
-        .filter_map(|&c| char::from_u32(c))
-        .collect()
 }
 
 fn wide(s: &str) -> Vec<u32> {

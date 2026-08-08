@@ -2,7 +2,7 @@ use super::*;
 use crate::chared::DELETE;
 use crate::map::map_init_emacs;
 use crate::read::el_wpush;
-use crate::testkit::{headless_editor, set_line};
+use crate::testkit::{headless_editor, killed, set_line, text};
 
 /// The shared editor under the emacs bindings, with `s` in the line and
 /// the cursor at `at`.
@@ -17,22 +17,6 @@ fn el_with(s: &str, at: usize) -> EditLine {
     map_init_emacs(&mut el);
     set_line(&mut el, s, at);
     el
-}
-
-fn text(el: &EditLine) -> String {
-    el.el_line.buffer[..el.el_line.lastchar]
-        .iter()
-        .filter_map(|&c| char::from_u32(c))
-        .collect()
-}
-
-/// The kill buffer as its length field describes it — it carries no
-/// terminator, so `c_kill.last` is the only thing that says where it ends.
-fn killed(el: &EditLine) -> String {
-    el.el_chared.c_kill.buf[..el.el_chared.c_kill.last]
-        .iter()
-        .filter_map(|&c| char::from_u32(c))
-        .collect()
 }
 
 /// The stashed live line as `el_history.last` describes it.

@@ -1,20 +1,13 @@
 use super::*;
 use crate::el::blank_editline;
 use crate::read::el_wpush;
-use crate::testkit::{headless_editor, set_line};
+use crate::testkit::{headless_editor, killed, set_line, text};
 
 /// The shared editor holding `s`, cursor at `at`.
 fn editor(s: &str, at: usize) -> EditLine {
     let mut el = headless_editor(80, 24);
     set_line(&mut el, s, at);
     el
-}
-
-fn text(el: &EditLine) -> String {
-    el.el_line.buffer[..el.el_line.lastchar]
-        .iter()
-        .filter_map(|&c| char::from_u32(c))
-        .collect()
 }
 
 /// `cv__isword` is THREE-valued and the two nonzero values are not
@@ -308,13 +301,6 @@ fn the_resize_hook_runs_with_the_new_limit_already_published() {
     seen = 0;
     assert_eq!(ch_enlargebufs(&mut el, 1), 1);
     assert_eq!(seen, 0);
-}
-
-fn killed(el: &EditLine) -> String {
-    el.el_chared.c_kill.buf[..el.el_chared.c_kill.last]
-        .iter()
-        .filter_map(|&c| char::from_u32(c))
-        .collect()
 }
 
 /// Stage a pending vi operator the way `cv_action` leaves one: an anchor
