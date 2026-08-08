@@ -11,10 +11,13 @@
 //!
 //! The decision says "long name"; `term` keys its `bools`/`numbers`/`strings`
 //! maps by the terminfo **capname** (the short form — `el`, `cuu1`, `kcud1`),
-//! because `TermInfo::from_path` parses with `longnames: false`. The table
-//! `name` field is both what the lookup uses and what the user types at
-//! `settc`/`gettc`/`echotc` and reads back from `telltc`, so it is one string,
-//! and that string is the capname. Each row's doc records the long name.
+//! because `TermInfo::from_path` parses with `longnames: false`. So the table
+//! `name` field is the capname: it is what the terminfo lookup uses and what
+//! `telltc` prints back. Each row's doc records the long name.
+//!
+//! On the way *in* it is not the only spelling accepted. What a user types at
+//! `settc`/`gettc`/`echotc` is normally the C's termcap code, so
+//! [`resolve_cap`] takes either and that is where the two namespaces meet.
 //!
 //! Two capabilities have no terminfo counterpart at all — the C's `pt`
 //! (physical tabs) and `MT` (a termcap-only meta-key extension). Their rows
@@ -208,7 +211,7 @@ pub(crate) const T_VAL: usize = 8;
 /// `T_*` indices define.
 pub struct Termcapstr {
     /// The capability's name. Termcap two-letter code in the C
-    /// (`"al"`, `"bl"`, …), terminfo long name here.
+    /// (`"al"`, `"bl"`, …), terminfo capname here.
     pub name: &'static str,
     /// Human-readable description, shown by `telltc`.
     pub long_name: &'static str,
@@ -219,8 +222,8 @@ pub struct Termcapstr {
 /// `T_*` indices define. Structurally identical to [`Termcapstr`]; the C
 /// declares it separately and so does this.
 pub struct Termcapval {
-    /// Termcap two-letter code in the C (`"am"`, `"pt"`, …), terminfo long
-    /// name here. `MT`, `pt` and `xt` have no clean terminfo counterpart and
+    /// Termcap two-letter code in the C (`"am"`, `"pt"`, …), terminfo capname
+    /// here. `MT`, `pt` and `xt` have no clean terminfo counterpart and
     /// are resolved per capability during the port.
     pub name: &'static str,
     /// Human-readable description, shown by `telltc`.
@@ -234,40 +237,6 @@ const fn cs(name: &'static str, long_name: &'static str) -> Termcapstr {
 }
 
 /// Table-literal shorthand for [`Termcapval`], as [`cs`].
-/// Resolves a name a *user* typed to an index in one of the capability
-/// tables, accepting either spelling.
-///
-/// libedit's own tables are keyed by termcap two-letter code — `co`, `li`,
-/// `cl` — and this port's by terminfo capname — `cols`, `lines`, `clear`.
-/// That substitution is deliberate and `sem:terminal.terminal-telltc-fn`
-/// records it, because `telltc` PRINTS these names and printing terminfo
-/// names from a port that reads terminfo is the honest thing to do.
-///
-/// It is the wrong answer for input. `settc` and `echotc` take a name
-/// somebody typed, at a prompt or in a `.editrc`, and what people type is
-/// termcap: that is what libedit's own documentation shows and what every
-/// `.editrc` already on disk contains. Before this, `settc co 132` — a line
-/// straight out of the manual — was answered with "Bad capability".
-///
-/// So the capname is tried first, then the argument is retried as a termcap
-/// code through [`nshterm`], whose mapping is generated from ncurses'
-/// `include/Caps`. Accepting both means a `.editrc` written against this port
-/// keeps working as well as one written against libedit, and it costs a
-/// linear scan of ~500 entries on a path that runs once per line of a
-/// configuration file.
-///
-/// The bytes are compared directly first, so a capability name that is not
-/// valid UTF-8 still matches a table entry exactly as it did before; only the
-/// termcap fallback needs a `str`.
-fn resolve_cap(what: &[u8], find: impl Fn(&[u8]) -> Option<usize>) -> Option<usize> {
-    if let Some(i) = find(what) {
-        return Some(i);
-    }
-    let code = std::str::from_utf8(what).ok()?;
-    let capname = nshterm::parser::names::capname_for_termcap(code)?;
-    find(capname.as_bytes())
-}
-
 const fn cv(name: &'static str, long_name: &'static str) -> Termcapval {
     Termcapval { name, long_name }
 }
@@ -339,6 +308,59 @@ static TVAL: [Termcapval; T_VAL] = [
     cv("xenl", "newline ignored at right margin"),
     cv("MT", "Has meta key"),
 ];
+
+/// Which of the two capability tables [`resolve_cap`] is searching.
+#[derive(Clone, Copy)]
+enum CapTable {
+    /// [`TSTR`], whose indices are the `T_AL` … `T_KD_DEL` constants.
+    Str,
+    /// [`TVAL`], whose indices are the `T_AM` … `T_MT` constants.
+    Val,
+}
+
+/// Resolves a name a *user* typed to an index in one of the capability
+/// tables, accepting either spelling.
+///
+/// libedit's own tables are keyed by termcap two-letter code — `co`, `li`,
+/// `cl` — and this port's by terminfo capname — `cols`, `lines`, `clear`.
+/// That substitution is deliberate and `sem:terminal.terminal-telltc-fn`
+/// records it, because `telltc` PRINTS these names and printing terminfo
+/// names from a port that reads terminfo is the honest thing to do.
+///
+/// It is the wrong answer for input. `settc` and `echotc` take a name
+/// somebody typed, at a prompt or in a `.editrc`, and what people type is
+/// termcap: that is what libedit's own documentation shows and what every
+/// `.editrc` already on disk contains. Before this, `settc co 132` — a line
+/// straight out of the manual — was answered with "Bad capability".
+///
+/// So the capname is tried first, then the argument is retried as a termcap
+/// code through [`nshterm`], whose mapping is generated from ncurses'
+/// `include/Caps`. Accepting both means a `.editrc` written against this port
+/// keeps working as well as one written against libedit, and it costs a
+/// linear scan of ~500 entries on a path that runs once per line of a
+/// configuration file.
+///
+/// The bytes are compared directly first, so a capability name that is not
+/// valid UTF-8 still matches a table entry exactly as it did before; only the
+/// termcap fallback needs a `str`.
+///
+/// The table is named rather than handed in as a lookup closure because the
+/// three entry points that resolve a user's name — `settc`, `gettc`,
+/// `echotc` — have to agree on what a name means, and `gettc` was left behind
+/// twice while each of them carried its own scan. With the scan in here there
+/// is nowhere else for one to live.
+fn resolve_cap(table: CapTable, what: &[u8]) -> Option<usize> {
+    let find = |n: &[u8]| match table {
+        CapTable::Str => TSTR.iter().position(|t| t.name.as_bytes() == n),
+        CapTable::Val => TVAL.iter().position(|t| t.name.as_bytes() == n),
+    };
+    if let Some(i) = find(what) {
+        return Some(i);
+    }
+    let code = std::str::from_utf8(what).ok()?;
+    let capname = nshterm::parser::names::capname_for_termcap(code)?;
+    find(capname.as_bytes())
+}
 
 // [spec:libedit:def:terminal.funckey-t]
 /// A symbolic function-key binding: one row of `el_terminal.t_fkey`, indexed
@@ -1233,10 +1255,10 @@ pub(crate) fn terminal_move_to_char(el: &mut EditLine, where_: i32) {
                     // unconditionally and only an unallocated display puts it
                     // out of range.
                     if cur_stop != tgt_stop && stop_cell != Some(MB_FILL_CHAR) {
-                        let mut i = cur_stop;
-                        while i < tgt_stop {
+                        // One tab per stop crossed; both ends are already
+                        // rounded down to a multiple of 8.
+                        for _ in (cur_stop..tgt_stop).step_by(8) {
                             terminal__putc(el, u32::from(b'\t'));
-                            i += 8;
                         }
                         el.el_cursor.h = tgt_stop;
                     }
@@ -1847,10 +1869,10 @@ pub(crate) fn terminal_set_arrow(
     fun: KeymacroValueT,
     type_: i32,
 ) -> i32 {
-    for i in 0..A_K_NKEYS {
-        let Some(arrow) = el.el_terminal.t_fkey.get_mut(i) else {
-            break;
-        };
+    // `take` is the C's fixed-size array in both directions: it stops at
+    // `A_K_NKEYS` and it stops early on a table `terminal_init` has not
+    // filled, which is what the C's own bound cannot do.
+    for arrow in el.el_terminal.t_fkey.iter_mut().take(A_K_NKEYS) {
         // A NULL table name — the C would dereference it — never matches.
         if arrow.name.is_some_and(|n| wcs_eq(name, n)) {
             arrow.fun = fun;
@@ -1864,10 +1886,7 @@ pub(crate) fn terminal_set_arrow(
 // [spec:libedit:def:terminal.terminal-clear-arrow-fn]
 // [spec:libedit:sem:terminal.terminal-clear-arrow-fn]
 pub(crate) fn terminal_clear_arrow(el: &mut EditLine, name: &[u32]) -> i32 {
-    for i in 0..A_K_NKEYS {
-        let Some(arrow) = el.el_terminal.t_fkey.get_mut(i) else {
-            break;
-        };
+    for arrow in el.el_terminal.t_fkey.iter_mut().take(A_K_NKEYS) {
         if arrow.name.is_some_and(|n| wcs_eq(name, n)) {
             // The bound function value is left untouched; only the type
             // changes, and the key map is not modified until
@@ -1884,17 +1903,19 @@ pub(crate) fn terminal_clear_arrow(el: &mut EditLine, name: &[u32]) -> i32 {
 pub(crate) fn terminal_print_arrow(el: &mut EditLine, name: &[u32]) {
     // The empty wide string means "print them all".
     let all = wcs(name).is_empty();
-    for i in 0..A_K_NKEYS {
-        let Some(arrow) = el.el_terminal.t_fkey.get(i) else {
-            break;
-        };
-        let Some(aname) = arrow.name else {
-            continue;
-        };
-        if (all || wcs_eq(name, aname)) && arrow.r#type != XK_NOD {
-            let (fun, ntype) = (arrow.fun.clone(), arrow.r#type);
-            keymacro_kprint(el, aname, Some(&fun), ntype);
-        }
+    // Selected first, printed second, because printing needs the `EditLine`
+    // the table is a field of. `keymacro_kprint` only writes output, so the
+    // rows it sees and the order they come out in are the walk's.
+    let matched: Vec<(&'static [u32], KeymacroValueT, i32)> = el
+        .el_terminal
+        .t_fkey
+        .iter()
+        .take(A_K_NKEYS)
+        .filter_map(|arrow| Some((arrow.name?, arrow.fun.clone(), arrow.r#type)))
+        .filter(|&(aname, _, ntype)| (all || wcs_eq(name, aname)) && ntype != XK_NOD)
+        .collect();
+    for (aname, fun, ntype) in matched {
+        keymacro_kprint(el, aname, Some(&fun), ntype);
     }
     // A name matching nothing produces no output, and there is no diagnostic.
 }
@@ -1922,14 +1943,17 @@ pub(crate) fn terminal_bind_arrow(el: &mut EditLine) {
     // Step 3.
     terminal_reset_arrow(el);
 
-    // Step 4.
-    for i in 0..A_K_NKEYS {
-        let Some(arrow) = el.el_terminal.t_fkey.get(i) else {
-            break;
-        };
-        let (key, ntype) = (usize::try_from(arrow.key).unwrap_or(0), arrow.r#type);
-        let fun = arrow.fun.clone();
-
+    // Step 4. Each row is copied out before its body runs, because the body
+    // rebinds through `el` and the table is a field of it. Nothing below
+    // touches `t_fkey`, so the copies stay current.
+    let rows: Vec<(usize, i32, KeymacroValueT)> = el
+        .el_terminal
+        .t_fkey
+        .iter()
+        .take(A_K_NKEYS)
+        .map(|a| (usize::try_from(a.key).unwrap_or(0), a.r#type, a.fun.clone()))
+        .collect();
+    for (key, ntype, fun) in rows {
         // (a).
         let Some(p) = cap_owned(el, key) else {
             continue;
@@ -2196,7 +2220,7 @@ pub fn terminal_settc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     let how = truncate7(encode(el, argv[2]));
 
     // Step 3: the strings first.
-    if let Some(idx) = resolve_cap(&what, |n| TSTR.iter().position(|t| t.name.as_bytes() == n)) {
+    if let Some(idx) = resolve_cap(CapTable::Str, &what) {
         match std::str::from_utf8(&how) {
             Ok(s) => terminal_alloc(el, idx, Some(s)),
             // Encoded bytes that are not UTF-8 cannot cross `terminal_alloc`'s
@@ -2208,9 +2232,8 @@ pub fn terminal_settc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     }
 
     // Step 4: the numeric ones second.
-    let Some(idx) = resolve_cap(&what, |n| TVAL.iter().position(|t| t.name.as_bytes() == n)) else {
-        let cmd = encode(el, argv[0]);
-        let mut msg = cmd;
+    let Some(idx) = resolve_cap(CapTable::Val, &what) else {
+        let mut msg = encode(el, argv[0]);
         msg.extend_from_slice(b": Bad capability `");
         msg.extend_from_slice(&what);
         msg.extend_from_slice(b"'.\n");
@@ -2316,7 +2339,7 @@ pub fn terminal_gettc(el: &mut EditLine, argc: i32, argv: &[*mut c_char]) -> i32
     // be NULL when the capability is absent and which any later
     // `terminal_set`/`terminal_settc` invalidates — which is why the stored
     // value carries the terminator the C's does (see `terminal_alloc_bytes`).
-    if let Some(idx) = resolve_cap(&what, |n| TSTR.iter().position(|t| t.name.as_bytes() == n)) {
+    if let Some(idx) = resolve_cap(CapTable::Str, &what) {
         let p = match el.el_terminal.t_str.get(idx) {
             Some(Some(v)) => v.as_ptr().cast::<c_char>().cast_mut(),
             _ => std::ptr::null_mut(),
@@ -2328,7 +2351,7 @@ pub fn terminal_gettc(el: &mut EditLine, argc: i32, argv: &[*mut c_char]) -> i32
     }
 
     // Step 3.
-    let Some(idx) = resolve_cap(&what, |n| TVAL.iter().position(|t| t.name.as_bytes() == n)) else {
+    let Some(idx) = resolve_cap(CapTable::Val, &what) else {
         return -1;
     };
 
@@ -2382,36 +2405,34 @@ pub fn terminal_echotc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     let arg = wcs(argv[a]).to_vec();
 
     // Step 5: pseudo-capabilities. The yes/no lines use "%s\n" and the
-    // numeric ones "%d\n".
+    // numeric ones "%d\n". Answering one of these is the whole of the step —
+    // none of the seven names ever reaches the capability tables below — so
+    // the line is built first and the single write is what returns.
     let flags = el.el_terminal.t_flags;
     let yesno = |b: bool| if b { "yes" } else { "no" };
-    if wcs_eq(&arg, A_TABS) {
-        el.write_outfile(format!("{}\n", yesno(flags & TERM_CAN_TAB != 0)).as_bytes());
-        return 0;
+    let pseudo = if wcs_eq(&arg, A_TABS) {
+        Some(format!("{}\n", yesno(flags & TERM_CAN_TAB != 0)))
     } else if wcs_eq(&arg, A_META) {
         // From the meta-key value slot directly, not from TERM_HAS_META, so
         // the separate MT slot is deliberately not considered here.
-        el.write_outfile(format!("{}\n", yesno(val(el, T_KM) != 0)).as_bytes());
-        return 0;
+        Some(format!("{}\n", yesno(val(el, T_KM) != 0)))
     } else if wcs_eq(&arg, A_XN) {
-        el.write_outfile(format!("{}\n", yesno(flags & TERM_HAS_MAGIC_MARGINS != 0)).as_bytes());
-        return 0;
+        Some(format!("{}\n", yesno(flags & TERM_HAS_MAGIC_MARGINS != 0)))
     } else if wcs_eq(&arg, A_AM) {
-        el.write_outfile(format!("{}\n", yesno(flags & TERM_HAS_AUTO_MARGINS != 0)).as_bytes());
-        return 0;
+        Some(format!("{}\n", yesno(flags & TERM_HAS_AUTO_MARGINS != 0)))
     } else if wcs_eq(&arg, A_BAUD) {
         // The raw `speed_t`, as the C prints it: on Linux that is the encoded
         // `B*` constant, not a baud number.
-        let speed = el.el_tty.t_speed as i32;
-        el.write_outfile(format!("{speed}\n").as_bytes());
-        return 0;
+        Some(format!("{}\n", el.el_tty.t_speed as i32))
     } else if wcs_eq(&arg, A_ROWS) || wcs_eq(&arg, A_LINES) {
-        let li = val(el, T_LI);
-        el.write_outfile(format!("{li}\n").as_bytes());
-        return 0;
+        Some(format!("{}\n", val(el, T_LI)))
     } else if wcs_eq(&arg, A_COLS) {
-        let co = val(el, T_CO);
-        el.write_outfile(format!("{co}\n").as_bytes());
+        Some(format!("{}\n", val(el, T_CO)))
+    } else {
+        None
+    };
+    if let Some(line) = pseudo {
+        el.write_outfile(line.as_bytes());
         return 0;
     }
 
@@ -2419,9 +2440,7 @@ pub fn terminal_echotc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     // database. Note the fallback is reached only when the *name* is unknown:
     // a known name whose slot is empty does not fall back.
     let narrow = encode(el, &arg);
-    let scap: Option<Vec<u8>> = match resolve_cap(&narrow, |n| {
-        TSTR.iter().position(|t| t.name.as_bytes() == n)
-    }) {
+    let scap: Option<Vec<u8>> = match resolve_cap(CapTable::Str, &narrow) {
         Some(idx) => cap_owned(el, idx),
         None => std::str::from_utf8(&narrow)
             .ok()
@@ -2449,14 +2468,15 @@ pub fn terminal_echotc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     // terminating NUL and then steps one position past it. The scan stops at
     // the end here.
     let mut arg_need = 0i32;
-    let mut i = 0usize;
-    while i < scap.len() {
-        if scap[i] != b'%' {
-            i += 1;
+    let mut rest = scap.iter().copied();
+    while let Some(c) = rest.next() {
+        if c != b'%' {
             continue;
         }
-        i += 1;
-        let Some(&c) = scap.get(i) else {
+        // Taking the next byte from the same cursor is what consumes the
+        // whole two-byte sequence, so a `%%` is one escape rather than two
+        // introducers.
+        let Some(c) = rest.next() else {
             break;
         };
         match c {
@@ -2472,42 +2492,26 @@ pub fn terminal_echotc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
                 }
             }
         }
-        i += 1;
     }
 
     // Step 9. Every diagnostic phrased as a "Warning:" nonetheless returns
     // -1; `-s` suppresses the messages but changes no return value.
     match arg_need {
         0 => {
-            a += 1;
-            if let Some(extra) = argv.get(a).filter(|s| !wcs(s).is_empty()) {
-                let extra = extra.to_vec();
-                warn_extra(el, silent, &extra);
+            if echotc_extra(el, argv, a + 1, silent) {
                 return -1;
             }
             tputs_cap(el, &scap, 1);
         }
         1 => {
-            a += 1;
-            let Some(v) = argv.get(a).filter(|s| !wcs(s).is_empty()) else {
-                warn_missing(el, silent);
-                return -1;
-            };
-            let v = wcs(v).to_vec();
             // ERR-terminal-33, disposition `reproduce`: the column is forced
             // to 0 and the single user-supplied value becomes the row — the
             // *second* `tgoto` argument, not the first.
             let arg_cols = 0;
-            let (n, consumed) = wcstol10(&v);
-            if consumed != v.len() || n < 0 {
-                bad_echotc_value(el, silent, &v, "rows");
+            let Some(arg_rows) = echotc_number(el, argv, &mut a, silent, "rows") else {
                 return -1;
-            }
-            let arg_rows = i32::try_from(n).unwrap_or(i32::MAX);
-            a += 1;
-            if let Some(extra) = argv.get(a).filter(|s| !wcs(s).is_empty()) {
-                let extra = extra.to_vec();
-                warn_extra(el, silent, &extra);
+            };
+            if echotc_extra(el, argv, a + 1, silent) {
                 return -1;
             }
             let expanded = tgoto(&scap, arg_cols, arg_rows);
@@ -2522,38 +2526,16 @@ pub fn terminal_echotc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
                         .as_bytes(),
                 );
             }
-            a += 1;
-            let Some(v) = argv.get(a).filter(|s| !wcs(s).is_empty()) else {
-                warn_missing(el, silent);
+            let Some(arg_cols) = echotc_number(el, argv, &mut a, silent, "cols") else {
                 return -1;
             };
-            let v = wcs(v).to_vec();
-            let (n, consumed) = wcstol10(&v);
-            if consumed != v.len() || n < 0 {
-                bad_echotc_value(el, silent, &v, "cols");
-                return -1;
-            }
-            let arg_cols = i32::try_from(n).unwrap_or(i32::MAX);
-
-            a += 1;
-            let Some(v) = argv.get(a).filter(|s| !wcs(s).is_empty()) else {
-                warn_missing(el, silent);
+            let Some(arg_rows) = echotc_number(el, argv, &mut a, silent, "rows") else {
                 return -1;
             };
-            let v = wcs(v).to_vec();
-            let (n, consumed) = wcstol10(&v);
-            if consumed != v.len() || n < 0 {
-                bad_echotc_value(el, silent, &v, "rows");
-                return -1;
-            }
-            let arg_rows = i32::try_from(n).unwrap_or(i32::MAX);
             // ERR-terminal-65: the C re-tests the same parse result a third
             // time here. It can never fire, so it is not ported.
 
-            a += 1;
-            if let Some(extra) = argv.get(a).filter(|s| !wcs(s).is_empty()) {
-                let extra = extra.to_vec();
-                warn_extra(el, silent, &extra);
+            if echotc_extra(el, argv, a + 1, silent) {
                 return -1;
             }
             // ERR-terminal-33 again: the affected-line count is the row
@@ -2584,6 +2566,48 @@ const A_ROWS: &[u32] = &[0x72, 0x6f, 0x77, 0x73];
 const A_LINES: &[u32] = &[0x6c, 0x69, 0x6e, 0x65, 0x73];
 /// C: `L"cols"`.
 const A_COLS: &[u32] = &[0x63, 0x6f, 0x6c, 0x73];
+
+/// Advance `a` and read the argument there as a non-negative decimal count,
+/// diagnosing a missing or malformed one as `what` — `"rows"` or `"cols"`.
+///
+/// The one- and two-parameter forms of step 9 spell this out three times
+/// between them, differing only in that word, and the empty-argument test has
+/// to be the same at each: an empty string is *missing*, not a bad value.
+/// `None` is the caller's -1.
+fn echotc_number(
+    el: &mut EditLine,
+    argv: &[&[u32]],
+    a: &mut usize,
+    silent: bool,
+    what: &str,
+) -> Option<i32> {
+    *a += 1;
+    let Some(v) = argv.get(*a).filter(|s| !wcs(s).is_empty()) else {
+        warn_missing(el, silent);
+        return None;
+    };
+    let v = wcs(v).to_vec();
+    let (n, consumed) = wcstol10(&v);
+    if consumed != v.len() || n < 0 {
+        bad_echotc_value(el, silent, &v, what);
+        return None;
+    }
+    Some(i32::try_from(n).unwrap_or(i32::MAX))
+}
+
+/// True — the caller's -1 — when position `a` holds one more non-empty
+/// argument than the capability asked for, having said so.
+///
+/// Each of step 9's three arms ends with this test, and `a` is dead
+/// afterwards, so the position is passed rather than the cursor advanced.
+fn echotc_extra(el: &mut EditLine, argv: &[&[u32]], a: usize, silent: bool) -> bool {
+    let Some(extra) = argv.get(a).filter(|s| !wcs(s).is_empty()) else {
+        return false;
+    };
+    let extra = extra.to_vec();
+    warn_extra(el, silent, &extra);
+    true
+}
 
 /// C: `"echotc: Warning: Extra argument `%ls'.\n"`.
 fn warn_extra(el: &mut EditLine, silent: bool, arg: &[u32]) {

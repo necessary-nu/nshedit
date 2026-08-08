@@ -155,6 +155,21 @@ children (
                 title "Idiomatize the terminal layer"
                 deps (terminal-tests)
                 sealed true
+                log (
+                    {
+                        at 2026-08-08T10:19:51.397573703Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Net +8 lines: -33 code, +41 comment, because every extracted function got a doc saying why it exists. Annotation counts byte-identical to before (terminal.rs 86, tty.rs 49) and the pty differential is byte-identical, which is what says the emitted bytes did not move.\n\nTHE ONE STRUCTURAL CHANGE THAT MATTERS. resolve_cap's lookup closure became a CapTable enum. The five call sites each passed one of two literal closures scanning TSTR or TVAL; the scan now lives inside resolve_cap, so there is nowhere for a fourth entry point to grow its own — which is exactly how gettc got missed twice before being brought in. The routing is structural now rather than conventional.\n\nresolve_cap had also eaten cv's doc comment: it was declared between cs and cv, and its doc block opened by describing itself as a table-literal shorthand, so cv was undocumented and resolve_cap was documented as something it is not. Moved below the two tables it searches.\n\nTHE TERMCAP-NAME INPUT GAP IS ALREADY CLOSED, and the note that recorded it as open is stale. Commit 37e3a04 made resolve_cap try the capname then retry through nshterm's capname_for_termcap, and all three of settc, gettc and echotc route through it. Two corrections to how that gap was described: the settc truncation is to SEVEN bytes, not eight, and the longest name in either table is five (clear, kcuu1, lines), so the margin is two spare bytes rather than three — and the truncation happens BEFORE resolve_cap, so a two-letter termcap code is unaffected either way. The real ERR-terminal-30 exposure is the VALUE being cut to seven, which nothing here touched.\n\nWHAT IS ACTUALLY OPEN IS THE RULE SIDE, and it is a live inconsistency rather than a nicety. sem:terminal.terminal-settc-fn steps 3 and 4 still say \"search for an exact name match\", and the same sentence is missing from sem:terminal.terminal-gettc-fn and sem:terminal.terminal-echotc-fn. So `settc co 132` is accepted today by an implementation whose rule says only exact names match: 37e3a04 changed behaviour and did not amend the rules. That needs a deliberate bump, not a quiet edit, and it is the one thing this node did not finish. For echotc the sentence also has to say resolution happens before the terminal-database fallback, so a termcap code naming a table capability takes the table.\n\nTERMINAL_CLEAR_EOL'S TWO-PART TEST STAYS, and must. The C is `EL_CAN_CEOL && GoodStr(T_ce)` at src/terminal.c:825 while re_clear_lines branches on the flag alone — the split is the C's, not the port's, and refresh/test.rs pins the divergent case byte for byte including the cursor left at h == DLEN. Unifying the flag with the capability would change those bytes and needs sem:refresh.re-clear-lines-fn amended. It also reaches into refresh.rs, which this node does not own.\n\nSTILL C-SHAPED AND DELIBERATELY SO. t_flags as an i32 bit word and the T_* indices as loose usize constants parallel to two static arrays — def:terminal.el-terminal-t says in as many words that the flag word stays an integer, and refresh.rs reads it at five sites. terminal_gettc's smuggled out-pointer, whose own doc already owes the core a capability query that returns a value; the safe query belongs here but its only consumer is the ABI's EL_GETTC arm, so adding it alone would be dead public surface. tputs, tgoto and parse_delay keep manual byte cursors because they are segmenting scanners with lookahead where an iterator would obscure rather than clarify. And encode() is duplicated between terminal.rs and tty.rs, six lines each, whose honest home is chartype.rs — not this node's."
+                    }
+
+                    {
+                        at 2026-08-08T10:20:00.918132437Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
         )
         sealed true

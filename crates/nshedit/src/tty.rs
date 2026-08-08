@@ -11,6 +11,7 @@ use crate::keymacro::keymacro_clear;
 use crate::locale::MB_LEN_MAX;
 use crate::map::{ElMapCurrent, MAP_VI, N_KEYS};
 use crate::parse::parse__escape;
+use crate::terminal::TERM_CAN_TAB;
 
 /// C: `#define NN_IO 3` — the number of I/O modes (`ED_IO`, `EX_IO`,
 /// `QU_IO`).
@@ -294,17 +295,11 @@ fn cfsetispeed(t: &mut Termios, speed: u32) {
     cfsetospeed(t, speed);
 }
 
-/// C: `#define TERM_CAN_TAB 0x008` and `#define EL_CAN_TAB (EL_FLAGS &
-/// TERM_CAN_TAB)`, from `terminal.h`.
-///
-/// `terminal.rs` does not publish the `TERM_*` flag bits yet and is being
-/// written in parallel, so the one bit this module needs is spelled out here
-/// rather than added to a file that is not mine. Idiomatization should fold
-/// it into `terminal.rs` and delete this.
-const TERM_CAN_TAB: i32 = 0x008;
-
 /// C: `EL_CAN_TAB` — the terminfo capability bit for "the terminal can use
 /// hardware tabs".
+///
+/// C: `#define EL_CAN_TAB (EL_FLAGS & TERM_CAN_TAB)`, from `terminal.h`,
+/// which is why the bit itself comes from the module that ports that header.
 fn el_can_tab(el: &EditLine) -> bool {
     el.el_terminal.t_flags & TERM_CAN_TAB != 0
 }
@@ -712,6 +707,16 @@ fn with_tios<R>(
     r
 }
 
+/// C: `tty__setchar(&el->el_tty.<dst>, el->el_tty.t_c[row])`.
+///
+/// Both operands are fields of `el_tty`, so the row has to be copied out
+/// before the termios is borrowed. It is a `[u8; C_NCC]` and therefore `Copy`,
+/// which is what makes that a copy rather than a dance.
+fn setchar_from_row(el: &mut EditLine, dst: Tios, row: usize) {
+    let chars = el.el_tty.t_c[row];
+    tty__setchar(tios_slot(el, dst), &chars);
+}
+
 /// The C's whole-struct `*dst = *src` on a `struct termios`.
 fn termios_copy(dst: &mut Termios, src: &Termios) {
     dst.c_iflag = src.c_iflag;
@@ -869,13 +874,7 @@ fn tty_setup(el: &mut EditLine) -> i32 {
     {
         let tty = &mut el.el_tty;
         termios_copy(&mut tty.t_ex, &tty.t_or);
-    }
-    {
-        let tty = &mut el.el_tty;
         termios_copy(&mut tty.t_ed, &tty.t_or);
-    }
-    {
-        let tty = &mut el.el_tty;
         termios_copy(&mut tty.t_ts, &tty.t_or);
     }
 
@@ -913,11 +912,7 @@ fn tty_setup(el: &mut EditLine) -> i32 {
         }
 
         // 9b.
-        {
-            let tty = &mut el.el_tty;
-            let row = tty.t_c[EX_IO];
-            tty__setchar(&mut tty.t_ex, &row);
-        }
+        setchar_from_row(el, Tios::Ex, EX_IO);
 
         // 9c. The only terminal write `tty_setup` performs, and it happens
         // **before** `t_initialized` is set — so a failure here leaves the
@@ -935,11 +930,7 @@ fn tty_setup(el: &mut EditLine) -> i32 {
     with_tios(el, Tios::Ed, |el, t| tty_setup_flags(el, t, ED_IO as i32));
 
     // Step 11.
-    {
-        let tty = &mut el.el_tty;
-        let row = tty.t_c[ED_IO];
-        tty__setchar(&mut tty.t_ed, &row);
-    }
+    setchar_from_row(el, Tios::Ed, ED_IO);
 
     // Step 12. Forced, because step 11 has just made `t_ed.c_cc` agree with
     // `t_c[ED_IO]` for every mapped character, so a non-forced call would
@@ -1338,11 +1329,7 @@ pub fn tty_rawmode(el: &mut EditLine) -> i32 {
             // new `t_c[ED_IO]` against the *old* `t_ed.c_cc`.
             tty_bind_char(el, 0);
 
-            {
-                let tty = &mut el.el_tty;
-                let row = tty.t_c[ED_IO];
-                tty__setchar(&mut tty.t_ed, &row);
-            }
+            setchar_from_row(el, Tios::Ed, ED_IO);
 
             // `EX_IO`'s `MD_CHAR` masks are both 0, so this loop reduces to
             // copying the scratch row into the execute row wholesale.
@@ -1350,11 +1337,7 @@ pub fn tty_rawmode(el: &mut EditLine) -> i32 {
                 tty_update_char(el, EX_IO as i32, i as i32);
             }
 
-            {
-                let tty = &mut el.el_tty;
-                let row = tty.t_c[EX_IO];
-                tty__setchar(&mut tty.t_ex, &row);
-            }
+            setchar_from_row(el, Tios::Ex, EX_IO);
         }
     }
     // If step 6 was skipped — the terminal was already non-canonical — `t_ed`
@@ -1559,31 +1542,32 @@ pub fn tty_stty(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
 /// buffer and writes it once, which a `FILE *` would have done anyway and
 /// which keeps `el` borrowable while the text is built.
 fn tty_stty_display(el: &mut EditLine, z: usize, aflag: i32) {
-    // `i` is the group last printed, `len` the current output column, `st`
-    // the indent to use when wrapping.
-    let mut i: i32 = -1;
+    // `group` is the group last printed — the C's `i`, whose -1 sentinel also
+    // stands for "nothing printed yet", which is the whole reason its
+    // `i == -1` fallback branch exists and is unreachable. `len` is the
+    // current output column, `st` the indent to use when wrapping.
+    let mut group: Option<usize> = None;
     let mut len: usize = 0;
     let mut st: usize = 0;
     let mut out: Vec<u8> = Vec::new();
 
     for m in &TTYMODES {
-        if m.m_type != i {
+        let kind = m.m_type as usize;
+        if group != Some(kind) {
             // A newline before every group but the first.
-            if i != -1 {
+            if group.is_some() {
                 out.push(b'\n');
             }
             // One of "iflag:", "oflag:", "cflag:", "lflag:", "chars:". This
             // relies on `ttymodes` being grouped by `m_type` in `MD_*` order.
-            let label = el.el_tty.t_t[z][m.m_type as usize].t_name;
+            let label = el.el_tty.t_t[z][kind].t_name;
             out.extend_from_slice(label.as_bytes());
-            i = m.m_type;
+            group = Some(kind);
             len = label.len();
             st = len;
         }
 
-        // The C's `i == -1` fallback branch is unreachable: the first entry
-        // always assigns a non-negative `m_type`.
-        let ent = &el.el_tty.t_t[z][i as usize];
+        let ent = &el.el_tty.t_t[z][kind];
         // Clear wins in the display.
         let mut x = if ent.t_setmask & m.m_value != 0 {
             b'+'
