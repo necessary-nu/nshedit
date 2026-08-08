@@ -332,6 +332,111 @@ fn the_two_string_searches_walk_the_directions_their_names_deny() {
 // The on-disk format
 // ---------------------------------------------------------------------------
 
+fn native_file(records: &[crate::histfile::Record]) -> Vec<u8> {
+    let mut out = Vec::new();
+    crate::histfile::write_header(&mut out).unwrap();
+    for record in records {
+        crate::histfile::append(&mut out, record).unwrap();
+    }
+    out
+}
+
+/// `H_LOAD` is the user-facing bridge onto the native container. It appends
+/// text in file order, so the ordinary newest-first store ends in the same
+/// order as the file's producer, and deliberately has nowhere to put blobs.
+/// The save side remains covered below as `_HiStOrY_V2_`.
+#[test]
+fn native_load_does_not_change_save() {
+    let path = scratch_path("native");
+    let file = native_file(&[
+        crate::histfile::Record {
+            text: b"native oldest".into(),
+            blob: b"exit=7".to_vec(),
+        },
+        crate::histfile::Record {
+            text: b"native newest".into(),
+            blob: vec![0, 1, 2, 255],
+        },
+    ]);
+    std::fs::write(&path, file).unwrap();
+
+    let mut h = OwnedHistoryW::with_size(8);
+    h.enter(&wide("already present"));
+    let (rv, ev) = h.exec(H_LOAD, HistoryArg::Path(path.to_str().unwrap()));
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(rv, 2);
+    assert_eq!((ev.num, text(ev.str)), (0, "OK".to_string()));
+    assert_eq!(
+        h.first().unwrap().text,
+        HistText::Wide(wide("native newest"))
+    );
+    assert_eq!(
+        h.next().unwrap().text,
+        HistText::Wide(wide("native oldest"))
+    );
+    assert_eq!(
+        h.next().unwrap().text,
+        HistText::Wide(wide("already present"))
+    );
+    assert!(h.next().is_none());
+}
+
+/// COBS makes corruption local, and the ABI must not throw that property
+/// away. The good records are entered; `H_LOAD` still returns -1 so its caller
+/// knows the file was not complete.
+#[test]
+fn native_corruption_keeps_good_records() {
+    let path = scratch_path("native-damaged");
+    let mut file = native_file(&[
+        crate::histfile::Record::new(&b"before"[..]),
+        crate::histfile::Record::new(&b"CORRUPTME"[..]),
+        crate::histfile::Record::new(&b"after"[..]),
+    ]);
+    let at = file
+        .windows(b"CORRUPTME".len())
+        .position(|w| w == b"CORRUPTME")
+        .unwrap();
+    file[at - 1] = 200;
+    std::fs::write(&path, file).unwrap();
+
+    let mut h = OwnedHistoryW::with_size(8);
+    let (rv, ev) = h.exec(H_LOAD, HistoryArg::Path(path.to_str().unwrap()));
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(rv, -1);
+    assert_eq!(
+        (ev.num, text(ev.str)),
+        (10, "can't read history from file".into())
+    );
+    assert_eq!(h.first().unwrap().text, HistText::Wide(wide("after")));
+    assert_eq!(h.next().unwrap().text, HistText::Wide(wide("before")));
+    assert!(h.next().is_none());
+}
+
+/// A native record can contain a NUL, but a C history entry cannot. Silently
+/// truncating it would turn one command into another, so the record is skipped
+/// and the load is reported as incomplete.
+#[test]
+fn native_nul_is_rejected() {
+    let path = scratch_path("native-nul");
+    let file = native_file(&[
+        crate::histfile::Record::new(&b"before"[..]),
+        crate::histfile::Record::new(&b"not\0this"[..]),
+        crate::histfile::Record::new(&b"after"[..]),
+    ]);
+    std::fs::write(&path, file).unwrap();
+
+    let mut h = OwnedHistoryW::with_size(8);
+    let (rv, _) = h.exec(H_LOAD, HistoryArg::Path(path.to_str().unwrap()));
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(rv, -1);
+    assert_eq!(h.first().unwrap().text, HistText::Wide(wide("after")));
+    assert_eq!(h.next().unwrap().text, HistText::Wide(wide("before")));
+    assert!(h.next().is_none());
+}
+
 /// The whole grammar in one assertion: a 13-byte cookie, then one
 /// `strvis(…, VIS_WHITE)` line per entry, **oldest first**. Writing oldest
 /// first is what makes `history_load`'s top-to-bottom enter restore the

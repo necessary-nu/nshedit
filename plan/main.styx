@@ -2094,4 +2094,53 @@ children (
             }
         )
     }
+
+    {
+        id history-load-native
+        title "Let H_LOAD read the native history format without ever writing it"
+        priority 3
+        kind @feat
+        deps (history-format-sniff history-record-blob history-idiomatize)
+        sealed true
+        log (
+            {
+                at 2026-08-08T12:55:31.154009692Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-08T13:06:19.289713703Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "H_LOAD selects native decoding only after a positive native header match; libedit and unknown inputs retain the legacy streaming reader, including its truncated-cookie compatibility. Native blobs are ignored because the C seam has no length-bearing owner, embedded-NUL text is rejected rather than truncated, and recoverable good records are entered even when the call reports corruption. H_SAVE remains _HiStOrY_V2_. Verified with focused default/bsd tests, the C-locale matrix, clippy, and a passing nplan check."
+            }
+
+            {
+                at 2026-08-08T13:06:26.865993535Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
+        )
+    }
+
+    {
+        id cross-concern-cleanup
+        title "Consolidate cross-concern helpers and refresh conformance coverage"
+        priority 3
+        kind @refactor
+        deps (
+            history-load-native
+            encoding-idiomatize
+            terminal-idiomatize
+            buffer-idiomatize
+            input-idiomatize
+            modes-idiomatize
+            completion-idiomatize
+            core-api-idiomatize
+            readline-compat-idiomatize
+        )
+    }
 )

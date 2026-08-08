@@ -45,7 +45,7 @@ use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, BufWriter, Seek, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, Write};
 use std::mem::ManuallyDrop;
 use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::fs::OpenOptionsExt;
@@ -1473,16 +1473,73 @@ fn history_set_fun<C: HistChar>(h: &mut HistoryGen<C>, nh: &HistoryGen<C>) -> i3
 /// The path is narrow `char` in both builds. Nothing keeps it past the call,
 /// so it is borrowed rather than raw.
 ///
-/// The whole of the reading is [`history_load_in`], as the whole of the
-/// writing is `history_save_out`: opening the file is the only part of the
-/// pair that needs a filesystem, and keeping it out here is what lets a round
-/// trip be tested in memory.
+/// A positive native-format header takes the read-only extension below. Every
+/// other file still goes through [`history_load_in`], including an unknown
+/// header: that preserves the C reader's prefix-cookie behaviour rather than
+/// making the format detector silently tighten it. `H_SAVE` deliberately
+/// remains `_HiStOrY_V2_`, so a C-compatible caller never starts writing a
+/// format that another libedit cannot read.
 fn history_load<C: HistChar>(h: &mut HistoryGen<C>, fname: &str) -> i32 {
     let Ok(fp) = File::open(fname) else {
         // The C's `getline` never runs, so the pre-initialised -1 stands.
         return -1;
     };
-    history_load_in(h, &mut BufReader::new(fp))
+    let mut fp = BufReader::new(fp);
+    let native = matches!(
+        fp.fill_buf(),
+        Ok(head) if crate::histfile::detect(head) == crate::histfile::Format::Native
+    );
+    if !native {
+        return history_load_in(h, &mut fp);
+    }
+
+    // Only entry text crosses this seam. A native record's blob has no C
+    // representation: `HentryGen::data` is a bare `void *` with no length and
+    // cannot own or persist those bytes. Good records survive a damaged sibling,
+    // as they do in `histfile::read_all`, but the call still reports -1 so
+    // corruption is not mistaken for a complete load.
+    let mut bytes = Vec::new();
+    let mut failed = fp.read_to_end(&mut bytes).is_err();
+    let (records, fault) = crate::histfile::read_all(&bytes);
+    failed |= fault.is_some();
+
+    let mut conv = CtBufferT {
+        cbuff: Vec::new(),
+        csize: 0,
+        wbuff: Vec::new(),
+        wsize: 0,
+    };
+    let mut ev: HistEventGen<C> = scratch_ev();
+    let mut count: i32 = 0;
+
+    for record in records {
+        // NativeHistory can represent arbitrary bytes, while H_ENTER takes a
+        // C string. Refuse an embedded NUL rather than silently loading only
+        // its prefix and presenting it as the original command.
+        if record.text.contains(&0) {
+            failed = true;
+            continue;
+        }
+
+        let mut text: Vec<u8> = record.text.into();
+        let len = text.len();
+        text.push(0);
+
+        // Match the legacy reader's narrow/wide fork. The narrow build keeps
+        // the bytes verbatim; the wide build decodes in the active locale and
+        // skips a record it cannot represent. Both buffers carry a NUL just
+        // beyond the returned slice for the callback's C-string contract.
+        let Some(decoded) = C::decode(Some(&text[..len]), &mut conv) else {
+            count = count.saturating_add(1);
+            continue;
+        };
+        if he(h.h_enter, h.h_ref, &mut ev, decoded.as_ptr()) == -1 {
+            return -1;
+        }
+        count = count.saturating_add(1);
+    }
+
+    if failed { -1 } else { count }
 }
 
 /// The whole of `sem:history.history-load-fn`, against a reader.
