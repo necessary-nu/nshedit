@@ -2142,12 +2142,27 @@ children (
             core-api-idiomatize
             readline-compat-idiomatize
         )
+        sealed true
         log (
             {
                 at 2026-08-08T13:08:41.14785385Z
                 author "brendan@necessary.nu"
                 kind @status
                 text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-08T13:15:14.319002639Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "The zero-terminated slice rule now has one generic implementation in chartype and serves narrow and wide callers in keymacro/map; line and kill-buffer rendering now live in the shared testkit. Conformance coverage was regenerated only after every source move: 326 distinct rules are driven (hist_tok gained history insert/delete), coverage.sh --check passes, nplan check passes, and nspec remains 675/675 covered with 0 stale."
+            }
+
+            {
+                at 2026-08-08T13:15:16.991315761Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }
