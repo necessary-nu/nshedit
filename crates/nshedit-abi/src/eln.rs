@@ -143,6 +143,7 @@ unsafe fn decode_through_lgcyconv(el: *mut EditLine, str_: *const c_char) -> *co
 // [spec:libedit:def:eln.el-getc-fn]
 // [spec:libedit:sem:eln.el-getc-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_getc(el: *mut EditLine, cp: *mut c_char) -> c_int {
     // Everything the read records — the `EILSEQ` of `sem:read.read-char-fn`,
     // the failing `read`'s own value — reaches the caller's `errno` through
@@ -204,6 +205,7 @@ pub unsafe extern "C" fn el_getc(el: *mut EditLine, cp: *mut c_char) -> c_int {
 // [spec:libedit:def:eln.el-push-fn]
 // [spec:libedit:sem:eln.el-push-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_push(el: *mut EditLine, str_: *const c_char) {
     // The C does not check `el` and dereferences it for the conversion buffer
     // (ERR-core-api-05); defined here as doing nothing.
@@ -225,6 +227,7 @@ pub unsafe extern "C" fn el_push(el: *mut EditLine, str_: *const c_char) {
 // [spec:libedit:def:eln.el-gets-fn]
 // [spec:libedit:sem:eln.el-gets-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_gets(el: *mut EditLine, nread: *mut c_int) -> *const c_char {
     // The C dereferences `el` for the conversion buffer without checking it
     // (ERR-core-api-05); defined here as a NULL return.
@@ -297,6 +300,7 @@ pub unsafe extern "C" fn el_gets(el: *mut EditLine, nread: *mut c_int) -> *const
 // [spec:libedit:def:eln.el-parse-fn]
 // [spec:libedit:sem:eln.el-parse-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_parse(
     el: *mut EditLine,
     argc: c_int,
@@ -371,6 +375,7 @@ pub unsafe extern "C" fn el_parse(
 // [spec:libedit:def:eln.el-set-fn]
 // [spec:libedit:sem:eln.el-set-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_set(el: *mut EditLine, op: c_int, ap: ...) -> c_int {
     // Step 1: a NULL editor is -1 without touching the varargs, the check
     // sitting above `va_start` in the C. Reproduced exactly.
@@ -577,6 +582,7 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
 // [spec:libedit:def:eln.el-get-fn]
 // [spec:libedit:sem:eln.el-get-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_get(el: *mut EditLine, op: c_int, ap: ...) -> c_int {
     // Step 1, reproduced exactly: a NULL editor is -1 without touching the
     // varargs.
@@ -699,6 +705,7 @@ unsafe fn el_get_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
 // [spec:libedit:def:eln.el-line-fn]
 // [spec:libedit:sem:eln.el-line-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_line(el: *mut EditLine) -> *const LineInfo {
     // The C dereferences `el` for the flags word and the embedded `LineInfo`
     // without checking it (ERR-core-api-05, which singles out `el_line(NULL)`
@@ -792,6 +799,7 @@ pub unsafe extern "C" fn el_line(el: *mut EditLine) -> *const LineInfo {
 // [spec:libedit:def:eln.el-insertstr-fn]
 // [spec:libedit:sem:eln.el-insertstr-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_insertstr(el: *mut EditLine, str_: *const c_char) -> c_int {
     // The C does not check `el` and dereferences it for the conversion buffer
     // (ERR-core-api-05); defined here as the -1 the caller already handles.
@@ -813,6 +821,7 @@ pub unsafe extern "C" fn el_insertstr(el: *mut EditLine, str_: *const c_char) ->
 // [spec:libedit:def:eln.el-replacestr-fn]
 // [spec:libedit:sem:eln.el-replacestr-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_replacestr(el: *mut EditLine, str_: *const c_char) -> c_int {
     // As `el_insertstr`: the C checks nothing (ERR-core-api-05).
     if el.is_null() {

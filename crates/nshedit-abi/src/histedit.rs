@@ -84,7 +84,7 @@ use nshedit::prompt::ElPfuncT;
 
 // Renamed on import so the signatures below read as `histedit.h` writes
 // them; see the note on `LineInfoWide`.
-use crate::cdecl::histedit::{HistEventWide as HistEventW, LineInfoWide as LineInfoW, wchar_t};
+use crate::cdecl::histedit::{HistEventWide as HistEventW, LineInfoWide as LineInfoW, WcharT};
 use crate::cstdio::{self, CFileWriter};
 
 // ---------------------------------------------------------------------------
@@ -437,6 +437,7 @@ unsafe extern "C" fn default_getenv(name: *const c_char) -> *mut c_char {
 // [spec:libedit:def:histedit.el-init-fn]
 // [spec:libedit:sem:histedit.el-init-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_init(
     prog: *const c_char,
     fin: CFile,
@@ -469,6 +470,7 @@ pub unsafe extern "C" fn el_init(
 // [spec:libedit:def:histedit.el-init-fd-fn]
 // [spec:libedit:sem:histedit.el-init-fd-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_init_fd(
     prog: *const c_char,
     fin: CFile,
@@ -489,6 +491,7 @@ pub unsafe extern "C" fn el_init_fd(
 // [spec:libedit:def:histedit.el-end-fn]
 // [spec:libedit:sem:histedit.el-end-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_end(el: *mut EditLine) {
     // The one NULL-tolerant entry point in the editing API.
     if el.is_null() {
@@ -509,6 +512,7 @@ pub unsafe extern "C" fn el_end(el: *mut EditLine) {
 // [spec:libedit:def:histedit.el-reset-fn]
 // [spec:libedit:sem:histedit.el-reset-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_reset(el: *mut EditLine) {
     // SAFETY: `el` must be non-NULL; the C has no check and neither has this.
     nshedit::el::el_reset(unsafe { &mut *el });
@@ -541,6 +545,7 @@ pub use crate::eln::el_push;
 // [spec:libedit:def:histedit.el-beep-fn]
 // [spec:libedit:sem:histedit.el-beep-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_beep(el: *mut EditLine) {
     // SAFETY: `el` must be non-NULL; there is no check in the C.
     nshedit::el::el_beep(unsafe { &mut *el });
@@ -576,6 +581,7 @@ pub use crate::eln::el_get;
 // [spec:libedit:def:histedit.el-fn-complete-fn]
 // [spec:libedit:sem:histedit.el-fn-complete-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn _el_fn_complete(el: *mut EditLine, ch: c_int) -> c_uchar {
     // SAFETY: `el` must be non-NULL. `ch` is ignored, as in the C.
     nshedit::filecomplete::_el_fn_complete(unsafe { &mut *el }, ch)
@@ -587,6 +593,7 @@ pub unsafe extern "C" fn _el_fn_complete(el: *mut EditLine, ch: c_int) -> c_ucha
 // [spec:libedit:def:histedit.el-fn-sh-complete-fn]
 // [spec:libedit:sem:histedit.el-fn-sh-complete-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn _el_fn_sh_complete(el: *mut EditLine, ch: c_int) -> c_uchar {
     // A distinct exported symbol that forwards both arguments unchanged; the
     // two are behaviourally identical and must stay separate symbols.
@@ -597,6 +604,7 @@ pub unsafe extern "C" fn _el_fn_sh_complete(el: *mut EditLine, ch: c_int) -> c_u
 // [spec:libedit:def:histedit.el-source-fn]
 // [spec:libedit:sem:histedit.el-source-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_source(el: *mut EditLine, fname: *const c_char) -> c_int {
     use std::os::unix::ffi::OsStrExt;
 
@@ -613,6 +621,7 @@ pub unsafe extern "C" fn el_source(el: *mut EditLine, fname: *const c_char) -> c
 // [spec:libedit:def:histedit.el-resize-fn]
 // [spec:libedit:sem:histedit.el-resize-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_resize(el: *mut EditLine) {
     // SAFETY: `el` must be non-NULL. Not async-signal-safe, as in the C.
     nshedit::el::el_resize(unsafe { &mut *el });
@@ -637,6 +646,7 @@ pub use crate::eln::el_insertstr;
 // [spec:libedit:def:histedit.el-deletestr-fn]
 // [spec:libedit:sem:histedit.el-deletestr-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_deletestr(el: *mut EditLine, count: c_int) {
     // Also exported as `el_wdeletestr`, which the header `#define`s onto this
     // name — one function, counting wide characters under either spelling.
@@ -656,6 +666,7 @@ pub use crate::eln::el_replacestr;
 // [spec:libedit:def:histedit.el-deletestr1-fn]
 // [spec:libedit:sem:histedit.el-deletestr1-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_deletestr1(el: *mut EditLine, start: c_int, end: c_int) -> c_int {
     // The return is `end - start` whatever was actually removed, and the
     // cursor is only clamped at the low end — ERR-buffer-15, ERR-buffer-16,
@@ -668,6 +679,7 @@ pub unsafe extern "C" fn el_deletestr1(el: *mut EditLine, start: c_int, end: c_i
 // [spec:libedit:def:histedit.history-init-fn]
 // [spec:libedit:sem:histedit.history-init-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn history_init() -> *mut History {
     // `History` is `history.c` compiled with `Char = char`: a separate store
     // from the wide one, with byte strings throughout and no locale anywhere
@@ -681,6 +693,7 @@ pub unsafe extern "C" fn history_init() -> *mut History {
 // [spec:libedit:def:histedit.history-end-fn]
 // [spec:libedit:sem:histedit.history-end-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn history_end(h: *mut History) {
     // `h` must be non-NULL; there is no check and calling it twice is a double
     // free. Every `HistEvent.str` from this handle is dangling afterwards
@@ -695,6 +708,7 @@ pub unsafe extern "C" fn history_end(h: *mut History) {
 // [spec:libedit:def:histedit.history-fn]
 // [spec:libedit:sem:histedit.history-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn history(h: *mut History, ev: *mut HistEvent, op: c_int, ap: ...) -> c_int {
     // Same op codes, argument shapes, error codes and ownership rules as
     // `history_w` — `sem:histedit.history-fn` is the rule `history_w`'s is
@@ -710,6 +724,7 @@ pub unsafe extern "C" fn history(h: *mut History, ev: *mut HistEvent, op: c_int,
 // [spec:libedit:def:histedit.tok-init-fn]
 // [spec:libedit:sem:histedit.tok-init-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn tok_init(ifs: *const c_char) -> *mut Tokenizer {
     // `Tokenizer` is `tokenizer.c` compiled with `Char = char`: a byte word
     // space, byte `argv` slots and a byte IFS. NULL selects the default
@@ -722,6 +737,7 @@ pub unsafe extern "C" fn tok_init(ifs: *const c_char) -> *mut Tokenizer {
 // [spec:libedit:def:histedit.tok-end-fn]
 // [spec:libedit:sem:histedit.tok-end-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn tok_end(tok: *mut Tokenizer) {
     // `tok` must be non-NULL (no check) and must be a `Tokenizer`; every
     // `argv` array and word pointer from this tokenizer dangles afterwards,
@@ -734,6 +750,7 @@ pub unsafe extern "C" fn tok_end(tok: *mut Tokenizer) {
 // [spec:libedit:def:histedit.tok-reset-fn]
 // [spec:libedit:sem:histedit.tok-reset-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn tok_reset(tok: *mut Tokenizer) {
     // Five assignments; nothing is freed and the grown capacities are kept.
     // In particular `argv[0]` is not restored to NULL, so a following parse
@@ -756,6 +773,7 @@ fn publish_argv_n(tok: &Tokenizer, argc: c_int) -> *mut *const c_char {
 // [spec:libedit:def:histedit.tok-line-fn]
 // [spec:libedit:sem:histedit.tok-line-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn tok_line(
     tok: *mut Tokenizer,
     line: *const LineInfo,
@@ -804,6 +822,7 @@ pub unsafe extern "C" fn tok_line(
 // [spec:libedit:def:histedit.tok-str-fn]
 // [spec:libedit:sem:histedit.tok-str-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn tok_str(
     tok: *mut Tokenizer,
     line: *const c_char,
@@ -846,7 +865,8 @@ pub unsafe extern "C" fn tok_str(
 // [spec:libedit:def:histedit.el-wgets-fn]
 // [spec:libedit:sem:histedit.el-wgets-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn el_wgets(el: *mut EditLine, nread: *mut c_int) -> *const wchar_t {
+#[doc = include_str!("ffi_safety.md")]
+pub unsafe extern "C" fn el_wgets(el: *mut EditLine, nread: *mut c_int) -> *const WcharT {
     // `nread` may be NULL, in which case the core substitutes its own scratch
     // count and discards it.
     // SAFETY: `el` must be non-NULL; `nread` is null or writable.
@@ -864,7 +884,8 @@ pub unsafe extern "C" fn el_wgets(el: *mut EditLine, nread: *mut c_int) -> *cons
 // [spec:libedit:def:histedit.el-wgetc-fn]
 // [spec:libedit:sem:histedit.el-wgetc-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn el_wgetc(el: *mut EditLine, wc: *mut wchar_t) -> c_int {
+#[doc = include_str!("ffi_safety.md")]
+pub unsafe extern "C" fn el_wgetc(el: *mut EditLine, wc: *mut WcharT) -> c_int {
     // Returned verbatim, including the 0 the core reports when `tty_rawmode`
     // fails — a terminal-setup failure indistinguishable from end of file
     // (ERR-input-24). Not corrected to -1 here.
@@ -875,7 +896,8 @@ pub unsafe extern "C" fn el_wgetc(el: *mut EditLine, wc: *mut wchar_t) -> c_int 
 // [spec:libedit:def:histedit.el-wpush-fn]
 // [spec:libedit:sem:histedit.el-wpush-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn el_wpush(el: *mut EditLine, str_: *const wchar_t) {
+#[doc = include_str!("ffi_safety.md")]
+pub unsafe extern "C" fn el_wpush(el: *mut EditLine, str_: *const WcharT) {
     // A NULL string, a full stack or a failed duplication are all reported to
     // the user as a beep and to the caller not at all.
     // SAFETY: `el` must be non-NULL; `str_` is null or NUL-terminated.
@@ -885,10 +907,11 @@ pub unsafe extern "C" fn el_wpush(el: *mut EditLine, str_: *const wchar_t) {
 // [spec:libedit:def:histedit.el-wparse-fn]
 // [spec:libedit:sem:histedit.el-wparse-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_wparse(
     el: *mut EditLine,
     argc: c_int,
-    argv: *mut *const wchar_t,
+    argv: *mut *const WcharT,
 ) -> c_int {
     // The core takes `&[&[u32]]`, which cannot carry the C's NULL entries;
     // `sem:histedit.el-wparse-fn` says they are passed through as NULL wide
@@ -917,6 +940,7 @@ pub unsafe extern "C" fn el_wparse(
 // [spec:libedit:def:el.el-wset-fn]
 // [spec:libedit:sem:el.el-wset-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_wset(el: *mut EditLine, op: c_int, ap: ...) -> c_int {
     // A NULL editor is rejected before the tail is started, as in the C: the
     // check sits above `va_start`.
@@ -1276,6 +1300,7 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
 // [spec:libedit:def:el.el-wget-fn]
 // [spec:libedit:sem:el.el-wget-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_wget(el: *mut EditLine, op: c_int, ap: ...) -> c_int {
     // As `el_wset`: the NULL check sits above `va_start` in the C.
     if el.is_null() {
@@ -1557,6 +1582,7 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
 // [spec:libedit:def:histedit.el-cursor-fn]
 // [spec:libedit:sem:histedit.el-cursor-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_cursor(el: *mut EditLine, n: c_int) -> c_int {
     // The C advances the cursor pointer and only then clamps, transiently
     // forming an out-of-range pointer (ERR-buffer-11, undefined). The core
@@ -1571,6 +1597,7 @@ pub unsafe extern "C" fn el_cursor(el: *mut EditLine, n: c_int) -> c_int {
 // [spec:libedit:def:el.el-wline-fn]
 // [spec:libedit:sem:el.el-wline-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_wline(el: *mut EditLine) -> *const LineInfoW {
     // The C's whole body is `(const LineInfoW *)(void *)&el->el_line`: a
     // relabelling of the live editing state, which is why `el_wline(NULL)`
@@ -1615,7 +1642,8 @@ pub unsafe extern "C" fn el_wline(el: *mut EditLine) -> *const LineInfoW {
 // [spec:libedit:def:histedit.el-winsertstr-fn]
 // [spec:libedit:sem:histedit.el-winsertstr-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn el_winsertstr(el: *mut EditLine, str_: *const wchar_t) -> c_int {
+#[doc = include_str!("ffi_safety.md")]
+pub unsafe extern "C" fn el_winsertstr(el: *mut EditLine, str_: *const WcharT) -> c_int {
     // A NULL string and an empty one are the same -1, so NULL becomes the
     // empty slice rather than a separate check.
     // SAFETY: `el` must be non-NULL; `str_` is null or NUL-terminated.
@@ -1625,7 +1653,8 @@ pub unsafe extern "C" fn el_winsertstr(el: *mut EditLine, str_: *const wchar_t) 
 // [spec:libedit:def:histedit.el-wreplacestr-fn]
 // [spec:libedit:sem:histedit.el-wreplacestr-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn el_wreplacestr(el: *mut EditLine, str_: *const wchar_t) -> c_int {
+#[doc = include_str!("ffi_safety.md")]
+pub unsafe extern "C" fn el_wreplacestr(el: *mut EditLine, str_: *const WcharT) -> c_int {
     // As `el_winsertstr`: NULL and empty are both -1.
     // SAFETY: `el` must be non-NULL; `str_` is null or NUL-terminated.
     nshedit::chared::el_wreplacestr(unsafe { &mut *el }, unsafe { wstr(str_) }.unwrap_or(&[]))
@@ -1634,6 +1663,7 @@ pub unsafe extern "C" fn el_wreplacestr(el: *mut EditLine, str_: *const wchar_t)
 // [spec:libedit:def:histedit.history-winit-fn]
 // [spec:libedit:sem:histedit.history-winit-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn history_winit() -> *mut HistoryW {
     // The handle is raw all the way through: `H_END` frees it from inside
     // `history_w`, which no borrow could express. NULL is the C's allocation
@@ -1645,6 +1675,7 @@ pub unsafe extern "C" fn history_winit() -> *mut HistoryW {
 // [spec:libedit:def:histedit.history-wend-fn]
 // [spec:libedit:sem:histedit.history-wend-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn history_wend(h: *mut HistoryW) {
     // `h` must be non-NULL; there is no check and calling it twice is a
     // double free. Every `HistEventW.str` from this handle is dangling
@@ -1834,6 +1865,7 @@ unsafe fn history_dispatch<C: nshedit::history::HistChar>(
 // [spec:libedit:def:histedit.history-w-fn]
 // [spec:libedit:sem:histedit.history-w-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn history_w(
     h: *mut HistoryW,
     ev: *mut HistEventW,
@@ -1852,7 +1884,8 @@ pub unsafe extern "C" fn history_w(
 // [spec:libedit:def:histedit.tok-winit-fn]
 // [spec:libedit:sem:histedit.tok-winit-fn]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tok_winit(ifs: *const wchar_t) -> *mut TokenizerW {
+#[doc = include_str!("ffi_safety.md")]
+pub unsafe extern "C" fn tok_winit(ifs: *const WcharT) -> *mut TokenizerW {
     // NULL selects the default `L"\t \n"`. The caller keeps ownership of its
     // string; the tokenizer owns everything it later hands back.
     // SAFETY: `ifs` is null or a NUL-terminated wide string.
@@ -1862,6 +1895,7 @@ pub unsafe extern "C" fn tok_winit(ifs: *const wchar_t) -> *mut TokenizerW {
 // [spec:libedit:def:histedit.tok-wend-fn]
 // [spec:libedit:sem:histedit.tok-wend-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn tok_wend(tok: *mut TokenizerW) {
     // `tok` must be non-NULL (no check) and must be a `TokenizerW`; every
     // `argv` array and word pointer from this tokenizer dangles afterwards,
@@ -1874,6 +1908,7 @@ pub unsafe extern "C" fn tok_wend(tok: *mut TokenizerW) {
 // [spec:libedit:def:histedit.tok-wreset-fn]
 // [spec:libedit:sem:histedit.tok-wreset-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn tok_wreset(tok: *mut TokenizerW) {
     // Five assignments; nothing is freed and the grown capacities are kept.
     // In particular `argv[0]` is not restored to NULL, so a following parse
@@ -1926,11 +1961,12 @@ fn publish_argv(tok: &TokenizerW, argc: c_int) -> *mut *const u32 {
 // [spec:libedit:def:histedit.tok-wline-fn]
 // [spec:libedit:sem:histedit.tok-wline-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn tok_wline(
     tok: *mut TokenizerW,
     line: *const LineInfoW,
     argc: *mut c_int,
-    argv: *mut *mut *const wchar_t,
+    argv: *mut *mut *const WcharT,
     cursorc: *mut c_int,
     cursoro: *mut c_int,
 ) -> c_int {
@@ -1971,11 +2007,12 @@ pub unsafe extern "C" fn tok_wline(
 // [spec:libedit:def:histedit.tok-wstr-fn]
 // [spec:libedit:sem:histedit.tok-wstr-fn]
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn tok_wstr(
     tok: *mut TokenizerW,
-    line: *const wchar_t,
+    line: *const WcharT,
     argc: *mut c_int,
-    argv: *mut *mut *const wchar_t,
+    argv: *mut *mut *const WcharT,
 ) -> c_int {
     // A NUL-terminated string with no cursor: the core builds the `LineInfoW`
     // with `cursor == lastchar`, so the cursor never matches and both cursor

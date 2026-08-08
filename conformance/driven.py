@@ -35,7 +35,26 @@ FN = re.compile(r'\s*(pub(\(crate\))?\s+)?(unsafe\s+)?(extern\s+"C"\s+)?fn\s')
 # the item. Scanning for THAT rather than allowing a fixed number of lines is
 # what makes the pairing exact: `el_init` carries a fifteen-line doc comment
 # and a twelve-line window silently dropped it, along with a hundred others.
-SKIPPABLE = re.compile(r"\s*(//|#\[|$)")
+COMMENT_OR_BLANK = re.compile(r"\s*(//|$)")
+
+
+def labelled_item(lines, start):
+    """Return the first item line after comments and complete attributes."""
+    line = start
+    while line < len(lines):
+        if COMMENT_OR_BLANK.match(lines[line]):
+            line += 1
+            continue
+        if lines[line].lstrip().startswith("#["):
+            # rustfmt expands reasoned `expect` attributes over several
+            # lines. The closing bracket is the final token on the final
+            # line, for both the one-line and expanded forms.
+            while line < len(lines) and not lines[line].rstrip().endswith("]"):
+                line += 1
+            line += 1
+            continue
+        return line
+    return None
 
 
 def executed_ranges(export_path):
@@ -71,12 +90,9 @@ def annotations(root):
             m = ANNOTATION.search(line)
             if not m:
                 continue
-            for j in range(i + 1, len(lines)):
-                if SKIPPABLE.match(lines[j]):
-                    continue
-                if FN.match(lines[j]):
-                    found.append((m.group(2), real, rel, j + 1))
-                break
+            item = labelled_item(lines, i + 1)
+            if item is not None and FN.match(lines[item]):
+                found.append((m.group(2), real, rel, item + 1))
     return found
 
 

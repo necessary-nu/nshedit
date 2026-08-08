@@ -181,6 +181,7 @@ assertions (
     {id cross-concern-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-08T13:15:16.991315761Z}
     {id greenfield-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:17:31.852523476Z}
     {id greenfield-abi-oracle, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:46:10.110061941Z}
+    {id greenfield-lint-baseline, kind @doing, author "brendan@necessary.nu", at 2026-08-08T15:25:29.083552511Z}
 )
 
 impl_evidence (

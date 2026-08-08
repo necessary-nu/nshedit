@@ -63,7 +63,7 @@ after_includes = """
 [export]
 # Items cbindgen would otherwise drop as unreachable.
 #
-# `el_rfunc_t` appears in no signature in this header — a consumer reaches it
+# `ElReadCallback` appears in no signature in this header — a consumer reaches it
 # only through the varargs of `el_set(EL_GETCFN, ...)`. The C declares it; so
 # do we.
 #
@@ -71,7 +71,7 @@ after_includes = """
 # are excluded below, so nothing refers to these two by the name they carry
 # here; they are named explicitly instead. Emitting them is also what
 # monomorphises `LineInfoGen`/`HistEventGen` over `wchar_t`.
-include = ["el_rfunc_t", "LineInfoWide", "HistEventWide"]
+include = ["ElReadCallback", "LineInfoWide", "HistEventWide"]
 
 exclude = [
     # The core's wide aliases are `LineInfoGen<u32>`, `HistEventGen<u32>` and
@@ -86,8 +86,9 @@ exclude = [
     "ElRfuncT",
     # Spelling-only aliases that exist for the generator to rename or for the
     # header to reference, and that the C declares elsewhere or not at all.
-    # `wchar_t` comes from `<wchar.h>`; `CFile` is renamed to `FILE *` below.
-    "wchar_t",
+    # `WcharT` maps to `wchar_t`, which comes from `<wchar.h>`; `CFile` is
+    # renamed to `FILE *` below.
+    "WcharT",
     "CFile",
 ]
 
@@ -96,15 +97,25 @@ exclude = [
 # these, and a consumer writing `struct lineinfo` is writing a supported
 # thing, so the tags have to be the C's rather than cbindgen's.
 "LineInfoGen_c_char" = "lineinfo"
-"LineInfoGen_wchar_t" = "lineinfow"
+"LineInfoGen_WcharT" = "lineinfow"
 "HistEventGen_c_char" = "HistEvent"
-"HistEventGen_wchar_t" = "histeventW"
+"HistEventGen_WcharT" = "histeventW"
 
 # See the note on `LineInfoWide` in `crates/nshedit-abi/src/cdecl/histedit.rs`:
 # these carry a distinct Rust name only because `exclude` above is keyed on
 # names and would otherwise take the core's alias and this one together.
 "LineInfoWide" = "LineInfoW"
 "HistEventWide" = "HistEventW"
+
+# Rust source keeps idiomatic identifiers; these mappings preserve the exact
+# public C spellings and are verified by the header differential.
+"EditlineTag" = "editline"
+"HistoryTag" = "history"
+"HistoryWideTag" = "historyW"
+"TokenizerTag" = "tokenizer"
+"TokenizerWideTag" = "tokenizerW"
+"WcharT" = "wchar_t"
+"ElReadCallback" = "el_rfunc_t"
 
 # The core's `CFile` is `*mut c_void`, because no Rust can look inside a
 # `FILE`. `void *` and `FILE *` are not the same C type, and `el_init`'s

@@ -79,7 +79,12 @@ typedef int       rl_icppfunc_t(char **);
 # against the core's Rust-cased types, which render to the same tags — so
 # cbindgen would drop them as unreachable. A consumer writes `HIST_ENTRY *`,
 # so they are named explicitly.
-include = ["HIST_ENTRY", "HISTORY_STATE", "KEYMAP_ENTRY", "KEYMAP_ENTRY_ARRAY"]
+include = [
+    "HistEntryAlias",
+    "HistoryStateAlias",
+    "KeymapEntryAlias",
+    "KeymapEntryArrayAlias",
+]
 
 exclude = [
     # `<stdio.h>` declares `FILE`; this alias exists only so the rename below
@@ -128,3 +133,9 @@ exclude = [
 
 "HistdataT" = "histdata_t"
 "CFile" = "FILE*"
+"CONTROL_CHARACTER_THRESHOLD" = "control_character_threshold"
+"CONTROL_CHARACTER_BIT" = "control_character_bit"
+"HistEntryAlias" = "HIST_ENTRY"
+"HistoryStateAlias" = "HISTORY_STATE"
+"KeymapEntryAlias" = "KEYMAP_ENTRY"
+"KeymapEntryArrayAlias" = "KEYMAP_ENTRY_ARRAY"

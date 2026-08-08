@@ -230,7 +230,10 @@ unsafe fn out<'a>(p: *mut c_int) -> Option<&'a mut c_int> {
 /// # Safety
 ///
 /// As the two entry points.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the C completion surface has twelve independently observable arguments"
+)]
 unsafe fn complete(
     el: *mut EditLine,
     complete_func: Option<CompleteFuncC>,
@@ -351,7 +354,7 @@ unsafe fn complete(
 /// of the four `int *` may be NULL. A NULL `el` is the one the C faults on
 /// and is `CC_ERROR` here.
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn fn_complete2(
     el: *mut EditLine,
     complete_func: Option<CompleteFuncC>,
@@ -392,7 +395,7 @@ pub unsafe extern "C" fn fn_complete2(
 /// `attempted_completion_function`, and 0 when it did, on the reading that an
 /// application producing its own match has already quoted it.
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn fn_complete(
     el: *mut EditLine,
     complete_func: Option<CompleteFuncC>,
@@ -439,6 +442,7 @@ pub unsafe extern "C" fn fn_complete(
 /// array; `sem:filecomplete.fn-display-match-list-fn` defines it as a caller
 /// error instead (ERR-completion-02).
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn fn_display_match_list(
     el: *mut EditLine,
     matches: *mut *mut c_char,
@@ -524,6 +528,7 @@ pub(crate) unsafe fn permute_to_match(matches: *mut *mut c_char, sorted: &[Strin
 ///
 /// A NULL `txt` reaches `txt[0]` in the C. Defined here as NULL.
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn fn_tilde_expand(txt: *const c_char) -> *mut c_char {
     // SAFETY: `txt` is NULL or a NUL-terminated string.
     let Some(bytes) = (unsafe { c_bytes_opt(txt) }) else {
@@ -582,6 +587,7 @@ pub unsafe extern "C" fn fn_tilde_expand(txt: *const c_char) -> *mut c_char {
 ///
 /// The result is a newly allocated string the caller frees.
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn fn_filename_completion_function(
     text: *const c_char,
     state: c_int,

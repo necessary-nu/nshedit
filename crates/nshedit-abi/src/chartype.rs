@@ -188,6 +188,7 @@ unsafe fn wide_upto_nul<'a>(p: *const u32) -> &'a [u32] {
 /// A NULL `conv` is undefined behaviour in the C, which dereferences it
 /// immediately; here it is NULL, treated as the caller error it is.
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn ct_encode_string(s: *const u32, conv: *mut CtBufferC) -> *mut c_char {
     if conv.is_null() {
         return ptr::null_mut();
@@ -227,6 +228,7 @@ pub unsafe extern "C" fn ct_encode_string(s: *const u32, conv: *mut CtBufferC) -
 ///
 /// A NULL `conv` is NULL, as in [`ct_encode_string`].
 #[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn ct_decode_string(s: *const c_char, conv: *mut CtBufferC) -> *mut u32 {
     if conv.is_null() {
         return ptr::null_mut();

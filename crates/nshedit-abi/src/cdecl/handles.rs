@@ -29,33 +29,31 @@
 //! they are generated from the core's real types rather than restated. That
 //! is the whole point of `conformance-header-diff`.
 
-// These names are C `struct` tags, and cbindgen emits a type's Rust name
-// verbatim. Renaming them to Rust casing and mapping them back in the
-// generator's config would put the C spelling somewhere the compiler cannot
-// see it, which is the opposite of what this module is for.
-#![allow(non_camel_case_types)]
+// Rust owns the source-level names; cbindgen's checked rename table owns the
+// C tag spellings. `conformance/header-diff.sh` proves that the latter remain
+// exactly the declarations consumers compile against.
 
 /// C: `struct editline` — the editor, `def:el.editline`.
-pub struct editline;
+pub struct EditlineTag;
 /// C: `typedef struct editline EditLine;` — `def:histedit.edit-line`.
-pub type EditLine = editline;
+pub type EditLine = EditlineTag;
 
 /// C: `struct history` — the narrow history, `historyn.c`.
-pub struct history;
+pub struct HistoryTag;
 /// C: `typedef struct history History;` — `def:histedit.history`.
-pub type History = history;
+pub type History = HistoryTag;
 
 /// C: `struct historyW` — the wide history, `history.c`.
-pub struct historyW;
+pub struct HistoryWideTag;
 /// C: `typedef struct historyW HistoryW;` — `def:histedit.history-w`.
-pub type HistoryW = historyW;
+pub type HistoryW = HistoryWideTag;
 
 /// C: `struct tokenizer` — the narrow tokenizer, `tokenizern.c`.
-pub struct tokenizer;
+pub struct TokenizerTag;
 /// C: `typedef struct tokenizer Tokenizer;` — `def:histedit.tokenizer`.
-pub type Tokenizer = tokenizer;
+pub type Tokenizer = TokenizerTag;
 
 /// C: `struct tokenizerW` — the wide tokenizer, `tokenizer.c`.
-pub struct tokenizerW;
+pub struct TokenizerWideTag;
 /// C: `typedef struct tokenizerW TokenizerW;` — `def:histedit.tokenizer-w`.
-pub type TokenizerW = tokenizerW;
+pub type TokenizerW = TokenizerWideTag;

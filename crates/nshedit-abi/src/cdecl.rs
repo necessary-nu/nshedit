@@ -19,12 +19,14 @@
 //!   renders `uint32_t` — a *different* C type from `wchar_t`, which is
 //!   signed on every target this library builds for, so a consumer passing a
 //!   `wchar_t *` to a `uint32_t *` parameter gets a diagnostic. [`histedit`]
-//!   declares `wchar_t = u32` and restates the wide aliases in terms of it,
-//!   which is the identical Rust type and the correct C spelling.
+//!   declares [`histedit::WcharT`] as `u32` and restates the wide aliases in
+//!   terms of it. The generator maps that idiomatic Rust name back to
+//!   `wchar_t`, producing the identical Rust type and the correct C spelling.
 //! - `FILE *`. The core's `CFile` is `*mut c_void`, which is not `FILE *`.
 //!   The generator renames it; the alias here is what there is to rename.
 //! - The C's own names for the readline records — `HIST_ENTRY`,
-//!   `KEYMAP_ENTRY`, `HISTORY_STATE` — which the core spells in Rust casing.
+//!   `KEYMAP_ENTRY`, `HISTORY_STATE` — which the core and declaration aliases
+//!   spell in Rust casing and the generator maps back at the header boundary.
 //!
 //! # Nothing here may drift
 //!

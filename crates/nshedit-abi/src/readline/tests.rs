@@ -463,40 +463,31 @@ fn the_event_reader_runs_the_hook_before_it_reads() {
     }
 }
 
-/// The append character is rendered one byte at a time into a shared
-/// two-byte static, so the pointer is the same on every call and each
-/// answer destroys the last. A caller that keeps it across another
-/// completion reads the newer character.
+/// The adapter projects the C append byte into the core's UTF-8 string type.
+/// ASCII survives directly; zero and bytes without a one-byte UTF-8 spelling
+/// mean "append nothing".
 // [spec:libedit:sem:readline.rl-completion-append-character-function-fn/test]
 #[test]
-fn the_append_character_is_one_byte_out_of_one_shared_buffer() {
+fn append_character_projects_into_core_text() {
     let _g = globals();
     // SAFETY: single-threaded under the lock; the global is restored.
     unsafe {
         let saved = rl_completion_append_character;
 
         rl_completion_append_character = c_int::from(b' ');
-        let first = _rl_completion_append_character_function(ptr::null());
-        assert_eq!(CStr::from_ptr(first).to_bytes(), b" ");
+        assert_eq!(append_char_str(""), " ");
 
         // 0 is readline's "append nothing". It gives the empty string
         // rather than a NULL, which is the input that makes the core's
         // filename escaping produce an embedded NUL (ERR-completion-10).
         rl_completion_append_character = 0;
-        let second = _rl_completion_append_character_function(ptr::null());
-        assert!(!second.is_null());
-        assert_eq!(CStr::from_ptr(second).to_bytes(), b"");
+        assert_eq!(append_char_str(""), "");
 
-        // One `char` of room, so a wide append character is truncated to
-        // its low byte: U+03BB becomes 0xBB, which is a UTF-8
-        // continuation byte on its own and not a character at all.
+        // U+03BB would truncate to the invalid lone byte 0xBB in the C
+        // helper. The core accepts only valid text, so the ABI adapter drops
+        // that unrepresentable append value.
         rl_completion_append_character = 0x3bb;
-        let third = _rl_completion_append_character_function(ptr::null());
-        assert_eq!(CStr::from_ptr(third).to_bytes(), b"\xbb");
-
-        // The same storage every time.
-        assert_eq!(first, second);
-        assert_eq!(second, third);
+        assert_eq!(append_char_str(""), "");
 
         rl_completion_append_character = saved;
     }

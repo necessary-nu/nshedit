@@ -2254,6 +2254,14 @@ children (
                     native-impl ([spec:nshedit:req:workspace.no-legacy-allows])
                 }
                 deps (greenfield-abi-baseline)
+                log (
+                    {
+                        at 2026-08-08T15:25:29.083552511Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

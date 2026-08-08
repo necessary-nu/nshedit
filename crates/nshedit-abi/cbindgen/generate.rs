@@ -19,7 +19,9 @@
 // and `crates/nshedit-abi/src/{chartype,filecomplete}.rs` are simply not
 // parsed.
 
-use std::path::{Path, PathBuf};
+#[cfg(not(test))]
+use std::path::Path;
+use std::path::PathBuf;
 
 /// One generated header: where it goes, how it is configured, and the source
 /// files it is generated from.
@@ -61,6 +63,7 @@ const HEADERS: &[Header] = &[
             "crates/nshedit/src/editline/readline.rs",
             "crates/nshedit-abi/src/cdecl/readline.rs",
             "crates/nshedit-abi/src/readline.rs",
+            "crates/nshedit-abi/src/readline/history_io.rs",
         ],
     },
 ];
@@ -109,9 +112,8 @@ fn generate() -> Vec<(&'static str, String)> {
 }
 
 /// Writes what [`generate`] produced under `out_root`, creating directories.
-// `tests/headers.rs` includes this file and compares without writing, so from
-// that target's point of view this function is unused.
-#[allow(dead_code)]
+// `tests/headers.rs` includes this file and compares without writing.
+#[cfg(not(test))]
 fn write_headers(out_root: &Path) {
     for (rel, text) in generate() {
         let out = out_root.join(rel);

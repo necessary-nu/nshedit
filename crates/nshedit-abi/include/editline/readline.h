@@ -330,14 +330,6 @@ int unstifle_history(void);
 
 int history_is_stifled(void);
 
-int history_truncate_file(const char *filename, int nlines);
-
-int read_history(const char *filename);
-
-int write_history(const char *filename);
-
-int append_history(int n, const char *filename);
-
 struct _hist_entry *history_get(int num);
 
 int add_history(const char *line);
@@ -483,6 +475,14 @@ void _rl_erase_entire_line(void);
 
 // C: `char **completion_matches(/* const */ char *, rl_compentry_func_t *);`
 char **completion_matches(char *text, char *(*genfunc)(const char*, int));
+
+int history_truncate_file(const char *filename, int nlines);
+
+int read_history(const char *filename);
+
+int write_history(const char *filename);
+
+int append_history(int n, const char *filename);
 
 #ifdef __cplusplus
 }  // extern "C"
