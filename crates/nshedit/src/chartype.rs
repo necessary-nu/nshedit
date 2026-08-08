@@ -90,9 +90,9 @@ pub(crate) const MB_FILL_CHAR: u32 = u32::MAX;
 /// comes first wins. The C would read past the end of a slice that carries no
 /// terminator, which is the one thing the slice form cannot express.
 ///
-/// Generic because both halves of a [`CtBufferT`] need it and the C's `strlen`
-/// and `wcslen` differ only in element type.
-fn upto_nul<T: Copy + Default + PartialEq>(s: &[T]) -> &[T] {
+/// Generic because the port carries both `char *` and `wchar_t *` strings as
+/// slices, and their C terminators differ only in element type.
+pub(crate) fn upto_nul<T: Copy + Default + PartialEq>(s: &[T]) -> &[T] {
     s.iter()
         .position(|&c| c == T::default())
         .map_or(s, |end| &s[..end])

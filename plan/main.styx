@@ -2142,5 +2142,13 @@ children (
             core-api-idiomatize
             readline-compat-idiomatize
         )
+        log (
+            {
+                at 2026-08-08T13:08:41.14785385Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+        )
     }
 )

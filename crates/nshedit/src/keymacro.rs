@@ -3,7 +3,9 @@
 
 use std::process;
 
-use crate::chartype::{VISUAL_WIDTH_MAX, ct_encode_char, ct_encode_string, ct_visual_char};
+use crate::chartype::{
+    VISUAL_WIDTH_MAX, ct_encode_char, ct_encode_string, ct_visual_char, upto_nul,
+};
 use crate::el::{EL_BUFSIZ, EditLine, ElActionT};
 use crate::fcns::ED_SEQUENCE_LEAD_IN;
 use crate::map::{ElMapCurrent, N_KEYS};
@@ -891,7 +893,7 @@ pub(crate) fn keymacro_kprint(
             };
             let mut unparsbuf = [0u8; EL_BUFSIZ];
             keymacro__decode_str(str, &mut unparsbuf, EL_BUFSIZ, b"\"\"");
-            let what = upto_nul_byte(&unparsbuf).to_vec();
+            let what = upto_nul(&unparsbuf).to_vec();
             let key = encode_key(el, key);
             kprint_line(el, &key, &what);
         }
@@ -1053,17 +1055,6 @@ fn kprint_leaf(el: &mut EditLine, px: usize, val: &KeymacroValueT, ntype: i32) -
 // ---------------------------------------------------------------------------
 // Host facilities the C gets from libc. None of these is a ported function.
 // ---------------------------------------------------------------------------
-
-/// The C's strings end at their first `L'\0'`; a slice also has an end.
-/// Whichever comes first wins.
-fn upto_nul(s: &[u32]) -> &[u32] {
-    &s[..s.iter().position(|&c| c == 0).unwrap_or(s.len())]
-}
-
-/// Byte twin of [`upto_nul`], for reading a `char[]` back as a C string.
-fn upto_nul_byte(s: &[u8]) -> &[u8] {
-    &s[..s.iter().position(|&c| c == 0).unwrap_or(s.len())]
-}
 
 /// C: the `ADDC(c)` macro — write while there is room, count regardless.
 fn addc(buf: &mut [u8], len: usize, b: &mut usize, c: u8) {

@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use crate::chartype::upto_nul;
 use crate::el::{EL_BUFSIZ, EditLine, ElActionT};
 // The generated command table. A glob import because the three keymap tables
 // below name 86 of the 96 commands one by one; `crate::fcns` is generated
@@ -1368,7 +1369,7 @@ fn map_print_key(el: &mut EditLine, map: ElMapCurrent, r#in: &[u32]) {
     // ERR-modes-29: no matching help entry prints nothing at all here, where
     // `map_print_some_keys` aborts.
     if let Some(name) = name {
-        let mut out = cstr(&outbuf).to_vec();
+        let mut out = upto_nul(&outbuf).to_vec();
         out.extend_from_slice(b"\t->\t");
         out.extend_from_slice(&wcs_to_mb(&name));
         out.push(b'\n');
@@ -1795,30 +1796,12 @@ fn wcsdup(s: &[u32]) -> Option<Vec<u32>> {
     Some(out)
 }
 
-/// The prefix of a wide string before its first NUL: what every C callee sees
-/// of a `wchar_t *` that the port carries as a slice.
-fn upto_nul(s: &[u32]) -> &[u32] {
-    match s.iter().position(|&c| c == 0) {
-        Some(i) => &s[..i],
-        None => s,
-    }
-}
-
-/// The same for the narrow buffers `keymacro__decode_str` writes, which it
-/// always NUL-terminates and which the C then passes to `%s`.
-fn cstr(buf: &[u8]) -> &[u8] {
-    match buf.iter().position(|&c| c == 0) {
-        Some(i) => &buf[..i],
-        None => buf,
-    }
-}
-
 /// C: `keymacro__decode_str(str, buf, sizeof buf, sep)` followed by `%s` of
 /// the result, which is what all six call sites in `map.c` do.
 fn decode(s: &[u32], sep: &[u8]) -> Vec<u8> {
     let mut buf = [0u8; EL_BUFSIZ];
     keymacro__decode_str(upto_nul(s), &mut buf, EL_BUFSIZ, sep);
-    cstr(&buf).to_vec()
+    upto_nul(&buf).to_vec()
 }
 
 /// C: `printf`'s `%-Ns` — the bytes, then spaces up to `width`. Never
