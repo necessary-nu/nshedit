@@ -31,19 +31,9 @@
 //! `docs/errata.md`. A function here that looks wrong is reproducing
 //! something; check its `sem` rule before changing it.
 
-// Exported C symbols keep their C names, which are not Rust's casing.
-#![allow(non_upper_case_globals)]
-// Every function in this crate is a C entry point and its safety contract is
-// its `sem` rule, quoted per function in `docs/spec/port/`. Repeating a
-// boilerplate `# Safety` section on all ~160 of them would say less than the
-// rule already does.
-#![allow(clippy::missing_safety_doc)]
-// The bodies have landed, so the reason these are still here is narrower than
-// it was: `readline.c`'s `static` helpers translated across with no callers
-// yet, and a handful of parameters an arm accepts to match the C's signature
-// and does not read.
-#![allow(dead_code, unused_variables)]
-
+// Unsafe C entry points document the caller obligations at the Rust boundary;
+// their linked `sem` rules separately freeze the reference implementation's
+// observable behaviour.
 // [spec:nshedit:req:abi.complete-surface+1]
 
 pub mod cdecl;

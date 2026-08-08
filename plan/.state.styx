@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-08T15:15:12.887095396Z
+last_sync_at 2026-08-08T16:17:34.400031955Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -189,5 +189,8 @@ impl_evidence (
         abi.complete-surface
     ), covered_claims (
         {impl_name native-impl, rule abi.complete-surface}
+    ), rule_versions_seen (
+        {id abi.complete-surface, version 1}
     )}
+    {id greenfield-lint-baseline}
 )
