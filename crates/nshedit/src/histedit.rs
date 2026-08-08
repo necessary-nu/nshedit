@@ -86,15 +86,6 @@ pub use crate::history::History;
 /// body is `history.c`'s `struct TYPE(history)`, which the C defines without
 /// a rule of its own; see [`crate::history::HistoryW`].
 pub use crate::history::HistoryW;
-/// C: `typedef struct tokenizer Tokenizer;` — the narrow tokenizer handle.
-/// Its body is `tokenizern.c`'s `struct TYPE(tokenizer)`, i.e. `tokenizer.c`
-/// compiled with `Char = char`; see [`crate::tokenizer::Tokenizer`].
-pub use crate::tokenizer::Tokenizer;
-/// C: `typedef struct tokenizerW TokenizerW;` — the wide tokenizer handle.
-/// Its body is `tokenizer.c`'s `struct TYPE(tokenizer)`, which the C defines
-/// without a rule of its own; see [`crate::tokenizer::TokenizerW`].
-pub use crate::tokenizer::TokenizerW;
-
 /// C: `struct lineinfo` and `struct lineinfow`, which differ only in their
 /// three members' character type.
 ///

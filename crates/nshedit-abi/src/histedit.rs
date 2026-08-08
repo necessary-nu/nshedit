@@ -53,11 +53,11 @@
 //! `history.c` and `tokenizer.c` are each compiled twice in the C, so each
 //! declares two families here: `history_winit`/`history_wend`/`history_w` and
 //! `tok_w*` over `wchar_t`, `history_init`/`history_end`/`history` and `tok_*`
-//! over `char`. `nshedit` carries both instantiations of one generic source
-//! (`nshedit::history::HistChar`, `nshedit::tokenizer::TokChar`), so the
-//! bodies here are pairs too — [`history_dispatch`] and [`argv_ptrs`] are the
-//! shared halves, and the ten exported functions differ only in which
-//! character type they pin.
+//! over `char`. The translated history implementation remains generic over
+//! `nshedit::history::HistChar`. Tokenization instead uses the native core
+//! parser and keeps its narrow/wide representation mechanics in the opaque
+//! ABI owner. The exported pairs differ only in which boundary character
+//! type they pin.
 //!
 //! Nothing in this module is blocked on the core any more. The two causes that
 //! used to abort here are both closed: the narrow instantiations exist, and
@@ -81,10 +81,13 @@ use nshedit::prompt::ElPfuncT;
 
 // Renamed on import so the signatures below read as `histedit.h` writes
 // them; see the note on `LineInfoWide`.
-use crate::adapter::{EditLine, History, HistoryHandle, HistoryW, Tokenizer, TokenizerW};
+use crate::adapter::{
+    BoundaryContinuation, EditLine, History, HistoryHandle, HistoryW, TokenizeOutcome, Tokenizer,
+    TokenizerW,
+};
 use crate::cdecl::histedit::{
-    HistEvent, HistEventGen, HistEventWide as HistEventW, LineInfo, LineInfoWide as LineInfoW,
-    WcharT,
+    HistEvent, HistEventGen, HistEventWide as HistEventW, LineInfo, LineInfoGen,
+    LineInfoWide as LineInfoW, WcharT,
 };
 use crate::cstdio::{self, CFileWriter};
 
@@ -300,6 +303,64 @@ unsafe fn cstr<'a>(p: *const c_char) -> Option<&'a [c_char]> {
     // SAFETY: `c_char` and `u8` have the same size and alignment and every
     // bit pattern is valid for both; this relabels the same bytes.
     Some(unsafe { core::slice::from_raw_parts(b.as_ptr().cast::<c_char>(), b.len()) })
+}
+
+/// Borrow the region described by a C `LineInfo` and translate its cursor to
+/// an optional element offset. A cursor at `lastchar` is deliberately absent:
+/// the reference tokenizer substitutes end-of-input before comparing it.
+///
+/// # Safety
+/// The three pointers must describe one live allocation as required by the
+/// corresponding `LineInfo` contract, with `lastchar >= buffer`.
+unsafe fn tokenizer_input<'a, C>(line: &LineInfoGen<C>) -> (&'a [C], Option<usize>) {
+    // SAFETY: the caller guarantees both pointers belong to one allocation.
+    let len = usize::try_from(unsafe { line.lastchar.offset_from(line.buffer) }).unwrap_or(0);
+    // SAFETY: the caller guarantees this `buffer..lastchar` region is live.
+    let input = unsafe { core::slice::from_raw_parts(line.buffer, len) };
+    let cursor = if line.cursor.is_null() {
+        None
+    } else {
+        // SAFETY: the caller guarantees the cursor belongs to the same line
+        // allocation. Negative and end offsets do not match the C loop.
+        usize::try_from(unsafe { line.cursor.offset_from(line.buffer) })
+            .ok()
+            .filter(|offset| *offset < len)
+    };
+    (input, cursor)
+}
+
+/// Map a typed tokenizer result onto the C integer protocol and output slots.
+///
+/// # Safety
+/// `argc` and `argv` must be writable. The two cursor pointers may be NULL;
+/// when non-NULL they must be writable too.
+unsafe fn publish_tokenize_outcome<C>(
+    outcome: TokenizeOutcome<C>,
+    argc: *mut c_int,
+    argv: *mut *mut *const C,
+    cursorc: *mut c_int,
+    cursoro: *mut c_int,
+) -> c_int {
+    let published = match outcome {
+        TokenizeOutcome::Published(published) => published,
+        TokenizeOutcome::Incomplete(BoundaryContinuation::SingleQuote) => return 1,
+        TokenizeOutcome::Incomplete(BoundaryContinuation::DoubleQuote) => return 2,
+        TokenizeOutcome::Incomplete(BoundaryContinuation::EscapedNewline) => return 3,
+        TokenizeOutcome::Failed => return -1,
+    };
+
+    // SAFETY: the success-path output contract is stated above.
+    unsafe {
+        *argc = published.count;
+        *argv = published.words;
+        if !cursorc.is_null() {
+            *cursorc = published.cursor_word;
+        }
+        if !cursoro.is_null() {
+            *cursoro = published.cursor_offset;
+        }
+    }
+    0
 }
 
 /// The program name `el_init`/`el_init_fd` take.
@@ -703,9 +764,7 @@ pub unsafe extern "C" fn tok_init(ifs: *const c_char) -> *mut Tokenizer {
     // owns everything it later hands back.
     // SAFETY: `ifs` is null or a NUL-terminated byte string.
     let separators = unsafe { cstr(ifs) };
-    nshedit::tokenizer::tok_init(separators)
-        .map(|compatibility| Tokenizer::from_narrow(compatibility, separators))
-        .map_or(core::ptr::null_mut(), Box::into_raw)
+    Box::into_raw(Tokenizer::from_narrow(separators))
 }
 
 // [spec:libedit:def:histedit.tok-end-fn]
@@ -729,7 +788,7 @@ pub unsafe extern "C" fn tok_reset(tok: *mut Tokenizer) {
     // In particular `argv[0]` is not restored to NULL, so a following parse
     // that publishes no word leaves the array unterminated (ERR-input-38).
     // SAFETY: `tok` must be non-NULL.
-    nshedit::tokenizer::tok_reset(unsafe { &mut *tok });
+    unsafe { &mut *tok }.reset();
 }
 
 // [spec:libedit:def:histedit.tok-line-fn]
@@ -752,33 +811,13 @@ pub unsafe extern "C" fn tok_line(
     // consults the locale to decide.
     // SAFETY: both are the caller's live objects.
     let tok = unsafe { &mut *tok };
-    let line = unsafe { &*line.cast::<nshedit::histedit::LineInfo>() };
-    let mut n: c_int = 0;
-    // `cursorc` and `cursoro` are NULL-checked in the C, so they are optional
-    // here; `argc` is written unconditionally on success.
-    // SAFETY: each is null or writable.
-    let cc = if cursorc.is_null() {
-        None
-    } else {
-        Some(unsafe { &mut *cursorc })
-    };
-    let co = if cursoro.is_null() {
-        None
-    } else {
-        Some(unsafe { &mut *cursoro })
-    };
-    let rv = nshedit::tokenizer::tok_line(tok, line, &mut n, cc, co);
-    if rv != 0 {
-        // On any non-zero return none of the four out-parameters is written.
-        return rv;
-    }
-    let words = tok.publish_argv(n);
-    // SAFETY: the success path writes both out-parameters, as in the C.
-    unsafe {
-        *argc = n;
-        *argv = words;
-    }
-    0
+    let line = unsafe { &*line };
+    // SAFETY: the caller's live `LineInfo` contract is stated above.
+    let (input, cursor) = unsafe { tokenizer_input(line) };
+    let outcome = tok.tokenize(input, cursor);
+    // SAFETY: the caller provides the mandatory writable outputs; cursor
+    // outputs are nullable by contract.
+    unsafe { publish_tokenize_outcome(outcome, argc, argv, cursorc, cursoro) }
 }
 
 // [spec:libedit:def:histedit.tok-str-fn]
@@ -796,19 +835,18 @@ pub unsafe extern "C" fn tok_str(
     // out-parameters are NULL. Does not reset the tokenizer either.
     // SAFETY: `tok` must be non-NULL, `line` non-NULL and NUL-terminated.
     let tok = unsafe { &mut *tok };
-    let s = unsafe { cstr(line) }.unwrap_or(&[]);
-    let mut n: c_int = 0;
-    let rv = nshedit::tokenizer::tok_str(tok, s, &mut n);
-    if rv != 0 {
-        return rv;
-    }
-    let words = tok.publish_argv(n);
-    // SAFETY: the success path writes both out-parameters, as in the C.
+    let input = unsafe { cstr(line) }.unwrap_or(&[]);
+    let outcome = tok.tokenize(input, None);
+    // SAFETY: `argc` and `argv` are mandatory writable outputs.
     unsafe {
-        *argc = n;
-        *argv = words;
+        publish_tokenize_outcome(
+            outcome,
+            argc,
+            argv,
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+        )
     }
-    0
 }
 
 // [spec:libedit:def:histedit.wcsdup-fn]
@@ -1837,9 +1875,7 @@ pub unsafe extern "C" fn tok_winit(ifs: *const WcharT) -> *mut TokenizerW {
     // string; the tokenizer owns everything it later hands back.
     // SAFETY: `ifs` is null or a NUL-terminated wide string.
     let separators = unsafe { wstr(ifs) };
-    nshedit::tokenizer::tok_winit(separators)
-        .map(|compatibility| TokenizerW::from_wide(compatibility, separators))
-        .map_or(core::ptr::null_mut(), Box::into_raw)
+    Box::into_raw(TokenizerW::from_wide(separators))
 }
 
 // [spec:libedit:def:histedit.tok-wend-fn]
@@ -1863,7 +1899,7 @@ pub unsafe extern "C" fn tok_wreset(tok: *mut TokenizerW) {
     // In particular `argv[0]` is not restored to NULL, so a following parse
     // that publishes no word leaves the array unterminated (ERR-input-38).
     // SAFETY: `tok` must be non-NULL.
-    nshedit::tokenizer::tok_wreset(unsafe { &mut *tok });
+    unsafe { &mut *tok }.reset();
 }
 
 // [spec:libedit:def:histedit.tok-wline-fn]
@@ -1883,33 +1919,13 @@ pub unsafe extern "C" fn tok_wline(
     // how multi-line continuation works.
     // SAFETY: both are the caller's live objects.
     let tok = unsafe { &mut *tok };
-    let line = unsafe { &*line.cast::<nshedit::histedit::LineInfoW>() };
-    let mut n: c_int = 0;
-    // `cursorc` and `cursoro` are NULL-checked in the C, so they are optional
-    // here; `argc` is written unconditionally on success.
-    // SAFETY: each is null or writable.
-    let cc = if cursorc.is_null() {
-        None
-    } else {
-        Some(unsafe { &mut *cursorc })
-    };
-    let co = if cursoro.is_null() {
-        None
-    } else {
-        Some(unsafe { &mut *cursoro })
-    };
-    let rv = nshedit::tokenizer::tok_wline(tok, line, &mut n, cc, co);
-    if rv != 0 {
-        // On any non-zero return none of the four out-parameters is written.
-        return rv;
-    }
-    let words = tok.publish_argv(n);
-    // SAFETY: the success path writes both out-parameters, as in the C.
-    unsafe {
-        *argc = n;
-        *argv = words;
-    }
-    0
+    let line = unsafe { &*line };
+    // SAFETY: the caller's live `LineInfoW` contract is stated above.
+    let (input, cursor) = unsafe { tokenizer_input(line) };
+    let outcome = tok.tokenize(input, cursor);
+    // SAFETY: the caller provides the mandatory writable outputs; cursor
+    // outputs are nullable by contract.
+    unsafe { publish_tokenize_outcome(outcome, argc, argv, cursorc, cursoro) }
 }
 
 // [spec:libedit:def:histedit.tok-wstr-fn]
@@ -1927,19 +1943,18 @@ pub unsafe extern "C" fn tok_wstr(
     // out-parameters are NULL. Does not reset the tokenizer either.
     // SAFETY: `tok` must be non-NULL, `line` non-NULL and NUL-terminated.
     let tok = unsafe { &mut *tok };
-    let s = unsafe { wstr(line) }.unwrap_or(&[]);
-    let mut n: c_int = 0;
-    let rv = nshedit::tokenizer::tok_wstr(tok, s, &mut n);
-    if rv != 0 {
-        return rv;
-    }
-    let words = tok.publish_argv(n);
-    // SAFETY: the success path writes both out-parameters, as in the C.
+    let input = unsafe { wstr(line) }.unwrap_or(&[]);
+    let outcome = tok.tokenize(input, None);
+    // SAFETY: `argc` and `argv` are mandatory writable outputs.
     unsafe {
-        *argc = n;
-        *argv = words;
+        publish_tokenize_outcome(
+            outcome,
+            argc,
+            argv,
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+        )
     }
-    0
 }
 
 #[cfg(test)]
