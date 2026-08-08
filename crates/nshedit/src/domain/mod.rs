@@ -9,7 +9,9 @@
 
 mod command;
 mod keymap;
+mod prompt;
 mod screen;
+mod terminal;
 mod text;
 
 pub use command::{
@@ -17,7 +19,9 @@ pub use command::{
     TextTransform, WordKind, YankPlacement,
 };
 pub use keymap::{Binding, KeyLookup, KeySequence};
-pub use screen::{LiteralId, LiteralTable, Screen, ScreenCell, ScreenPosition, ScreenSize};
+pub use prompt::{Prompt, PromptPart, TerminalLiteral};
+pub use screen::{Screen, ScreenCell, ScreenGlyph, ScreenPosition, ScreenSize};
+pub use terminal::TerminalMode;
 pub use text::{NonScalarWide, Text, TextIndex, TextSpan, TextUnit};
 
 use std::fmt;

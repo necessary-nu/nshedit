@@ -10,7 +10,8 @@ use std::os::fd::BorrowedFd;
 
 use crate::domain::{
     Action, Binding, CommandName, Direction, EditorConfig, Error, InputMode, KeyLookup,
-    KeySequence, KeymapMode, Outcome, Text, TextIndex,
+    KeySequence, KeymapMode, Outcome, Prompt, Screen, ScreenPosition, ScreenSize, TerminalMode,
+    Text, TextIndex,
 };
 
 // [spec:nshedit:req:core.effect-hooks]
@@ -18,6 +19,11 @@ pub mod effect;
 
 // [spec:nshedit:req:core.line-commands]
 mod line;
+
+// [spec:nshedit:req:core.terminal-render+1]
+mod render;
+
+pub use render::{BaudRate, CapabilityKind, RenderError, RenderSummary, TerminalProfile};
 
 /// Safe terminal lifecycle operations owned by one editor session.
 ///
@@ -27,8 +33,13 @@ mod line;
 /// session, the editor calls `restore` at most once, from explicit finish or
 /// from `Drop`.
 pub trait TerminalControl {
-    /// Prepare the terminal for this session's editing policy.
+    /// Prepare the terminal for this session's editing policy and enter
+    /// [`TerminalMode::Editing`].
     fn activate(&mut self, config: EditorConfig) -> io::Result<()>;
+
+    /// Transition the active tty between semantic input modes. A failed call
+    /// must leave the previously committed mode usable.
+    fn set_mode(&mut self, mode: TerminalMode) -> io::Result<()>;
 
     /// Restore the state that preceded the activation attempt.
     fn restore(&mut self) -> io::Result<()>;
@@ -127,6 +138,8 @@ pub struct Editor<T: TerminalControl> {
     config: EditorConfig,
     state: line::State,
     terminal: Option<T>,
+    terminal_mode: TerminalMode,
+    renderer: render::State,
     effects: effect::Runtime,
 }
 
@@ -148,6 +161,8 @@ impl<T: TerminalControl> Editor<T> {
             config,
             state: line::State::new(config),
             terminal: Some(terminal),
+            terminal_mode: TerminalMode::Editing,
+            renderer: render::State::default(),
             effects: effect::Runtime::default(),
         })
     }
@@ -238,6 +253,78 @@ impl<T: TerminalControl> Editor<T> {
         self.state.lookup(sequence)
     }
 
+    /// The tty mode currently committed by this editor.
+    #[must_use]
+    pub const fn terminal_mode(&self) -> TerminalMode {
+        self.terminal_mode
+    }
+
+    /// Change tty mode transactionally through the owned controller.
+    ///
+    /// A failed controller operation leaves the editor's committed mode
+    /// unchanged.
+    pub fn set_terminal_mode(&mut self, mode: TerminalMode) -> io::Result<()> {
+        if mode == self.terminal_mode {
+            return Ok(());
+        }
+        let terminal = self
+            .terminal
+            .as_mut()
+            .ok_or_else(|| io::Error::other("editor terminal is no longer active"))?;
+        terminal.set_mode(mode)?;
+        self.terminal_mode = mode;
+        Ok(())
+    }
+
+    /// Install an owned terminal profile and reset the committed screen.
+    pub fn configure_display(&mut self, profile: TerminalProfile, size: ScreenSize) {
+        self.renderer.configure(profile, size);
+    }
+
+    /// Resize the configured display and discard its previous screen image.
+    pub fn resize_display(&mut self, size: ScreenSize) -> Result<(), RenderError> {
+        self.renderer.resize(size)
+    }
+
+    /// The terminal profile currently driving native rendering.
+    #[must_use]
+    pub fn terminal_profile(&self) -> Option<&TerminalProfile> {
+        self.renderer.profile()
+    }
+
+    /// The last screen image committed after a successful flush.
+    #[must_use]
+    pub fn screen(&self) -> Option<&Screen> {
+        self.renderer.screen()
+    }
+
+    /// The cursor in the last successfully committed screen image.
+    #[must_use]
+    pub fn screen_cursor(&self) -> Option<ScreenPosition> {
+        self.renderer.cursor()
+    }
+
+    /// Render the current private line and cursor through a safe writer.
+    pub fn render_to(
+        &mut self,
+        left_prompt: &Prompt,
+        right_prompt: Option<&Prompt>,
+        output: &mut dyn Write,
+    ) -> Result<RenderSummary, RenderError> {
+        self.renderer.present(
+            left_prompt,
+            right_prompt,
+            &self.state.line,
+            self.state.cursor,
+            output,
+        )
+    }
+
+    /// Emit the configured terminal's notification capability.
+    pub fn beep(&mut self, output: &mut dyn Write) -> Result<usize, RenderError> {
+        self.renderer.beep(output)
+    }
+
     /// Restore the terminal, reporting any failure to the caller.
     ///
     /// This consumes the editor. Its following `Drop` observes that the
@@ -274,17 +361,19 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
-    use crate::domain::{Buffering, EditingMode};
+    use crate::domain::{Buffering, EditingMode, TerminalLiteral};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Event {
         Activate(EditorConfig),
+        SetMode(TerminalMode),
         Restore,
     }
 
     struct MockTerminal {
         events: Rc<RefCell<Vec<Event>>>,
         fail_activation: bool,
+        fail_mode: bool,
         fail_restoration: bool,
     }
 
@@ -293,6 +382,7 @@ mod tests {
             Self {
                 events: Rc::clone(events),
                 fail_activation: false,
+                fail_mode: false,
                 fail_restoration: false,
             }
         }
@@ -303,6 +393,15 @@ mod tests {
             self.events.borrow_mut().push(Event::Activate(config));
             if self.fail_activation {
                 Err(io::Error::other("activation failed"))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn set_mode(&mut self, mode: TerminalMode) -> io::Result<()> {
+            self.events.borrow_mut().push(Event::SetMode(mode));
+            if self.fail_mode {
+                Err(io::Error::other("mode change failed"))
             } else {
                 Ok(())
             }
@@ -395,6 +494,51 @@ mod tests {
             events.borrow().as_slice(),
             [Event::Activate(EditorConfig::default()), Event::Restore]
         );
+    }
+
+    #[test]
+    fn tty_modes_are_typed_and_transactional() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut editor =
+            Editor::new(EditorConfig::default(), MockTerminal::recording(&events)).unwrap();
+
+        assert_eq!(editor.terminal_mode(), TerminalMode::Editing);
+        editor.set_terminal_mode(TerminalMode::Quoted).unwrap();
+        editor.set_terminal_mode(TerminalMode::Quoted).unwrap();
+        assert_eq!(editor.terminal_mode(), TerminalMode::Quoted);
+        assert_eq!(
+            events.borrow().as_slice(),
+            [
+                Event::Activate(EditorConfig::default()),
+                Event::SetMode(TerminalMode::Quoted)
+            ]
+        );
+
+        let failed_events = Rc::new(RefCell::new(Vec::new()));
+        let mut terminal = MockTerminal::recording(&failed_events);
+        terminal.fail_mode = true;
+        let mut failed = Editor::new(EditorConfig::default(), terminal).unwrap();
+        assert!(failed.set_terminal_mode(TerminalMode::Cooked).is_err());
+        assert_eq!(failed.terminal_mode(), TerminalMode::Editing);
+    }
+
+    // [spec:nshedit:req:core.terminal-render+1/test]
+    #[test]
+    fn editor_owns_native_render_state() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut editor =
+            Editor::new(EditorConfig::default(), MockTerminal::recording(&events)).unwrap();
+        editor.configure_display(TerminalProfile::ansi(), ScreenSize::new(2, 12).unwrap());
+        editor.execute(Action::Insert(Text::from("line"))).unwrap();
+        let mut prompt = Prompt::from("p> ");
+        prompt.push_literal(TerminalLiteral::from(&b"\x1b[1m"[..]));
+        let mut output = Vec::new();
+
+        let summary = editor.render_to(&prompt, None, &mut output).unwrap();
+
+        assert_eq!(summary.cursor().column(), 7);
+        assert_eq!(editor.screen_cursor(), Some(summary.cursor()));
+        assert!(output.windows(7).any(|bytes| bytes == b"p> \x1b[1m"));
     }
 
     // [spec:nshedit:req:core.rust-io+1/test]

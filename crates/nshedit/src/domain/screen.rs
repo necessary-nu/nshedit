@@ -1,43 +1,69 @@
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU8, NonZeroUsize};
+
+use unicode_width::UnicodeWidthChar;
 
 use super::Error;
 
-/// An index into the renderer's owned table of zero-width terminal bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct LiteralId(usize);
+/// Printable scalar text anchored at one physical terminal column.
+///
+/// The first scalar has a non-zero terminal width. Following zero-width
+/// scalars are retained in the same glyph instead of pretending they occupy
+/// independent cells.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ScreenGlyph {
+    text: String,
+    width: NonZeroU8,
+}
 
-/// Terminal byte strings referenced by [`ScreenCell::Literal`].
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct LiteralTable(Vec<Box<[u8]>>);
-
-impl LiteralTable {
-    /// Own a terminal sequence and return its stable identifier.
-    pub fn insert(&mut self, bytes: impl Into<Box<[u8]>>) -> LiteralId {
-        let id = LiteralId(self.0.len());
-        self.0.push(bytes.into());
-        id
+impl ScreenGlyph {
+    /// Construct a glyph from one printable, non-zero-width scalar.
+    #[must_use]
+    pub fn from_scalar(character: char) -> Option<Self> {
+        let width = character
+            .width()
+            .and_then(|width| u8::try_from(width).ok())
+            .and_then(NonZeroU8::new)?;
+        Some(Self {
+            text: character.to_string(),
+            width,
+        })
     }
 
-    /// Resolve an identifier issued by this table.
+    pub(crate) fn push_zero_width(&mut self, character: char) -> bool {
+        if character.width() == Some(0) {
+            self.text.push(character);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Borrow the complete scalar sequence emitted for this glyph.
     #[must_use]
-    pub fn get(&self, id: LiteralId) -> Option<&[u8]> {
-        self.0.get(id.0).map(AsRef::as_ref)
+    pub fn as_str(&self) -> &str {
+        &self.text
+    }
+
+    /// Number of physical terminal columns occupied by the glyph.
+    #[must_use]
+    pub const fn width(&self) -> usize {
+        self.width.get() as usize
     }
 }
 
 // [spec:nshedit:req:core.text-screen-model] rendered screen representation
-/// One rendered terminal cell. Display bookkeeping is represented by variants
-/// and can never alias a text value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// The state of one physical terminal column.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum ScreenCell {
-    /// One visible Unicode scalar.
-    Text(char),
-    /// A cell occupied by the tail of a preceding wide glyph.
+    /// An unoccupied display column.
+    #[default]
+    Blank,
+    /// A printable glyph anchored at this column.
+    Glyph(ScreenGlyph),
+    /// A column occupied by the tail of a preceding wide glyph.
     Continuation,
-    /// A cell reserved as terminal-edge or layout padding.
+    /// A column deliberately skipped at a terminal edge during layout.
     Padding,
-    /// A zero-width terminal byte sequence owned by the renderer.
-    Literal(LiteralId),
 }
 
 /// Non-empty terminal dimensions.
@@ -112,7 +138,7 @@ impl ScreenPosition {
     }
 }
 
-/// A rectangular rendered image with checked cell access.
+/// A rectangular physical screen image with checked cell access.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Screen {
     size: ScreenSize,
@@ -120,21 +146,12 @@ pub struct Screen {
 }
 
 impl Screen {
-    /// Construct a blank image. A blank is visible text, not padding.
+    /// Construct a blank image.
     #[must_use]
     pub fn new(size: ScreenSize) -> Self {
         Self {
             size,
-            cells: vec![ScreenCell::Text(' '); size.area()],
-        }
-    }
-
-    /// Construct an image with every cell in an explicit state.
-    #[must_use]
-    pub fn filled(size: ScreenSize, cell: ScreenCell) -> Self {
-        Self {
-            size,
-            cells: vec![cell; size.area()],
+            cells: vec![ScreenCell::Blank; size.area()],
         }
     }
 
@@ -143,10 +160,16 @@ impl Screen {
         self.size
     }
 
+    /// Borrow every physical cell in row-major order.
+    #[must_use]
+    pub fn cells(&self) -> &[ScreenCell] {
+        &self.cells
+    }
+
     /// Read a position, revalidating it for this image.
-    pub fn get(&self, position: ScreenPosition) -> Result<ScreenCell, Error> {
+    pub fn get(&self, position: ScreenPosition) -> Result<&ScreenCell, Error> {
         let index = self.cell_index(position)?;
-        Ok(self.cells[index])
+        Ok(&self.cells[index])
     }
 
     /// Replace a position, revalidating it for this image.
@@ -166,25 +189,34 @@ impl Screen {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{NonScalarWide, TextUnit};
+    use crate::domain::{NonScalarWide, TerminalLiteral, TextUnit};
 
     // [spec:nshedit:req:core.text-screen-model/test]
     #[test]
-    fn screen_cells_have_explicit_states() {
+    fn display_values_have_distinct_types() {
         let logical = TextUnit::CompatibilityWide(NonScalarWide::new(0xD800).unwrap());
-        let mut literals = LiteralTable::default();
-        let literal = literals.insert(&b"\x1b[31m"[..]);
+        let literal = TerminalLiteral::from(&b"\x1b[31m"[..]);
+        let glyph = ScreenGlyph::from_scalar('x').unwrap();
         let cells = [
-            ScreenCell::Text('x'),
+            ScreenCell::Glyph(glyph),
             ScreenCell::Continuation,
             ScreenCell::Padding,
-            ScreenCell::Literal(literal),
+            ScreenCell::Blank,
         ];
 
         assert_eq!(logical, TextUnit::from_wide(0xD800));
-        assert_eq!(cells[3], ScreenCell::Literal(literal));
-        assert_eq!(literals.get(literal), Some(&b"\x1b[31m"[..]));
+        assert_eq!(literal.as_bytes(), b"\x1b[31m");
         assert_ne!(cells[1], cells[2]);
+    }
+
+    #[test]
+    fn combining_scalars_share_the_anchor() {
+        let mut glyph = ScreenGlyph::from_scalar('e').unwrap();
+        assert!(glyph.push_zero_width('\u{301}'));
+        assert!(!glyph.push_zero_width('x'));
+        assert_eq!(glyph.as_str(), "e\u{301}");
+        assert_eq!(glyph.width(), 1);
+        assert!(ScreenGlyph::from_scalar('\u{301}').is_none());
     }
 
     #[test]
@@ -232,6 +264,6 @@ mod tests {
         let mut screen = Screen::new(size);
         let position = size.position(0, 1).unwrap();
         screen.set(position, ScreenCell::Continuation).unwrap();
-        assert_eq!(screen.get(position), Ok(ScreenCell::Continuation));
+        assert_eq!(screen.get(position), Ok(&ScreenCell::Continuation));
     }
 }

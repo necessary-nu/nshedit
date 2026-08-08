@@ -96,10 +96,17 @@ states where those semantics may live and what the native Rust API must be.
 > typed results. Null-terminated pointer arrays, thread-local return storage,
 > C generators, and integer status protocols MUST remain in the ABI adapter.
 
-> [spec:nshedit:req:core.terminal-render]
-> Terminal capabilities, tty state, prompts, and screen refresh MUST use
-> private typed state and safe writers. Rendering MUST NOT require a global
-> destination, a `FILE *`, foreign putc callback, or C sentinel encoding.
+> [spec:nshedit:req:core.terminal-render+1]
+> The native terminal profile, tty mode, prompts, render plan, and committed
+> screen image MUST use private typed state. Rendering MUST write only through
+> a caller-supplied safe Rust writer and MUST NOT require a global destination,
+> a `FILE *`, foreign putc callback, C sentinel encoding, or zero-width terminal
+> literal disguised as a physical screen cell. These native types MUST be the
+> only terminal-render implementation reachable from the native `Editor`.
+> Until the ABI adapter replaces the transliterated compatibility path,
+> C-shaped terminal, tty, prompt, and refresh machinery MAY remain only in
+> those existing compatibility modules; `core.no-compat-internals` governs
+> its final removal.
 
 > [spec:nshedit:req:core.read-driver]
 > Input preparation, decoding, key dispatch, signal transitions, and editing

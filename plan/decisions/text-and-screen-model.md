@@ -1,6 +1,6 @@
 ---
 id [dec:libedit:text-and-screen-model]
-epitome "Logical text and rendered cells are distinct typed values; invalid bytes and wide values are preserved explicitly, never as sentinels."
+epitome "Logical text, terminal literals, rendered glyphs, and physical cells are distinct typed values; compatibility data is never a display sentinel."
 state @decided
 category @property
 scope {
@@ -29,7 +29,8 @@ alternatives (
 consequences {
     accepted (
         "TextUnit represents a Unicode scalar, a raw undecodable byte, or a validated non-scalar compatibility-wide value; Text owns a sequence of those units."
-        "ScreenCell represents visible scalar text, continuation, padding, or a typed LiteralId. No spare character bits carry display sentinels."
+        "ScreenGlyph owns the printable scalar sequence anchored at one terminal column. ScreenCell represents a blank, an anchored glyph, its continuation column, or explicit padding; no spare character bits carry display sentinels."
+        "A TerminalLiteral owns a zero-width byte sequence at a render boundary. It is a prompt/render atom rather than a physical ScreenCell, so emitting it cannot consume, replace, or alias a terminal column."
         "Narrow multibyte and wide C conversion occurs in nshedit-abi under the active locale contract. The core does not expose wchar_t or locale conversion buffers."
         "Native history remains byte-preserving and rejects or reports representations it cannot round-trip instead of silently truncating at NUL."
         "Public cursor and span values use checked domain indices rather than raw pointers or unchecked integer differences."
@@ -55,6 +56,9 @@ wide value the compatibility boundary must carry. A bare integer preserves
 those values but also preserves the C model's accidental states.
 
 Explicit logical variants retain information without pretending every value
-is Unicode, while a separate screen-cell type makes rendering sentinels part
-of the type system. ABI conversion remains locale-aware and isolated; native
-consumers get a stable semantic model rather than C integer conventions.
+is Unicode, while anchored glyphs, physical cells, and zero-width terminal
+literals remain separate types. That last separation matters: putting a
+literal escape sequence in a rectangular cell grid falsely charges it one
+column and makes it overwrite visible state. ABI conversion remains
+locale-aware and isolated; native consumers get a stable semantic model
+rather than C integer conventions.

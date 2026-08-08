@@ -2433,9 +2433,24 @@ children (
                 priority 0
                 kind @refactor
                 implements {
-                    native-impl ([spec:nshedit:req:core.terminal-render])
+                    native-impl ([spec:nshedit:req:core.terminal-render+1])
                 }
                 deps (greenfield-line-commands)
+                log (
+                    {
+                        at 2026-08-08T17:53:44.439606384Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T18:15:02.113289211Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Corrected core.terminal-render to v1 because v0 globally banned C-shaped terminal state before the later ABI adapter can stop using the existing compatibility modules. V1 governs the native Editor immediately and leaves those modules temporary until core.no-compat-internals. The native Editor now owns private renderer state and semantic TerminalMode; Prompt separates logical Text from zero-width TerminalLiteral; ScreenGlyph anchors combining scalars while ScreenCell models only physical columns. TerminalProfile owns terminfo bytes, semantic baud/padding, and per-session capability variables. Frames are planned first, emitted through a caller-supplied Write, and screen plus capability-variable state commit only after write_all and flush succeed. Recorded in [dec:libedit:native-terminal-render]; [dec:libedit:text-and-screen-model] was corrected because its earlier LiteralId cell contradicted zero-width layout."
+                    }
+                )
             }
 
             {

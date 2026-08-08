@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-08T17:52:30.481754319Z
+last_sync_at 2026-08-08T18:20:55.88281857Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -15,7 +15,6 @@ rule_versions (
     {id core.raii-lifecycle, version 0}
     {id core.read-driver, version 0}
     {id core.rust-io, version 1}
-    {id core.terminal-render, version 0}
     {id core.text-screen-model, version 0}
     {id core.token-completion, version 0}
     {id core.typed-domain, version 1}
@@ -217,6 +216,11 @@ impl_evidence (
     ), rule_versions_seen (
         {id core.effect-hooks, version 0}
     )}
+    {id greenfield-history, covered_rules (
+        core.history
+    ), covered_claims (
+        {impl_name native-impl, rule core.history}
+    )}
     {id greenfield-line-commands, covered_rules (
         core.line-commands
     ), covered_claims (
@@ -231,9 +235,9 @@ impl_evidence (
     ), rule_versions_seen (
         {id workspace.no-legacy-allows, version 0}
     )}
-    {id greenfield-history, covered_rules (
-        core.history
+    {id greenfield-terminal-render, covered_rules (
+        core.terminal-render
     ), covered_claims (
-        {impl_name native-impl, rule core.history}
+        {impl_name native-impl, rule core.terminal-render}
     )}
 )

@@ -102,7 +102,7 @@ impl ::std::fmt::Display for Error {
 impl ::std::error::Error for Error {}
 
 /// Container for static and dynamic variable arrays
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Variables {
     /// Static variables A-Z
     sta_vars: [Param; 26],

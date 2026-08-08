@@ -2,7 +2,7 @@ use std::io;
 
 use super::*;
 use crate::domain::{
-    CommandName, EditingMode, KeyLookup, NonScalarWide, Refresh, TextUnit, WordKind,
+    CommandName, EditingMode, KeyLookup, NonScalarWide, Refresh, TerminalMode, TextUnit, WordKind,
 };
 use crate::editor::{Editor, TerminalControl};
 
@@ -10,6 +10,10 @@ struct TestTerminal;
 
 impl TerminalControl for TestTerminal {
     fn activate(&mut self, _config: EditorConfig) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn set_mode(&mut self, _mode: TerminalMode) -> io::Result<()> {
         Ok(())
     }
 

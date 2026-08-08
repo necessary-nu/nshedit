@@ -9,7 +9,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::domain::{
-    CommandName, Direction, Error, Outcome, ScreenSize, Text, TextIndex, TextUnit,
+    CommandName, Direction, Error, Outcome, Prompt, ScreenSize, Text, TextIndex, TextUnit,
 };
 
 use super::{Editor, TerminalControl};
@@ -44,7 +44,7 @@ pub struct PromptEffect {
 impl sealed::Sealed for PromptEffect {}
 
 impl Effect for PromptEffect {
-    type Response = EffectResult<Text>;
+    type Response = EffectResult<Prompt>;
 }
 
 /// Ask the host for one logical input unit or end of input.
@@ -329,6 +329,10 @@ mod tests {
             Ok(())
         }
 
+        fn set_mode(&mut self, _mode: crate::domain::TerminalMode) -> io::Result<()> {
+            Ok(())
+        }
+
         fn restore(&mut self) -> io::Result<()> {
             Ok(())
         }
@@ -355,8 +359,10 @@ mod tests {
             Some(EffectStateError::AlreadySuspended)
         );
 
-        let response = editor.resume(&prompt, Ok(Text::from("prompt> "))).unwrap();
-        assert_eq!(response, Ok(Text::from("prompt> ")));
+        let response = editor
+            .resume(&prompt, Ok(Prompt::from("prompt> ")))
+            .unwrap();
+        assert_eq!(response, Ok(Prompt::from("prompt> ")));
         assert!(editor.suspend(ReadEffect).is_ok());
     }
 
@@ -404,7 +410,7 @@ mod tests {
             PromptEffect {
                 side: PromptSide::Right,
             },
-            Ok(Text::from("prompt")),
+            Ok(Prompt::from("prompt")),
         );
         accepts(ReadEffect, Ok(ReadOutcome::Input(TextUnit::Scalar('x'))));
         accepts(
