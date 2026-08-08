@@ -136,9 +136,10 @@ pub struct LineInfoGen<C> {
 /// declaration (`typedef struct lineinfo { ... } LineInfo;`), so both sit
 /// here.
 ///
-/// Embedded in `EditLine` as `el_lgcylinfo` and returned by `el_line`. The
-/// three pointers are into `el_lgcyconv` and are invalidated by the next
-/// narrow call; see `sem:eln.el-line-fn`.
+/// The ABI adapter owns one stable record per opaque editor and returns it
+/// from `el_line`. Its three pointers refer to the adapter's narrow
+/// conversion buffer and are invalidated by the next narrow call; see
+/// `sem:eln.el-line-fn`.
 pub type LineInfo = LineInfoGen<c_char>;
 
 /// C: `struct histevent` and `struct histeventW`, which differ only in

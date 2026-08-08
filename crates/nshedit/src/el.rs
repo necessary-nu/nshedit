@@ -63,7 +63,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::hist::{EditorHistory, ElHistoryT, HistSource, hist_end, hist_init};
-use crate::histedit::{HistEventW, LineInfo};
+use crate::histedit::HistEventW;
 use crate::keymacro::{ElKeymacroT, KeymacroValueT, keymacro_end, keymacro_init};
 use crate::literal::{ElLiteralT, literal_end, literal_init};
 use crate::locale;
@@ -252,16 +252,6 @@ pub struct EditLine {
     pub el_visual: CtBufferT,
     /// Scratch conversion buffer.
     pub el_scratch: CtBufferT,
-    /// Buffer for legacy wrappers.
-    pub el_lgcyconv: CtBufferT,
-    /// Legacy `LineInfo` buffer — the one narrow line view the narrow
-    /// `el_line` hands out, which is what makes two live views of a single
-    /// editor impossible.
-    ///
-    /// Filled in by `nshedit-abi` and by nothing here. An editor driven from
-    /// Rust leaves it at the three NULLs `blank_editline` wrote; the live
-    /// line state is [`EditLine::el_line`].
-    pub el_lgcylinfo: LineInfo,
     // [spec:libedit:def:el.editline.el-getenv-fn]
     /// C: `char *(*el_getenv)(const char *)` — the environment-lookup hook.
     /// Defaults to `secure_getenv`, which is load-bearing for set-uid
@@ -925,12 +915,6 @@ pub(crate) fn blank_editline() -> EditLine {
         el_read: None,
         el_visual: blank_ct_buffer(),
         el_scratch: blank_ct_buffer(),
-        el_lgcyconv: blank_ct_buffer(),
-        el_lgcylinfo: LineInfo {
-            buffer: ptr::null(),
-            cursor: ptr::null(),
-            lastchar: ptr::null(),
-        },
         el_getenv: None,
     }
 }
@@ -1106,11 +1090,6 @@ pub fn el_end(el: Option<Box<EditLine>>) {
     //   arguments, are dropped without notification: there is no destructor
     //   callback. The history object behind `EL_HIST` belongs to the caller
     //   and must be destroyed separately with `history_end`.
-    // ERR-core-api-13, disposition `fix`: the C frees `el_lgcyconv.cbuff` and
-    // leaves `el_lgcylinfo`'s three `char *` members dangling into it for the
-    // instant before the object goes away. Nothing here reads them and they
-    // go out of existence with the object, so there is nothing to dangle.
-    //
     // Not idempotent and not re-entrant in the C — the object is freed and
     // there is no "already ended" marker — which is what taking the box by
     // value expresses: a second `el_end` on the same object cannot be

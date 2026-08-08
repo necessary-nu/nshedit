@@ -13,9 +13,10 @@ use core::ops::{Deref, DerefMut};
 use std::ffi::CString;
 use std::io;
 
+use nshedit::chartype::CtBufferT;
 use nshedit::domain::{EditorConfig, TerminalMode, Text, TextUnit};
 use nshedit::editor::{Editor, TerminalControl, Tokenizer as NativeTokenizer};
-use nshedit::histedit::LineInfoW;
+use nshedit::histedit::{LineInfo, LineInfoW};
 use nshedit::history::HistoryStore;
 
 /// Terminal ownership remains with the translated engine during the bounded
@@ -38,6 +39,8 @@ impl TerminalControl for CompatibilityTerminal {
 }
 
 struct EditLineBoundary {
+    narrow_conversion: CtBufferT,
+    narrow_line: Box<LineInfo>,
     wide_line: Box<LineInfoW>,
     terminal_name: Option<CString>,
     word_characters: Option<Vec<u32>>,
@@ -46,6 +49,17 @@ struct EditLineBoundary {
 impl EditLineBoundary {
     fn new() -> Self {
         Self {
+            narrow_conversion: CtBufferT {
+                cbuff: Vec::new(),
+                csize: 0,
+                wbuff: Vec::new(),
+                wsize: 0,
+            },
+            narrow_line: Box::new(LineInfo {
+                buffer: core::ptr::null(),
+                cursor: core::ptr::null(),
+                lastchar: core::ptr::null(),
+            }),
             wide_line: Box::new(LineInfoW {
                 buffer: core::ptr::null(),
                 cursor: core::ptr::null(),
@@ -94,6 +108,14 @@ impl EditLine {
 
     pub(crate) fn compatibility_ptr(&mut self) -> *mut nshedit::el::EditLine {
         core::ptr::from_mut(&mut **self)
+    }
+
+    pub(crate) fn narrow_conversion_mut(&mut self) -> &mut CtBufferT {
+        &mut self.boundary.narrow_conversion
+    }
+
+    pub(crate) fn narrow_line_ptr(&mut self) -> *mut LineInfo {
+        core::ptr::from_mut(self.boundary.narrow_line.as_mut())
     }
 
     pub(crate) fn publish_wide_line(&mut self) -> *const LineInfoW {

@@ -20,7 +20,7 @@
 //! the next call which writes the narrow half, and code in the wild relies on
 //! it (`readline.c`'s own `_resize_fun` does). So every one of them returns
 //! [`nshedit::chartype::ct_encode_string`]'s slice `as_ptr()` — the start of
-//! the core's `Vec<u8>` — and the next encode into the same `EditLine`
+//! the adapter's `Vec<u8>` — and the next encode into the same `EditLine`
 //! overwrites it, or reallocates and dangles it, exactly as `realloc` does in
 //! the C. Nothing here copies, caches or leaks a second buffer, and the
 //! decoding calls (`el_push`, `el_parse`, `el_insertstr`, `el_replacestr`)
@@ -137,7 +137,7 @@ unsafe fn bytes_upto_nul<'a>(p: *const c_char) -> Option<&'a [u8]> {
 /// the next call that writes it.
 unsafe fn decode_through_lgcyconv(el: *mut EditLine, str_: *const c_char) -> *const u32 {
     let bytes = unsafe { bytes_upto_nul(str_) };
-    let conv = unsafe { &mut (&mut *el).el_lgcyconv };
+    let conv = unsafe { (&mut *el).narrow_conversion_mut() };
     ct_decode_string(bytes, conv).map_or(ptr::null(), <[u32]>::as_ptr)
 }
 
@@ -291,7 +291,7 @@ pub unsafe extern "C" fn el_gets(el: *mut EditLine, nread: *mut c_int) -> *const
     } else {
         Some(unsafe { wide_upto_nul(tmp) })
     };
-    let conv = unsafe { &mut (&mut *el).el_lgcyconv };
+    let conv = unsafe { (&mut *el).narrow_conversion_mut() };
     let out = ct_encode_string(s, conv).map_or(ptr::null(), |b| b.as_ptr().cast::<c_char>());
 
     crate::errno::publish(mark);
@@ -342,7 +342,7 @@ pub unsafe extern "C" fn el_parse(
             owned.push(None);
             continue;
         };
-        let conv = unsafe { &mut (&mut *el).el_lgcyconv };
+        let conv = unsafe { (&mut *el).narrow_conversion_mut() };
         match ct_decode_string(Some(bytes), conv) {
             Some(w) => {
                 let mut v = Vec::with_capacity(w.len() + 1);
@@ -471,7 +471,7 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
             };
             let el_ptr: *mut EditLine = el;
             // SAFETY: `el_ptr` is live for the call.
-            let conv = unsafe { &mut (&mut *el_ptr).el_lgcyconv };
+            let conv = unsafe { (&mut *el_ptr).narrow_conversion_mut() };
             // C: `ct_decode_argv`, whose NULL return is -1 without calling
             // the handler.
             let Some(w) = ct_decode_string(Some(bytes), conv) else {
@@ -676,7 +676,7 @@ unsafe fn el_get_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
                 let mut editor: &'static [u32] = &[];
                 let result = nshedit::map::map_get_editor(el, &mut editor);
                 let narrow = (result == 0)
-                    .then(|| ct_encode_string(Some(editor), &mut el.el_lgcyconv))
+                    .then(|| ct_encode_string(Some(editor), el.narrow_conversion_mut()))
                     .flatten()
                     .map_or(ptr::null(), |bytes| bytes.as_ptr().cast());
                 (result, narrow)
@@ -684,14 +684,14 @@ unsafe fn el_get_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
                 let mut wordchars = None;
                 let result = nshedit::map::map_get_wordchars(el, &mut wordchars);
                 let narrow = (result == 0)
-                    .then(|| ct_encode_string(wordchars.as_deref(), &mut el.el_lgcyconv))
+                    .then(|| ct_encode_string(wordchars.as_deref(), el.narrow_conversion_mut()))
                     .flatten()
                     .map_or(ptr::null(), |bytes| bytes.as_ptr().cast());
                 (result, narrow)
             };
             // SAFETY: `out` was checked above and points at the caller's slot.
             unsafe { *out = narrow };
-            if el.el_lgcyconv.csize == 0 {
+            if el.narrow_conversion_mut().csize == 0 {
                 -1
             } else {
                 result
@@ -721,7 +721,7 @@ pub unsafe extern "C" fn el_line(el: *mut EditLine) -> *const LineInfo {
     // by every caller, so two live `LineInfo` views of one editor are
     // impossible. The struct itself is stable; its three pointers are not.
     let winfo = unsafe { el_wline(el) };
-    let info: *mut LineInfo = unsafe { &raw mut (&mut *el).el_lgcylinfo };
+    let info = unsafe { (&mut *el).narrow_line_ptr() };
 
     // Step 2. `FROM_ELLINE` is set nowhere else in the library, so this fires
     // exactly when the application's resize callback calls back in, and
@@ -745,7 +745,7 @@ pub unsafe extern "C" fn el_line(el: *mut EditLine) -> *const LineInfo {
     } else {
         Some(unsafe { wide_upto_nul(buffer) })
     };
-    let conv = unsafe { &mut (&mut *el).el_lgcyconv };
+    let conv = unsafe { (&mut *el).narrow_conversion_mut() };
     let encoded = ct_encode_string(s, conv).map_or(ptr::null(), |b| b.as_ptr().cast::<c_char>());
     unsafe { (*info).buffer = encoded };
 
