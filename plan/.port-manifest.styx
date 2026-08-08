@@ -1,4 +1,4 @@
-generated_at 2026-08-04T16:26:42.975142828Z
+generated_at 2026-08-08T02:12:58.627961703Z
 
 source_lang c
 
@@ -351,15 +351,15 @@ symbols (
     {id readline.keymap, kind @typedef, name *Keymap, qualified keymap, signature "typedef KEYMAP_ENTRY *Keymap", file src/editline/readline.h, line_start 90, line_end 90, rules (
         {verb def, id readline.keymap}
     )}
-    {id readline.rl-completion-word-break-hook-fn, kind @function, name "(*rl_completion_word_break_hook)", qualified rl-completion-word-break-hook, signature "extern char *(*rl_completion_word_break_hook)(void)", file src/editline/readline.h, line_start 139, line_end 139, rules (
+    {id readline.rl-completion-word-break-hook-fn, kind @function, name "(*rl_completion_word_break_hook)", qualified rl-completion-word-break-hook, signature "extern char *(*rl_completion_word_break_hook)(void)", file src/editline/readline.h, line_start 165, line_end 165, rules (
         {verb def, id readline.rl-completion-word-break-hook-fn}
         {verb sem, id readline.rl-completion-word-break-hook-fn}
     )}
-    {id readline.rl-getc-function-fn, kind @function, name "(*rl_getc_function)", qualified rl-getc-function, signature "extern int (*rl_getc_function)(FILE *)", file src/editline/readline.h, line_start 177, line_end 177, rules (
+    {id readline.rl-getc-function-fn, kind @function, name "(*rl_getc_function)", qualified rl-getc-function, signature "extern int (*rl_getc_function)(FILE *)", file src/editline/readline.h, line_start 267, line_end 267, rules (
         {verb def, id readline.rl-getc-function-fn}
         {verb sem, id readline.rl-getc-function-fn}
     )}
-    {id readline.completion-matches-fn, kind @function, name completion_matches, qualified completion-matches, signature "char **completion_matches(/* const */ char *, rl_compentry_func_t *)", file src/editline/readline.h, line_start 234, line_end 234, rules (
+    {id readline.completion-matches-fn, kind @function, name completion_matches, qualified completion-matches, signature "char **completion_matches(/* const */ char *, rl_compentry_func_t *)", file src/editline/readline.h, line_start 356, line_end 356, rules (
         {verb def, id readline.completion-matches-fn}
         {verb sem, id readline.completion-matches-fn}
     )}
@@ -2250,32 +2250,6 @@ symbols (
     {id tty.el-tty-t, kind @typedef, name el_tty_t, qualified el-tty-t, signature "typedef struct", file src/tty.h, line_start 472, line_end 482, rules (
         {verb def, id tty.el-tty-t}
     )}
-    {id unvis.nv, kind @struct, name nv, qualified nv, signature "struct nv", members (
-        "char name[7]"
-        "uint8_t value"
-    ), file src/unvis.c, line_start 86, line_end 89, rules (
-        {verb def, id unvis.nv}
-    )}
-    {id unvis.unvis-fn, kind @function, name unvis, qualified unvis, signature "int unvis(char *cp, int c, int *astate, int flag)", file src/unvis.c, line_start 197, line_end 499, rules (
-        {verb def, id unvis.unvis-fn}
-        {verb sem, id unvis.unvis-fn}
-    )}
-    {id unvis.strnunvisx-fn, kind @function, name strnunvisx, qualified strnunvisx, signature "int strnunvisx(char *dst, size_t dlen, const char *src, int flag)", file src/unvis.c, line_start 510, line_end 557, rules (
-        {verb def, id unvis.strnunvisx-fn}
-        {verb sem, id unvis.strnunvisx-fn}
-    )}
-    {id unvis.strunvisx-fn, kind @function, name strunvisx, qualified strunvisx, signature "int strunvisx(char *dst, const char *src, int flag)", file src/unvis.c, line_start 561, line_end 565, rules (
-        {verb def, id unvis.strunvisx-fn}
-        {verb sem, id unvis.strunvisx-fn}
-    )}
-    {id unvis.strunvis-fn, kind @function, name strunvis, qualified strunvis, signature "int strunvis(char *dst, const char *src)", file src/unvis.c, line_start 569, line_end 573, rules (
-        {verb def, id unvis.strunvis-fn}
-        {verb sem, id unvis.strunvis-fn}
-    )}
-    {id unvis.strnunvis-fn, kind @function, name strnunvis, qualified strnunvis, signature "int strnunvis(char *dst, size_t dlen, const char *src)", file src/unvis.c, line_start 577, line_end 581, rules (
-        {verb def, id unvis.strnunvis-fn}
-        {verb sem, id unvis.strnunvis-fn}
-    )}
     {id vi.cv-action-fn, kind @function, name cv_action, qualified cv-action, signature "static el_action_t cv_action(EditLine *el, wint_t c)", file src/vi.c, line_start 68, line_end 95, rules (
         {verb def, id vi.cv-action-fn}
         {verb sem, id vi.cv-action-fn}
@@ -2471,124 +2445,5 @@ symbols (
     {id vi.vi-redo-fn, kind @function, name vi_redo, qualified vi-redo, signature "libedit_private el_action_t /*ARGSUSED*/ vi_redo(EditLine *el, wint_t c __attribute__((__unused__)))", file src/vi.c, line_start 1234, line_end 1258, rules (
         {verb def, id vi.vi-redo-fn}
         {verb sem, id vi.vi-redo-fn}
-    )}
-    {id vis.iscgraph-fn, kind @function, name iscgraph, qualified iscgraph, signature "static int iscgraph(int c)", file src/vis.c, line_start 110, line_end 120, rules (
-        {verb def, id vis.iscgraph-fn}
-        {verb sem, id vis.iscgraph-fn}
-    )}
-    {id vis.do-hvis-fn, kind @function, name do_hvis, qualified do-hvis, signature "static wchar_t * do_hvis(wchar_t *dst, wint_t c, int flags, wint_t nextc, const wchar_t *extra)", file src/vis.c, line_start 169, line_end 186, rules (
-        {verb def, id vis.do-hvis-fn}
-        {verb sem, id vis.do-hvis-fn}
-    )}
-    {id vis.do-mvis-fn, kind @function, name do_mvis, qualified do-mvis, signature "static wchar_t * do_mvis(wchar_t *dst, wint_t c, int flags, wint_t nextc, const wchar_t *extra)", file src/vis.c, line_start 194, line_end 210, rules (
-        {verb def, id vis.do-mvis-fn}
-        {verb sem, id vis.do-mvis-fn}
-    )}
-    {id vis.do-mbyte-fn, kind @function, name do_mbyte, qualified do-mbyte, signature "static wchar_t * do_mbyte(wchar_t *dst, wint_t c, int flags, wint_t nextc, int iswextra)", file src/vis.c, line_start 217, line_end 303, rules (
-        {verb def, id vis.do-mbyte-fn}
-        {verb sem, id vis.do-mbyte-fn}
-    )}
-    {id vis.do-svis-fn, kind @function, name do_svis, qualified do-svis, signature "static wchar_t * do_svis(wchar_t *dst, wint_t c, int flags, wint_t nextc, const wchar_t *extra)", file src/vis.c, line_start 316, line_end 342, rules (
-        {verb def, id vis.do-svis-fn}
-        {verb sem, id vis.do-svis-fn}
-    )}
-    {id vis.visfun-t-wchar-t-wint-t-int-wint-t-const-wchar-t, kind @typedef, name "*(*visfun_t)(wchar_t *, wint_t, int, wint_t, const wchar_t *)", qualified visfun-t-wchar-t-wint-t-int-wint-t-const-wchar-t, signature "typedef wchar_t *(*visfun_t)(wchar_t *, wint_t, int, wint_t, const wchar_t *)", file src/vis.c, line_start 345, line_end 345, rules (
-        {verb def, id vis.visfun-t-wchar-t-wint-t-int-wint-t-const-wchar-t}
-    )}
-    {id vis.getvisfun-fn, kind @function, name getvisfun, qualified getvisfun, signature "static visfun_t getvisfun(int flags)", file src/vis.c, line_start 352, line_end 360, rules (
-        {verb def, id vis.getvisfun-fn}
-        {verb sem, id vis.getvisfun-fn}
-    )}
-    {id vis.makeextralist-fn, kind @function, name makeextralist, qualified makeextralist, signature "static wchar_t * makeextralist(int flags, const char *src)", file src/vis.c, line_start 367, line_end 405, rules (
-        {verb def, id vis.makeextralist-fn}
-        {verb sem, id vis.makeextralist-fn}
-    )}
-    {id vis.istrsenvisx-fn, kind @function, name istrsenvisx, qualified istrsenvisx, signature "static int istrsenvisx(char **mbdstp, size_t *dlen, const char *mbsrc, size_t mblength, int flags, const char *mbextra, int *cerr_ptr)", file src/vis.c, line_start 414, line_end 698, rules (
-        {verb def, id vis.istrsenvisx-fn}
-        {verb sem, id vis.istrsenvisx-fn}
-    )}
-    {id vis.istrsenvisxl-fn, kind @function, name istrsenvisxl, qualified istrsenvisxl, signature "static int istrsenvisxl(char **mbdstp, size_t *dlen, const char *mbsrc, int flags, const char *mbextra, int *cerr_ptr)", file src/vis.c, line_start 702, line_end 708, rules (
-        {verb def, id vis.istrsenvisxl-fn}
-        {verb sem, id vis.istrsenvisxl-fn}
-    )}
-    {id vis.svis-fn, kind @function, name svis, qualified svis, signature "char * svis(char *mbdst, int c, int flags, int nextc, const char *mbextra)", file src/vis.c, line_start 722, line_end 735, rules (
-        {verb def, id vis.svis-fn}
-        {verb sem, id vis.svis-fn}
-    )}
-    {id vis.snvis-fn, kind @function, name snvis, qualified snvis, signature "char * snvis(char *mbdst, size_t dlen, int c, int flags, int nextc, const char *mbextra)", file src/vis.c, line_start 739, line_end 752, rules (
-        {verb def, id vis.snvis-fn}
-        {verb sem, id vis.snvis-fn}
-    )}
-    {id vis.strsvis-fn, kind @function, name strsvis, qualified strsvis, signature "int strsvis(char *mbdst, const char *mbsrc, int flags, const char *mbextra)", file src/vis.c, line_start 756, line_end 760, rules (
-        {verb def, id vis.strsvis-fn}
-        {verb sem, id vis.strsvis-fn}
-    )}
-    {id vis.strsnvis-fn, kind @function, name strsnvis, qualified strsnvis, signature "int strsnvis(char *mbdst, size_t dlen, const char *mbsrc, int flags, const char *mbextra)", file src/vis.c, line_start 764, line_end 768, rules (
-        {verb def, id vis.strsnvis-fn}
-        {verb sem, id vis.strsnvis-fn}
-    )}
-    {id vis.strsvisx-fn, kind @function, name strsvisx, qualified strsvisx, signature "int strsvisx(char *mbdst, const char *mbsrc, size_t len, int flags, const char *mbextra)", file src/vis.c, line_start 772, line_end 776, rules (
-        {verb def, id vis.strsvisx-fn}
-        {verb sem, id vis.strsvisx-fn}
-    )}
-    {id vis.strsnvisx-fn, kind @function, name strsnvisx, qualified strsnvisx, signature "int strsnvisx(char *mbdst, size_t dlen, const char *mbsrc, size_t len, int flags, const char *mbextra)", file src/vis.c, line_start 780, line_end 785, rules (
-        {verb def, id vis.strsnvisx-fn}
-        {verb sem, id vis.strsnvisx-fn}
-    )}
-    {id vis.strsenvisx-fn, kind @function, name strsenvisx, qualified strsenvisx, signature "int strsenvisx(char *mbdst, size_t dlen, const char *mbsrc, size_t len, int flags, const char *mbextra, int *cerr_ptr)", file src/vis.c, line_start 789, line_end 794, rules (
-        {verb def, id vis.strsenvisx-fn}
-        {verb sem, id vis.strsenvisx-fn}
-    )}
-    {id vis.vis-fn, kind @function, name vis, qualified vis, signature "char * vis(char *mbdst, int c, int flags, int nextc)", file src/vis.c, line_start 803, line_end 816, rules (
-        {verb def, id vis.vis-fn}
-        {verb sem, id vis.vis-fn}
-    )}
-    {id vis.nvis-fn, kind @function, name nvis, qualified nvis, signature "char * nvis(char *mbdst, size_t dlen, int c, int flags, int nextc)", file src/vis.c, line_start 820, line_end 833, rules (
-        {verb def, id vis.nvis-fn}
-        {verb sem, id vis.nvis-fn}
-    )}
-    {id vis.strvis-fn, kind @function, name strvis, qualified strvis, signature "int strvis(char *mbdst, const char *mbsrc, int flags)", file src/vis.c, line_start 845, line_end 849, rules (
-        {verb def, id vis.strvis-fn}
-        {verb sem, id vis.strvis-fn}
-    )}
-    {id vis.strnvis-fn, kind @function, name strnvis, qualified strnvis, signature "int strnvis(char *mbdst, size_t dlen, const char *mbsrc, int flags)", file src/vis.c, line_start 853, line_end 857, rules (
-        {verb def, id vis.strnvis-fn}
-        {verb sem, id vis.strnvis-fn}
-    )}
-    {id vis.stravis-fn, kind @function, name stravis, qualified stravis, signature "int stravis(char **mbdstp, const char *mbsrc, int flags)", file src/vis.c, line_start 861, line_end 866, rules (
-        {verb def, id vis.stravis-fn}
-        {verb sem, id vis.stravis-fn}
-    )}
-    {id vis.strvisx-fn, kind @function, name strvisx, qualified strvisx, signature "int strvisx(char *mbdst, const char *mbsrc, size_t len, int flags)", file src/vis.c, line_start 881, line_end 885, rules (
-        {verb def, id vis.strvisx-fn}
-        {verb sem, id vis.strvisx-fn}
-    )}
-    {id vis.strnvisx-fn, kind @function, name strnvisx, qualified strnvisx, signature "int strnvisx(char *mbdst, size_t dlen, const char *mbsrc, size_t len, int flags)", file src/vis.c, line_start 889, line_end 893, rules (
-        {verb def, id vis.strnvisx-fn}
-        {verb sem, id vis.strnvisx-fn}
-    )}
-    {id vis.strenvisx-fn, kind @function, name strenvisx, qualified strenvisx, signature "int strenvisx(char *mbdst, size_t dlen, const char *mbsrc, size_t len, int flags, int *cerr_ptr)", file src/vis.c, line_start 897, line_end 902, rules (
-        {verb def, id vis.strenvisx-fn}
-        {verb sem, id vis.strenvisx-fn}
-    )}
-    {id vis.strunvis-fn, kind @function, name strunvis, qualified strunvis, signature "int strunvis(char *, const char *)", file src/vis.h, line_start 108, line_end 108, rules (
-        {verb def, id vis.strunvis-fn}
-        {verb sem, id vis.strunvis-fn}
-    )}
-    {id vis.strnunvis-fn, kind @function, name strnunvis, qualified strnunvis, signature "int strnunvis(char *, size_t, const char *)", file src/vis.h, line_start 111, line_end 111, rules (
-        {verb def, id vis.strnunvis-fn}
-        {verb sem, id vis.strnunvis-fn}
-    )}
-    {id vis.strunvisx-fn, kind @function, name strunvisx, qualified strunvisx, signature "int strunvisx(char *, const char *, int)", file src/vis.h, line_start 115, line_end 115, rules (
-        {verb def, id vis.strunvisx-fn}
-        {verb sem, id vis.strunvisx-fn}
-    )}
-    {id vis.strnunvisx-fn, kind @function, name strnunvisx, qualified strnunvisx, signature "int strnunvisx(char *, size_t, const char *, int)", file src/vis.h, line_start 118, line_end 118, rules (
-        {verb def, id vis.strnunvisx-fn}
-        {verb sem, id vis.strnunvisx-fn}
-    )}
-    {id vis.unvis-fn, kind @function, name unvis, qualified unvis, signature "int unvis(char *, int, int *, int)", file src/vis.h, line_start 123, line_end 123, rules (
-        {verb def, id vis.unvis-fn}
-        {verb sem, id vis.unvis-fn}
     )}
 )

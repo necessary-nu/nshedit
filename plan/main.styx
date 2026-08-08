@@ -506,6 +506,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-08T02:14:25.359608623Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "THE UNFINISHED HALF OF THIS NODE, closed now rather than left to be rediscovered. Deleting the vis and unvis bodies moved seventy def and sem annotations onto the `pub use bsd::vis` re-export, and the reasoning written at the time was sound for the two facets a re-export can honestly satisfy. It said nothing about the third, and the third is where it broke.\n\nA /test facet on that re-export would be this tree claiming it verifies an implementation living in another repository — one with its own [spec:libbsd:...] corpus and its own tests. The only ways to reach 650 were to write tests that only run under an optional feature, which reports \"tested\" about code the default build does not compile, or to leave thirty-four rules permanently unverified so the port gate could never go green. Both make the number mean less than it appears to.\n\nSo the rules are retired. docs/spec/port/src/vis.md and unvis.md are deleted, src/vis.c, src/vis.h and src/unvis.c leave the source-impl scan the same way strlcpy.c and the other libc gap-fillers already had, and `nplan port extract` rewrote the manifest from the narrowed globs. 650 symbols becomes 614, and waves 1 and 2 went from 650/650 to 614/614 — still complete, now over a denominator that counts only what this tree implements. Wave 3 went 599/650 to 597/614: the two that disappeared were vis and unvis rules that already had a /test facet, so nothing verified was lost.\n\nNOTHING ABOUT WHAT WE SHIP CHANGES, and that was checked rather than assumed. `pub use bsd::vis` stays — nshedit-abi's readline layer reaches Encoder through it at two sites. And the C ABI never exported these symbols in the first place: nm -D on the built cdylib finds zero of them, which matches Debian's own libedit.so.2 IMPORTING strvis@LIBBSD_0.0 rather than providing it. conformance-abi-shape sees no difference either way.\n\n`nplan spec validate` reports no orphan refs, so no annotation anywhere still points at a rule that stopped existing.\n\nWHAT THIS DOES NOT SETTLE. The bsd crate's vis is now an untested dependency from this tree's point of view, and that is the correct place for the gap to sit rather than a reason to be comfortable. conformance/vis-cross.sh still cross-checks the in-tree C against libbsd.so, which is evidence about the C and about libbsd but not about the Rust crate we actually link. If that ever matters, the check belongs in the bsd repo where the implementation and its rules live."
+                        after_done true
+                    }
                 )
             }
 

@@ -10,8 +10,16 @@ specs ({
         // sys.h is pure portability shim (typedefs, __arraycount, _DIAGASSERT,
         // libc prototypes, Solaris termcap externs) — nothing survives in Rust.
         // strlcpy/strlcat/getline/wcsdup/reallocarr are libc gap-fillers with no
-        // observable surface. vis/unvis stay: they are the history file format.
-        {name source-impl, languages (@c), include (src/**/*.c src/**/*.h), exclude (src/sys.h src/strlcpy.c src/strlcat.c src/getline.c src/wcsdup.c src/reallocarr.c), mode @impl-only}
+        // observable surface.
+        //
+        // vis/unvis joined them once the bodies were deleted in favour of the
+        // `bsd` crate. They are still the history file format and we still
+        // ship them, through `nshedit::vis` — but the implementation is
+        // another repository's, with its own `[spec:libbsd:...]` corpus and
+        // its own tests, so a `/test` facet claimed here would be this tree
+        // vouching for code it does not build. The rules are retired and the
+        // denominator counts what this tree implements.
+        {name source-impl, languages (@c), include (src/**/*.c src/**/*.h), exclude (src/sys.h src/strlcpy.c src/strlcat.c src/getline.c src/wcsdup.c src/reallocarr.c src/vis.c src/vis.h src/unvis.c), mode @impl-only}
         // `test_include` is scanned verify-only: a `/test` annotation there
         // counts, a bare impl annotation is ignored. That is how the
         // conformance harness claims what it verifies — the C driver and the
