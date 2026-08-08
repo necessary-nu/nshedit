@@ -38,8 +38,6 @@ use std::cell::{Cell, RefCell};
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use nshedit::chartype::{CtBufferT, ct_decode_string};
-use nshedit::editline::readline::{HistEntry, HistdataT, HistoryState, Keymap, KeymapEntry};
-use nshedit::el::CFile;
 use nshedit::filecomplete::{self, FilenameCompletionState};
 use nshedit::tty::{C_EOF, C_REPRINT, TS_IO};
 use std::os::fd::AsRawFd;
@@ -50,6 +48,9 @@ use crate::cdecl::histedit::{
     H_LAST, H_LOAD, H_NEXT, H_NEXT_EVDATA, H_NEXT_EVENT, H_NEXT_STR, H_PREV, H_PREV_EVENT,
     H_PREV_STR, H_REPLACE, H_SAVE, H_SET, H_SETSIZE, HistEvent,
 };
+use crate::cdecl::readline::{
+    CFile, HistEntry, HistdataT, HistoryState, KEYMAP_SIZE, Keymap, KeymapEntry, RlCommandFuncT,
+};
 use crate::{cenv, clocale, cstdio};
 use bridge::{
     NO_TTY, em_kill_line, passwd_home_dir, re_putc, tty_end, tty_get_signal_character, tty_init,
@@ -57,22 +58,14 @@ use bridge::{
 
 mod bridge;
 
-/// C: `rl_command_func_t *` — the application's keystroke handler.
-///
-/// Spelled out here rather than taken from
-/// `nshedit::editline::readline::RlCommandFuncT`, which is a *Rust*-ABI `fn`
-/// and so cannot cross an `extern "C"` boundary. Collapse the two when the
-/// header types move into this crate.
-type RlCommandFunc = unsafe extern "C" fn(c_int, c_int) -> c_int;
-
 // ---------------------------------------------------------------------------
-// Constants `readline.c` gets from headers this crate does not own yet.
+// Constants `readline.c` gets from its public and private C headers.
 //
 // `histedit.h`'s `EL_*` and `H_*`, `editline/readline.h`'s `RL_*`, `tty.h`'s
 // control-character indices, `fcns.h`'s action numbers and `vis.h`'s flags are
-// all frozen ABI. The `H_*` and `CC_*` sets are `pub` in the core and imported
-// above; the rest are `pub(crate)` there or have no Rust home at all, so they
-// are spelled out here with their C values.
+// all frozen compatibility values. Public `H_*` and `CC_*` values come from
+// the ABI declarations above; implementation-only values remain local here
+// instead of creating another public compatibility module in the core.
 // ---------------------------------------------------------------------------
 
 /// C: `#define EL_TERMINAL 1`.
@@ -254,34 +247,34 @@ pub static mut rl_event_hook: Option<unsafe extern "C" fn() -> c_int> = None;
 // [spec:libedit:def:readline.emacs-standard-keymap]
 // [spec:libedit:sem:readline.emacs-standard-keymap]
 #[unsafe(no_mangle)]
-pub static mut emacs_standard_keymap: [KeymapEntry; 256] = [const {
+pub static mut emacs_standard_keymap: [KeymapEntry; KEYMAP_SIZE] = [const {
     KeymapEntry {
         r#type: 0,
         function: None,
     }
-}; 256];
+}; KEYMAP_SIZE];
 
 /// C: `KEYMAP_ENTRY_ARRAY emacs_meta_keymap;` — likewise inert.
 // [spec:libedit:def:readline.emacs-meta-keymap]
 // [spec:libedit:sem:readline.emacs-meta-keymap]
 #[unsafe(no_mangle)]
-pub static mut emacs_meta_keymap: [KeymapEntry; 256] = [const {
+pub static mut emacs_meta_keymap: [KeymapEntry; KEYMAP_SIZE] = [const {
     KeymapEntry {
         r#type: 0,
         function: None,
     }
-}; 256];
+}; KEYMAP_SIZE];
 
 /// C: `KEYMAP_ENTRY_ARRAY emacs_ctlx_keymap;` — likewise inert.
 // [spec:libedit:def:readline.emacs-ctlx-keymap]
 // [spec:libedit:sem:readline.emacs-ctlx-keymap]
 #[unsafe(no_mangle)]
-pub static mut emacs_ctlx_keymap: [KeymapEntry; 256] = [const {
+pub static mut emacs_ctlx_keymap: [KeymapEntry; KEYMAP_SIZE] = [const {
     KeymapEntry {
         r#type: 0,
         function: None,
     }
-}; 256];
+}; KEYMAP_SIZE];
 
 /// C: `int rl_catch_signals = 1;` — read once, by `rl_initialize`, as the
 /// `EL_SIGNAL` argument.
@@ -630,7 +623,7 @@ static mut E: *mut EditLine = ptr::null_mut();
 
 /// C: `static rl_command_func_t *map[256];` — `rl_add_defun`'s dispatch
 /// table, consulted by `rl_bind_wrapper`.
-static mut MAP: [Option<RlCommandFunc>; 256] = [None; 256];
+static mut MAP: [Option<RlCommandFuncT>; KEYMAP_SIZE] = [None; KEYMAP_SIZE];
 
 thread_local! {
     /// C: `static HIST_ENTRY rl_he;` — the shared entry `current_history`
@@ -726,9 +719,9 @@ static ABORT_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 // and all three of them read it.
 // ---------------------------------------------------------------------------
 
-// `EditLine` and `History` are opaque handles the C only ever passes by
-// pointer, and the core does not spell them `repr(C)`; every exported
-// definition in this crate takes them the same way.
+// `EditLine` and `History` are ABI-owned opaque allocations. Only their
+// pointer values cross this declaration; no caller can name or inspect their
+// fields, and every exported definition in this crate uses the same handles.
 #[expect(
     improper_ctypes,
     reason = "the C ABI treats EditLine and History exclusively as opaque pointer handles"

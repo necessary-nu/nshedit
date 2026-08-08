@@ -74,42 +74,42 @@ typedef int       rl_icppfunc_t(char **);
 // C: `#define RL_STATE_DONE 0x000001`.
 #define RL_STATE_DONE 1
 
-// C: `typedef void *histdata_t;` — opaque per-entry application data,
+// C: `typedef void *histdata_t;` — opaque per-entry application data.
 typedef void *histdata_t;
 
-// C: `typedef struct _hist_entry { const char *line; histdata_t data; } HIST_ENTRY;`
+// C: `typedef struct _hist_entry { const char *line; histdata_t data; } HIST_ENTRY;`.
 struct _hist_entry {
   const char *line;
   histdata_t data;
 };
 
-// C: `typedef struct { int length; } HISTORY_STATE;`
+// C: `typedef struct { int length; } HISTORY_STATE;`.
 struct _history_state {
   int length;
 };
 
-// C: `typedef struct _keymap_entry { char type; rl_linebuf_func_t *function; } KEYMAP_ENTRY;`
+// C: `typedef struct _keymap_entry { char type; rl_linebuf_func_t *function; } KEYMAP_ENTRY;`.
 struct _keymap_entry {
-  // `ISFUNC` (0), `ISKMAP` (1) or `ISMACR` (2). `c_char` because that is
+  // `ISFUNC`, `ISKMAP`, or `ISMACR`.
   char type;
-  // The C's `rl_linebuf_func_t *`, spelled out rather than written
+  // Nullable `rl_linebuf_func_t *`, expanded so cbindgen renders a C
   int (*function)(const char*, int);
 };
 
-// C: `typedef KEYMAP_ENTRY *Keymap;` — a borrowed view of a
+// C: `typedef KEYMAP_ENTRY *Keymap;` — a borrowed mutable keymap view.
 typedef struct _keymap_entry *Keymap;
 
-// C: `typedef struct _hist_entry { ... } HIST_ENTRY;` — `def:readline.hist-entry`.
+// C: `typedef struct _hist_entry { ... } HIST_ENTRY;`.
 typedef struct _hist_entry HIST_ENTRY;
 
-// C: `typedef struct { int length; } HISTORY_STATE;` — `def:readline.history-state`.
+// C: `typedef struct { int length; } HISTORY_STATE;`.
 typedef struct _history_state HISTORY_STATE;
 
-// C: `typedef struct _keymap_entry { ... } KEYMAP_ENTRY;` — `def:readline.keymap-entry`.
+// C: `typedef struct _keymap_entry { ... } KEYMAP_ENTRY;`.
 typedef struct _keymap_entry KEYMAP_ENTRY;
 
-// C: `typedef KEYMAP_ENTRY KEYMAP_ENTRY_ARRAY[KEYMAP_SIZE];` —
-typedef KEYMAP_ENTRY KEYMAP_ENTRY_ARRAY[256];
+// C: `typedef KEYMAP_ENTRY KEYMAP_ENTRY_ARRAY[KEYMAP_SIZE];`.
+typedef KEYMAP_ENTRY KEYMAP_ENTRY_ARRAY[KEYMAP_SIZE];
 
 #ifdef __cplusplus
 extern "C" {
@@ -149,13 +149,13 @@ extern int rl_done;
 extern int (*rl_event_hook)(void);
 
 // C: `KEYMAP_ENTRY_ARRAY emacs_standard_keymap;` — zero-initialized and
-extern struct _keymap_entry emacs_standard_keymap[256];
+extern struct _keymap_entry emacs_standard_keymap[KEYMAP_SIZE];
 
 // C: `KEYMAP_ENTRY_ARRAY emacs_meta_keymap;` — likewise inert.
-extern struct _keymap_entry emacs_meta_keymap[256];
+extern struct _keymap_entry emacs_meta_keymap[KEYMAP_SIZE];
 
 // C: `KEYMAP_ENTRY_ARRAY emacs_ctlx_keymap;` — likewise inert.
-extern struct _keymap_entry emacs_ctlx_keymap[256];
+extern struct _keymap_entry emacs_ctlx_keymap[KEYMAP_SIZE];
 
 // C: `int rl_catch_signals = 1;` — read once, by `rl_initialize`, as the
 extern int rl_catch_signals;

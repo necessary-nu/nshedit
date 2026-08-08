@@ -74,11 +74,9 @@ typedef int       rl_icppfunc_t(char **);
 """
 
 [export]
-# The C's names for the three records, plus the keymap array type. Nothing in
-# this header's own signatures uses them — the exported functions are written
-# against the core's Rust-cased types, which render to the same tags — so
-# cbindgen would drop them as unreachable. A consumer writes `HIST_ENTRY *`,
-# so they are named explicitly.
+# The C typedef names for the three ABI-owned records and keymap array.
+# Exported signatures reach the record tags directly, so cbindgen would omit
+# these aliases unless they were named explicitly.
 include = [
     "HistEntryAlias",
     "HistoryStateAlias",
@@ -97,19 +95,12 @@ exclude = [
     "el_set_va",
     "el_get_va",
     "history_va",
-    # A private alias in `crates/nshedit-abi/src/readline.rs` for the type of
-    # `rl_add_defun`'s dispatch table. `editline/readline.h` declares
-    # `rl_command_func_t` for the same shape, above, and this one is an
-    # implementation detail that has no business in the header.
-    "RlCommandFunc",
-    # The core's Rust-cased names for the three records. The C names come
-    # from `crates/nshedit-abi/src/cdecl/readline.rs`, which aliases the
-    # identical Rust types under the C's spelling; keeping both would put a
-    # second name for each record in the header.
+    # The Rust-cased array alias under the C-facing alias above.
     "KeymapEntryArray",
-    # The ten function-pointer aliases the core declares. The C's
-    # counterparts are function TYPES and are emitted above; a consumer that
-    # got these instead would silently gain a level of indirection.
+    # The ten Rust function-pointer aliases mirror declarations for coverage
+    # and Rust use. Their C counterparts are function TYPES and are emitted
+    # above; emitting the pointers under those names would silently gain a
+    # level of indirection at every C use site.
     "RlLinebufFuncT",
     "RlVoidfuncT",
     "RlVintfuncT",

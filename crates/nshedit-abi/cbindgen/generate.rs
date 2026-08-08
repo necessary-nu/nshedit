@@ -57,8 +57,10 @@ const HEADERS: &[Header] = &[
         out: "editline/readline.h",
         config: "cbindgen/readline.toml",
         srcs: &[
-            "crates/nshedit/src/editline/readline.rs",
+            // Every readline typedef, record, and header-only constant.
+            // Generation deliberately reads no core source.
             "crates/nshedit-abi/src/cdecl/readline.rs",
+            // Exported globals and functions.
             "crates/nshedit-abi/src/readline.rs",
             "crates/nshedit-abi/src/readline/history_io.rs",
         ],

@@ -2618,7 +2618,7 @@ layer, its history-expansion machinery and its exported globals.
 - rule: `[spec:libedit:sem:readline.history-get-history-state-fn]` · C: `src/editline/readline.h`, `src/readline.c`
 - class: divergence · reach: hot for a mismatched build.
 - disposition: reproduce — the struct definition is frozen by the drop-in requirement.
-- status: reproduced — `crates/nshedit/src/editline/readline.rs` `HistoryState` carries only `length`, and `history_get_history_state` allocates one and writes just that field.
+- status: reproduced — `crates/nshedit-abi/src/cdecl/readline.rs` owns the ABI `HistoryState` with only `length`, and `history_get_history_state` allocates one and writes just that field.
 
 **ERR-readline-49** — return-convention divergences: `history_search_prefix` returns 0/-1 where GNU readline returns the offset of the matching line; `history_search` returns the byte offset of the match but does not update `history_offset` as readline does; `add_history` returns `int` where readline declares it `void`, and the value carries no information (always 0), so success and allocation failure are indistinguishable; `read_history`/`write_history`/`append_history`/`history_truncate_file` return a positive errno on failure and never -1.
 - rule: `[spec:libedit:sem:readline.history-search-prefix-fn]`, `[spec:libedit:sem:readline.history-search-fn]`, `[spec:libedit:sem:readline.add-history-fn]`, `[spec:libedit:sem:readline.read-history-fn]`, `[spec:libedit:sem:readline.write-history-fn]`, `[spec:libedit:sem:readline.append-history-fn]` · C: `src/readline.c`

@@ -108,8 +108,8 @@ pub mod domain;
 /// Safe native editor sessions and their borrowed I/O capabilities.
 pub mod editor;
 
-// Public headers.
-pub mod editline;
+// Temporary compatibility definitions still consumed by the translated
+// engine. Installed C declarations belong exclusively to `nshedit-abi`.
 pub mod histedit;
 
 // Host facilities the port has to supply itself. None has a C counterpart:
