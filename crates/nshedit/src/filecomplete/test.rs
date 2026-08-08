@@ -3,7 +3,7 @@ use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 
 use super::*;
-use crate::el::blank_editline;
+use crate::testkit::{headless_editor, set_line};
 
 /// Text as the line buffer carries it.
 fn wide(s: &str) -> Vec<u32> {
@@ -83,30 +83,18 @@ impl Sink {
     }
 }
 
-/// An editor whose line holds `s` with the cursor at `at`.
+/// An editor whose line holds `s` with the cursor at `at`, on an 80-column
+/// screen and writing nowhere.
 ///
-/// Two things are set that are easy to get wrong. The buffer runs well
-/// past `lastchar` because `ch_init` allocates `EL_BUFSIZ` and leaves
-/// `limit` short of its end, and the insert and delete paths need that
-/// slack. And `thiscmd` is moved off `lastcmd`: `blank_editline` leaves
-/// both at 0, which `fn_complete2` reads as the *second* consecutive
-/// invocation of the same command and answers with `?` — the listing
-/// path, not the first-tab path.
+/// The one thing here that is not [`headless_editor`]'s is `thiscmd` being
+/// moved off `lastcmd`. A blank editor leaves both at 0, which
+/// [`what_to_do`] reads as the *second* consecutive invocation of the same
+/// command and answers with `?` — so without this every test would take the
+/// listing path instead of the first-tab path.
 fn el_with(s: &str, at: usize) -> EditLine {
-    let mut el = blank_editline();
-    let text = wide(s);
-    let mut buf = vec![0u32; text.len() + 256];
-    buf[..text.len()].copy_from_slice(&text);
-    el.el_line.lastchar = text.len();
-    el.el_line.limit = buf.len() - 1;
-    el.el_line.cursor = at;
-    el.el_line.buffer = buf;
-    el.el_state.lastcmd = 0;
+    let mut el = headless_editor(80, 24);
+    set_line(&mut el, s, at);
     el.el_state.thiscmd = 1;
-    // `blank_editline` leaves this at 0, the process stdin, and both
-    // `write_outfile` and the beep take it literally. Nothing wants to
-    // write there; a negative descriptor is the discard.
-    el.el_outfd = -1;
     el
 }
 
@@ -137,10 +125,10 @@ fn the_escaping_set_is_the_c_s_twenty_three_characters_holes_included() {
     let members = b"'\"()\\<>$# \n\t?;`@=|{}&*[";
     assert_eq!(members.len(), 23);
     for &c in members {
-        assert_eq!(needs_escaping(u32::from(c)), 1, "{:?}", c as char);
+        assert!(needs_escaping(u32::from(c)), "{:?}", c as char);
     }
     for &c in b"]!~^%:/-_.,+abzAZ09" {
-        assert_eq!(needs_escaping(u32::from(c)), 0, "{:?}", c as char);
+        assert!(!needs_escaping(u32::from(c)), "{:?}", c as char);
     }
 
     // Anything that is not a single byte falls through to 0, and so does
@@ -149,10 +137,10 @@ fn the_escaping_set_is_the_c_s_twenty_three_characters_holes_included() {
     // character is never escaped, and `escape_filename` widens the bytes
     // of a multibyte character one at a time, so its bytes are not
     // escaped either.
-    assert_eq!(needs_escaping(u32::from('é')), 0);
-    assert_eq!(needs_escaping(u32::from('☃')), 0);
-    assert_eq!(needs_escaping(0xC3), 0, "a UTF-8 lead byte");
-    assert_eq!(needs_escaping(0xA9), 0, "a UTF-8 continuation byte");
+    assert!(!needs_escaping(u32::from('é')));
+    assert!(!needs_escaping(u32::from('☃')));
+    assert!(!needs_escaping(0xC3), "a UTF-8 lead byte");
+    assert!(!needs_escaping(0xA9), "a UTF-8 continuation byte");
 }
 
 /// Four characters, every one of them also a `needs_escaping` member.
@@ -164,10 +152,9 @@ fn the_escaping_set_is_the_c_s_twenty_three_characters_holes_included() {
 #[test]
 fn the_double_quote_set_is_four_characters_and_a_subset_of_the_bare_set() {
     for &c in b"\"\\`$" {
-        assert_eq!(needs_dquote_escaping(c), 1, "{:?}", c as char);
-        assert_eq!(
+        assert!(needs_dquote_escaping(c), "{:?}", c as char);
+        assert!(
             needs_escaping(u32::from(c)),
-            1,
             "{:?} is unreachable in escape_filename unless it is in both",
             c as char
         );
@@ -175,7 +162,7 @@ fn the_double_quote_set_is_four_characters_and_a_subset_of_the_bare_set() {
     // Everything else, the rest of the bare set included: inside double
     // quotes a space, a semicolon or a glob character stands for itself.
     for &c in b"'() <>#\n\t?;@=|{}&*[a0/" {
-        assert_eq!(needs_dquote_escaping(c), 0, "{:?}", c as char);
+        assert!(!needs_dquote_escaping(c), "{:?}", c as char);
     }
 }
 
@@ -220,22 +207,22 @@ fn unescaping_drops_every_backslash_including_the_escaped_one() {
 // [spec:libedit:sem:filecomplete.escape-filename-fn/test]
 #[test]
 fn an_unquoted_match_is_backslash_escaped_and_gets_its_append_character() {
-    let mut el = el_with("", 0);
+    let el = el_with("", 0);
     assert_eq!(
-        escape_filename(&mut el, "a b(c)", 0, None).unwrap(),
+        escape_filename(&el, "a b(c)", false, None).unwrap(),
         "a\\ b\\(c\\)"
     );
     assert_eq!(
-        escape_filename(&mut el, "a b(c)", 0, Some(app_space)).unwrap(),
+        escape_filename(&el, "a b(c)", false, Some(app_space)).unwrap(),
         "a\\ b\\(c\\)",
         "the append character needs a single match, not merely an app_func"
     );
     assert_eq!(
-        escape_filename(&mut el, "a b(c)", 1, Some(app_space)).unwrap(),
+        escape_filename(&el, "a b(c)", true, Some(app_space)).unwrap(),
         "a\\ b\\(c\\) "
     );
     assert_eq!(
-        escape_filename(&mut el, "dir", 1, Some(app_slash)).unwrap(),
+        escape_filename(&el, "dir", true, Some(app_slash)).unwrap(),
         "dir/"
     );
 }
@@ -250,36 +237,36 @@ fn inside_single_quotes_only_the_apostrophe_is_escaped() {
     // The scan reads the line up to the cursor, and the C's ordering has
     // `fn_complete2` delete the partial word before calling this — so a
     // lone opening quote is the whole of what it sees.
-    let mut el = el_with("'", 1);
+    let el = el_with("'", 1);
     assert_eq!(
-        escape_filename(&mut el, "a b(c)", 0, None).unwrap(),
+        escape_filename(&el, "a b(c)", false, None).unwrap(),
         "a b(c)",
         "the bare set does not apply inside single quotes"
     );
     assert_eq!(
-        escape_filename(&mut el, "it's", 0, None).unwrap(),
+        escape_filename(&el, "it's", false, None).unwrap(),
         "it'\\''s"
     );
     assert_eq!(
-        escape_filename(&mut el, "a b", 1, Some(app_space)).unwrap(),
+        escape_filename(&el, "a b", true, Some(app_space)).unwrap(),
         "a b'",
         "the space is suppressed inside quotes and the quote is closed"
     );
     assert_eq!(
-        escape_filename(&mut el, "sub", 1, Some(app_slash)).unwrap(),
+        escape_filename(&el, "sub", true, Some(app_slash)).unwrap(),
         "sub/",
         "a directory leaves the quote open on purpose"
     );
 
     // Double quotes escape only the four `needs_dquote_escaping` bytes,
     // so the space stays bare while the `$` is backslashed.
-    let mut el = el_with("\"", 1);
+    let el = el_with("\"", 1);
     assert_eq!(
-        escape_filename(&mut el, "a b$c", 0, None).unwrap(),
+        escape_filename(&el, "a b$c", false, None).unwrap(),
         "a b\\$c"
     );
     assert_eq!(
-        escape_filename(&mut el, "a b", 1, Some(app_space)).unwrap(),
+        escape_filename(&el, "a b", true, Some(app_space)).unwrap(),
         "a b\""
     );
 }
@@ -293,17 +280,17 @@ fn inside_single_quotes_only_the_apostrophe_is_escaped() {
 #[test]
 fn the_quote_scan_mistakes_an_escaped_quote_for_a_quote_and_back_again() {
     // Baseline: an unquoted line escapes the whole bare set.
-    let mut el = el_with("", 0);
+    let el = el_with("", 0);
     assert_eq!(
-        escape_filename(&mut el, "a b$c", 0, None).unwrap(),
+        escape_filename(&el, "a b$c", false, None).unwrap(),
         "a\\ b\\$c"
     );
 
     // ERR-completion-08. The backslash the user typed is ignored, so this
     // escapes as if inside double quotes: the space survives bare.
-    let mut el = el_with("\\\"", 2);
+    let el = el_with("\\\"", 2);
     assert_eq!(
-        escape_filename(&mut el, "a b$c", 0, None).unwrap(),
+        escape_filename(&el, "a b$c", false, None).unwrap(),
         "a b\\$c"
     );
 
@@ -311,20 +298,20 @@ fn the_quote_scan_mistakes_an_escaped_quote_for_a_quote_and_back_again() {
     // opening quote, but the one-character look-back sees only the
     // backslash, so the quote does not register and the escaping is the
     // unquoted one.
-    let mut el = el_with("\\\\'", 3);
+    let el = el_with("\\\\'", 3);
     assert_eq!(
-        escape_filename(&mut el, "a b$c", 0, None).unwrap(),
+        escape_filename(&el, "a b$c", false, None).unwrap(),
         "a\\ b\\$c"
     );
 
     // The check does work for the case it was written for.
-    let mut el = el_with("\\'", 2);
+    let el = el_with("\\'", 2);
     assert_eq!(
-        escape_filename(&mut el, "a b$c", 0, None).unwrap(),
+        escape_filename(&el, "a b$c", false, None).unwrap(),
         "a\\ b\\$c"
     );
-    let mut el = el_with("'", 1);
-    assert_eq!(escape_filename(&mut el, "a b$c", 0, None).unwrap(), "a b$c");
+    let el = el_with("'", 1);
+    assert_eq!(escape_filename(&el, "a b$c", false, None).unwrap(), "a b$c");
 }
 
 /// ERR-completion-10, reproduced: an `app_func` that returns the empty
@@ -338,16 +325,16 @@ fn an_empty_append_string_plants_a_nul_inside_the_result() {
     fn app_nothing(_: &str) -> &'static str {
         ""
     }
-    let mut el = el_with("", 0);
-    let out = escape_filename(&mut el, "abc", 1, Some(app_nothing)).unwrap();
+    let el = el_with("", 0);
+    let out = escape_filename(&el, "abc", true, Some(app_nothing)).unwrap();
     assert_eq!(out.as_bytes(), b"abc\0");
     assert_eq!(cstr(&out), "abc", "the C's view ends one byte early");
 
     // And the quote is not closed either: step 7 asks for a space, and
     // the NUL is not one. A single-quoted context therefore ends up with
     // an unbalanced quote in the line.
-    let mut el = el_with("'", 1);
-    let out = escape_filename(&mut el, "abc", 1, Some(app_nothing)).unwrap();
+    let el = el_with("'", 1);
+    let out = escape_filename(&el, "abc", true, Some(app_nothing)).unwrap();
     assert_eq!(out.as_bytes(), b"abc\0");
 }
 
@@ -433,7 +420,7 @@ fn the_display_sort_folds_ascii_case_and_nothing_else() {
 fn the_word_runs_back_to_the_nearest_break_character() {
     let buf = wide("ls /tm");
     let mut len = 0;
-    let w = find_word_to_complete(6, &buf, BREAK_CHARS, None, &mut len, 0).unwrap();
+    let w = find_word_to_complete(6, &buf, BREAK_CHARS, None, &mut len, false).unwrap();
     assert_eq!(len, 3);
     assert_eq!(w, [wide("/tm"), vec![0]].concat());
 
@@ -441,7 +428,7 @@ fn the_word_runs_back_to_the_nearest_break_character() {
     // is appended; the raw span and the returned word are the same length.
     let buf = wide("x a\\ b");
     let mut len = 0;
-    let w = find_word_to_complete(6, &buf, BREAK_CHARS, None, &mut len, 0).unwrap();
+    let w = find_word_to_complete(6, &buf, BREAK_CHARS, None, &mut len, false).unwrap();
     assert_eq!(len, 4);
     assert_eq!(w, [wide("a\\ b"), vec![0]].concat());
 }
@@ -457,7 +444,7 @@ fn the_word_runs_back_to_the_nearest_break_character() {
 fn an_escaped_break_character_stays_inside_the_word() {
     let buf = wide("x a\\ b");
     let mut len = 0;
-    let w = find_word_to_complete(6, &buf, BREAK_CHARS, None, &mut len, 1).unwrap();
+    let w = find_word_to_complete(6, &buf, BREAK_CHARS, None, &mut len, true).unwrap();
     assert_eq!(len, 4, "four characters of line for a three-character word");
     assert_eq!(w, [wide("a b"), vec![0, 0]].concat());
 }
@@ -473,13 +460,13 @@ fn an_escaped_break_character_stays_inside_the_word() {
 fn a_trailing_quote_or_backslash_is_stepped_over_but_still_counted() {
     let buf = wide("ls foo\\");
     let mut len = 0;
-    let w = find_word_to_complete(7, &buf, BREAK_CHARS, None, &mut len, 1).unwrap();
+    let w = find_word_to_complete(7, &buf, BREAK_CHARS, None, &mut len, true).unwrap();
     assert_eq!(len, 4);
     assert_eq!(w, [wide("foo"), vec![0, 0]].concat());
 
     let buf = wide("ls '");
     let mut len = 99;
-    let w = find_word_to_complete(4, &buf, BREAK_CHARS, None, &mut len, 1).unwrap();
+    let w = find_word_to_complete(4, &buf, BREAK_CHARS, None, &mut len, true).unwrap();
     assert_eq!(len, 0);
     assert_eq!(w, [0], "an empty word, not the quote");
 }
@@ -496,14 +483,14 @@ fn a_special_prefix_ends_the_word_exactly_as_a_break_character_does() {
     let buf = wide("echo $HO");
     let mut len = 0;
     let sp = [u32::from(b'$')];
-    let w = find_word_to_complete(8, &buf, &[], Some(&sp), &mut len, 0).unwrap();
+    let w = find_word_to_complete(8, &buf, &[], Some(&sp), &mut len, false).unwrap();
     assert_eq!(len, 2);
     assert_eq!(w, [wide("HO"), vec![0]].concat());
 
     // An empty break set matches nothing but a 0, and here there is one.
     let buf = [u32::from(b'a'), 0, u32::from(b'b')];
     let mut len = 0;
-    let w = find_word_to_complete(3, &buf, &[], None, &mut len, 0).unwrap();
+    let w = find_word_to_complete(3, &buf, &[], None, &mut len, false).unwrap();
     assert_eq!(len, 1);
     assert_eq!(w, [u32::from(b'b'), 0]);
 }

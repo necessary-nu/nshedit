@@ -51,6 +51,17 @@ use crate::histedit::{CC_NORM, CC_REDISPLAY, CC_REFRESH};
 /// [`fn_complete`] is the only thing that computes it.
 pub const FN_QUOTE_MATCH: u32 = 1;
 
+/// The three ASCII characters this file tests wide input against: the
+/// backslash and the two quotes.
+///
+/// Named because a Rust pattern takes no cast expression, so `'\\' as u32`
+/// cannot be written inline in the `match`es that want it.
+const BSLASH: u32 = '\\' as u32;
+/// C: `'\''` widened. See [`BSLASH`].
+const SQUOTE: u32 = '\'' as u32;
+/// C: `'"'` widened. See [`BSLASH`].
+const DQUOTE: u32 = '"' as u32;
+
 /// C: `static const wchar_t break_chars[] = L" \t\n\"\\'`@$><=;|&{("`.
 ///
 /// The file-static word-break set [`_el_fn_complete`] passes. It carries the
@@ -60,9 +71,9 @@ const BREAK_CHARS: &[u32] = &[
     ' ' as u32,
     '\t' as u32,
     '\n' as u32,
-    '"' as u32,
-    '\\' as u32,
-    '\'' as u32,
+    DQUOTE,
+    BSLASH,
+    SQUOTE,
     '`' as u32,
     '@' as u32,
     '$' as u32,
@@ -237,8 +248,9 @@ pub fn fn_tilde_expand(txt: &str) -> Option<String> {
 
 // [spec:libedit:def:filecomplete.needs-escaping-fn]
 // [spec:libedit:sem:filecomplete.needs-escaping-fn]
-/// C: `static int needs_escaping(wchar_t c)` — 1 or 0, kept an `int`.
-fn needs_escaping(c: u32) -> i32 {
+/// C: `static int needs_escaping(wchar_t c)`, a predicate whose `int` is only
+/// ever 1 or 0 and only ever read as a condition.
+fn needs_escaping(c: u32) -> bool {
     // Exactly 23 characters, and every one of them ASCII. `]` is absent
     // although `[` is present, `)` and `}` are present, and `!`, `~`, `^`,
     // `%`, `:` and `/` are absent — ERR-completion-20, disposition
@@ -249,7 +261,7 @@ fn needs_escaping(c: u32) -> i32 {
     // `escape_filename` widens one at a time: the C's comparisons are against
     // ASCII code points and match neither, whichever way `char` and `wchar_t`
     // are signed.
-    i32::from(matches!(
+    matches!(
         u8::try_from(c),
         Ok(b'\''
             | b'"'
@@ -274,18 +286,18 @@ fn needs_escaping(c: u32) -> i32 {
             | b'&'
             | b'*'
             | b'[')
-    ))
+    )
 }
 
 // [spec:libedit:def:filecomplete.needs-dquote-escaping-fn]
 // [spec:libedit:sem:filecomplete.needs-dquote-escaping-fn]
 /// C: `static int needs_dquote_escaping(char c)`. A byte of a narrow
-/// filename, so `u8` and not `u32`.
-fn needs_dquote_escaping(c: u8) -> i32 {
+/// filename, so `u8` and not `u32`; a predicate, so `bool` and not `int`.
+fn needs_dquote_escaping(c: u8) -> bool {
     // All four are also members of the `needs_escaping` set, which is
-    // load-bearing: `escape_filename` tests that one first and copies
-    // anything it rejects verbatim.
-    i32::from(matches!(c, b'"' | b'\\' | b'`' | b'$'))
+    // load-bearing: escaping is reached only through that set, so a character
+    // in this one and not in that one could never be escaped at all.
+    matches!(c, b'"' | b'\\' | b'`' | b'$')
 }
 
 // [spec:libedit:def:filecomplete.unescape-string-fn]
@@ -310,7 +322,7 @@ fn unescape_string(string: &[u32]) -> Option<Vec<u32>> {
     // character, producing a string that appears to end early.
     let mut j = 0usize;
     for &c in string {
-        if c == '\\' as u32 {
+        if c == BSLASH {
             continue;
         }
         unescaped[j] = c;
@@ -320,80 +332,133 @@ fn unescape_string(string: &[u32]) -> Option<Vec<u32>> {
     Some(unescaped)
 }
 
+/// The quoting context a completion is inserted into — the C's `s_quoted`
+/// and `d_quoted`, which its own rule records can never both be set.
+///
+/// One value rather than two flags because that exclusion is what the
+/// counting and emitting passes rely on: each folds "inside single quotes"
+/// and "inside double quotes" into one branch, and both would be wrong if the
+/// two could overlap.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Quoting {
+    /// C: neither flag set.
+    Bare,
+    /// C: `s_quoted`.
+    Single,
+    /// C: `d_quoted`.
+    Double,
+}
+
+/// Step 2 of [`escape_filename`]: the quoting context `typed` leaves its end
+/// in.
+///
+/// `typed` is the line up to but not including the cursor. `fn_complete2` has
+/// ALREADY deleted the partial word by the time this runs, so the scan sees
+/// the opening quote the user typed but not the word being completed;
+/// reordering the two changes the escaping.
+fn quoting_before(typed: &[u32]) -> Quoting {
+    let mut quoting = Quoting::Bare;
+    let mut prev: Option<u32> = None;
+    for &c in typed {
+        // The look-back is exactly one character, so `\\'` — an escaped
+        // backslash followed by a quote — is misread as an escaped quote
+        // (ERR-completion-09).
+        let bare_quote = prev != Some(BSLASH);
+        quoting = match (quoting, c) {
+            (Quoting::Bare, SQUOTE) if bare_quote => Quoting::Single,
+            (Quoting::Single, SQUOTE) if bare_quote => Quoting::Bare,
+            // ERR-completion-08, disposition *reproduce*: no backslash check
+            // on these two, so a user-typed `\"` still toggles the
+            // double-quote state. The asymmetry with the single-quote rule
+            // above is the bug.
+            (Quoting::Bare, DQUOTE) => Quoting::Double,
+            (Quoting::Double, DQUOTE) => Quoting::Bare,
+            // A quote of the other kind, or any ordinary character, leaves
+            // the state alone — which is how each kind stays inert inside the
+            // other.
+            (q, _) => q,
+        };
+        prev = Some(c);
+    }
+    quoting
+}
+
+/// What one byte of the filename becomes on its way into the line.
+///
+/// The C asks this twice in two differently-shaped conditionals — step 3 to
+/// budget the buffer, step 5 to fill it — and the two have to agree byte for
+/// byte or the buffer is the wrong size. Here there is one answer and the
+/// budget is read off it.
+#[derive(Clone, Copy)]
+enum EscapedByte {
+    /// The byte itself.
+    Verbatim,
+    /// A backslash, then the byte.
+    Backslashed,
+    /// `'\''` — close the single-quoted string, backslash-escape the
+    /// apostrophe, reopen it. The only form costing more than one extra byte.
+    QuoteBreak,
+}
+
+/// Steps 3 and 5 of [`escape_filename`], asked of one byte.
+fn escaped_byte(quoting: Quoting, c: u8) -> EscapedByte {
+    match quoting {
+        // Outside quotes the whole `needs_escaping` set is backslashed.
+        Quoting::Bare if needs_escaping(u32::from(c)) => EscapedByte::Backslashed,
+        // Inside single quotes nothing but the apostrophe needs anything.
+        Quoting::Single if c == b'\'' => EscapedByte::QuoteBreak,
+        // Inside double quotes only the four `needs_dquote_escaping` bytes,
+        // every one of which is also a `needs_escaping` member — which is what
+        // lets this skip the C's outer `needs_escaping` test without changing
+        // the answer.
+        Quoting::Double if needs_dquote_escaping(c) => EscapedByte::Backslashed,
+        _ => EscapedByte::Verbatim,
+    }
+}
+
 // [spec:libedit:def:filecomplete.escape-filename-fn]
 // [spec:libedit:sem:filecomplete.escape-filename-fn]
 /// C: `static char * escape_filename(EditLine *el, const char *filename, int
 /// single_match, const char *(*app_func)(const char *))`.
 ///
 /// The C's `filename == NULL` guard is unrepresentable — a `&str` is never
-/// null — so only the allocation-failure `None` survives.
+/// null — so only the allocation-failure `None` survives. `el` is shared
+/// rather than exclusive because the editor is only read here: the line this
+/// escapes against is one `fn_complete2` has already finished editing.
 fn escape_filename(
-    el: &mut EditLine,
+    el: &EditLine,
     filename: &str,
-    single_match: i32,
+    single_match: bool,
     app_func: Option<AppFunc>,
 ) -> Option<String> {
     // The C walks a `char *`; the emitting pass, the counting pass and the
     // `app_func` call all see the same bytes-up-to-NUL.
     let filename = cstr(filename);
 
-    // Step 2: work out the quoting context from the line the user has
-    // already typed. `fn_complete2` has ALREADY deleted the partial word by
-    // the time it calls this, so the scan sees the opening quote but not the
-    // word being completed; reordering the two changes the escaping.
-    let mut s_quoted = false;
-    let mut d_quoted = false;
-    {
-        let buffer = &el.el_line.buffer;
-        // `cursor` is an offset into `buffer` by the crate's convention, so
-        // the clamp never fires; it is here so a broken invariant degrades
-        // into a short scan rather than a panic.
-        let end = el.el_line.cursor.min(buffer.len());
-        let mut prev: Option<u32> = None;
-        for &c in &buffer[..end] {
-            if c == '\'' as u32 && !d_quoted && prev.is_none_or(|p| p != '\\' as u32) {
-                // The look-back is exactly one character, so `\\'` — an
-                // escaped backslash followed by a quote — is misread as an
-                // escaped quote (ERR-completion-09).
-                s_quoted = !s_quoted;
-            } else if c == '"' as u32 && !s_quoted {
-                // ERR-completion-08, disposition *reproduce*: no backslash
-                // check on this branch, so a user-typed `\"` still toggles
-                // the double-quote state. The asymmetry with the single-quote
-                // rule above is the bug.
-                d_quoted = !d_quoted;
-            }
-            prev = Some(c);
-        }
-    }
+    // Step 2. `cursor` is an offset into `buffer` by the crate's convention,
+    // so the clamp never fires; it is here so a broken invariant degrades
+    // into a short scan rather than a panic.
+    let end = el.el_line.cursor.min(el.el_line.buffer.len());
+    let quoting = quoting_before(&el.el_line.buffer[..end]);
 
     // Step 3: count the extra bytes the escaping will need.
     let bytes = filename.as_bytes();
     let original_len = bytes.len();
-    let mut escaped_character_count = 0usize;
-    for &c in bytes {
-        if s_quoted && c == b'\'' {
-            // Inside single quotes only single quotes need escaping, and one
-            // costs three extra bytes.
-            escaped_character_count += 3;
-        } else if
-        // Inside double quotes only `"`, `\`, `` ` `` and `$` need it…
-        (d_quoted && needs_dquote_escaping(c) != 0)
-            // …and outside both, the whole `needs_escaping` set does. The two
-            // are one branch because the flags are mutually exclusive, so at
-            // most one of them can be true; the C keeps them apart.
-            || (!s_quoted && !d_quoted && needs_escaping(u32::from(c)) != 0)
-        {
-            escaped_character_count += 1;
-        }
-    }
+    let escaped_character_count: usize = bytes
+        .iter()
+        .map(|&c| match escaped_byte(quoting, c) {
+            EscapedByte::Verbatim => 0,
+            EscapedByte::Backslashed => 1,
+            EscapedByte::QuoteBreak => 3,
+        })
+        .sum();
 
     // Step 4. One byte for a closing quote, one for the append character.
     let mut newlen = original_len + escaped_character_count + 1;
-    if s_quoted || d_quoted {
+    if quoting != Quoting::Bare {
         newlen += 1;
     }
-    if single_match != 0 && app_func.is_some() {
+    if single_match && app_func.is_some() {
         newlen += 1;
     }
     let mut escaped_str: Vec<u8> = Vec::new();
@@ -401,22 +466,12 @@ fn escape_filename(
         return None;
     }
 
-    // Step 5: emit. Each branch emits exactly what step 3 budgeted.
+    // Step 5: emit exactly what step 3 budgeted.
     for &c in bytes {
-        if needs_escaping(u32::from(c)) == 0 {
-            escaped_str.push(c);
-        } else if c == b'\'' && s_quoted {
-            // Close the quote, backslash-escape the apostrophe, reopen it.
-            escaped_str.extend_from_slice(b"'\\''");
-        } else if
-        // Nothing else needs escaping inside single quotes, and inside
-        // double quotes nothing but the four `needs_dquote_escaping` bytes
-        // does. One branch for the same reason as in step 3.
-        s_quoted || (d_quoted && needs_dquote_escaping(c) == 0) {
-            escaped_str.push(c);
-        } else {
-            escaped_str.push(b'\\');
-            escaped_str.push(c);
+        match escaped_byte(quoting, c) {
+            EscapedByte::Verbatim => escaped_str.push(c),
+            EscapedByte::Backslashed => escaped_str.extend_from_slice(&[b'\\', c]),
+            EscapedByte::QuoteBreak => escaped_str.extend_from_slice(b"'\\''"),
         }
     }
 
@@ -425,23 +480,17 @@ fn escape_filename(
     // transient `escaped_str[offset] = 0` before the call is invisible: every
     // path either overwrites that byte or leaves it where step 8's
     // terminator goes anyway.
-    let mut append_char: Option<&'static str> = None;
-    if single_match != 0
-        && let Some(f) = app_func
-    {
-        let ap = f(filename);
-        append_char = Some(ap);
-        // An empty `app_func` result yields its NUL here, which is then
-        // *stored* — the result carries an embedded NUL and its visible
-        // length ends one byte before the real end (ERR-completion-10,
-        // disposition *reproduce*).
-        let b = ap.as_bytes().first().copied().unwrap_or(0);
-        if b == b' ' {
-            // A space is appended only outside quotes.
-            if !s_quoted && !d_quoted {
-                escaped_str.push(b);
-            }
-        } else {
+    //
+    // An empty `app_func` result yields its NUL here, which is then *stored* —
+    // the result carries an embedded NUL and its visible length ends one byte
+    // before the real end (ERR-completion-10, disposition *reproduce*).
+    let appended = app_func
+        .filter(|_| single_match)
+        .map(|f| f(filename).as_bytes().first().copied().unwrap_or(0));
+    if let Some(b) = appended {
+        // A space is appended only outside quotes; anything else, typically
+        // the `/` of a directory, unconditionally.
+        if b != b' ' || quoting == Quoting::Bare {
             escaped_str.push(b);
         }
     }
@@ -449,13 +498,11 @@ fn escape_filename(
     // Step 7: close the quote, but only when the append character was a
     // space — the byte step 4 reserved for it is what the quote reuses. A
     // `/` leaves the quote open on purpose: the user keeps typing the path.
-    if single_match != 0
-        && append_char.is_some_and(|a| a.as_bytes().first().copied().unwrap_or(0) == b' ')
-    {
-        if s_quoted {
-            escaped_str.push(b'\'');
-        } else if d_quoted {
-            escaped_str.push(b'"');
+    if appended == Some(b' ') {
+        match quoting {
+            Quoting::Single => escaped_str.push(b'\''),
+            Quoting::Double => escaped_str.push(b'"'),
+            Quoting::Bare => {}
         }
     }
 
@@ -701,22 +748,25 @@ pub fn completion_matches(text: &str, genfunc: &mut CompleteFunc) -> Option<Vec<
     // Steps 1 and 2. The state argument is the number of matches collected so
     // far, so the first call passes 0 — the generator's "start a new scan"
     // signal — and later calls pass 1, 2, 3, …
-    let mut match_list: Option<Vec<String>> = None;
+    let mut match_list: Vec<String> = Vec::new();
     let mut matches = 0usize;
     let mut match_list_len = 1usize;
 
     while let Some(retstr) = genfunc(text, matches as i32) {
+        if match_list.is_empty() {
+            // Index 0 is left reserved for the common prefix and the first
+            // match lands at index 1, so the first match seeds a placeholder
+            // the tail of this function overwrites.
+            match_list.push(String::new());
+        }
         // Allow for the list terminator here. The first iteration lands on
         // four slots.
         if matches.saturating_add(3) >= match_list_len {
             while matches.saturating_add(3) >= match_list_len {
                 match_list_len = match_list_len.saturating_mul(2);
             }
-            // Index 0 is left reserved for the common prefix and the first
-            // match lands at index 1, so the array is seeded with a
-            // placeholder the tail of this function overwrites.
-            let v = match_list.get_or_insert_with(|| vec![String::new()]);
-            if v.try_reserve_exact(match_list_len.saturating_sub(v.capacity()))
+            if match_list
+                .try_reserve_exact(match_list_len.saturating_sub(match_list.len()))
                 .is_err()
             {
                 // ERR-completion-06: the C frees the ARRAY only, so every
@@ -728,13 +778,15 @@ pub fn completion_matches(text: &str, genfunc: &mut CompleteFunc) -> Option<Vec<
                 return None;
             }
         }
-        match_list.as_mut()?.push(retstr);
+        match_list.push(retstr);
         matches += 1;
     }
 
-    // Step 3. Still NULL exactly when the very first call returned NULL, i.e.
+    // Step 3. Still empty exactly when the very first call returned NULL, i.e.
     // when there are no matches at all.
-    let mut match_list = match_list?;
+    if match_list.is_empty() {
+        return None;
+    }
 
     // Step 4: the longest common prefix. The comparison is always against
     // element 1 — the C's local is named `prevstr` and is never reassigned,
@@ -794,18 +846,15 @@ fn _fn_qsort_string_compare(i1: &str, i2: &str) -> i32 {
     // ends at the first NUL, which then compares below every other byte.
     let s1 = cstr(i1).as_bytes();
     let s2 = cstr(i2).as_bytes();
-    let n = s1.len().min(s2.len());
-    for i in 0..n {
-        let c1 = i32::from(s1[i].to_ascii_lowercase());
-        let c2 = i32::from(s2[i].to_ascii_lowercase());
-        if c1 != c2 {
-            return c1 - c2;
-        }
-    }
-    // The terminator against whatever the longer string still has.
-    let c1 = s1.get(n).map_or(0, |&b| i32::from(b.to_ascii_lowercase()));
-    let c2 = s2.get(n).map_or(0, |&b| i32::from(b.to_ascii_lowercase()));
-    c1 - c2
+    // Past the end is the terminator, which is why the shorter of two strings
+    // sharing a prefix sorts first. Index `n` is past the end of at most one
+    // of them, so the pair is compared one position beyond the overlap and no
+    // further.
+    let folded = |s: &[u8], i: usize| s.get(i).map_or(0, |&b| i32::from(b.to_ascii_lowercase()));
+    (0..=s1.len().min(s2.len()))
+        .map(|i| (folded(s1, i), folded(s2, i)))
+        .find(|(c1, c2)| c1 != c2)
+        .map_or(0, |(c1, c2)| c1 - c2)
 }
 
 // [spec:libedit:def:filecomplete.fn-display-match-list-fn]
@@ -909,7 +958,7 @@ fn find_word_to_complete(
     word_break: &[u32],
     special_prefixes: Option<&[u32]>,
     length: &mut usize,
-    do_unescape: i32,
+    do_unescape: bool,
 ) -> Option<Vec<u32>> {
     // ERR-completion-05 (a NULL `word_break` handed to `wcschr`) cannot be
     // expressed: `&[u32]` is never null. An empty slice is the closest thing
@@ -918,12 +967,7 @@ fn find_word_to_complete(
     // Step 1: if the cursor sits just after a backslash or a quote, step back
     // over it so the scan carries on through the word that precedes it.
     let mut ctemp = cursor;
-    if ctemp > 0
-        && matches!(
-            buffer[ctemp - 1],
-            c if c == '\\' as u32 || c == '\'' as u32 || c == '"' as u32
-        )
-    {
+    if ctemp > 0 && matches!(buffer[ctemp - 1], BSLASH | SQUOTE | DQUOTE) {
         ctemp -= 1;
     }
 
@@ -934,8 +978,7 @@ fn find_word_to_complete(
         }
         // This test comes FIRST, so a backslash-escaped word-break character
         // does not end the word: in `a\ b` the whole `a\ b` is the word.
-        if ctemp >= 2 && buffer[ctemp - 2] == '\\' as u32 && needs_escaping(buffer[ctemp - 1]) != 0
-        {
+        if ctemp >= 2 && buffer[ctemp - 2] == BSLASH && needs_escaping(buffer[ctemp - 1]) {
             ctemp -= 2;
             continue;
         }
@@ -958,7 +1001,7 @@ fn find_word_to_complete(
 
     // Step 4: a lone quote at the cursor means an empty word starting after
     // the quote.
-    if len == 1 && (buffer[ctemp] == '\'' as u32 || buffer[ctemp] == '"' as u32) {
+    if len == 1 && matches!(buffer[ctemp], SQUOTE | DQUOTE) {
         len = 0;
         ctemp += 1;
     }
@@ -973,7 +1016,7 @@ fn find_word_to_complete(
     let span = &buffer[ctemp..ctemp + len];
 
     // Step 6.
-    if do_unescape != 0 {
+    if do_unescape {
         return unescape_string(span);
     }
     let mut temp = Vec::new();
@@ -981,6 +1024,27 @@ fn find_word_to_complete(
     temp.extend_from_slice(span);
     temp.push(0);
     Some(temp)
+}
+
+/// C: `char what_to_do = el->el_state.lastcmd == el->el_state.thiscmd ? '?' :
+/// '\t'` — step 1 of [`fn_complete2`].
+///
+/// "A second consecutive invocation of this same command lists the
+/// possibilities" is the whole protocol, and it is carried by two fields
+/// named for neither it nor each other. Named here so the consequence is
+/// visible at the reading rather than at the debugging: an editor whose two
+/// command slots happen to agree — a freshly zeroed one, say — takes the
+/// listing path on its very first invocation.
+///
+/// ERR-completion-23: the result is never `*` or `!`, so the header comment's
+/// `*` behaviour is unimplemented and the `!` tests are dead code — neither is
+/// ported.
+fn what_to_do(el: &EditLine) -> char {
+    if el.el_state.lastcmd == el.el_state.thiscmd {
+        '?'
+    } else {
+        '\t'
+    }
 }
 
 // [spec:libedit:def:filecomplete.fn-complete2-fn]
@@ -1009,17 +1073,10 @@ pub fn fn_complete2(
     flags: u32,
 ) -> i32 {
     let mut retval = i32::from(CC_NORM);
-    let do_unescape = (flags & FN_QUOTE_MATCH) as i32;
+    let do_unescape = flags & FN_QUOTE_MATCH != 0;
 
-    // Step 1. A second consecutive invocation of this same command becomes
-    // "list the possibilities". ERR-completion-23: `what_to_do` is never `*`
-    // or `!`, so the header comment's `*` behaviour is unimplemented and the
-    // `!` tests are dead code — neither is ported.
-    let what_to_do = if el.el_state.lastcmd == el.el_state.thiscmd {
-        '?'
-    } else {
-        '\t'
-    };
+    // Step 1.
+    let what_to_do = what_to_do(el);
 
     // Step 2: readline's `rl_completion_type` has to be told what we did.
     if let Some(ct) = completion_type {
@@ -1130,14 +1187,11 @@ pub fn fn_complete2(
     // Step 11.
     retval = i32::from(CC_REFRESH);
 
-    // C: `matches[0][0] != '\0'`. A missing element 0 — an empty array from a
-    // caller's completion function, which the C would dereference as NULL —
-    // reads as the empty string.
-    let lcd_empty = matches
-        .first()
-        .and_then(|s| s.as_bytes().first().copied())
-        .unwrap_or(0)
-        == 0;
+    // C: `matches[0][0] != '\0'` — so an element 0 that merely *starts* with a
+    // NUL is empty too, which is what taking the C's view of it says. A
+    // missing element 0 — an empty array from a caller's completion function,
+    // which the C would dereference as NULL — reads as the empty string.
+    let lcd_empty = matches.first().is_none_or(|s| cstr(s).is_empty());
 
     // Step 12.
     if !lcd_empty {
@@ -1148,7 +1202,7 @@ pub fn fn_complete2(
         // first, so `escape_filename` scans a line the partial word has
         // already left.
         let completion = if flags & FN_QUOTE_MATCH != 0 {
-            escape_filename(el, &matches[0], i32::from(single_match), Some(app_func))
+            escape_filename(el, &matches[0], single_match, Some(app_func))
         } else {
             let mut s = String::new();
             match s.try_reserve_exact(matches[0].len() + 1) {
@@ -1195,10 +1249,12 @@ pub fn fn_complete2(
     if !single_match && what_to_do == '?' {
         // (a) Walk `matches[1]` onward. The C's walk stops at the NULL
         // terminator the `Vec` does not carry, so it stops at the end.
-        let mut maxlen = 0usize;
-        for m in matches.iter().skip(1) {
-            maxlen = maxlen.max(cstr(m).len());
-        }
+        let maxlen = matches
+            .iter()
+            .skip(1)
+            .map(|m| cstr(m).len())
+            .max()
+            .unwrap_or(0);
         let matches_num = matches.len() - 1;
 
         // (b) Get onto the next line from the command line.

@@ -148,4 +148,5 @@ assertions (
     {id buffer-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T10:27:35.59105328Z}
     {id input-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:03:58.507609972Z}
     {id modes-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:07:33.617601976Z}
+    {id completion-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:29:36.110990454Z}
 )

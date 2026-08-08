@@ -18,15 +18,6 @@ use core::ffi::c_char;
 
 use crate::histedit::{LineInfo, LineInfoGen, LineInfoW};
 
-/// C: `#define TOK_KEEP 1` — "this word exists even though it produced no
-/// elements". Set by `'`, `"` and `\`, cleared only by [`tok_finish_gen`].
-const TOK_KEEP: i32 = 1;
-
-/// C: `#define TOK_EAT 2` — the last thing consumed was a backslash-newline
-/// pair, so end of input means "quoted return" (3) rather than a complete
-/// parse.
-const TOK_EAT: i32 = 2;
-
 /// C: `#define WINCR 20` — the word buffer's initial size and its growth
 /// step. Growth is linear, not doubling.
 const WINCR: usize = 20;
@@ -121,6 +112,7 @@ pub type Tokenizer = TokenizerGen<c_char>;
 
 // [spec:libedit:def:tokenizer.quote-t]
 /// The quoting state machine. A genuine C `enum`, so a Rust enum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuoteT {
     /// No quoting.
     QNone,
@@ -139,33 +131,59 @@ pub enum QuoteT {
 /// The C defines this body with no rule of its own, which is why there is no
 /// annotation here.
 ///
-/// `wptr`, `wmax`, `wstart` and every `argv` slot are pointers into
-/// `wspace` in the C, and `tok_line` rebases them after each `realloc`, so
-/// they are offsets here.
+/// `wptr`, `wstart` and every `argv` slot are pointers into `wspace` in the
+/// C, and `tok_line` rebases them after each `realloc`, so they are offsets
+/// here.
+///
+/// Two C members have no field of their own. `wmax` and `amax` are the ends
+/// of the two blocks, which a `char *` cannot report and a `Vec` can: they
+/// are `wspace.len()` and `argv.len()`, always, so keeping them would be
+/// keeping an invariant that can only ever be broken. `flags` is a two-bit
+/// word and is the two bits.
+///
+/// Only `argv` and `wspace` are public. The C's handle is opaque —
+/// `histedit.h` declares the struct and defines it nowhere a consumer can
+/// see — and the two exceptions are what the ABI crate resolves a published
+/// `argv` slot against.
 pub struct TokenizerGen<C> {
     /// C: `Char *ifs` — in-field separators, owned. Defaults to `L"\t \n"`.
-    pub ifs: Vec<C>,
+    pub(crate) ifs: Vec<C>,
     /// Current number of arguments.
-    pub argc: usize,
-    /// Maximum number of arguments (the `argv` capacity, initially 10).
-    pub amax: usize,
+    pub(crate) argc: usize,
     /// C: `const Char **argv` — one offset into `wspace` per argument;
-    /// `None` is the C's NULL terminator slot.
+    /// `None` is the C's NULL terminator slot. Its length is the C's `amax`.
     pub argv: Vec<Option<usize>>,
     /// C: `Char *wptr` — write position, offset into `wspace`.
-    pub wptr: usize,
-    /// C: `Char *wmax` — limit, offset into `wspace`.
-    pub wmax: usize,
+    pub(crate) wptr: usize,
     /// C: `Char *wstart` — beginning of the next word, offset into
     /// `wspace`.
-    pub wstart: usize,
-    /// C: `Char *wspace` — the word buffer, owned. Starts at 20 elements.
+    pub(crate) wstart: usize,
+    /// C: `Char *wspace` — the word buffer, owned. Starts at 20 elements,
+    /// and its length is the C's `wmax`.
     pub wspace: Vec<C>,
     /// Quoting state.
-    pub quote: QuoteT,
-    /// C: `int flags` — `TOK_KEEP` (1) and `TOK_EAT` (2). Kept an integer
-    /// flag word.
-    pub flags: i32,
+    pub(crate) quote: QuoteT,
+    /// C: `flags & TOK_KEEP` — "this word exists even though it produced no
+    /// elements". Set by `'`, `"` and `\`, cleared only by
+    /// [`tok_finish_gen`].
+    pub(crate) keep: bool,
+    /// C: `flags & TOK_EAT` — the last thing consumed was a backslash-newline
+    /// pair, so end of input means "quoted return" (3) rather than a complete
+    /// parse.
+    pub(crate) eat: bool,
+}
+
+impl<C: TokChar> TokenizerGen<C> {
+    /// The rule's "emit x": C `*tok->wptr++ = x`.
+    ///
+    /// No bounds check and no allocation, exactly as in the C — the previous
+    /// pass's growth step left at least four free elements, which covers the
+    /// two this can be asked for in one pass plus [`tok_finish_gen`]'s
+    /// terminator.
+    fn emit(&mut self, x: C) {
+        self.wspace[self.wptr] = x;
+        self.wptr += 1;
+    }
 }
 
 // [spec:libedit:def:tokenizer.fun-tok-finish-fn]
@@ -176,7 +194,7 @@ fn tok_finish_gen<C: TokChar>(tok: &mut TokenizerGen<C>) {
     // caller's growth slack guarantees this slot exists; there is no bounds
     // check in the C and none is needed here.
     tok.wspace[tok.wptr] = C::NUL;
-    if (tok.flags & TOK_KEEP) != 0 || tok.wptr != tok.wstart {
+    if tok.keep || tok.wptr != tok.wstart {
         // Publish. `argv` slots are offsets into `wspace`, so the C's
         // `tok->argv[tok->argc++] = tok->wstart` is the offset itself.
         tok.argv[tok.argc] = Some(tok.wstart);
@@ -189,7 +207,9 @@ fn tok_finish_gen<C: TokChar>(tok: &mut TokenizerGen<C>) {
     }
     // Otherwise the NUL written above is inert: the next element emitted
     // overwrites it, which is how a run of separators collapses.
-    tok.flags &= !TOK_KEEP;
+    //
+    // `eat` is deliberately untouched.
+    tok.keep = false;
 }
 
 // [spec:libedit:def:tokenizer.fun-tok-init-fn]
@@ -212,18 +232,18 @@ pub fn tok_init_gen<C: TokChar>(ifs: Option<&[C]>) -> Option<Box<TokenizerGen<C>
         // separator test, so the slice is copied whole.
         ifs: ifs.unwrap_or(C::default_ifs()).to_vec(),
         argc: 0,
-        amax: AINCR,
-        // C: `argv[0] = NULL` only. The remaining slots are uninitialised
-        // there and `None` here; nothing reads past `argc`.
+        // C: `argv[0] = NULL` only, in a block of `amax` slots. The remaining
+        // ones are uninitialised there and `None` here; nothing reads past
+        // `argc`.
         argv: vec![None; AINCR],
         wptr: 0,
-        wmax: WINCR,
         wstart: 0,
         // C leaves the word buffer's contents uninitialised. Every element
         // is written before it is read, so zeroing is unobservable.
         wspace: vec![C::NUL; WINCR],
         quote: QuoteT::QNone,
-        flags: 0,
+        keep: false,
+        eat: false,
     }))
 }
 
@@ -234,12 +254,15 @@ pub fn tok_reset_gen<C: TokChar>(tok: &mut TokenizerGen<C>) {
     tok.argc = 0;
     tok.wstart = 0;
     tok.wptr = 0;
-    tok.flags = 0;
+    // The C's one `flags = 0`, which clears both bits.
+    tok.keep = false;
+    tok.eat = false;
     tok.quote = QuoteT::QNone;
-    // Exactly five assignments, as in the C. In particular `argv[0]` is
-    // *not* restored to `None`: the stale offset from the previous parse
-    // survives, so a following `tok_line_gen` that publishes no word leaves the
-    // array without its terminator. Reproduced deliberately — ERR-input-38.
+    // The C's five assignments, `flags = 0` split in two. Nothing else: in
+    // particular `argv[0]` is *not* restored to `None`, so the stale offset
+    // from the previous parse survives and a following `tok_line_gen` that
+    // publishes no word leaves the array without its terminator. Reproduced
+    // deliberately — ERR-input-38.
 }
 
 // [spec:libedit:def:tokenizer.fun-tok-end-fn]
@@ -278,15 +301,6 @@ pub fn tok_line_gen<C: TokChar>(
     cursorc: Option<&mut i32>,
     cursoro: Option<&mut i32>,
 ) -> i32 {
-    /// The rule's "emit x": C `*tok->wptr++ = x`. No bounds check and no
-    /// allocation, exactly as in the C — the previous pass's growth step
-    /// left at least four free elements, which covers the two this can be
-    /// asked for in one pass plus [`tok_finish_gen`]'s terminator.
-    fn emit<C: TokChar>(tok: &mut TokenizerGen<C>, x: C) {
-        tok.wspace[tok.wptr] = x;
-        tok.wptr += 1;
-    }
-
     let mut cc: i32 = -1;
     let mut co: i32 = -1;
     let mut ptr = line.buffer;
@@ -336,8 +350,8 @@ pub fn tok_line_gen<C: TokChar>(
         // ported (ERR-input-43).
         match c.code() {
             C_SQUOTE => {
-                tok.flags |= TOK_KEEP;
-                tok.flags &= !TOK_EAT;
+                tok.keep = true;
+                tok.eat = false;
                 match tok.quote {
                     // Enter single quote mode.
                     QuoteT::QNone => tok.quote = QuoteT::QSingle,
@@ -346,23 +360,23 @@ pub fn tok_line_gen<C: TokChar>(
                     // Quote this '.
                     QuoteT::QOne => {
                         tok.quote = QuoteT::QNone;
-                        emit(tok, c);
+                        tok.emit(c);
                     }
                     // Stay in double quote mode.
-                    QuoteT::QDouble => emit(tok, c),
+                    QuoteT::QDouble => tok.emit(c),
                     // Quote this ' — dropping the backslash, where sh(1)
                     // keeps it. Deliberate-looking divergence, preserved:
                     // ERR-input-41.
                     QuoteT::QDoubleone => {
                         tok.quote = QuoteT::QDouble;
-                        emit(tok, c);
+                        tok.emit(c);
                     }
                 }
             }
 
             C_DQUOTE => {
-                tok.flags &= !TOK_EAT;
-                tok.flags |= TOK_KEEP;
+                tok.eat = false;
+                tok.keep = true;
                 match tok.quote {
                     // Enter double quote mode.
                     QuoteT::QNone => tok.quote = QuoteT::QDouble,
@@ -371,21 +385,21 @@ pub fn tok_line_gen<C: TokChar>(
                     // Quote this ".
                     QuoteT::QOne => {
                         tok.quote = QuoteT::QNone;
-                        emit(tok, c);
+                        tok.emit(c);
                     }
                     // Stay in single quote mode.
-                    QuoteT::QSingle => emit(tok, c),
+                    QuoteT::QSingle => tok.emit(c),
                     // Quote this ".
                     QuoteT::QDoubleone => {
                         tok.quote = QuoteT::QDouble;
-                        emit(tok, c);
+                        tok.emit(c);
                     }
                 }
             }
 
             C_BSLASH => {
-                tok.flags |= TOK_KEEP;
-                tok.flags &= !TOK_EAT;
+                tok.keep = true;
+                tok.eat = false;
                 match tok.quote {
                     // Quote next character.
                     QuoteT::QNone => tok.quote = QuoteT::QOne,
@@ -393,35 +407,35 @@ pub fn tok_line_gen<C: TokChar>(
                     QuoteT::QDouble => tok.quote = QuoteT::QDoubleone,
                     // Quote this, restore state.
                     QuoteT::QOne => {
-                        emit(tok, c);
+                        tok.emit(c);
                         tok.quote = QuoteT::QNone;
                     }
                     // Stay in single quote mode.
-                    QuoteT::QSingle => emit(tok, c),
+                    QuoteT::QSingle => tok.emit(c),
                     // Quote this \.
                     QuoteT::QDoubleone => {
                         tok.quote = QuoteT::QDouble;
-                        emit(tok, c);
+                        tok.emit(c);
                     }
                 }
             }
 
             C_NEWLINE => {
-                tok.flags &= !TOK_EAT;
+                tok.eat = false;
                 match tok.quote {
-                    // The line is complete. TOK_KEEP is not set here.
+                    // The line is complete. `keep` is not set here.
                     QuoteT::QNone => break 'tokenize,
                     // Add the return: a newline inside quotes is an
                     // ordinary element and does not end the line.
-                    QuoteT::QSingle | QuoteT::QDouble => emit(tok, c),
+                    QuoteT::QSingle | QuoteT::QDouble => tok.emit(c),
                     // Back to double, eat the '\n'.
                     QuoteT::QDoubleone => {
-                        tok.flags |= TOK_EAT;
+                        tok.eat = true;
                         tok.quote = QuoteT::QDouble;
                     }
                     // No quote, more, eat the '\n'.
                     QuoteT::QOne => {
-                        tok.flags |= TOK_EAT;
+                        tok.eat = true;
                         tok.quote = QuoteT::QNone;
                     }
                 }
@@ -433,8 +447,8 @@ pub fn tok_line_gen<C: TokChar>(
             C_NUL => match tok.quote {
                 QuoteT::QNone => {
                     // Finish word and return.
-                    if (tok.flags & TOK_EAT) != 0 {
-                        tok.flags &= !TOK_EAT;
+                    if tok.eat {
+                        tok.eat = false;
                         return 3;
                     }
                     break 'tokenize;
@@ -443,16 +457,16 @@ pub fn tok_line_gen<C: TokChar>(
                 QuoteT::QDouble => return 2,
                 QuoteT::QDoubleone => {
                     tok.quote = QuoteT::QDouble;
-                    emit(tok, c);
+                    tok.emit(c);
                 }
                 QuoteT::QOne => {
                     tok.quote = QuoteT::QNone;
-                    emit(tok, c);
+                    tok.emit(c);
                 }
             },
 
             _ => {
-                tok.flags &= !TOK_EAT;
+                tok.eat = false;
                 match tok.quote {
                     QuoteT::QNone => {
                         // C: `Strchr(tok->ifs, *ptr) != NULL`. Element-wise,
@@ -462,21 +476,21 @@ pub fn tok_line_gen<C: TokChar>(
                         if tok.ifs.contains(&c) {
                             tok_finish_gen(tok);
                         } else {
-                            emit(tok, c);
+                            tok.emit(c);
                         }
                     }
-                    QuoteT::QSingle | QuoteT::QDouble => emit(tok, c),
+                    QuoteT::QSingle | QuoteT::QDouble => tok.emit(c),
                     // A backslash inside double quotes is preserved before
                     // anything other than ' " \ newline NUL. The only arm
                     // that emits two elements in one pass.
                     QuoteT::QDoubleone => {
-                        emit(tok, C::BSLASH);
+                        tok.emit(C::BSLASH);
                         tok.quote = QuoteT::QDouble;
-                        emit(tok, c);
+                        tok.emit(c);
                     }
                     QuoteT::QOne => {
                         tok.quote = QuoteT::QNone;
-                        emit(tok, c);
+                        tok.emit(c);
                     }
                 }
             }
@@ -487,14 +501,11 @@ pub fn tok_line_gen<C: TokChar>(
         // `wstart` when the block moves; here they are offsets, so there is
         // nothing to rebase. The C's two -1 returns for a failed `realloc`
         // are unreachable in Rust, which aborts on allocation failure.
-        if tok.wptr >= tok.wmax - 4 {
-            let size = tok.wmax + WINCR;
-            tok.wspace.resize(size, C::NUL);
-            tok.wmax = size;
+        if tok.wptr >= tok.wspace.len() - 4 {
+            tok.wspace.resize(tok.wspace.len() + WINCR, C::NUL);
         }
-        if tok.argc >= tok.amax - 4 {
-            tok.amax += AINCR;
-            tok.argv.resize(tok.amax, None);
+        if tok.argc >= tok.argv.len() - 4 {
+            tok.argv.resize(tok.argv.len() + AINCR, None);
         }
 
         ptr = ptr.wrapping_add(1);
@@ -690,11 +701,11 @@ mod test {
         assert_eq!(parse("\"a'b\""), (0, 1, vec_of(&["a'b"])));
     }
 
-    /// `TOK_KEEP` is what makes an empty quoted word exist at all: without it
-    /// `tok_finish` publishes only when the write pointer moved, so `''` — a
-    /// deliberate empty argument — would vanish instead of becoming an empty
-    /// `argv` element. A run of separators, which sets no such flag, does
-    /// collapse.
+    /// `keep` — the C's `TOK_KEEP` — is what makes an empty quoted word exist
+    /// at all: without it `tok_finish` publishes only when the write pointer
+    /// moved, so `''` — a deliberate empty argument — would vanish instead of
+    /// becoming an empty `argv` element. A run of separators, which sets no
+    /// such flag, does collapse.
     // [spec:libedit:sem:tokenizer.fun-tok-finish-fn/test]
     #[test]
     fn an_empty_quoted_word_is_published_and_a_run_of_separators_is_not() {
@@ -840,8 +851,9 @@ mod test {
         assert_eq!(tok.argc, 0);
         assert_eq!(tok.wptr, 0);
         assert_eq!(tok.wstart, 0);
-        assert_eq!(tok.flags, 0);
-        assert!(matches!(tok.quote, QuoteT::QNone));
+        assert!(!tok.keep);
+        assert!(!tok.eat);
+        assert_eq!(tok.quote, QuoteT::QNone);
         assert_eq!(tok.argv[0], Some(0), "and it does not undo one");
 
         let mut argc = -1;
@@ -862,8 +874,10 @@ mod test {
     fn the_separator_set_is_replaceable_but_cannot_reach_the_dispatch() {
         let tok = tok_winit(None).unwrap();
         assert_eq!(tok.ifs, wide("\t \n"));
-        assert_eq!(tok.amax, AINCR);
-        assert_eq!(tok.wmax, WINCR);
+        // The two buffers are the C's `amax` and `wmax` blocks; their lengths
+        // are what those two members held.
+        assert_eq!(tok.argv.len(), AINCR);
+        assert_eq!(tok.wspace.len(), WINCR);
         tok_wend(tok);
 
         let ifs = wide(",");
