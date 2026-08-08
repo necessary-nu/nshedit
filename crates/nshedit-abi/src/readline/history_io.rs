@@ -252,7 +252,8 @@ pub unsafe extern "C" fn write_history(filename: *const c_char) -> c_int {
 pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_int {
     // No [`EMPTY_EVENT`] here. The C declares one for its `H_NSAVE_FP` call,
     // and this is the one history entry point that does not make that call —
-    // see the note on `history_save_fd` below — so there is no out-parameter
+    // see the note on the descriptor save path below — so there is no
+    // out-parameter
     // to declare.
     // SAFETY: as `read_history`.
     unsafe {
@@ -291,7 +292,7 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
         // as the C's `fclose` does.
         //
         // Seek it to the end first; this is load-bearing rather than
-        // tidiness. `history_save_fd` decides whether to write the
+        // tidiness. The descriptor save path decides whether to write the
         // `_HiStOrY_V2_` cookie from `ftell(fp) == 0`, faithfully to the C.
         // The C reaches it through `fopen(filename, "a")`, and glibc
         // positions an append stream at EOF, so `ftell` reports the size. A

@@ -279,16 +279,16 @@ impl EditLine {
     /// So this takes a shared handle rather than a value, and dropping the
     /// editor leaves the caller's history intact.
     ///
-    /// [`crate::history::OwnedHistoryW`] implements [`EditorHistory`], so the
+    /// [`crate::history::HistorySession`] implements [`EditorHistory`], so the
     /// built-in store needs no adapter:
     ///
     /// ```no_run
     /// # use std::cell::RefCell;
     /// # use std::rc::Rc;
     /// # use nshedit::el::EditLine;
-    /// # use nshedit::history::OwnedHistoryW;
+    /// # use nshedit::history::HistorySession;
     /// # fn f(el: &mut EditLine) {
-    /// let history = Rc::new(RefCell::new(OwnedHistoryW::with_size(100)));
+    /// let history = Rc::new(RefCell::new(HistorySession::default()));
     /// el.set_history(history.clone());
     /// // `el` may now be dropped; `history` outlives it and keeps its entries.
     /// # }

@@ -3,8 +3,9 @@ use std::rc::Rc;
 
 use super::*;
 use crate::common::{ed_next_history, ed_prev_history};
+use crate::domain::Text;
 use crate::histedit::CC_REFRESH_BEEP;
-use crate::history::OwnedHistoryW;
+use crate::history::{HistorySession, PushResult};
 use crate::testkit::{headless_editor, text};
 
 /// An editor in the state `el_init` leaves behind, on an ordinary screen.
@@ -14,6 +15,13 @@ fn editor() -> EditLine {
 
 fn wide(s: &str) -> Vec<u32> {
     s.chars().map(u32::from).collect()
+}
+
+fn insert(history: &mut HistorySession, line: &str) -> bool {
+    matches!(
+        history.push(Text::from(line)).unwrap(),
+        PushResult::Inserted { .. }
+    )
 }
 
 /// A history with no store behind it, so the seam can be tested without also
@@ -173,10 +181,10 @@ fn the_editrc_settings_default_to_the_answer_the_c_gives_a_narrow_store() {
 /// the trait itself, so attaching one is a single call.
 #[test]
 fn the_builtin_store_walks_through_the_seam() {
-    let mut h = OwnedHistoryW::new();
+    let mut h = HistorySession::default();
     assert_eq!(h.set_size(16), 0);
-    assert!(h.enter(&wide("first typed")));
-    assert!(h.enter(&wide("second typed")));
+    assert!(insert(&mut h, "first typed"));
+    assert!(insert(&mut h, "second typed"));
 
     let newest = h.first().expect("a store with two entries has a first");
     assert_eq!(newest.text, HistText::Wide(wide("second typed")));
@@ -202,21 +210,22 @@ fn the_builtin_store_walks_through_the_seam() {
 fn the_owned_store_forwards_the_settings_it_advertises() {
     // Without a size the store keeps nothing, so this would pass for the
     // wrong reason: `first` would be `None` because everything was trimmed.
-    let mut h = OwnedHistoryW::with_size(16);
+    let mut h = HistorySession::default();
+    assert_eq!(h.set_size(16), 0);
     assert_eq!(h.set_unique(true), 0);
-    assert!(h.enter(&wide("same")), "the first one is stored");
+    assert!(insert(&mut h, "same"), "the first one is stored");
     assert!(
-        !h.enter(&wide("same")),
+        !insert(&mut h, "same"),
         "and the second is suppressed rather than failing"
     );
     assert_eq!(h.first().unwrap().text, HistText::Wide(wide("same")));
     assert!(h.next().is_none(), "the duplicate was not stored");
 }
 
-/// A byte-oriented store, which is what a shell actually has: dash keeps a
-/// `HistoryGen<c_char>` and the C sets `NARROW_HISTORY` for it. The seam takes
-/// the bytes and decodes them here, through the same `ct_decode_string` the
-/// C's narrow path uses, so neither side transcodes twice.
+/// A byte-oriented store, which is what a shell actually has. The C boundary
+/// marks its opaque narrow history with `NARROW_HISTORY`; the seam takes the
+/// bytes and decodes them here through the same `ct_decode_string` path, so
+/// neither side transcodes twice.
 struct ByteStore(Vec<&'static [u8]>);
 
 impl EditorHistory for ByteStore {

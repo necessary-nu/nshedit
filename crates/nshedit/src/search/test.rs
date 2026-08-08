@@ -9,8 +9,9 @@ use std::rc::Rc;
 
 use super::*;
 use crate::chared::DELETE;
+use crate::domain::Text;
 use crate::histedit::{CC_EOF, CC_NEWLINE};
-use crate::history::OwnedHistoryW;
+use crate::history::{HistorySession, PushResult};
 use crate::map::map_init_emacs;
 use crate::testkit::{headless_editor, text};
 
@@ -54,11 +55,12 @@ fn pattern(el: &EditLine) -> String {
 }
 
 fn with_history(el: &mut EditLine, entries: &[&str]) {
-    // `with_size`, not `new`: a store with `max == 0` trims on every insert
-    // and would leave the search nothing to find.
-    let mut h = OwnedHistoryW::with_size(32);
+    let mut h = HistorySession::default();
     for s in entries {
-        h.enter(&wide(s));
+        assert!(matches!(
+            h.push(Text::from(*s)).unwrap(),
+            PushResult::Inserted { .. }
+        ));
     }
     el.set_history(Rc::new(RefCell::new(h)));
 }

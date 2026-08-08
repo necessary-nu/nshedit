@@ -53,11 +53,10 @@
 //! `history.c` and `tokenizer.c` are each compiled twice in the C, so each
 //! declares two families here: `history_winit`/`history_wend`/`history_w` and
 //! `tok_w*` over `wchar_t`, `history_init`/`history_end`/`history` and `tok_*`
-//! over `char`. The translated history implementation remains generic over
-//! `nshedit::history::HistChar`. Tokenization instead uses the native core
-//! parser and keeps its narrow/wide representation mechanics in the opaque
-//! ABI owner. The exported pairs differ only in which boundary character
-//! type they pin.
+//! over `char`. History uses the native core store while the opaque ABI owner
+//! keeps event numbers, callbacks, persistence, and narrow/wide representation
+//! mechanics private. Tokenization likewise uses the native core parser. The
+//! exported pairs differ only in which boundary character type they pin.
 //!
 //! Nothing in this module is blocked on the core any more. The two causes that
 //! used to abort here are both closed: the narrow instantiations exist, and

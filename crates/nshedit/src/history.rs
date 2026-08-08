@@ -1,44 +1,9 @@
-//! Ported from `src/history.c`; rules live in
-//! `docs/spec/port/src/history.md`.
+//! Native history storage and editor traversal.
 //!
-//! The C compiles this file twice — once wide (`Char = wchar_t`,
-//! `TYPE(x) = xW`) and once narrow via `historyn.c`, whose entire content is
-//! `#define NARROWCHAR` followed by `#include "history.c"`. The port does the
-//! same thing with the same source: every type and function here is generic
-//! over [`HistChar`], and the two instantiations are `C = u32` (the wide
-//! build's `wchar_t`) and `C = c_char` (the narrow build's `char`). The
-//! handles they produce are [`HistoryW`] and [`History`], which are distinct
-//! Rust types over separate stores exactly as the C's two incomplete struct
-//! types are.
-//!
-//! [`HistChar`] is the port's `#ifdef NARROWCHAR` block: `Strlen`, `Strdup`,
-//! `Strcmp`, `Strncmp`, `he_errlist`'s `STR()` literals, and the two
-//! conversions `ct_decode_string`/`ct_encode_string` that the narrow build
-//! `#define`s to the identity. Everything else in this file is shared source
-//! and cannot drift between the two, which is the property `historyn.c` has
-//! and a hand-copied narrow implementation would not.
-//!
-//! The builtin history is a circular doubly-linked list in the C, with a
-//! sentinel embedded in the owner (`history_t.list`) that every entry links
-//! back to and that `cursor` points at to mean "no current event". None of
-//! that is observable: the API hands out event ids and borrowed strings, never
-//! a node. So the port holds the entries in a [`VecDeque`] newest-first with
-//! the cursor an `Option<usize>`, which says the same thing — insertion at the
-//! head, eviction from the tail, "first" the most recent — and says it without
-//! a single link pointer. What survives from `sem:history.history-def-insert-fn`
-//! is its *effect*: a new entry becomes the newest, takes the next id and the
-//! cursor.
-//!
-//! One pointer does remain, and it is the ABI: `ev->str` is a borrowed
-//! `Char *` into the entry's own storage, valid until that entry is deleted or
-//! replaced. Each entry owns a NUL-terminated `Vec<C>`, whose buffer does not
-//! move when the deque reshuffles, so the borrow is as stable as the C's.
+//! The generic translated engine below is temporarily retained only while its
+//! now-unreferenced implementation is removed. Concrete C handles and their
+//! ownership mechanics live exclusively in `nshedit-abi`.
 
-// The three public entry points take the C's raw handle and dereference it:
-// `history_gen` because `H_END` frees it and because internal callers reach it
-// through `el_history.ref` (a `void *`), `history_init_gen`/`history_end_gen`
-// because they are `malloc`/`free` in the C. The lint is about the public
-// face, and this face is the C ABI's.
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 use std::collections::VecDeque;
@@ -53,7 +18,7 @@ use crate::histedit::{
     H_ADD, H_APPEND, H_CLEAR, H_CURR, H_DEL, H_DELDATA, H_END, H_ENTER, H_FIRST, H_FUNC, H_GETSIZE,
     H_GETUNIQUE, H_LAST, H_LOAD, H_NEXT, H_NEXT_EVDATA, H_NEXT_EVENT, H_NEXT_STR, H_NSAVE_FP,
     H_PREV, H_PREV_EVENT, H_PREV_STR, H_REPLACE, H_SAVE, H_SAVE_FP, H_SET, H_SETSIZE, H_SETUNIQUE,
-    HistEvent, HistEventGen, HistEventW,
+    HistEventGen,
 };
 
 // ---------------------------------------------------------------------------
@@ -217,13 +182,6 @@ impl HistChar for c_char {
     }
 }
 
-/// C: `TYPE(History)` with `Char = wchar_t` — `historyW`, the wide handle.
-pub type HistoryW = HistoryGen<u32>;
-
-/// C: `TYPE(History)` with `Char = char` — `history`, the narrow handle
-/// `historyn.c` produces and `crate::histedit::History` names.
-pub type History = HistoryGen<c_char>;
-
 // The four vtable typedefs. All of them are C ABI types and not Rust `fn`s:
 // `history(h, ev, H_FUNC, ptr, first, next, ...)` is how an application
 // installs its own ten, so the values that reach [`HistoryGen`]'s slots are
@@ -295,33 +253,6 @@ pub struct HistoryGen<C> {
     pub h_enter: Option<HistoryEfunT<C>>,
     /// Append to an element.
     pub h_add: Option<HistoryEfunT<C>>,
-}
-
-// [spec:libedit:def:history.hist-event-private]
-/// A layout-compatible twin of [`HistEventGen`] whose `str` member is not
-/// `const`.
-///
-/// The C reaches an entry's string through this cast, because the entry
-/// embeds a `TYPE(HistEvent)` whose `str` is `const Char *` and the string is
-/// nevertheless the entry's to free. [`HentryGen`] owns its text outright, so
-/// nothing here needs the cast and nothing constructs one of these; the type
-/// stays because the C typedef does and `def:history.hist-event-private` is
-/// claimed on it.
-///
-/// It is **not** part of the ABI, whatever its name suggests. The C declares
-/// it as an untagged `typedef struct { ... } HistEventPrivate;` at file scope
-/// in `history.c:138` — no header carries it, and it has no struct tag a
-/// caller could name even if one did. `crates/nshedit-abi/include/histedit.h`
-/// is correspondingly silent about it, which is what upstream's `histedit.h`
-/// is too. `#[repr(C)]` here says only that the twin claim is structural:
-/// [`HistEventGen`] is `#[repr(C)]`, so the two agree on layout the way the
-/// C's cast assumes.
-#[repr(C)]
-pub struct HistEventPrivateGen<C> {
-    /// C: `int num`.
-    pub num: i32,
-    /// C: `Char *str`, the member the whole twin exists for.
-    pub str: *mut C,
 }
 
 // [spec:libedit:def:history.hentry-t]
@@ -2415,61 +2346,11 @@ pub fn history_gen<C: HistChar>(
     }
 }
 
-// ---------------------------------------------------------------------------
-// The two instantiations. C: `history.c` compiled as itself, and `historyn.c`
-// compiling it again under `NARROWCHAR`. Each of the six is one call into the
-// shared source above with the character type pinned; the `def`/`sem` rules
-// for them belong to `histedit.h`, which is where the declarations are, so
-// they are claimed at the ABI boundary rather than here.
-// ---------------------------------------------------------------------------
-
-/// C: `HistoryW *history_winit(void)` — `FUN(history,init)` with
-/// `Char = wchar_t`.
-pub fn history_winit() -> *mut HistoryW {
-    history_init_gen::<u32>()
-}
-
-/// C: `void history_wend(HistoryW *)` — `FUN(history,end)` with
-/// `Char = wchar_t`.
-pub fn history_wend(h: *mut HistoryW) {
-    history_end_gen::<u32>(h);
-}
-
-/// C: `int history_w(HistoryW *, HistEventW *, int, ...)` — `FUNW(history)`
-/// with `Char = wchar_t`.
-pub fn history_w(h: *mut HistoryW, ev: &mut HistEventW, fun: i32, arg: HistoryArg<'_, u32>) -> i32 {
-    history_gen::<u32>(h, ev, fun, arg)
-}
-
-/// C: `History *history_init(void)` — `FUN(history,init)` with `Char = char`,
-/// i.e. the whole of `historyn.c`'s contribution to this entry point.
-///
-/// The store is bytes: entry text is `strdup`ed and compared byte for byte,
-/// `ev->str` is a `char *`, and nothing here consults the locale. A byte
-/// sequence that is not valid in `LC_CTYPE` round-trips through this history
-/// unchanged, which is the reason it cannot be layered on the wide one.
-pub fn history_init() -> *mut History {
-    history_init_gen::<c_char>()
-}
-
-/// C: `void history_end(History *)` — `FUN(history,end)` with `Char = char`.
-pub fn history_end(h: *mut History) {
-    history_end_gen::<c_char>(h);
-}
-
-/// C: `int history(History *, HistEvent *, int, ...)` — `FUNW(history)` with
-/// `Char = char`.
-pub fn history(h: *mut History, ev: &mut HistEvent, fun: i32, arg: HistoryArg<'_, c_char>) -> i32 {
-    history_gen::<c_char>(h, ev, fun, arg)
-}
-
 // [spec:nshedit:req:core.history+1]
 mod native;
-mod owned;
-#[cfg(test)]
-mod test;
+mod session;
 pub use native::{
     DuplicatePolicy, HistoryCursor, HistoryEntry, HistoryId, HistoryStore, Navigation, PushError,
     PushResult,
 };
-pub use owned::OwnedHistoryW;
+pub use session::HistorySession;

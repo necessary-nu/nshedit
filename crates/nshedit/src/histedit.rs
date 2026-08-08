@@ -78,14 +78,6 @@ pub const H_NSAVE_FP: i32 = 27;
 /// C: `typedef struct editline EditLine;` — the editor handle. Its body is
 /// `def:el.editline`, in [`crate::el`].
 pub use crate::el::EditLine;
-/// C: `typedef struct history History;` — the narrow history handle. Its body
-/// is `historyn.c`'s `struct TYPE(history)`, i.e. `history.c` compiled with
-/// `Char = char`; see [`crate::history::History`].
-pub use crate::history::History;
-/// C: `typedef struct historyW HistoryW;` — the wide history handle. Its
-/// body is `history.c`'s `struct TYPE(history)`, which the C defines without
-/// a rule of its own; see [`crate::history::HistoryW`].
-pub use crate::history::HistoryW;
 /// C: `struct lineinfo` and `struct lineinfow`, which differ only in their
 /// three members' character type.
 ///
