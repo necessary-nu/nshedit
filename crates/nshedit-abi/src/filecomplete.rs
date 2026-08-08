@@ -221,20 +221,8 @@ unsafe fn out<'a>(p: *mut c_int) -> Option<&'a mut c_int> {
     }
 }
 
-/// The body [`fn_complete`] and [`fn_complete2`] share.
-///
-/// `flags` is `None` for `fn_complete`, which derives it from whether an
-/// attempted-completion hook was supplied, and `Some` for `fn_complete2`,
-/// which is handed it.
-///
-/// # Safety
-///
-/// As the two entry points.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the C completion surface has twelve independently observable arguments"
-)]
-unsafe fn complete(
+/// One call translated from either exported C completion entry point.
+struct CompletionCall {
     el: *mut EditLine,
     complete_func: Option<CompleteFuncC>,
     attempted_completion_function: Option<AttemptedCompletionFuncC>,
@@ -247,7 +235,33 @@ unsafe fn complete(
     point: *mut c_int,
     end: *mut c_int,
     flags: Option<c_uint>,
-) -> c_int {
+}
+
+/// The body [`fn_complete`] and [`fn_complete2`] share.
+///
+/// `flags` is `None` for `fn_complete`, which derives it from whether an
+/// attempted-completion hook was supplied, and `Some` for `fn_complete2`,
+/// which is handed it. The call is owned as one boundary value so this private
+/// implementation does not inherit the exported C signature's shape.
+///
+/// # Safety
+///
+/// As the two entry points.
+unsafe fn complete(call: CompletionCall) -> c_int {
+    let CompletionCall {
+        el,
+        complete_func,
+        attempted_completion_function,
+        word_break,
+        special_prefixes,
+        app_func,
+        query_items,
+        completion_type,
+        over,
+        point,
+        end,
+        flags,
+    } = call;
     // The C dereferences `el` at once, through `el_wline`. Defined here as
     // the caller error it is; every other argument has a documented NULL.
     if el.is_null() {
@@ -371,7 +385,7 @@ pub unsafe extern "C" fn fn_complete2(
 ) -> c_int {
     // SAFETY: as documented above.
     unsafe {
-        complete(
+        complete(CompletionCall {
             el,
             complete_func,
             attempted_completion_function,
@@ -383,8 +397,8 @@ pub unsafe extern "C" fn fn_complete2(
             over,
             point,
             end,
-            Some(flags),
-        )
+            flags: Some(flags),
+        })
     }
 }
 
@@ -411,7 +425,7 @@ pub unsafe extern "C" fn fn_complete(
 ) -> c_int {
     // SAFETY: as [`fn_complete2`].
     unsafe {
-        complete(
+        complete(CompletionCall {
             el,
             complete_func,
             attempted_completion_function,
@@ -423,8 +437,8 @@ pub unsafe extern "C" fn fn_complete(
             over,
             point,
             end,
-            None,
-        )
+            flags: None,
+        })
     }
 }
 

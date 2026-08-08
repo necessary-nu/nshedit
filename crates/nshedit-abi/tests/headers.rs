@@ -20,6 +20,7 @@
 include!("../cbindgen/generate.rs");
 
 /// Every committed header is byte-identical to a fresh generation.
+// [spec:nshedit:req:abi.surface-stability/test]
 #[test]
 fn committed_headers_are_freshly_generated() {
     let shipped = shipped_dir();

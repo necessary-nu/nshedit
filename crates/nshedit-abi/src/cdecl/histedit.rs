@@ -2,12 +2,11 @@
 //!
 //! The complete records, operation codes, callback spelling, version macros,
 //! and foreign scalar aliases live here so header generation never parses the
-//! core. The translated engine temporarily carries layout-compatible record
-//! twins; compile-time size, alignment, and offset assertions below guard the
-//! casts at that migration seam.
+//! core. Boundary code publishes these records field by field; their layout is
+//! therefore an independent C contract rather than a claim about any core
+//! representation.
 
 use core::ffi::{c_char, c_int, c_void};
-use core::mem::{align_of, offset_of, size_of};
 
 use super::handles::EditLine;
 
@@ -139,32 +138,3 @@ pub type HistEventWide = HistEventGen<WcharT>;
 /// cannot accidentally learn the ABI adapter's allocation layout.
 // [spec:libedit:def:histedit.el-rfunc-t-edit-line-wchar-t]
 pub type ElReadCallback = unsafe extern "C" fn(*mut EditLine, *mut WcharT) -> c_int;
-
-/// The translated payload still consumes its own temporary record twins.
-/// These assertions make every pointer cast at that seam a checked layout
-/// claim rather than an assumption.
-const _: () = {
-    assert!(size_of::<LineInfo>() == size_of::<nshedit::histedit::LineInfo>());
-    assert!(align_of::<LineInfo>() == align_of::<nshedit::histedit::LineInfo>());
-    assert!(offset_of!(LineInfo, buffer) == offset_of!(nshedit::histedit::LineInfo, buffer));
-    assert!(offset_of!(LineInfo, cursor) == offset_of!(nshedit::histedit::LineInfo, cursor));
-    assert!(offset_of!(LineInfo, lastchar) == offset_of!(nshedit::histedit::LineInfo, lastchar));
-
-    assert!(size_of::<LineInfoWide>() == size_of::<nshedit::histedit::LineInfoW>());
-    assert!(align_of::<LineInfoWide>() == align_of::<nshedit::histedit::LineInfoW>());
-    assert!(offset_of!(LineInfoWide, buffer) == offset_of!(nshedit::histedit::LineInfoW, buffer));
-    assert!(offset_of!(LineInfoWide, cursor) == offset_of!(nshedit::histedit::LineInfoW, cursor));
-    assert!(
-        offset_of!(LineInfoWide, lastchar) == offset_of!(nshedit::histedit::LineInfoW, lastchar)
-    );
-
-    assert!(size_of::<HistEvent>() == size_of::<nshedit::histedit::HistEvent>());
-    assert!(align_of::<HistEvent>() == align_of::<nshedit::histedit::HistEvent>());
-    assert!(offset_of!(HistEvent, num) == offset_of!(nshedit::histedit::HistEvent, num));
-    assert!(offset_of!(HistEvent, str) == offset_of!(nshedit::histedit::HistEvent, str));
-
-    assert!(size_of::<HistEventWide>() == size_of::<nshedit::histedit::HistEventW>());
-    assert!(align_of::<HistEventWide>() == align_of::<nshedit::histedit::HistEventW>());
-    assert!(offset_of!(HistEventWide, num) == offset_of!(nshedit::histedit::HistEventW, num));
-    assert!(offset_of!(HistEventWide, str) == offset_of!(nshedit::histedit::HistEventW, str));
-};

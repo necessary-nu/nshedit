@@ -176,6 +176,7 @@ fn oracle_builds() {
 /// `fn_filename_completion_function` and `fn_tilde_expand` — are exported now,
 /// from [`nshedit_abi::chartype`] and [`nshedit_abi::filecomplete`]. Debian
 /// exports all seven, so a consumer deployed today reaches them.
+// [spec:nshedit:req:abi.surface-stability/test]
 #[test]
 fn abi_shape() {
     let _stages = stage_lock();
@@ -244,6 +245,7 @@ fn traces_are_deterministic() {
 /// The staleness question — is the committed header what the generator
 /// produces — is `tests/headers.rs`, which needs no toolchain and is not
 /// ignored.
+// [spec:nshedit:req:abi.surface-stability/test]
 #[test]
 fn header_diff() {
     let _stages = stage_lock();
@@ -270,6 +272,7 @@ fn header_diff() {
 /// because `debian/patches/update-soname.diff` changes that line to `2:75:0`.
 /// A newly linked consumer records `libnshedit.so.0` instead, which is the
 /// point — `ldd` names what actually loaded.
+// [spec:nshedit:req:abi.surface-stability/test]
 #[test]
 fn soname_and_compat_symlinks() {
     let _stages = stage_lock();

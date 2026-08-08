@@ -19,11 +19,11 @@
 //! - The C names for the readline records: `HIST_ENTRY`, `KEYMAP_ENTRY`, and
 //!   `HISTORY_STATE`.
 //!
-//! The temporary compatibility payload still has private record twins.
-//! Compile-time size, alignment, and field-offset assertions guard the casts
-//! until those twins are deleted. The layouts here are authoritative and are
-//! independently verified by the generated-header differential.
+//! Boundary code constructs the completed records field by field; it never
+//! casts a core record into one. The layouts here are independently
+//! authoritative and are verified by the generated-header differential.
 
+// [spec:nshedit:req:abi.surface-stability]
 pub mod handles;
 pub mod histedit;
 pub mod readline;
