@@ -1,9 +1,5 @@
 //! Ported from `src/tty.c`; rules live in `docs/spec/port/src/tty.md`.
 
-use std::io::Write;
-use std::mem::ManuallyDrop;
-use std::os::fd::FromRawFd;
-
 use crate::chartype::{ct_encode_char, ct_encode_string};
 use crate::el::{EDIT_DISABLED, EL_BUFSIZ, EditLine, ElActionT, NO_RESET};
 use crate::fcns::{
@@ -724,33 +720,6 @@ fn termios_copy(dst: &mut Termios, src: &Termios) {
     dst.c_lflag = src.c_lflag;
     dst.c_cc.clear();
     dst.c_cc.extend_from_slice(&src.c_cc);
-}
-
-/// C: `fprintf(el->el_outfile, …)` for an already-formatted byte string.
-///
-/// The stream is a caller-owned `FILE *` the port cannot write through, so
-/// this goes to the matching descriptor, which the `EditLine` carries for
-/// exactly this reason (`def:el.editline`). Errors are discarded, as the C
-/// discards `fprintf`'s result. `hist.rs` carries a private twin; one of them
-/// should survive idiomatization.
-fn write_outfile(el: &EditLine, bytes: &[u8]) {
-    write_fd(el.el_outfd, bytes);
-}
-
-/// C: `fprintf(el->el_errfile, …)`. Same reasoning as [`write_outfile`].
-fn write_errfile(el: &EditLine, bytes: &[u8]) {
-    write_fd(el.el_errfd, bytes);
-}
-
-fn write_fd(fd: i32, bytes: &[u8]) {
-    if fd < 0 {
-        return;
-    }
-    // SAFETY: the descriptor is the application's and stays open for the life
-    // of the `EditLine`; `ManuallyDrop` is what keeps this borrow from
-    // closing it, which libedit never does.
-    let mut out = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
-    let _ = out.write_all(bytes);
 }
 
 /// The C's `s[i]` on a NUL-terminated `const wchar_t *`, made total: the
@@ -1564,7 +1533,7 @@ pub fn tty_stty(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
                 msg.extend_from_slice(b": Unknown switch `");
                 msg.extend_from_slice(&encode_char(s[1]));
                 msg.extend_from_slice(b"'.\n");
-                write_errfile(el, &msg);
+                el.write_errfile(&msg);
                 return -1;
             }
         }
@@ -1645,7 +1614,7 @@ fn tty_stty_display(el: &mut EditLine, z: usize, aflag: i32) {
         }
     }
     out.push(b'\n');
-    write_outfile(el, &out);
+    el.write_outfile(&out);
 }
 
 /// [`tty_stty`] steps 6 to 9: apply each remaining argument, re-derive the
@@ -1691,7 +1660,7 @@ fn tty_stty_edit(
             msg.extend_from_slice(b": Invalid argument `");
             msg.extend_from_slice(&enc);
             msg.extend_from_slice(b"'.\n");
-            write_errfile(el, &msg);
+            el.write_errfile(&msg);
             return -1;
         };
 
@@ -1814,7 +1783,7 @@ fn tty_printchar(el: &mut EditLine, s: &[u8]) {
         }
     }
     out.push(b'\n');
-    write_errfile(el, &out);
+    el.write_errfile(&out);
 }
 
 // [spec:libedit:def:tty.tty-setup-flags-fn]

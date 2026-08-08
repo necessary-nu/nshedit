@@ -83,6 +83,6 @@ fn the_bell_falls_back_to_one_literal_byte_and_touches_nothing_else() {
     assert_eq!(out, [0x07]);
 
     // `sem:el.el-beep-fn`: no cursor movement and no editing state.
-    assert_eq!((el.el_cursor.h, el.el_cursor.v), (7, 2));
+    assert_eq!(el.el_cursor, CoordT { h: 7, v: 2 });
     assert_eq!((el.el_line.cursor, el.el_line.lastchar), (3, 5));
 }

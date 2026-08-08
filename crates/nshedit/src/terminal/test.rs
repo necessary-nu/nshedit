@@ -278,7 +278,7 @@ fn deleting_picks_the_parameterised_form_only_when_it_is_cheaper() {
         b"<dm>ddd<ed>"
     );
     // Nothing here touches the screen model; the caller owns it.
-    assert_eq!((el.el_cursor.h, el.el_cursor.v), (0, 0));
+    assert_eq!(el.el_cursor, CoordT { h: 0, v: 0 });
 }
 
 // [spec:libedit:sem:terminal.terminal-insertwrite-fn/test]
@@ -403,8 +403,8 @@ fn clearing_falls_back_to_home_and_clear_to_bottom_then_to_a_newline() {
     terminal_alloc(&mut el, T_CL, Some("<cl>"));
     assert_eq!(emitted(&mut el, terminal_clear_screen), b"<cl>");
     assert_eq!(
-        (el.el_cursor.h, el.el_cursor.v),
-        (7, 2),
+        el.el_cursor,
+        CoordT { h: 7, v: 2 },
         "the cursor model is the caller's to fix"
     );
 }
@@ -423,7 +423,7 @@ fn the_bell_falls_back_to_a_literal_bel_byte() {
 
     terminal_alloc(&mut el, T_BL, Some(""));
     assert_eq!(emitted(&mut el, terminal_beep), b"\x07");
-    assert_eq!((el.el_cursor.h, el.el_cursor.v), (0, 0));
+    assert_eq!(el.el_cursor, CoordT { h: 0, v: 0 });
 }
 
 /// The function-key table as `terminal_init` leaves it, defaults filled

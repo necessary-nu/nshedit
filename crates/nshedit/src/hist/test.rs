@@ -2,30 +2,14 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::*;
-use crate::chared::ch_init;
 use crate::common::{ed_next_history, ed_prev_history};
-use crate::el::blank_editline;
 use crate::histedit::CC_REFRESH_BEEP;
 use crate::history::OwnedHistoryW;
-use crate::search::search_init;
+use crate::testkit::headless_editor;
 
-/// An editor with a line buffer, a screen and no descriptors, in the state
-/// `el_init` leaves behind. Same shape as the one in `vi/test.rs`, and for the
-/// same reasons: `re_refresh` walks `el_display` under `t_size` and recurses to
-/// a stack overflow on a zero-sized terminal, and descriptor 0 is the test
-/// runner's own stdout.
+/// An editor in the state `el_init` leaves behind, on an ordinary screen.
 fn editor() -> EditLine {
-    let mut el = blank_editline();
-    ch_init(&mut el);
-    search_init(&mut el);
-    el.el_infd = -1;
-    el.el_outfd = -1;
-    el.el_errfd = -1;
-    el.el_terminal.t_size.h = 80;
-    el.el_terminal.t_size.v = 24;
-    el.el_display = vec![vec![0u32; 81]; 24];
-    el.el_vdisplay = vec![vec![0u32; 81]; 24];
-    el
+    headless_editor(80, 24)
 }
 
 fn text(el: &EditLine) -> String {
@@ -423,14 +407,15 @@ fn a_refused_allocation_leaves_the_stash_exactly_as_it_was() {
 /// and the sole caller discards that error deliberately: the first line-buffer
 /// growth allocates from nothing and silently repairs the state.
 ///
-/// `editor()` is that state — it runs `ch_init` and `search_init` and never
-/// `hist_init` — so this is also what an editor assembled without the stash
-/// recovers to.
+/// ERR-history-11 is that this state reaches a working editor unannounced, so
+/// it is staged here rather than being borrowed from a half-built one.
 // [spec:libedit:sem:hist.hist-enlargebuf-fn/test]
 #[test]
 fn the_first_growth_repairs_a_stash_that_was_never_allocated() {
     let mut el = editor();
-    assert_eq!((el.el_history.sz, el.el_history.last), (0, 0));
+    el.el_history.buf = Vec::new();
+    el.el_history.sz = 0;
+    el.el_history.last = 0;
     assert!(el.el_history.buf.is_empty());
 
     assert_eq!(hist_enlargebuf(&mut el, EL_BUFSIZ), 1);

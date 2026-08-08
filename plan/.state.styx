@@ -142,4 +142,5 @@ assertions (
     {id history-listing-escape, kind @complete, author "brendan@necessary.nu", at 2026-08-08T01:38:10.626578749Z}
     {id history-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-08T01:41:36.218868298Z}
     {id history-save-truncates, kind @complete, author "brendan@necessary.nu", at 2026-08-08T01:58:02.920782469Z}
+    {id core-api-idiomatize, kind @doing, author "brendan@necessary.nu", at 2026-08-08T09:01:56.204420688Z}
 )

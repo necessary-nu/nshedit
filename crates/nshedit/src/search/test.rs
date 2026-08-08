@@ -8,51 +8,26 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::*;
-use crate::chared::{DELETE, ch_init};
-use crate::el::blank_editline;
-use crate::hist::hist_init;
+use crate::chared::DELETE;
 use crate::histedit::{CC_EOF, CC_NEWLINE};
 use crate::history::OwnedHistoryW;
-use crate::map::{map_init, map_init_emacs, map_init_vi};
-use crate::read::read_init;
+use crate::map::map_init_emacs;
+use crate::testkit::headless_editor;
 
-/// An editor in the state `el_init` leaves behind, in emacs mode, with no
-/// descriptors.
-///
-/// `map_init` is not optional here the way it is in `vi/test.rs`:
-/// [`ce_inc_search`] dispatches every keystroke through `el_map.current`, so
-/// an editor without a keymap reads every character as command 0 and the
-/// incremental search never grows its pattern. `hist_init` is needed for the
-/// same kind of reason — the search's unwind path calls `hist_get`, whose
-/// `eventno == 0` branch restores the live line out of a stash that is empty
-/// until `hist_init` sizes it.
-///
-/// The screen has to be real: `re_refresh` walks `el_display` under `t_size`
-/// and recurses to a stack overflow on a zero-sized terminal. Descriptor 0 is
-/// the test runner's own stdout, hence the -1s.
+/// The shared editor in emacs mode, which is where `^R`, `^S` and the
+/// incremental search are typed.
 fn editor() -> EditLine {
-    let mut el = blank_editline();
-    map_init(&mut el);
+    let mut el = headless_editor(80, 24);
     map_init_emacs(&mut el);
-    ch_init(&mut el);
-    search_init(&mut el);
-    hist_init(&mut el);
-    read_init(&mut el);
-    el.el_infd = -1;
-    el.el_outfd = -1;
-    el.el_errfd = -1;
-    el.el_terminal.t_size.h = 80;
-    el.el_terminal.t_size.v = 24;
-    el.el_display = vec![vec![0u32; 81]; 24];
-    el.el_vdisplay = vec![vec![0u32; 81]; 24];
     el
 }
 
 /// The same editor in vi command mode, which is where `/`, `?`, `n`, `N` and
-/// the character searches are typed.
+/// the character searches are typed. `headless_editor` already left the vi
+/// tables installed — that is `map_init`'s own last step — so only the mode
+/// moves.
 fn vi_editor() -> EditLine {
-    let mut el = editor();
-    map_init_vi(&mut el);
+    let mut el = headless_editor(80, 24);
     el.el_map.current = ElMapCurrent::Alt;
     el
 }

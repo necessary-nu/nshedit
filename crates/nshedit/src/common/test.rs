@@ -452,7 +452,7 @@ fn the_command_prompt_destroys_the_line_and_leaves_command_mode() {
     assert_eq!(ed_command(&mut el, 0), CC_REFRESH);
     assert_eq!(el.el_line.lastchar, 0);
     assert_eq!(el.el_line.cursor, 0);
-    assert!(el.el_map.current == ElMapCurrent::Key);
+    assert_eq!(el.el_map.current, ElMapCurrent::Key);
     assert_eq!(el.el_refresh.r_oldcv, 0);
 }
 

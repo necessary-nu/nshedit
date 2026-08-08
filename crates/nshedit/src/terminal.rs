@@ -43,6 +43,7 @@ use crate::literal::{EL_LITERAL, literal_get};
 use crate::locale;
 use crate::map::{ElMapCurrent, MAP_VI};
 use crate::refresh::re_clear_display;
+use crate::stdio::write_fd;
 use crate::tty::SpeedT;
 
 /// C: `#define TC_BUFSIZE ((size_t)2048)`.
@@ -427,42 +428,6 @@ pub(crate) fn block_sigwinch() -> Option<SigSet> {
 /// caller here discards, as the C does.
 pub(crate) fn set_sigmask(oset: &SigSet) -> bool {
     signal::sigmask_set(oset)
-}
-
-/// C: `fputs(s, el->el_outfile)` / `fprintf(el->el_outfile, …)`.
-///
-/// The stream is a caller-owned `FILE *` the port cannot write through, so
-/// this goes to the matching descriptor, which the `EditLine` carries for
-/// exactly this reason (`def:el.editline`). Returns the C's `fputs` result:
-/// non-negative on success, `EOF` on failure.
-///
-/// Unbuffered, where the C's `FILE *` is not — see [`terminal__flush`].
-fn write_outfile(el: &EditLine, bytes: &[u8]) -> i32 {
-    write_fd(el.el_outfd, bytes)
-}
-
-/// C: `fprintf(el->el_errfile, …)`. As [`write_outfile`], on the error
-/// descriptor; every diagnostic in this file discards the result, as the C
-/// discards `fprintf`'s.
-fn write_errfile(el: &EditLine, bytes: &[u8]) {
-    let _ = write_fd(el.el_errfd, bytes);
-}
-
-/// The one place this module touches a descriptor.
-fn write_fd(fd: i32, bytes: &[u8]) -> i32 {
-    if fd < 0 {
-        return -1;
-    }
-    // SAFETY: the descriptor is the application's and stays open for the life
-    // of the `EditLine`; `ManuallyDrop` is what keeps this borrow from
-    // closing it, which libedit never does.
-    let mut out = std::mem::ManuallyDrop::new(unsafe {
-        <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd)
-    });
-    match out.write_all(bytes) {
-        Ok(()) => 0,
-        Err(_) => -1,
-    }
 }
 
 /// The C reads a `wchar_t *` to its first `L'\0'`; a slice also has an end.
@@ -1576,14 +1541,11 @@ pub fn terminal_set(el: &mut EditLine, term: Option<&str>) -> i32 {
     if i <= 0 {
         // Step 5: dumb-terminal settings.
         if i == -1 {
-            write_errfile(el, b"Cannot read termcap database;\n");
+            el.write_errfile(b"Cannot read termcap database;\n");
         } else {
-            write_errfile(
-                el,
-                format!("No entry for terminal type \"{name}\";\n").as_bytes(),
-            );
+            el.write_errfile(format!("No entry for terminal type \"{name}\";\n").as_bytes());
         }
-        write_errfile(el, b"using dumb terminal settings.\n");
+        el.write_errfile(b"using dumb terminal settings.\n");
         set_val(el, T_CO, 80);
         set_val(el, T_PT, 0);
         set_val(el, T_KM, 0);
@@ -2110,7 +2072,7 @@ pub(crate) fn terminal__putc(el: &mut EditLine, c: u32) -> i32 {
         return i32::try_from(i).unwrap_or(-1);
     }
     let n = usize::try_from(i).unwrap_or(0);
-    write_outfile(el, &buf[..n])
+    el.write_outfile(&buf[..n])
 }
 
 // [spec:libedit:def:terminal.terminal-flush-fn]
@@ -2152,13 +2114,10 @@ pub(crate) fn terminal_writec(el: &mut EditLine, c: u32) {
 pub fn terminal_telltc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     let _ = (argc, argv);
 
-    write_outfile(el, b"\n\tYour terminal has the\n");
-    write_outfile(el, b"\tfollowing characteristics:\n\n");
+    el.write_outfile(b"\n\tYour terminal has the\n");
+    el.write_outfile(b"\tfollowing characteristics:\n\n");
     let (co, li) = (val(el, T_CO), val(el, T_LI));
-    write_outfile(
-        el,
-        format!("\tIt has {co} columns and {li} lines\n").as_bytes(),
-    );
+    el.write_outfile(format!("\tIt has {co} columns and {li} lines\n").as_bytes());
 
     let flags = el.el_terminal.t_flags;
     let meta = if flags & TERM_HAS_META != 0 {
@@ -2166,26 +2125,26 @@ pub fn terminal_telltc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     } else {
         "no"
     };
-    write_outfile(el, format!("\tIt has {meta} meta key\n").as_bytes());
+    el.write_outfile(format!("\tIt has {meta} meta key\n").as_bytes());
     let tabs = if flags & TERM_CAN_TAB != 0 {
         " "
     } else {
         "not "
     };
-    write_outfile(el, format!("\tIt can{tabs}use tabs\n").as_bytes());
+    el.write_outfile(format!("\tIt can{tabs}use tabs\n").as_bytes());
     let am = if flags & TERM_HAS_AUTO_MARGINS != 0 {
         "has"
     } else {
         "does not have"
     };
-    write_outfile(el, format!("\tIt {am} automatic margins\n").as_bytes());
+    el.write_outfile(format!("\tIt {am} automatic margins\n").as_bytes());
     if flags & TERM_HAS_AUTO_MARGINS != 0 {
         let xn = if flags & TERM_HAS_MAGIC_MARGINS != 0 {
             "has"
         } else {
             "does not have"
         };
-        write_outfile(el, format!("\tIt {xn} magic margins\n").as_bytes());
+        el.write_outfile(format!("\tIt {xn} magic margins\n").as_bytes());
     }
 
     // One line per string capability, walking the table and the slots in
@@ -2210,9 +2169,9 @@ pub fn terminal_telltc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
         let mut line = format!("\t{:>25} ({}) == ", t.long_name, t.name).into_bytes();
         line.extend_from_slice(&ub);
         line.push(b'\n');
-        write_outfile(el, &line);
+        el.write_outfile(&line);
     }
-    write_outfile(el, b"\n");
+    el.write_outfile(b"\n");
     0
 }
 
@@ -2255,7 +2214,7 @@ pub fn terminal_settc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
         msg.extend_from_slice(b": Bad capability `");
         msg.extend_from_slice(&what);
         msg.extend_from_slice(b"'.\n");
-        write_errfile(el, &msg);
+        el.write_errfile(&msg);
         return -1;
     };
 
@@ -2315,7 +2274,7 @@ fn bad_value(el: &mut EditLine, cmd: &[u32], how: &[u8]) {
     msg.extend_from_slice(b": Bad value `");
     msg.extend_from_slice(how);
     msg.extend_from_slice(b"'.\n");
-    write_errfile(el, &msg);
+    el.write_errfile(&msg);
 }
 
 /// C: `strtol(s, &ep, 10)`, returning the value and `ep - s`.
@@ -2427,41 +2386,32 @@ pub fn terminal_echotc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     let flags = el.el_terminal.t_flags;
     let yesno = |b: bool| if b { "yes" } else { "no" };
     if wcs_eq(&arg, A_TABS) {
-        write_outfile(
-            el,
-            format!("{}\n", yesno(flags & TERM_CAN_TAB != 0)).as_bytes(),
-        );
+        el.write_outfile(format!("{}\n", yesno(flags & TERM_CAN_TAB != 0)).as_bytes());
         return 0;
     } else if wcs_eq(&arg, A_META) {
         // From the meta-key value slot directly, not from TERM_HAS_META, so
         // the separate MT slot is deliberately not considered here.
-        write_outfile(el, format!("{}\n", yesno(val(el, T_KM) != 0)).as_bytes());
+        el.write_outfile(format!("{}\n", yesno(val(el, T_KM) != 0)).as_bytes());
         return 0;
     } else if wcs_eq(&arg, A_XN) {
-        write_outfile(
-            el,
-            format!("{}\n", yesno(flags & TERM_HAS_MAGIC_MARGINS != 0)).as_bytes(),
-        );
+        el.write_outfile(format!("{}\n", yesno(flags & TERM_HAS_MAGIC_MARGINS != 0)).as_bytes());
         return 0;
     } else if wcs_eq(&arg, A_AM) {
-        write_outfile(
-            el,
-            format!("{}\n", yesno(flags & TERM_HAS_AUTO_MARGINS != 0)).as_bytes(),
-        );
+        el.write_outfile(format!("{}\n", yesno(flags & TERM_HAS_AUTO_MARGINS != 0)).as_bytes());
         return 0;
     } else if wcs_eq(&arg, A_BAUD) {
         // The raw `speed_t`, as the C prints it: on Linux that is the encoded
         // `B*` constant, not a baud number.
         let speed = el.el_tty.t_speed as i32;
-        write_outfile(el, format!("{speed}\n").as_bytes());
+        el.write_outfile(format!("{speed}\n").as_bytes());
         return 0;
     } else if wcs_eq(&arg, A_ROWS) || wcs_eq(&arg, A_LINES) {
         let li = val(el, T_LI);
-        write_outfile(el, format!("{li}\n").as_bytes());
+        el.write_outfile(format!("{li}\n").as_bytes());
         return 0;
     } else if wcs_eq(&arg, A_COLS) {
         let co = val(el, T_CO);
-        write_outfile(el, format!("{co}\n").as_bytes());
+        el.write_outfile(format!("{co}\n").as_bytes());
         return 0;
     }
 
@@ -2487,7 +2437,7 @@ pub fn terminal_echotc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
                 let mut msg = b"echotc: Termcap parameter `".to_vec();
                 msg.extend_from_slice(&name);
                 msg.extend_from_slice(b"' not found.\n");
-                write_errfile(el, &msg);
+                el.write_errfile(&msg);
             }
             return -1;
         }
@@ -2518,7 +2468,7 @@ pub fn terminal_echotc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
                     let mut msg = b"echotc: Warning: unknown termcap % `".to_vec();
                     msg.push(c);
                     msg.extend_from_slice(b"'.\n");
-                    write_errfile(el, &msg);
+                    el.write_errfile(&msg);
                 }
             }
         }
@@ -2567,8 +2517,7 @@ pub fn terminal_echotc(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
             // Any count greater than 2 falls through to the two-parameter
             // case, warning first when verbose.
             if arg_need > 2 && verbose {
-                write_errfile(
-                    el,
+                el.write_errfile(
                     format!("echotc: Warning: Too many required arguments ({arg_need}).\n")
                         .as_bytes(),
                 );
@@ -2645,7 +2594,7 @@ fn warn_extra(el: &mut EditLine, silent: bool, arg: &[u32]) {
     let mut msg = b"echotc: Warning: Extra argument `".to_vec();
     msg.extend_from_slice(&name);
     msg.extend_from_slice(b"'.\n");
-    write_errfile(el, &msg);
+    el.write_errfile(&msg);
 }
 
 /// C: `"echotc: Warning: Missing argument.\n"`.
@@ -2653,7 +2602,7 @@ fn warn_missing(el: &mut EditLine, silent: bool) {
     if silent {
         return;
     }
-    write_errfile(el, b"echotc: Warning: Missing argument.\n");
+    el.write_errfile(b"echotc: Warning: Missing argument.\n");
 }
 
 /// C: `"echotc: Bad value `%ls' for rows.\n"` and its `cols` twin.
@@ -2665,7 +2614,7 @@ fn bad_echotc_value(el: &mut EditLine, silent: bool, arg: &[u32], what: &str) {
     let mut msg = b"echotc: Bad value `".to_vec();
     msg.extend_from_slice(&name);
     msg.extend_from_slice(format!("' for {what}.\n").as_bytes());
-    write_errfile(el, &msg);
+    el.write_errfile(&msg);
 }
 
 #[cfg(test)]

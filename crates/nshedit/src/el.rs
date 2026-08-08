@@ -23,9 +23,7 @@ use core::ffi::{c_char, c_void};
 use core::ptr;
 use std::ffi::{CStr, CString, OsStr, OsString};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
-use std::mem::ManuallyDrop;
-use std::os::fd::FromRawFd;
+use std::io::{BufRead, BufReader};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -123,6 +121,7 @@ pub type ElActionT = u8;
 /// Note that `el_terminal.t_size` stores columns in `v` and lines in `h`,
 /// the reverse of what the names suggest. That is the C's doing, not a slip
 /// here; see `sem:terminal.terminal-set-fn`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CoordT {
     pub h: i32,
     pub v: i32,
@@ -1404,7 +1403,7 @@ pub(crate) fn el_editmode(el: &mut EditLine, argv: &[&[u32]]) -> i32 {
             msg.extend_from_slice(encoded);
         }
         msg.extend_from_slice(b"'.\n");
-        write_errfile(el, &msg);
+        el.write_errfile(&msg);
         return -1;
     }
 
@@ -1422,23 +1421,6 @@ fn wcs_eq_ascii(s: &[u32], lit: &str) -> bool {
     let end = s.iter().position(|&c| c == 0).unwrap_or(s.len());
     let s = &s[..end];
     s.len() == lit.len() && s.iter().zip(lit.bytes()).all(|(&c, b)| c == u32::from(b))
-}
-
-/// C: `fprintf(el->el_errfile, …)` for an already-formatted byte string.
-///
-/// The stream is a caller-owned `FILE *` the port cannot write through, so
-/// this goes to the matching descriptor, which the `EditLine` carries for
-/// exactly this reason (`def:el.editline`). Errors are discarded, as the C
-/// discards `fprintf`'s result. Same shape as `hist.rs`'s `write_outfile`.
-fn write_errfile(el: &EditLine, bytes: &[u8]) {
-    if el.el_errfd < 0 {
-        return;
-    }
-    // SAFETY: `el_errfd` is the application's descriptor and stays open for
-    // the life of the `EditLine`; `ManuallyDrop` is what keeps this borrow
-    // from closing it, which libedit never does.
-    let mut out = ManuallyDrop::new(unsafe { File::from_raw_fd(el.el_errfd) });
-    let _ = out.write_all(bytes);
 }
 
 #[cfg(test)]

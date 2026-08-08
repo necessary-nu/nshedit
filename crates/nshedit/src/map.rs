@@ -1,9 +1,6 @@
 //! Ported from `src/map.c`; rules live in `docs/spec/port/src/map.md`.
 
 use std::borrow::Cow;
-use std::io::Write;
-use std::mem::ManuallyDrop;
-use std::os::fd::FromRawFd;
 
 use crate::el::{EL_BUFSIZ, EditLine, ElActionT};
 // The generated command table. A glob import because the three keymap tables
@@ -120,7 +117,7 @@ pub struct ElBindingsT {
 /// unconditionally true in the C because `current` is only ever `key` or
 /// `alt`; leaving `Emacs` out of this enum preserves that outcome rather
 /// than inviting a translation that could make the test meaningful.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElMapCurrent {
     /// `current == el_map.key`.
     Key,
@@ -1369,7 +1366,7 @@ fn map_print_key(el: &mut EditLine, map: ElMapCurrent, r#in: &[u32]) {
         out.extend_from_slice(b"\t->\t");
         out.extend_from_slice(&wcs_to_mb(&name));
         out.push(b'\n');
-        write_outfile(el, &out);
+        el.write_outfile(&out);
     }
 }
 
@@ -1390,7 +1387,7 @@ fn map_print_some_keys(el: &mut EditLine, map: ElMapCurrent, first: u32, last: u
             let mut out = Vec::new();
             pad(&mut out, &decode(&firstbuf, STRQQ), 15);
             out.extend_from_slice(b"->  is undefined\n");
-            write_outfile(el, &out);
+            el.write_outfile(&out);
         }
         return;
     }
@@ -1428,7 +1425,7 @@ fn map_print_some_keys(el: &mut EditLine, map: ElMapCurrent, first: u32, last: u
     out.extend_from_slice(b"->  ");
     out.extend_from_slice(&wcs_to_mb(&name));
     out.push(b'\n');
-    write_outfile(el, &out);
+    el.write_outfile(&out);
 }
 
 // [spec:libedit:def:map.map-print-all-keys-fn]
@@ -1438,18 +1435,18 @@ fn map_print_some_keys(el: &mut EditLine, map: ElMapCurrent, first: u32, last: u
 fn map_print_all_keys(el: &mut EditLine) {
     // All four headings are printed even when the section under them is
     // empty; the order and the exact strings are observable output.
-    write_outfile(el, b"Standard key bindings\n");
+    el.write_outfile(b"Standard key bindings\n");
     print_runs(el, ElMapCurrent::Key);
 
     // In emacs mode `alt` is uniformly ED_UNASSIGNED, so this is one run of
     // 256 keys that `map_print_some_keys` prints nothing for: the heading
     // appears with no entries under it.
-    write_outfile(el, b"Alternative key bindings\n");
+    el.write_outfile(b"Alternative key bindings\n");
     print_runs(el, ElMapCurrent::Alt);
 
-    write_outfile(el, b"Multi-character bindings\n");
+    el.write_outfile(b"Multi-character bindings\n");
     keymacro_print(el, &[]);
-    write_outfile(el, b"Arrow key bindings\n");
+    el.write_outfile(b"Arrow key bindings\n");
     terminal_print_arrow(el, &[]);
 }
 
@@ -1529,7 +1526,7 @@ pub fn map_bind(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
                     out.extend_from_slice(&wcs_to_mb(&bp.description));
                     out.push(b'\n');
                 }
-                write_outfile(el, &out);
+                el.write_outfile(&out);
                 return 0;
             }
             // Anything else, a bare `-` included (where the C reads the
@@ -1541,7 +1538,7 @@ pub fn map_bind(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
                 out.extend_from_slice(b": Invalid switch `");
                 out.extend_from_slice(&wcs_to_mb(&[c]));
                 out.extend_from_slice(b"'.\n");
-                write_errfile(el, &out);
+                el.write_errfile(&out);
             }
         }
         i += 1;
@@ -1571,7 +1568,7 @@ pub fn map_bind(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
         let Some(n) = parse__string(&mut buf, arg).map(<[u32]>::len) else {
             let mut out = wcs_to_mb(prog);
             out.extend_from_slice(b": Invalid \\ or ^ in instring.\n");
-            write_errfile(el, &out);
+            el.write_errfile(&out);
             return -1;
         };
         buf.truncate(n);
@@ -1632,7 +1629,7 @@ pub fn map_bind(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
             let Some(n) = parse__string(&mut buf, value).map(<[u32]>::len) else {
                 let mut out = wcs_to_mb(prog);
                 out.extend_from_slice(b": Invalid \\ or ^ in outstring.\n");
-                write_errfile(el, &out);
+                el.write_errfile(&out);
                 return -1;
             };
             buf.truncate(n);
@@ -1664,7 +1661,7 @@ pub fn map_bind(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
                 out.extend_from_slice(b": Invalid command `");
                 out.extend_from_slice(&wcs_to_mb(value));
                 out.extend_from_slice(b"'.\n");
-                write_errfile(el, &out);
+                el.write_errfile(&out);
                 return -1;
             }
             if key {
@@ -1837,32 +1834,6 @@ fn wcs_to_mb(s: &[u32]) -> Vec<u8> {
 fn wcs_eq_ascii(s: &[u32], lit: &[u8]) -> bool {
     let s = upto_nul(s);
     s.len() == lit.len() && s.iter().zip(lit).all(|(&c, &b)| c == u32::from(b))
-}
-
-/// C: `fprintf(el->el_outfile, ...)` for an already-formatted byte string.
-///
-/// The stream is a caller-owned `FILE *` the port cannot write through, so
-/// this goes to the matching descriptor, which the `EditLine` carries for
-/// exactly this reason (`def:el.editline`). Errors are discarded, as the C
-/// discards `fprintf`'s result.
-fn write_outfile(el: &EditLine, bytes: &[u8]) {
-    write_fd(el.el_outfd, bytes);
-}
-
-/// C: `fprintf(el->el_errfile, ...)`, likewise.
-fn write_errfile(el: &EditLine, bytes: &[u8]) {
-    write_fd(el.el_errfd, bytes);
-}
-
-fn write_fd(fd: i32, bytes: &[u8]) {
-    if fd < 0 {
-        return;
-    }
-    // SAFETY: the descriptor is the application's and stays open for the life
-    // of the `EditLine`; `ManuallyDrop` is what keeps this borrow from
-    // closing it, which libedit never does.
-    let mut out = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
-    let _ = out.write_all(bytes);
 }
 
 #[cfg(test)]

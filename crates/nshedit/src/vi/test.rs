@@ -1,53 +1,23 @@
 use super::*;
-use crate::chared::ch_init;
 use crate::common::ed_insert;
-use crate::el::blank_editline;
 use crate::hist::HistSource;
 use crate::histedit::CC_NEWLINE;
 use crate::histedit::{H_FIRST, HistEventW};
 use crate::map::ElFuncT;
-use crate::read::read_init;
-use crate::search::search_init;
+use crate::testkit::{headless_editor, set_line};
 use core::ffi::{c_int, c_void};
 use std::sync::OnceLock;
 
-/// An editor in vi command mode, in the state `el_init` plus a `vi`
-/// `el_set(EL_EDITOR)` leaves behind, with `s` in the line and the cursor
-/// at `at`.
+/// The shared editor in vi *command* mode, with `s` in the line and the
+/// cursor at `at`.
 ///
-/// `ch_init` sizes the line, undo, redo and kill buffers at `EL_BUFSIZ`
-/// and puts `limit` two slots below the end of the line, which is the
-/// slack the insert paths shift into. The screen has to be real too:
-/// `re_refresh` walks `el_display` under `t_size`, and a zero-sized
-/// terminal makes it recurse until the stack runs out.
+/// `headless_editor` leaves the shipped default, vi insert mode, so only
+/// `current` moves: `el_map.alt` is the command keymap and that is where every
+/// command below is typed.
 fn el_with(s: &str, at: usize) -> EditLine {
-    let mut el = blank_editline();
-    ch_init(&mut el);
-    let chars: Vec<u32> = s.chars().map(u32::from).collect();
-    el.el_line.buffer[..chars.len()].copy_from_slice(&chars);
-    el.el_line.lastchar = chars.len();
-    el.el_line.cursor = at;
-    // `el_init` allocates the pattern buffer; `cv_search` writes through
-    // it, and `chadir`/`chacha` start from here too.
-    search_init(&mut el);
-    // Nothing here has a terminal to talk to, and descriptor 0 is the
-    // test runner's. `write_fd` already treats a negative one as "no
-    // destination", so the editor writes into the void instead of
-    // spraying escape sequences over the test output.
-    el.el_infd = -1;
-    el.el_outfd = -1;
-    el.el_errfd = -1;
-    el.el_map.r#type = MAP_VI;
-    // `el_map.alt` is the vi COMMAND keymap; `ch_init` leaves `key` — the
-    // insert one — current, which is not where these commands are typed.
+    let mut el = headless_editor(80, 24);
     el.el_map.current = ElMapCurrent::Alt;
-    // C: `wcsdup(L"_")` from `map_init_vi`. `ch_init` does not install it
-    // and every word test here consults it.
-    el.el_map.wordchars = Some(vec![u32::from(b'_')]);
-    el.el_terminal.t_size.h = 80;
-    el.el_terminal.t_size.v = 24;
-    el.el_display = vec![vec![0u32; 81]; 24];
-    el.el_vdisplay = vec![vec![0u32; 81]; 24];
+    set_line(&mut el, s, at);
     el
 }
 
@@ -138,8 +108,9 @@ fn a_doubled_operator_acts_on_the_whole_line() {
     assert_eq!(killed(&el), "abcdef");
     assert_eq!(el.el_chared.c_vcmd.action, NOP);
     assert_eq!(el.el_chared.c_undo.len, 6);
-    assert!(
-        el.el_map.current == ElMapCurrent::Alt,
+    assert_eq!(
+        el.el_map.current,
+        ElMapCurrent::Alt,
         "`dd` stays in command mode"
     );
 
@@ -147,8 +118,9 @@ fn a_doubled_operator_acts_on_the_whole_line() {
     vi_change_meta(&mut el, 0);
     assert_eq!(vi_change_meta(&mut el, 0), CC_REFRESH);
     assert_eq!(text(&el), "");
-    assert!(
-        el.el_map.current == ElMapCurrent::Key,
+    assert_eq!(
+        el.el_map.current,
+        ElMapCurrent::Key,
         "`cc` enters insert mode"
     );
 
@@ -310,13 +282,13 @@ fn change_word_keeps_the_trailing_blank_that_delete_word_eats() {
     pending(&mut el, DELETE | INSERT);
     assert_eq!(vi_next_word(&mut el, 0), CC_REFRESH);
     assert_eq!(text(&el), " bar");
-    assert!(el.el_map.current == ElMapCurrent::Key);
+    assert_eq!(el.el_map.current, ElMapCurrent::Key);
 
     let mut el = el_with("foo bar", 0);
     pending(&mut el, DELETE);
     assert_eq!(vi_next_word(&mut el, 0), CC_REFRESH);
     assert_eq!(text(&el), "bar");
-    assert!(el.el_map.current == ElMapCurrent::Alt);
+    assert_eq!(el.el_map.current, ElMapCurrent::Alt);
 }
 
 // [spec:libedit:sem:vi.vi-end-word-fn/test]
@@ -393,7 +365,7 @@ fn insert_at_bol_goes_to_column_zero_not_to_the_first_word() {
     let mut el = el_with("   ab", 4);
     assert_eq!(vi_insert_at_bol(&mut el, 0), CC_CURSOR);
     assert_eq!(el.el_line.cursor, 0);
-    assert!(el.el_map.current == ElMapCurrent::Key);
+    assert_eq!(el.el_map.current, ElMapCurrent::Key);
     assert_eq!(el.el_chared.c_undo.cursor, 0);
     assert_eq!(el.el_chared.c_undo.len, 5);
 }
@@ -408,20 +380,20 @@ fn replace_char_arms_a_one_shot_overwrite_that_ed_insert_completes() {
     let mut el = el_with("abc", 1);
     assert_eq!(vi_replace_char(&mut el, 0), CC_ARGHACK);
     assert_eq!(el.el_state.inputmode, MODE_REPLACE_1);
-    assert!(el.el_map.current == ElMapCurrent::Key);
+    assert_eq!(el.el_map.current, ElMapCurrent::Key);
     assert_eq!(el.el_chared.c_undo.len, 3);
 
     assert_eq!(ed_insert(&mut el, u32::from(b'X')), CC_CURSOR);
     assert_eq!(text(&el), "aXc");
     assert_eq!(el.el_line.cursor, 1);
     assert_eq!(el.el_state.inputmode, MODE_INSERT);
-    assert!(el.el_map.current == ElMapCurrent::Alt);
+    assert_eq!(el.el_map.current, ElMapCurrent::Alt);
 
     // Nothing under the cursor: refused before anything is armed.
     let mut el = el_with("abc", 3);
     assert_eq!(vi_replace_char(&mut el, 0), CC_ERROR);
     assert_eq!(el.el_state.inputmode, MODE_INSERT);
-    assert!(el.el_map.current == ElMapCurrent::Alt);
+    assert_eq!(el.el_map.current, ElMapCurrent::Alt);
 }
 
 // [spec:libedit:sem:vi.vi-replace-mode-fn/test]
@@ -433,7 +405,7 @@ fn replace_mode_is_sticky_and_unguarded() {
     let mut el = el_with("", 0);
     assert_eq!(vi_replace_mode(&mut el, 0), CC_NORM);
     assert_eq!(el.el_state.inputmode, MODE_REPLACE);
-    assert!(el.el_map.current == ElMapCurrent::Key);
+    assert_eq!(el.el_map.current, ElMapCurrent::Key);
     assert_eq!(el.el_chared.c_undo.len, 0);
 }
 
@@ -448,7 +420,7 @@ fn substitute_char_has_no_failure_case() {
     assert_eq!(vi_substitute_char(&mut el, 0), CC_REFRESH);
     assert_eq!(text(&el), "abef");
     assert_eq!(killed(&el), "cd");
-    assert!(el.el_map.current == ElMapCurrent::Key);
+    assert_eq!(el.el_map.current, ElMapCurrent::Key);
     assert_eq!(el.el_chared.c_undo.len, 6);
 
     let mut el = el_with("abc", 3);
@@ -456,7 +428,7 @@ fn substitute_char_has_no_failure_case() {
     assert_eq!(vi_substitute_char(&mut el, 0), CC_REFRESH);
     assert_eq!(text(&el), "abc");
     assert_eq!(el.el_chared.c_kill.last, 0, "the kill buffer is emptied");
-    assert!(el.el_map.current == ElMapCurrent::Key);
+    assert_eq!(el.el_map.current, ElMapCurrent::Key);
 }
 
 // [spec:libedit:sem:vi.vi-substitute-line-fn/test]
@@ -472,20 +444,20 @@ fn the_line_substitutions_cut_and_enter_insert_mode() {
     assert_eq!(el.el_line.cursor, 0);
     assert_eq!(killed(&el), "abcdef");
     assert_eq!(el.el_chared.c_undo.len, 6);
-    assert!(el.el_map.current == ElMapCurrent::Key);
+    assert_eq!(el.el_map.current, ElMapCurrent::Key);
 
     let mut el = el_with("abcdef", 2);
     assert_eq!(vi_change_to_eol(&mut el, 0), CC_REFRESH);
     assert_eq!(text(&el), "ab");
     assert_eq!(el.el_line.cursor, 2);
     assert_eq!(killed(&el), "cdef");
-    assert!(el.el_map.current == ElMapCurrent::Key);
+    assert_eq!(el.el_map.current, ElMapCurrent::Key);
 
     let mut el = el_with("", 0);
     preload_kill(&mut el, "zz");
     assert_eq!(vi_change_to_eol(&mut el, 0), CC_REFRESH);
     assert_eq!(el.el_chared.c_kill.last, 0);
-    assert!(el.el_map.current == ElMapCurrent::Key);
+    assert_eq!(el.el_map.current, ElMapCurrent::Key);
 }
 
 // [spec:libedit:sem:vi.vi-insert-fn/test]
@@ -499,7 +471,7 @@ fn the_insert_mode_entries_differ_only_in_the_cursor() {
     let mut el = el_with("abc", 1);
     assert_eq!(vi_insert(&mut el, 0), CC_NORM);
     assert_eq!(el.el_line.cursor, 1);
-    assert!(el.el_map.current == ElMapCurrent::Key);
+    assert_eq!(el.el_map.current, ElMapCurrent::Key);
     assert_eq!(el.el_chared.c_undo.cursor, 1);
 
     let mut el = el_with("abc", 1);
@@ -517,7 +489,7 @@ fn the_insert_mode_entries_differ_only_in_the_cursor() {
     assert_eq!(vi_add_at_eol(&mut el, 0), CC_CURSOR);
     assert_eq!(el.el_line.cursor, 3);
     assert_eq!(el.el_chared.c_undo.cursor, 3);
-    assert!(el.el_map.current == ElMapCurrent::Key);
+    assert_eq!(el.el_map.current, ElMapCurrent::Key);
 }
 
 // [spec:libedit:sem:vi.vi-undo-fn/test]
@@ -563,7 +535,7 @@ fn command_mode_steps_back_onto_the_last_character_typed() {
 
     assert_eq!(vi_command_mode(&mut el, 0), CC_CURSOR);
     assert_eq!(el.el_line.cursor, 1);
-    assert!(el.el_map.current == ElMapCurrent::Alt);
+    assert_eq!(el.el_map.current, ElMapCurrent::Alt);
     assert_eq!(el.el_state.inputmode, MODE_INSERT);
     assert_eq!(el.el_state.doingarg, 0);
     assert_eq!(el.el_state.argument, 5);
@@ -706,7 +678,6 @@ fn the_character_searches_land_on_or_beside_the_target() {
         (vi_to_next_char, 0, 1),
     ] {
         let mut el = el_with("abcabc", from);
-        read_init(&mut el);
         feed(&mut el, "c");
         assert_eq!(search(&mut el, 0), CC_CURSOR);
         assert_eq!(el.el_line.cursor, want);
@@ -721,7 +692,6 @@ fn the_character_searches_land_on_or_beside_the_target() {
         (vi_to_prev_char, 5, 4),
     ] {
         let mut el = el_with("abcabc", from);
-        read_init(&mut el);
         feed(&mut el, "a");
         assert_eq!(search(&mut el, 0), CC_CURSOR);
         assert_eq!(el.el_line.cursor, want);
@@ -735,7 +705,6 @@ fn the_character_searches_land_on_or_beside_the_target() {
 #[test]
 fn a_failed_character_search_still_rebinds_the_repeat() {
     let mut el = el_with("abcabc", 0);
-    read_init(&mut el);
     feed(&mut el, "z");
     assert_eq!(vi_next_char(&mut el, 0), CC_ERROR);
     assert_eq!(el.el_line.cursor, 0);
@@ -757,7 +726,6 @@ fn the_character_search_repeats_reuse_the_remembered_target() {
     assert_eq!(vi_repeat_prev_char(&mut el, 0), CC_ERROR);
 
     let mut el = el_with("abcabc", 0);
-    read_init(&mut el);
     feed(&mut el, "c");
     vi_next_char(&mut el, 0);
     assert_eq!(el.el_line.cursor, 2);
@@ -782,7 +750,6 @@ fn the_character_search_repeats_reuse_the_remembered_target() {
 #[test]
 fn repeating_a_till_search_gets_stuck_on_the_same_occurrence() {
     let mut el = el_with("abcabc", 0);
-    read_init(&mut el);
     feed(&mut el, "c");
     assert_eq!(vi_to_next_char(&mut el, 0), CC_CURSOR);
     assert_eq!(el.el_line.cursor, 1);
@@ -957,13 +924,12 @@ unsafe extern "C" fn alias_hook(_arg: *mut c_void, name: *const c_char) -> *cons
 #[test]
 fn an_alias_expansion_is_pushed_back_as_input() {
     let mut el = el_with("", 0);
-    read_init(&mut el);
     el.el_chared.c_aliasfun = Some(alias_hook);
     feed(&mut el, "a");
 
     assert_eq!(vi_alias(&mut el, 0), CC_NORM);
     assert_eq!(drain(&mut el, 8), "expanded");
-    assert!(el.el_map.current == ElMapCurrent::Alt);
+    assert_eq!(el.el_map.current, ElMapCurrent::Alt);
 }
 
 // [spec:libedit:sem:vi.vi-alias-fn/test]
@@ -974,11 +940,9 @@ fn an_alias_expansion_is_pushed_back_as_input() {
 #[test]
 fn an_unknown_alias_is_ignored_rather_than_refused() {
     let mut el = el_with("", 0);
-    read_init(&mut el);
     assert_eq!(vi_alias(&mut el, 0), CC_ERROR);
 
     let mut el = el_with("", 0);
-    read_init(&mut el);
     el.el_chared.c_aliasfun = Some(alias_hook);
     feed(&mut el, "z");
     assert_eq!(vi_alias(&mut el, 0), CC_NORM);
@@ -1016,7 +980,6 @@ unsafe extern "C" fn redo_sink(_el: *mut EditLine, _ch: u32) -> ElActionT {
 fn redo_replays_the_recorded_command_through_the_function_table() {
     REDO_CH.store(0, Ordering::Relaxed);
     let mut el = el_with("abcdef", 3);
-    read_init(&mut el);
     el.el_map.func = vec![redo_probe as ElFuncT; 4];
     el.el_chared.c_redo.cmd = 2;
     el.el_chared.c_redo.ch = u32::from(b'q');
@@ -1042,7 +1005,6 @@ fn redo_replays_the_recorded_command_through_the_function_table() {
 #[test]
 fn a_count_on_the_dot_overrides_the_recorded_one() {
     let mut el = el_with("abcdef", 3);
-    read_init(&mut el);
     el.el_map.func = vec![redo_sink as ElFuncT; 4];
     el.el_chared.c_redo.cmd = 1;
     el.el_chared.c_redo.count = 7;
@@ -1095,7 +1057,6 @@ fn the_history_searches_wrap_the_pattern_and_eat_the_line() {
         (vi_search_next, ED_SEARCH_NEXT_HISTORY),
     ] {
         let mut el = el_with("editing this", 5);
-        read_init(&mut el);
         with_stash(&mut el);
         feed(&mut el, "foo\r");
 
@@ -1184,7 +1145,7 @@ fn history_word_appends_a_word_from_the_previous_entry() {
     assert_eq!(vi_history_word(&mut el, 0), CC_REFRESH);
     assert_eq!(text(&el), "ab three");
     assert_eq!(el.el_line.cursor, 8);
-    assert!(el.el_map.current == ElMapCurrent::Key);
+    assert_eq!(el.el_map.current, ElMapCurrent::Key);
     assert_eq!(
         el.el_chared.c_undo.len, 2,
         "the pre-append line is undoable"
@@ -1251,5 +1212,5 @@ fn histedit_round_trips_the_line_through_the_editor_and_submits_it() {
     assert_eq!(text(&el), "echo hi\n");
     assert_eq!(el.el_line.cursor, 0);
     assert_eq!(el.el_chared.c_undo.len, -1);
-    assert!(el.el_map.current == ElMapCurrent::Alt);
+    assert_eq!(el.el_map.current, ElMapCurrent::Alt);
 }

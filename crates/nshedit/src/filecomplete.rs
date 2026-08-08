@@ -37,9 +37,7 @@
 //! user that exists only in a directory resolves as it does for the C, and a
 //! lookup can block on a network name service. See [`passwd`].
 
-use std::io::{Read, Write};
-use std::mem::ManuallyDrop;
-use std::os::fd::FromRawFd;
+use std::io::Read;
 
 use crate::chared::{el_deletestr, el_winsertstr};
 use crate::chartype::{ct_decode_string, ct_encode_string};
@@ -101,24 +99,6 @@ fn cstr(s: &str) -> &str {
 /// records that, and that the line buffer never holds one.
 fn wcschr(set: &[u32], c: u32) -> bool {
     c == 0 || set.contains(&c)
-}
-
-/// C: `fprintf(el->el_outfile, …)` for an already-formatted byte string.
-///
-/// The stream is a caller-owned `FILE *` the port cannot write through, so
-/// this goes to the matching descriptor, which the `EditLine` carries for
-/// exactly this reason (`def:el.editline`). Errors are discarded, as the C
-/// discards `fprintf`'s result. `hist.c`'s translation needs the same thing
-/// and has its own private copy; idiomatization should hoist one of them.
-fn write_outfile(el: &EditLine, bytes: &[u8]) {
-    if el.el_outfd < 0 {
-        return;
-    }
-    // SAFETY: `el_outfd` is the application's descriptor and stays open for
-    // the life of the `EditLine`; `ManuallyDrop` is what keeps this borrow
-    // from closing it, which libedit never does.
-    let mut out = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(el.el_outfd) });
-    let _ = out.write_all(bytes);
 }
 
 /// C: `getc(stdin)` — always the process `stdin`, never `el->el_infile`.
@@ -910,7 +890,7 @@ pub fn fn_display_match_list(
         }
         out.push(b'\n');
     }
-    write_outfile(el, &out);
+    el.write_outfile(&out);
 }
 
 // [spec:libedit:def:filecomplete.find-word-to-complete-fn]
@@ -1222,20 +1202,19 @@ pub fn fn_complete2(
         let matches_num = matches.len() - 1;
 
         // (b) Get onto the next line from the command line.
-        write_outfile(el, b"\n");
+        el.write_outfile(b"\n");
 
         // (c) Too many items: ask for confirmation. The prompt must be on the
         // wire before the read, which is the C's `fflush`.
         let mut match_display = true;
         if matches_num > query_items {
-            write_outfile(
-                el,
+            el.write_outfile(
                 format!("Display all {matches_num} possibilities? (y or n) ").as_bytes(),
             );
             if getc_stdin() != Some(b'y') {
                 match_display = false;
             }
-            write_outfile(el, b"\n");
+            el.write_outfile(b"\n");
         }
 
         // (d) The `+ 1` restores the 1-based convention that function

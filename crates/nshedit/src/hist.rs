@@ -3,9 +3,6 @@
 use core::ffi::{c_int, c_void};
 use std::cell::RefCell;
 use std::ffi::CStr;
-use std::io::Write;
-use std::mem::ManuallyDrop;
-use std::os::fd::FromRawFd;
 use std::ptr;
 use std::rc::Rc;
 
@@ -499,7 +496,7 @@ pub(crate) fn hist_command(el: &mut EditLine, argc: i32, argv: *const *const u32
             let mut out = format!("{hno}\t").into_bytes();
             out.extend_from_slice(&buf);
             out.push(b'\n');
-            write_outfile(el, &out);
+            el.write_outfile(&out);
             hno += 1;
 
             entry = hist_prev(el);
@@ -819,23 +816,6 @@ pub(crate) fn hist_next(el: &mut EditLine) -> Option<Vec<u32>> {
 /// C: `HIST_PREV(el)` — one step toward the present.
 pub(crate) fn hist_prev(el: &mut EditLine) -> Option<Vec<u32>> {
     hist_fun(el, H_PREV, ptr::null_mut())
-}
-
-/// C: `fprintf(el->el_outfile, …)` for an already-formatted byte string.
-///
-/// The stream is a caller-owned `FILE *` the port cannot write through, so
-/// this goes to the matching descriptor, which the `EditLine` carries for
-/// exactly this reason (`def:el.editline`). Errors are discarded, as the C
-/// discards `fprintf`'s result.
-fn write_outfile(el: &EditLine, bytes: &[u8]) {
-    if el.el_outfd < 0 {
-        return;
-    }
-    // SAFETY: `el_outfd` is the application's descriptor and stays open for
-    // the life of the `EditLine`; `ManuallyDrop` is what keeps this borrow
-    // from closing it, which libedit never does.
-    let mut out = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(el.el_outfd) });
-    let _ = out.write_all(bytes);
 }
 
 /// C: `wcscmp(s, L"…") == 0` against an ASCII literal.

@@ -92,13 +92,16 @@
 pub mod editline;
 pub mod histedit;
 
-// Host facilities the port has to supply itself. Neither has a C counterpart:
-// `plan/decisions/no-c-ffi.md` bars linking libc, so the `LC_CTYPE` queries and
-// the `errno` the C makes through it have nowhere else to come from. Every
-// module that needs one takes it from here — two independent copies of the
-// locale layer and two of `errno` existed before they were hoisted.
+// Host facilities the port has to supply itself. None has a C counterpart:
+// `plan/decisions/no-c-ffi.md` bars linking libc, so the `LC_CTYPE` queries,
+// the `errno` the C makes through it, and the writes the C aims at
+// `el_outfile` and `el_errfile` have nowhere else to come from. Every module
+// that needs one takes it from here — two independent copies of the locale
+// layer, two of `errno` and fifteen of the output writers existed before they
+// were hoisted.
 pub mod errno;
 pub(crate) mod locale;
+pub(crate) mod stdio;
 
 // Encoding and escaping.
 pub mod chartype;
@@ -175,3 +178,9 @@ pub mod tokenizer;
 
 // EditLine lifecycle.
 pub mod el;
+
+// The one editor the concern tests are built on. Here rather than in any one
+// of them because five modules were each constructing their own and no two
+// agreed on which subsystem a headless editor still needs.
+#[cfg(test)]
+mod testkit;

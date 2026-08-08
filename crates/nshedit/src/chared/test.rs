@@ -1,23 +1,12 @@
 use super::*;
-use crate::el::{CoordT, blank_editline};
-use crate::read::{el_wpush, read_init};
+use crate::el::blank_editline;
+use crate::read::el_wpush;
+use crate::testkit::{headless_editor, set_line};
 
-/// An editor whose line buffer holds `s`, cursor at `at`.
-///
-/// The allocation runs well past `lastchar`, as `ch_init`'s does: the
-/// buffer is `EL_BUFSIZ` and `limit` sits short of its end, so the
-/// insert and delete paths have slack to shift into. Sizing it to the
-/// text instead makes them index one past the end — which is the test
-/// being wrong about the invariant, not the code breaking it.
-fn el_with(s: &str, at: usize) -> EditLine {
-    let mut el = blank_editline();
-    let text: Vec<u32> = s.chars().map(u32::from).collect();
-    let mut buf = vec![0u32; text.len() + 64];
-    buf[..text.len()].copy_from_slice(&text);
-    el.el_line.lastchar = text.len();
-    el.el_line.limit = buf.len() - 1;
-    el.el_line.cursor = at;
-    el.el_line.buffer = buf;
+/// The shared editor holding `s`, cursor at `at`.
+fn editor(s: &str, at: usize) -> EditLine {
+    let mut el = headless_editor(80, 24);
+    set_line(&mut el, s, at);
     el
 }
 
@@ -92,12 +81,12 @@ fn the_emacs_word_test_is_boolean() {
 // [spec:libedit:sem:chared.c-hpos-fn/test]
 #[test]
 fn hpos_is_the_column_within_the_line_not_the_buffer() {
-    let mut el = el_with("abc", 0);
+    let mut el = editor("abc", 0);
     assert_eq!(c_hpos(&mut el), 0);
     el.el_line.cursor = 3;
     assert_eq!(c_hpos(&mut el), 3);
 
-    let mut el = el_with("abc\ndefgh", 9);
+    let mut el = editor("abc\ndefgh", 9);
     assert_eq!(c_hpos(&mut el), 5, "counts from after the newline");
     el.el_line.cursor = 4;
     assert_eq!(c_hpos(&mut el), 0, "just past the newline is column zero");
@@ -114,7 +103,7 @@ fn hpos_is_the_column_within_the_line_not_the_buffer() {
 // [spec:libedit:sem:chared.c-delafter-fn/test]
 #[test]
 fn delete_after_clamps_to_the_end_of_the_line() {
-    let mut el = el_with("abcdef", 2);
+    let mut el = editor("abcdef", 2);
     c_delafter(&mut el, 2);
     assert_eq!(text(&el), "abef");
     assert_eq!(el.el_line.cursor, 2, "the cursor does not move");
@@ -136,11 +125,11 @@ fn delete_after_clamps_to_the_end_of_the_line() {
 // [spec:libedit:sem:chared.c-delbefore1-fn/test]
 #[test]
 fn the_single_character_deletes_stay_inside_the_buffer() {
-    let mut el = el_with("abc", 1);
+    let mut el = editor("abc", 1);
     c_delafter1(&mut el);
     assert_eq!(text(&el), "ac");
 
-    let mut el = el_with("abc", 1);
+    let mut el = editor("abc", 1);
     c_delbefore1(&mut el);
     assert_eq!(text(&el), "bc");
     // Neither form touches `cursor`: the text slides left underneath it
@@ -149,11 +138,11 @@ fn the_single_character_deletes_stay_inside_the_buffer() {
     assert_eq!(el.el_line.cursor, 1, "the cursor is the caller's to adjust");
 
     // The unguarded ends: cursor at the very start and the very end.
-    let mut el = el_with("abc", 0);
+    let mut el = editor("abc", 0);
     c_delbefore1(&mut el);
     assert!(el.el_line.lastchar <= 3, "the line did not grow");
 
-    let mut el = el_with("abc", 3);
+    let mut el = editor("abc", 3);
     c_delafter1(&mut el);
     assert!(el.el_line.lastchar <= 3);
 }
@@ -166,7 +155,7 @@ fn the_single_character_deletes_stay_inside_the_buffer() {
 fn the_vi_word_walkers_stop_at_class_boundaries() {
     let line = "foo.bar baz";
     //          0123456789
-    let mut el = el_with(line, 0);
+    let mut el = editor(line, 0);
     let end = el.el_line.lastchar;
 
     // `w` from 0: over "foo", stopping at the punctuation.
@@ -193,7 +182,7 @@ fn the_vi_word_walkers_stop_at_class_boundaries() {
 fn the_end_of_word_walker_lands_on_the_last_character_of_the_run() {
     let line = "foo.bar baz";
     //          0123456789
-    let mut el = el_with(line, 0);
+    let mut el = editor(line, 0);
     let end = el.el_line.lastchar;
 
     assert_eq!(
@@ -317,34 +306,6 @@ fn the_resize_hook_runs_with_the_new_limit_already_published() {
     assert_eq!(seen, 0);
 }
 
-/// An editor with the four line-sized buffers `ch_init` allocates, a real
-/// screen and no descriptors, holding `s` with the cursor at `at`.
-///
-/// [`el_with`] is not enough for the two functions below. `cv_delfini` reaches
-/// `cv_undo` and `cv_yank`, which clamp their copies to the undo and kill
-/// buffers and so record nothing at all while those are empty; `c_gets` needs
-/// `el_line.limit` and calls `re_refresh`, which walks `el_display` under
-/// `t_size` and recurses to a stack overflow on a zero-sized terminal.
-/// Descriptor 0 is the test runner's own stdout, hence the -1s.
-fn editor(s: &str, at: usize) -> EditLine {
-    let mut el = blank_editline();
-    ch_init(&mut el);
-    // `c_gets` reads through `el_wgetc`, which needs the macro queue to exist
-    // before `feed` can put anything in it.
-    read_init(&mut el);
-    let text: Vec<u32> = s.chars().map(u32::from).collect();
-    el.el_line.buffer[..text.len()].copy_from_slice(&text);
-    el.el_line.lastchar = text.len();
-    el.el_line.cursor = at;
-    el.el_infd = -1;
-    el.el_outfd = -1;
-    el.el_errfd = -1;
-    el.el_terminal.t_size = CoordT { h: 80, v: 24 };
-    el.el_display = vec![vec![0u32; 81]; 24];
-    el.el_vdisplay = vec![vec![0u32; 81]; 24];
-    el
-}
-
 fn killed(el: &EditLine) -> String {
     el.el_chared.c_kill.buf[..el.el_chared.c_kill.last]
         .iter()
@@ -461,8 +422,9 @@ fn the_insert_bit_switches_the_keymap_whatever_the_operator_does() {
     el.el_map.current = ElMapCurrent::Alt;
     pending(&mut el, DELETE | INSERT, 1);
     cv_delfini(&mut el);
-    assert!(
-        el.el_map.current == ElMapCurrent::Key,
+    assert_eq!(
+        el.el_map.current,
+        ElMapCurrent::Key,
         "a change opens insert"
     );
     assert_eq!(text(&el), "aef");
@@ -472,7 +434,7 @@ fn the_insert_bit_switches_the_keymap_whatever_the_operator_does() {
     el.el_map.current = ElMapCurrent::Alt;
     pending(&mut el, YANK | INSERT, 1);
     cv_delfini(&mut el);
-    assert!(el.el_map.current == ElMapCurrent::Key);
+    assert_eq!(el.el_map.current, ElMapCurrent::Key);
     assert_eq!(
         text(&el),
         "abcdef",
@@ -485,7 +447,7 @@ fn the_insert_bit_switches_the_keymap_whatever_the_operator_does() {
     el.el_map.current = ElMapCurrent::Alt;
     pending(&mut el, YANK, 1);
     cv_delfini(&mut el);
-    assert!(el.el_map.current == ElMapCurrent::Alt);
+    assert_eq!(el.el_map.current, ElMapCurrent::Alt);
 
     // `INSERT` alone is not a mode switch with nothing attached: the delete
     // arm is the `else`, so the span goes whether `DELETE` was set or not.
@@ -493,7 +455,7 @@ fn the_insert_bit_switches_the_keymap_whatever_the_operator_does() {
     el.el_map.current = ElMapCurrent::Alt;
     pending(&mut el, INSERT, 1);
     cv_delfini(&mut el);
-    assert!(el.el_map.current == ElMapCurrent::Key);
+    assert_eq!(el.el_map.current, ElMapCurrent::Key);
     assert_eq!(text(&el), "aef");
 }
 

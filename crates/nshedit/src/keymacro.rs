@@ -1,9 +1,6 @@
 //! Ported from `src/keymacro.c`; rules live in
 //! `docs/spec/port/src/keymacro.md`.
 
-use std::io::Write;
-use std::mem::ManuallyDrop;
-use std::os::fd::FromRawFd;
 use std::process;
 
 use crate::chartype::{VISUAL_WIDTH_MAX, ct_encode_char, ct_encode_string, ct_visual_char};
@@ -211,7 +208,7 @@ pub(crate) fn keymacro_add(el: &mut EditLine, key: &[u32], val: &KeymacroValueT,
 
     // Step 1.
     if key.is_empty() {
-        write_errfile(el, b"keymacro_add: Null extended-key not allowed.\n");
+        el.write_errfile(b"keymacro_add: Null extended-key not allowed.\n");
         return;
     }
 
@@ -220,7 +217,7 @@ pub(crate) fn keymacro_add(el: &mut EditLine, key: &[u32], val: &KeymacroValueT,
     // reading a command byte out of a pointer, which has no counterpart here
     // and no caller.
     if ntype == XK_CMD && matches!(val, KeymacroValueT::Cmd(cmd) if *cmd == ED_SEQUENCE_LEAD_IN) {
-        write_errfile(el, b"keymacro_add: sequence-lead-in command not allowed\n");
+        el.write_errfile(b"keymacro_add: sequence-lead-in command not allowed\n");
         return;
     }
 
@@ -297,7 +294,7 @@ pub(crate) fn keymacro_delete(el: &mut EditLine, key: &[u32]) -> i32 {
 
     // Step 1: the only -1 this function has.
     if key.is_empty() {
-        write_errfile(el, b"keymacro_delete: Null extended-key not allowed.\n");
+        el.write_errfile(b"keymacro_delete: Null extended-key not allowed.\n");
         return -1;
     }
 
@@ -356,7 +353,7 @@ pub(crate) fn keymacro_print(el: &mut EditLine, key: &[u32]) {
         let mut msg = b"Unbound extended key \"".to_vec();
         msg.extend_from_slice(&encode_wide(key));
         msg.extend_from_slice(b"\"\n");
-        write_errfile(el, &msg);
+        el.write_errfile(&msg);
     }
 }
 
@@ -824,11 +821,11 @@ fn node_enum(el: &mut EditLine, ptr: Option<&KeymacroNodeT>, cnt: usize) -> i32 
             el.el_keymacro.buf[cnt] = u32::from(b'"');
             el.el_keymacro.buf[cnt + 1] = 0;
         }
-        write_errfile(el, b"Some extended keys too long for internal print buffer");
+        el.write_errfile(b"Some extended keys too long for internal print buffer");
         let mut msg = b" \"".to_vec();
         msg.extend_from_slice(&encode_wide(&el.el_keymacro.buf));
         msg.extend_from_slice(b"...\"\n");
-        write_errfile(el, &msg);
+        el.write_errfile(&msg);
         return 0;
     }
 
@@ -1125,33 +1122,7 @@ fn kprint_line(el: &EditLine, key: &[u8], what: &[u8]) {
     out.extend_from_slice(b"->  ");
     out.extend_from_slice(what);
     out.push(b'\n');
-    write_outfile(el, &out);
-}
-
-/// C: `fprintf(el->el_outfile, …)` for an already-formatted byte string.
-///
-/// The stream is a caller-owned `FILE *` the port cannot write through, so
-/// this goes to the matching descriptor, which the `EditLine` carries for
-/// exactly this reason (`def:el.editline`). Errors are discarded, as the C
-/// discards `fprintf`'s result.
-fn write_outfile(el: &EditLine, bytes: &[u8]) {
-    write_fd(el.el_outfd, bytes);
-}
-
-/// C: `fprintf(el->el_errfile, …)`, the twin of [`write_outfile`].
-fn write_errfile(el: &EditLine, bytes: &[u8]) {
-    write_fd(el.el_errfd, bytes);
-}
-
-fn write_fd(fd: i32, bytes: &[u8]) {
-    if fd < 0 {
-        return;
-    }
-    // SAFETY: the descriptor is the application's and stays open for the life
-    // of the `EditLine`; `ManuallyDrop` is what keeps this borrow from closing
-    // it, which libedit never does.
-    let mut out = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
-    let _ = out.write_all(bytes);
+    el.write_outfile(&out);
 }
 
 #[cfg(test)]

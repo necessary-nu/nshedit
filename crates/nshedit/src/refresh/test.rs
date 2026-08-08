@@ -3,9 +3,10 @@ use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::*;
-use crate::el::blank_editline;
+use crate::el::CoordT;
 use crate::literal::{EL_LITERAL, literal_get};
 use crate::terminal::{T_CE, T_STR};
+use crate::testkit::headless_editor;
 
 /// A screen row of `dlen` cells plus the reserved terminator slot at
 /// `d[dlen]` that both `re_insert` and `re_delete` write, holding `s` and
@@ -36,22 +37,14 @@ fn cells(s: &str) -> Vec<u32> {
     s.chars().map(u32::from).collect()
 }
 
-/// An editor with a `DLEN`-column, three-row screen and no descriptors.
+/// An editor with a `DLEN`-column, three-row screen.
 ///
-/// Both images are allocated with the extra terminator cell at `[t_size.h]`
-/// that `re_putc` and `re_putliteral` write before every wrap, because
-/// `terminal_alloc_buffer` allocates `t_size.h + 1`. Descriptor 0 is the test
-/// runner's own stdout, hence the -1s; [`emitted`] swaps in a real file where
-/// a test needs to read the byte stream back.
+/// Narrow on purpose: every wrap, margin and rotation case here is reached by
+/// running off the end of a row, which an 80-column screen would put out of
+/// reach of a readable test string. [`emitted`] swaps a real file in over the
+/// closed descriptors where a test needs to read the byte stream back.
 fn screen() -> EditLine {
-    let mut el = blank_editline();
-    el.el_infd = -1;
-    el.el_outfd = -1;
-    el.el_errfd = -1;
-    el.el_terminal.t_size = CoordT { h: DLEN, v: 3 };
-    el.el_display = vec![vec![0u32; DLEN as usize + 1]; 3];
-    el.el_vdisplay = vec![vec![0u32; DLEN as usize + 1]; 3];
-    el
+    headless_editor(DLEN, 3)
 }
 
 /// Everything `f` writes to either of the editor's output descriptors.
@@ -84,12 +77,6 @@ fn emitted(el: &mut EditLine, f: impl FnOnce(&mut EditLine)) -> Vec<u8> {
     drop(file);
     let _ = std::fs::remove_file(path);
     bytes
-}
-
-/// `CoordT` is a literal translation of the C struct and derives nothing, so
-/// a position is compared as the pair it is.
-fn at(c: &CoordT) -> (i32, i32) {
-    (c.h, c.v)
 }
 
 /// The `(buf, end)` pair `re_putliteral` takes, laid out as `prompt_print`
@@ -190,21 +177,20 @@ fn deleting_to_the_end_of_the_row_just_truncates_it() {
 // [spec:libedit:sem:refresh.re-nextline-fn/test]
 #[test]
 fn the_next_line_rotates_only_the_virtual_rows_at_the_bottom() {
-    let mut el = blank_editline();
-    el.el_terminal.t_size.v = 3;
+    let mut el = screen();
     el.el_vdisplay = vec![cells("Aa"), cells("Bb"), cells("Cc")];
     el.el_display = vec![cells("Dd"), cells("Ee"), cells("Ff")];
 
     // Room below: advance, and only the column resets.
     el.el_refresh.r_cursor = CoordT { h: 5, v: 1 };
     re_nextline(&mut el);
-    assert_eq!((el.el_refresh.r_cursor.h, el.el_refresh.r_cursor.v), (0, 2));
+    assert_eq!(el.el_refresh.r_cursor, CoordT { h: 0, v: 2 });
     assert_eq!(el.el_vdisplay[0][0], u32::from('A'), "no rotation yet");
 
     // On the last row: rotate up, and stay put vertically.
     el.el_refresh.r_cursor.h = 7;
     re_nextline(&mut el);
-    assert_eq!((el.el_refresh.r_cursor.h, el.el_refresh.r_cursor.v), (0, 2));
+    assert_eq!(el.el_refresh.r_cursor, CoordT { h: 0, v: 2 });
     assert_eq!(el.el_vdisplay[0][0], u32::from('B'));
     assert_eq!(el.el_vdisplay[1][0], u32::from('C'));
     assert_eq!(el.el_vdisplay[2][0], 0, "only the first cell is cleared");
@@ -250,8 +236,8 @@ fn the_debug_dump_emits_nothing_and_disturbs_nothing() {
 
     assert_eq!(out, b"", "nothing reaches either descriptor");
     assert_eq!((el.el_vdisplay.clone(), el.el_display.clone()), before);
-    assert_eq!(at(&el.el_refresh.r_cursor), (3, 1));
-    assert_eq!(at(&el.el_cursor), (5, 2));
+    assert_eq!(el.el_refresh.r_cursor, CoordT { h: 3, v: 1 });
+    assert_eq!(el.el_cursor, CoordT { h: 5, v: 2 });
 }
 
 // ---------------------------------------------------------------------------
@@ -273,8 +259,8 @@ fn a_literal_becomes_one_cell_that_replays_its_whole_byte_string() {
     assert_eq!(c, EL_LITERAL, "the first index, with the marker bit");
     assert_eq!(literal_get(&mut el, c), b"\x1b[1mX");
     assert_eq!(
-        at(&el.el_refresh.r_cursor),
-        (1, 0),
+        el.el_refresh.r_cursor,
+        CoordT { h: 1, v: 0 },
         "one column, the visible character's own width"
     );
     assert_eq!(el.el_vdisplay[0][1], 0, "no fill cell for a single column");
@@ -296,7 +282,7 @@ fn a_zero_width_visible_character_still_costs_a_column() {
     re_putliteral(&mut el, &buf, end);
 
     assert_eq!(el.el_vdisplay[0][0], EL_LITERAL);
-    assert_eq!(at(&el.el_refresh.r_cursor), (1, 0));
+    assert_eq!(el.el_refresh.r_cursor, CoordT { h: 1, v: 0 });
 }
 
 /// Both of `literal_add`'s refusals abandon the sequence without touching the
@@ -314,7 +300,7 @@ fn a_refused_literal_leaves_the_image_and_the_cursor_alone() {
     let (buf, end) = literal(&cells("\u{1b}["), 0xD800);
     re_putliteral(&mut el, &buf, end);
     assert_eq!(el.el_vdisplay, before);
-    assert_eq!(at(&el.el_refresh.r_cursor), (2, 1));
+    assert_eq!(el.el_refresh.r_cursor, CoordT { h: 2, v: 1 });
     assert_eq!(el.el_literal.l_idx, 0, "nothing was interned either");
 
     // The other refusal: the port bounds the table index where the C wraps
@@ -324,7 +310,7 @@ fn a_refused_literal_leaves_the_image_and_the_cursor_alone() {
     let (buf, end) = literal(&cells("\u{1b}["), u32::from('X'));
     re_putliteral(&mut el, &buf, end);
     assert_eq!(el.el_vdisplay, before);
-    assert_eq!(at(&el.el_refresh.r_cursor), (2, 1));
+    assert_eq!(el.el_refresh.r_cursor, CoordT { h: 2, v: 1 });
 }
 
 /// Reaching the right margin terminates the virtual row at `t_size.h` — the
@@ -346,7 +332,7 @@ fn a_literal_in_the_last_column_terminates_the_row_and_wraps() {
         el.el_vdisplay[0][DLEN as usize], 0,
         "the reserved terminator slot, not the sentinel it held"
     );
-    assert_eq!(at(&el.el_refresh.r_cursor), (0, 1));
+    assert_eq!(el.el_refresh.r_cursor, CoordT { h: 0, v: 1 });
 }
 
 /// A double-width literal is where `re_putliteral` and `re_putc` part company:
@@ -370,11 +356,11 @@ fn a_double_width_literal_is_truncated_at_the_margin_not_moved_off_it() {
     if wide {
         assert_eq!(el.el_vdisplay[0][0], EL_LITERAL);
         assert_eq!(el.el_vdisplay[0][1], MB_FILL_CHAR, "the second column");
-        assert_eq!(at(&el.el_refresh.r_cursor), (2, 0));
+        assert_eq!(el.el_refresh.r_cursor, CoordT { h: 2, v: 0 });
     } else {
         // C/POSIX: unprintable, so `literal_add` declines it outright.
         assert_eq!(el.el_vdisplay[0][0], 0);
-        assert_eq!(at(&el.el_refresh.r_cursor), (0, 0));
+        assert_eq!(el.el_refresh.r_cursor, CoordT { h: 0, v: 0 });
     }
 
     // At the last column there is only one column left for a two-column
@@ -390,10 +376,10 @@ fn a_double_width_literal_is_truncated_at_the_margin_not_moved_off_it() {
             el.el_vdisplay[0][DLEN as usize], 0,
             "the terminator, not a fill cell: the clamp emptied the fill loop"
         );
-        assert_eq!(at(&el.el_refresh.r_cursor), (0, 1));
+        assert_eq!(el.el_refresh.r_cursor, CoordT { h: 0, v: 1 });
     } else {
         assert_eq!(el.el_vdisplay[0][DLEN as usize - 1], u32::from('h'));
-        assert_eq!(at(&el.el_refresh.r_cursor), (DLEN - 1, 0));
+        assert_eq!(el.el_refresh.r_cursor, CoordT { h: DLEN - 1, v: 0 });
     }
 }
 
@@ -422,8 +408,8 @@ fn clearing_walks_the_rows_upwards_and_loses_track_of_the_cursor() {
 
     assert_eq!(emitted(&mut el, re_clear_lines), b"\r\n\n\nce\r\ncece");
     assert_eq!(
-        at(&el.el_cursor),
-        (0, 0),
+        el.el_cursor,
+        CoordT { h: 0, v: 0 },
         "ERR-terminal-52: the model never saw the bare newlines"
     );
 }
@@ -441,7 +427,7 @@ fn without_the_clear_capability_the_old_text_is_only_scrolled_away() {
     el.el_refresh.r_oldcv = 2;
 
     assert_eq!(emitted(&mut el, re_clear_lines), b"\r\n\r\n\n\n\r\n");
-    assert_eq!(at(&el.el_cursor), (0, 2));
+    assert_eq!(el.el_cursor, CoordT { h: 0, v: 2 });
 }
 
 /// The flag is the gate, not the capability. With `TERM_CAN_CEOL` set but no
@@ -463,8 +449,8 @@ fn a_missing_clear_capability_blanks_the_row_with_spaces_instead() {
         b"\r\n\n        \r        ",
     );
     assert_eq!(
-        at(&el.el_cursor),
-        (DLEN, 0),
+        el.el_cursor,
+        CoordT { h: DLEN, v: 0 },
         "the fallback leaves the column one past the last one it wrote"
     );
 }
