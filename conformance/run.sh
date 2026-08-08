@@ -12,8 +12,9 @@
 #   3. abi-shape.sh           exported symbols: port vs oracle vs libedit.so.2
 #                             vs libreadline.so.8
 #   4. determinism.sh         every trace is byte-identical across runs
-#   5. differential.sh        both libraries driven through one C driver,
-#                             traces diffed per operation
+#   5. differential.sh        both libraries driven through one C driver;
+#                             traces must agree or match a reviewed exact
+#                             known-gap fixture byte for byte
 #   6. vis-cross.sh           the in-tree vis(3) against libbsd's, which is
 #                             what wrote the history files already on disk
 #   7. header-diff.sh         the headers we generate from our own Rust
@@ -22,7 +23,7 @@
 #   8. soname.sh              install, then load: a consumer linked against a
 #                             real libedit before we existed is run against
 #                             our install and has to start
-#      (the differential covers four drivers now, one of which is a real pty:
+#      (the differential covers five drivers now, one of which is a real pty:
 #       conformance/driver/pty_edit.c forks a child onto it, types a scripted
 #       editing session, and diffs the bytes a terminal would have received)
 #   9. ub.sh                  the calls the C has no defined answer for. NOT a

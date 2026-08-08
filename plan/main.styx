@@ -2201,6 +2201,29 @@ children (
                 priority 0
                 kind @test
                 deps (greenfield-contract)
+                sealed true
+                log (
+                    {
+                        at 2026-08-08T14:20:38.701288724Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T14:46:04.777025308Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "The oracle now carries a deterministic abi_gaps driver plus an exact, stale-detecting known-diff fixture. It records twelve differing observations: all six narrow el_get conversion/prompt arms; stdin/stdout identity and the environment-owned rl_terminal_name; rl_message formatting and its 159-byte cap; rl_kill_full_line; FIONREAD event-hook polling; and byte-preserving tilde expansion. Custom FILE descriptors already match and are explicitly retained as a non-gap. The PTY prompt now re-enters its own handle through el_get and el_set, pinning the ownership constraint behind the effect protocol. All five differential drivers are stable across three fresh runs per library and locale; instrumented coverage rises from 326 to 332 distinct detailed rules. abi.complete-surface was corrected to v1: reference-defined unsupported/no-op behaviour is compatibility, while only port-private stand-ins where the reference performs work are gaps. Full conformance and nplan check pass."
+                    }
+
+                    {
+                        at 2026-08-08T14:46:10.110061941Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
             }
 
             {

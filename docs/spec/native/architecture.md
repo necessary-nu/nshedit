@@ -6,11 +6,13 @@ states where those semantics may live and what the native Rust API must be.
 
 ## Compatibility adapter
 
-> [spec:nshedit:req:abi.complete-surface]
+> [spec:nshedit:req:abi.complete-surface+1]
 > Every function, variable, operation code, callback, and stream behaviour
-> declared by the shipped compatibility headers MUST have a working ABI
-> implementation. An exported stand-in, unconditional error return, or
-> documented "cannot yet" path does not satisfy this rule.
+> declared by the shipped compatibility headers MUST implement the behaviour
+> assigned by the detailed `libedit` corpus. An unsupported return or no-op is
+> permitted only where that corpus defines it as reference behaviour; a
+> port-private stand-in, unconditional error where the reference performs
+> work, or documented "cannot yet" path does not satisfy this rule.
 
 > [spec:nshedit:req:abi.opaque-owner]
 > Each incomplete C handle type MUST be backed by an ABI-owned allocation

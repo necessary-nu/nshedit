@@ -89,9 +89,18 @@ static void besc(const unsigned char *b, size_t n)
 /* The child: a real editing session on the pty                           */
 /* --------------------------------------------------------------------- */
 
+/* A prompt callback may re-enter its own opaque handle.  This is the case
+ * that requires the native core to yield an effect before the ABI invokes
+ * foreign code: calling through C while a Rust &mut is live would alias it. */
+/* [spec:nshedit:req:core.effect-hooks/test] */
 static char *prompt(EditLine *el)
 {
-	(void)el;
+	int signals = -1;
+
+	if (el_get(el, EL_SIGNAL, &signals) != 0 || signals != 0)
+		return (char *)"! ";
+	if (el_set(el, EL_SIGNAL, signals) != 0)
+		return (char *)"! ";
 	return (char *)"> ";
 }
 

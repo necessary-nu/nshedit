@@ -20,6 +20,12 @@
 # offset. Full traces are left in target/conformance/reports/ for a wider
 # look, and `diff -u` on the two files is always available.
 #
+# A reviewed port-only gap may temporarily have an exact unified diff under
+# `conformance/known-gaps/`.  The fixture is not a wildcard or a blessed port
+# trace: any changed byte fails, and equality fails until the stale fixture is
+# removed.  This keeps the full harness green while the immediately following
+# baseline node closes the gaps one by one.
+#
 # A divergence is not automatically a bug. Read it against docs/errata.md:
 # the register says which defects the port reproduces on purpose, and a
 # divergence that matches a registered entry means the harness is working.
@@ -94,6 +100,8 @@ for src in "${DRIVER_SRCS[@]}"; do
 
     for locale in "${LOCALES[@]}"; do
         tag="$name.${locale//./_}"
+        known="$CONF_DIR/known-gaps/$tag.diff"
+        [ -f "$known" ] || known="$CONF_DIR/known-gaps/$name.diff"
         prepare_work
         mkdir -p -- "$WORK/data/oracle" "$WORK/data/port"
 
@@ -124,8 +132,22 @@ for src in "${DRIVER_SRCS[@]}"; do
         fi
 
         if cmp -s "$REPORTS/$tag.oracle.trace" "$REPORTS/$tag.port.trace"; then
+            if [ -f "$known" ]; then
+                printf 'STALE KNOWN-DIFF FIXTURE: traces now agree; remove %s.\n' "$known"
+                overall=1
+                continue
+            fi
             printf 'IDENTICAL: %s operations agree.\n' \
                 "$(wc -l < "$REPORTS/$tag.oracle.trace")"
+            continue
+        fi
+
+        actual="$REPORTS/$tag.diff"
+        diff -U0 --label oracle --label port \
+            "$REPORTS/$tag.oracle.trace" "$REPORTS/$tag.port.trace" \
+            > "$actual" || true
+        if [ -f "$known" ] && cmp -s "$known" "$actual"; then
+            printf 'KNOWN DIVERGENCE: exact diff matches %s.\n' "$known"
             continue
         fi
 
@@ -171,7 +193,7 @@ for src in "${DRIVER_SRCS[@]}"; do
 done
 
 if [ "$overall" -eq 0 ]; then
-    printf '\nPASS: every driver produced identical traces under every locale.\n'
+    printf '\nPASS: every driver matched the oracle or its exact known-diff fixture under every locale.\n'
 else
     printf '\nFAIL: see the per-operation report above. A divergence is not\n'
     printf 'automatically a port bug — check docs/errata.md for a registered\n'

@@ -23,13 +23,13 @@ alternatives (
     }
     {
         option "Freeze the current Rust port, including known compatibility gaps, as the oracle."
-        rejected_because "The deliverable is a drop-in libedit/readline implementation. Existing stand-ins and missing operations are defects to close before their internals become a migration baseline."
+        rejected_because "The deliverable is a drop-in libedit/readline implementation. Existing port-only stand-ins and missing operations are defects to close before their internals become a migration baseline."
     }
 )
 consequences {
     accepted (
         "The detailed libedit corpus remains the behavioural authority for the ABI: return values, errno, emitted bytes, stream effects, callback ordering, pointer validity, and state transitions are observable."
-        "The compatibility oracle is strengthened before structural replacement. A missing implementation, unconditional error, or documented stand-in is fixed before it can be treated as baseline behaviour."
+        "The compatibility oracle is strengthened before structural replacement. A missing implementation, unconditional error, or documented stand-in is fixed before it can be treated as baseline behaviour whenever the reference performs real work; reference-defined unsupported and no-op behaviour remains compatible."
         "Defined defects in the reference are preserved unless a separate decided record and a versioned rule change authorize a C-visible divergence. Idiomatization is not automatic permission to change them."
         "Existing intentional divergences are re-proven by the oracle and remain only where a rule explicitly defines them."
         "Undefined C constructs receive deterministic safe behaviour recorded in the corresponding rule; unsafe emulation is forbidden."
@@ -59,10 +59,12 @@ stream owns buffered output, and what errno contains on failure. Those
 observations remain tied to the reference implementation and the detailed
 rules extracted from it.
 
-The greenfield core changes the mechanism, not that contract. Compatibility
-gaps already documented by the ABI are therefore closed and captured by the
-oracle before the core representation is replaced. Otherwise the rewrite
-would faithfully preserve omissions that were never part of libedit.
+The greenfield core changes the mechanism, not that contract. Port-only
+compatibility gaps already documented by the ABI are therefore closed and
+captured by the oracle before the core representation is replaced. Otherwise
+the rewrite would faithfully preserve omissions that were never part of
+libedit. Conversely, an intentional no-op in the reference is an ABI
+observation to preserve, not an implementation gap to invent away.
 
 The old reproduce-then-fix policy served a staged port but is unsafe as a
 standing policy for a shipped compatibility library. A defect fix can still

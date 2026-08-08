@@ -379,6 +379,16 @@
 // [spec:libedit:sem:tty.tty-update-flags-fn/test]  crates/nshedit/src/tty.rs:1219
 
 // ---------------------------------------------------------------------------
+// conformance/driver/abi_gaps.c — 6 rules
+// ---------------------------------------------------------------------------
+// [spec:libedit:sem:map.map-set-wordchars-fn/test]  crates/nshedit/src/map.rs:1314
+// [spec:libedit:sem:read.el-read-setfn-fn/test]  crates/nshedit/src/read.rs:143
+// [spec:libedit:sem:readline.get-prompt-fn/test]  crates/nshedit-abi/src/readline.rs:1175
+// [spec:libedit:sem:readline.readline-fn/test]  crates/nshedit-abi/src/readline.rs:1577
+// [spec:libedit:sem:readline.rl-event-read-char-fn/test]  crates/nshedit-abi/src/readline.rs:4211
+// [spec:libedit:sem:readline.rl-kill-full-line-fn/test]  crates/nshedit-abi/src/readline.rs:4681
+
+// ---------------------------------------------------------------------------
 // conformance/aux/ub_corpus.c — 0 rules
 // ---------------------------------------------------------------------------
 
@@ -386,16 +396,16 @@
 ///
 /// A rule reached by more than one driver is attributed to the first that
 /// reaches it, so these sum to the total. The overlap is large and that is
-/// expected — 326 of 326 rules are reached by more than one,
+/// expected — 332 of 332 rules are reached by more than one,
 /// because every driver goes through the same lifecycle and allocator paths.
 #[test]
 fn the_claim_list_is_what_coverage_measured() {
     // Regenerate with ./conformance/coverage.sh, verify with --check.
-    // 326 rules across 5 drivers, measured under -C instrument-coverage.
-    assert_eq!(CLAIMED, 326);
+    // 332 rules across 6 drivers, measured under -C instrument-coverage.
+    assert_eq!(CLAIMED, 332);
 }
 
 /// How many `/test` facets this file carries. The generator and the
 /// annotations above are written together, so a hand edit to either
 /// desynchronises them and `coverage.sh --check` says so.
-const CLAIMED: usize = 326;
+const CLAIMED: usize = 332;

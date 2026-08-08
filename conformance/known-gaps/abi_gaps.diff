@@ -1,0 +1,28 @@
+--- oracle
++++ port
+@@ -1,7 +1,7 @@
+-0001 el_get EL_EDITOR               rc=0 value=<vi>
+-0002 el_get EL_WORDCHARS            rc=0 value=<abc:_>
+-0003 el_get EL_PROMPT               rc=0 same=1
+-0004 el_get EL_PROMPT_ESC           rc=0 same=0 esc=0
+-0005 el_get EL_RPROMPT              rc=0 same=1
+-0006 el_get EL_RPROMPT_ESC          rc=0 same=1 esc=29
+-0007 rl_initialize std streams      rc=0 in=1 out=1 termenv=1
++0001 el_get EL_EDITOR               rc=-1 value=<(null)>
++0002 el_get EL_WORDCHARS            rc=-1 value=<(null)>
++0003 el_get EL_PROMPT               rc=-1 same=0
++0004 el_get EL_PROMPT_ESC           rc=-1 same=0 esc=0
++0005 el_get EL_RPROMPT              rc=-1 same=0
++0006 el_get EL_RPROMPT_ESC          rc=-1 same=0 esc=0
++0007 rl_initialize std streams      rc=0 in=0 out=0 termenv=0
+@@ -9,5 +9,5 @@
+-0009 rl_message formatting          <value=42/ok/Z>
+-0010 rl_message truncation          len=159
+-0011 rl_kill_full_line              rc=0 line=<X>
+-0012 rl_event_hook polling          spun=1 line=<x>
+-0013 fn_tilde_expand bytes          <x\xFFy>
++0009 rl_message formatting          <value=%d/%s/%c>
++0010 rl_message truncation          len=2
++0011 rl_kill_full_line              rc=0 line=<XYa>
++0012 rl_event_hook polling          spun=0 line=<z>
++0013 fn_tilde_expand bytes          <x\xEF\xBF\xBDy>

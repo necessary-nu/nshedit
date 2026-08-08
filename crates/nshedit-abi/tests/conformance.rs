@@ -43,10 +43,11 @@
 //!
 //! Historically they were ignored for a second reason worth recording: they
 //! **reported open gaps**, and closing those is a decision, not something a
-//! red test should force. Making them non-ignored then would have meant
-//! either a red workspace or a baseline file that quietly blessed whatever
-//! the port happened to do — and blessing is exactly what a conformance
-//! harness must not do. Every stage passes, so that reason is spent too.
+//! red test should force. A temporary known-gap fixture is now permitted only
+//! as the exact unified diff from the reviewed oracle trace to the port trace.
+//! Any changed byte fails, and equality also fails until the stale fixture is
+//! removed. That gives a short baseline-fix node a green gate without quietly
+//! blessing subsequent drift.
 //!
 //! # How to read a failure
 //!

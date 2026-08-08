@@ -50,7 +50,7 @@ for src in "$CONF_DIR"/driver/*.c; do
                     same=no
                     printf 'NON-DETERMINISTIC: %s, run 1 vs run %d\n' "$tag" "$i"
                     diff "$REPORTS/determinism/$tag.1" "$REPORTS/determinism/$tag.$i" \
-                        | head -20 | sed 's/^/  /'
+                        | head -20 | sed 's/^/  /' || true
                     status=1
                 fi
             done
