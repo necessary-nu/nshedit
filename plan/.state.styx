@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-08T19:23:32.870427323Z
+last_sync_at 2026-08-08T19:57:02.840904986Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -182,6 +182,13 @@ assertions (
 )
 
 impl_evidence (
+    {id greenfield-abi-adapter, covered_rules (
+        abi.opaque-owner
+    ), covered_claims (
+        {impl_name native-impl, rule abi.opaque-owner}
+    ), rule_versions_seen (
+        {id abi.opaque-owner, version 0}
+    )}
     {id greenfield-abi-baseline, covered_rules (
         abi.complete-surface
     ), covered_claims (

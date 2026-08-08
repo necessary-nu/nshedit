@@ -27,7 +27,7 @@ alternatives (
     }
     {
         option "Build a second complete editor and switch the ABI after both coexist."
-        rejected_because "Two live engines double state and behavioural drift. A typed shell followed by concern-by-concern replacement keeps one engine under the existing oracle."
+        rejected_because "Two independently authoritative engines would double state and behavioural drift. A bounded ABI owner may carry migration state for both representations, but each exported concern has one authority and deletes its compatibility state when switched."
     }
 )
 consequences {
@@ -39,6 +39,7 @@ consequences {
         "The core ultimately forbids unsafe code. Platform unsafety belongs to nshedit-plat and C unsafety belongs to nshedit-abi."
         "nshedit-abi depends only on the core's public semantic API and cannot access editor fields or internal modules."
         "The transliterated implementation is replaced incrementally behind the typed surface and then deleted; it is not retained as a legacy backend."
+        "During the bounded ABI cutover, an opaque owner may contain both the native object and a translated compatibility payload. The payload remains authoritative only for behaviour not yet switched, and no migrated concern may continue updating both representations."
     )
     deferred (
         "Whether a future native API offers async integration in addition to the resumable synchronous driver."
@@ -75,8 +76,11 @@ and `Tokenizer *` types. Completed records and header generation likewise move
 to the ABI crate. The native crate can then be designed for Rust without
 changing a C layout that consumers can observe.
 
-Replacement proceeds through one typed shell over the current behaviour, then
-vertical concern replacements, rather than a flag-day or a second engine. The
-conformance oracle remains executable throughout, and the final deletion of
-the transliterated backend proves the new model is the implementation rather
-than decoration.
+Replacement proceeds through an ABI-owned shell that can temporarily contain a
+native object and the translated payload, then through vertical concern
+replacements. This is migration scaffolding, not a second supported backend:
+the compatibility payload is the sole authority for an unswitched concern, and
+that concern's compatibility state is deleted once the exported path uses the
+native semantic API. The conformance oracle remains executable throughout, and
+the final deletion of the payload proves the new model is the implementation
+rather than decoration.
