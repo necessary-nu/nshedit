@@ -1,12 +1,11 @@
-// Porting config — two impl blocks. source-impl is the C original and
-// carries impl annotations only; target-impl is the Rust port and
-// carries both impl annotations and /test facets. Every rule is
-// therefore claimed twice, once on each side, which is what makes the
-// spec the conformance contract between them.
-specs ({
-    name libedit,
-    include (docs/spec/**/*.md),
-    impls (
+// The libedit corpus is the behavioural contract shared by the C oracle
+// and the compatibility implementation. The nshedit corpus constrains the
+// Rust-native library and therefore has no source-C implementation.
+specs (
+    {
+        name libedit,
+        include (docs/spec/port/**/*.md),
+        impls (
         // sys.h is pure portability shim (typedefs, __arraycount, _DIAGASSERT,
         // libc prototypes, Solaris termcap externs) — nothing survives in Rust.
         // strlcpy/strlcat/getline/wcsdup/reallocarr are libc gap-fillers with no
@@ -26,6 +25,14 @@ specs ({
         // shell stages execute the port against an oracle built from this
         // tree's own C, which is stronger evidence than a unit test, but they
         // are not target sources and must never be read as impl sites.
-        {name target-impl, languages (@rust @c @bash), include (src/**/*.rs crates/**/*.rs), test_include (crates/**/tests/**/*.rs conformance/**/*.c conformance/**/*.sh), exclude (target/**), mode @both}
-    )
-})
+            {name target-impl, languages (@rust @c @bash), include (src/**/*.rs crates/**/*.rs), test_include (crates/**/tests/**/*.rs conformance/**/*.c conformance/**/*.sh), exclude (target/**), mode @both}
+        )
+    }
+    {
+        name nshedit,
+        include (docs/spec/native/**/*.md),
+        impls (
+            {name native-impl, languages (@rust @c @bash), include (crates/**/*.rs), test_include (crates/**/tests/**/*.rs conformance/**/*.c conformance/**/*.sh), exclude (target/**), mode @both}
+        )
+    }
+)

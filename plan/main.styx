@@ -2008,7 +2008,7 @@ children (
             {
                 id nshterm-hashed-db
                 title "Survey whether any platform we target ships hashed terminfo, then decide whether to read it"
-                priority 40
+                priority 0
                 deps (nshterm-extract)
                 log (
                     {
@@ -2163,6 +2163,225 @@ children (
                 author "brendan@necessary.nu"
                 kind @status
                 text "Doing → Done (nplan complete)"
+            }
+        )
+    }
+
+    {
+        id greenfield-core
+        title "Replace the transliterated core with a Rust-native editor behind the drop-in C ABI"
+        kind @refactor
+        children (
+            {
+                id greenfield-contract
+                title "Define the enforceable Rust-core and C-ABI boundary"
+                priority 0
+                kind @docs
+                sealed true
+                log (
+                    {
+                        at 2026-08-08T14:06:37.120915084Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T14:17:31.852523476Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id greenfield-abi-oracle
+                title "Capture C ABI compatibility behaviour before replacing internals"
+                priority 0
+                kind @test
+                deps (greenfield-contract)
+            }
+
+            {
+                id greenfield-abi-baseline
+                title "Close known C ABI compatibility gaps"
+                priority 0
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:abi.complete-surface])
+                }
+                deps (greenfield-abi-oracle)
+            }
+
+            {
+                id greenfield-lint-baseline
+                title "Remove blanket lint suppressions and classify legacy code"
+                priority 0
+                kind @refactor
+                implements {
+                    native-impl ([spec:nshedit:req:workspace.no-legacy-allows])
+                }
+                deps (greenfield-abi-baseline)
+            }
+
+            {
+                id greenfield-domain-model
+                title "Introduce typed editor, text, screen, action, and error models"
+                priority 0
+                kind @refactor
+                implements {
+                    native-impl ([spec:nshedit:req:core.typed-domain] [spec:nshedit:req:core.text-screen-model])
+                }
+                deps (greenfield-lint-baseline)
+            }
+
+            {
+                id greenfield-editor-shell
+                title "Build the safe private-state editor shell with RAII lifecycle and Rust I/O"
+                priority 0
+                kind @refactor
+                implements {
+                    native-impl ([spec:nshedit:req:core.raii-lifecycle] [spec:nshedit:req:core.rust-io])
+                }
+                deps (greenfield-domain-model)
+            }
+
+            {
+                id greenfield-effect-runtime
+                title "Suspend host interactions as typed effects with resumable responses"
+                priority 0
+                kind @refactor
+                implements {
+                    native-impl ([spec:nshedit:req:core.effect-hooks])
+                }
+                deps (greenfield-editor-shell)
+            }
+
+            {
+                id greenfield-abi-adapter
+                title "Move every C representation and lifetime obligation into an opaque ABI adapter"
+                priority 0
+                kind @refactor
+                implements {
+                    native-impl ([spec:nshedit:req:abi.opaque-owner] [spec:nshedit:req:abi.surface-stability] [spec:nshedit:req:abi.behavioural-conformance])
+                }
+                deps (greenfield-effect-runtime)
+            }
+
+            {
+                id greenfield-public-firewall
+                title "Restrict the ABI crate to the core's public semantic API"
+                priority 0
+                kind @refactor
+                implements {
+                    native-impl ([spec:nshedit:req:core.public-surface])
+                }
+                deps (greenfield-abi-adapter)
+            }
+
+            {
+                id greenfield-line-commands
+                title "Replace line state, keymaps, search, and editor commands with Rust-domain implementations"
+                priority 0
+                kind @refactor
+                implements {
+                    native-impl ([spec:nshedit:req:core.line-commands])
+                }
+                deps (greenfield-public-firewall)
+            }
+
+            {
+                id greenfield-history
+                title "Replace C-shaped history dispatch with a safe Rust history subsystem"
+                priority 0
+                kind @refactor
+                implements {
+                    native-impl ([spec:nshedit:req:core.history])
+                }
+                deps (greenfield-public-firewall)
+            }
+
+            {
+                id greenfield-token-completion
+                title "Replace tokenization and completion with owned typed Rust APIs"
+                priority 0
+                kind @refactor
+                implements {
+                    native-impl ([spec:nshedit:req:core.token-completion])
+                }
+                deps (greenfield-public-firewall)
+            }
+
+            {
+                id greenfield-terminal-render
+                title "Replace terminal, tty, prompt, and refresh state with typed rendering"
+                priority 0
+                kind @refactor
+                implements {
+                    native-impl ([spec:nshedit:req:core.terminal-render])
+                }
+                deps (greenfield-line-commands)
+            }
+
+            {
+                id greenfield-read-driver
+                title "Replace input, parsing, signals, and dispatch with the resumable editor driver"
+                priority 0
+                kind @refactor
+                implements {
+                    native-impl ([spec:nshedit:req:core.read-driver])
+                }
+                deps (greenfield-history greenfield-token-completion greenfield-terminal-render)
+            }
+
+            {
+                id greenfield-retire-port
+                title "Delete the transliterated C-shaped core and compatibility internals"
+                priority 0
+                kind @refactor
+                implements {
+                    native-impl ([spec:nshedit:req:core.no-compat-internals])
+                }
+                deps (greenfield-read-driver)
+            }
+
+            {
+                id greenfield-rust-consumer
+                title "Prove the native API with a safe real-world Rust consumer"
+                priority 0
+                kind @test
+                implements {
+                    native-impl ([spec:nshedit:req:core.native-consumer])
+                }
+                deps (greenfield-read-driver)
+            }
+
+            {
+                id greenfield-lint-zero
+                title "Forbid unsafe core code and eliminate unjustified lint suppressions workspace-wide"
+                priority 0
+                kind @refactor
+                implements {
+                    native-impl ([spec:nshedit:req:core.unsafe-free] [spec:nshedit:req:workspace.lint-policy])
+                }
+                deps (greenfield-retire-port)
+            }
+
+            {
+                id greenfield-acceptance
+                title "Prove Rust-core safety and drop-in C ABI compatibility end to end"
+                priority 0
+                kind @test
+                deps (greenfield-lint-zero greenfield-rust-consumer nshterm-hashed-db)
+            }
+        )
+        log (
+            {
+                at 2026-08-08T14:17:09.707783215Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "The dependency DAG is authoritative for ordering. Every programme leaf has the same neutral priority; greenfield-contract is the first dependency root, and nshterm-hashed-db gates only greenfield-acceptance."
             }
         )
     }

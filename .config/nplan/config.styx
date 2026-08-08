@@ -68,6 +68,12 @@ comment-smells {
 }
 
 quality {
+    // Structural code gates operate on source, not the plan, specifications,
+    // or their configuration. Without this boundary a documentation-only
+    // commit makes crate-scope test-footprint fall back to the repository root
+    // and counts prose as production LOC under the dominant Rust language.
+    exempt-paths (.config/** docs/** plan/**)
+
     // The gate bounds how much production code one file carries. It was
     // counting test functions too, which measures something else: a ported
     // file's test module has one function per rule it verifies, and vi.c has
