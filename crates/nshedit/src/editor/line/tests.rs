@@ -191,6 +191,23 @@ fn undo_is_atomic_and_clears_redo() {
 }
 
 #[test]
+fn replacement_and_reset_are_session_operations() {
+    let mut editor = editor();
+    apply(&mut editor, Action::Insert(Text::from("abcdef")));
+    let span = editor.line().span(2..4).unwrap();
+    editor.replace(span, Text::from("XY")).unwrap();
+    assert_eq!(editor.line(), &Text::from("abXYef"));
+    assert_eq!(editor.cursor().get(), 4);
+    assert!(editor.can_undo());
+
+    editor.reset_line();
+    assert!(editor.line().is_empty());
+    assert_eq!(editor.cursor(), TextIndex::START);
+    assert!(!editor.can_undo());
+    assert!(!editor.can_redo());
+}
+
+#[test]
 fn transforms_preserve_text_unit_kinds() {
     let mut editor = editor();
     let text: Text = [

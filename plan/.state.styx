@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-08T22:30:08.239178257Z
+last_sync_at 2026-08-08T23:10:45.893132724Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -252,6 +252,8 @@ impl_evidence (
         core.public-surface
     ), covered_claims (
         {impl_name native-impl, rule core.public-surface}
+    ), rule_versions_seen (
+        {id core.public-surface, version 0}
     )}
     {id greenfield-read-driver, covered_rules (
         core.read-driver
@@ -260,6 +262,7 @@ impl_evidence (
     ), rule_versions_seen (
         {id core.read-driver, version 0}
     )}
+    {id greenfield-retire-port}
     {id greenfield-terminal-render, covered_rules (
         core.terminal-render
     ), covered_claims (

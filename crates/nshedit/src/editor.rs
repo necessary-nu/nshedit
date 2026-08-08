@@ -11,7 +11,7 @@ use std::os::fd::BorrowedFd;
 use crate::domain::{
     Action, Binding, CommandName, Direction, EditorConfig, Error, InputMode, KeyLookup,
     KeySequence, KeymapMode, Outcome, Prompt, Screen, ScreenPosition, ScreenSize, TerminalMode,
-    Text, TextIndex,
+    Text, TextIndex, TextSpan,
 };
 
 // [spec:nshedit:req:core.effect-hooks]
@@ -246,6 +246,19 @@ impl<T: TerminalControl> Editor<T> {
     /// Apply one typed semantic action to the private editor state.
     pub fn execute(&mut self, action: Action) -> Result<CommandStep, Error> {
         self.state.execute(action)
+    }
+
+    /// Replace a checked portion of the line as one undoable edit.
+    pub fn replace(&mut self, span: TextSpan, replacement: Text) -> Result<(), Error> {
+        self.state
+            .replace_at(replacement, span.start().get(), span.end().get())
+            .map(|_| ())
+    }
+
+    /// Begin a fresh logical line while preserving session policy, bindings,
+    /// and long-lived registers.
+    pub fn reset_line(&mut self) {
+        self.state.reset_line(self.config);
     }
 
     /// Install or replace a typed binding in one keymap.

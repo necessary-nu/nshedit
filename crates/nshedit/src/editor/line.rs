@@ -36,10 +36,7 @@ pub(super) struct State {
 
 impl State {
     pub(super) fn new(config: EditorConfig) -> Self {
-        let keymap_mode = match config.editing_mode() {
-            EditingMode::Emacs => KeymapMode::Emacs,
-            EditingMode::Vi => KeymapMode::ViInsert,
-        };
+        let keymap_mode = initial_keymap(config);
         Self {
             line: Text::default(),
             cursor: TextIndex::START,
@@ -52,6 +49,16 @@ impl State {
             undo: Vec::new(),
             redo: Vec::new(),
         }
+    }
+
+    pub(super) fn reset_line(&mut self, config: EditorConfig) {
+        self.line.clear();
+        self.cursor = TextIndex::START;
+        self.mark = None;
+        self.input_mode = InputMode::Insert;
+        self.keymap_mode = initial_keymap(config);
+        self.undo.clear();
+        self.redo.clear();
     }
 
     pub(super) const fn input_mode(&self) -> InputMode {
@@ -372,6 +379,13 @@ impl State {
         };
         self.mark = Some(self.line.index(position)?);
         Ok(())
+    }
+}
+
+fn initial_keymap(config: EditorConfig) -> KeymapMode {
+    match config.editing_mode() {
+        EditingMode::Emacs => KeymapMode::Emacs,
+        EditingMode::Vi => KeymapMode::ViInsert,
     }
 }
 
