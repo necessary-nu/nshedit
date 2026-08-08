@@ -2370,6 +2370,14 @@ children (
                     native-impl ([spec:nshedit:req:core.public-surface])
                 }
                 deps (greenfield-abi-adapter)
+                log (
+                    {
+                        at 2026-08-08T22:19:30.952425762Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

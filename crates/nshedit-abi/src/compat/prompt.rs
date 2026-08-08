@@ -405,4 +405,5 @@ pub fn prompt_get(
 }
 
 #[cfg(test)]
+#[path = "prompt/test.rs"]
 mod test;

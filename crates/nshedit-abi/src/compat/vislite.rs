@@ -256,4 +256,5 @@ fn for_each_significant_byte(c: u32, mut f: impl FnMut(u32)) {
 }
 
 #[cfg(test)]
+#[path = "vislite/test.rs"]
 mod test;

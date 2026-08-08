@@ -110,6 +110,7 @@ pub mod editor;
 
 // Temporary compatibility definitions still consumed by the translated
 // engine. Installed C declarations belong exclusively to `nshedit-abi`.
+#[path = "../../nshedit-abi/src/compat/histedit.rs"]
 pub mod histedit;
 
 // Host facilities the port has to supply itself. None has a C counterpart:
@@ -119,16 +120,22 @@ pub mod histedit;
 // that needs one takes it from here — two independent copies of the locale
 // layer, two of `errno` and fifteen of the output writers existed before they
 // were hoisted.
+#[path = "../../nshedit-abi/src/compat/errno.rs"]
 pub mod errno;
+#[path = "../../nshedit-abi/src/compat/locale.rs"]
 pub(crate) mod locale;
+#[path = "../../nshedit-abi/src/compat/stdio.rs"]
 pub(crate) mod stdio;
 
 // Encoding and escaping.
+#[path = "../../nshedit-abi/src/compat/chartype.rs"]
 pub mod chartype;
+#[path = "../../nshedit-abi/src/compat/literal.rs"]
 pub mod literal;
 /// `strvis(dst, src, VIS_NL)` alone, so that escaping a `history` listing for
 /// display does not depend on the optional `bsd` feature. The rest of `vis(3)`
 /// — every other flag word, and the whole decoder — still comes from `bsd`.
+#[path = "../../nshedit-abi/src/compat/vislite.rs"]
 pub(crate) mod vislite;
 /// `vis(3)`/`unvis(3)`, re-exported from the `bsd` crate.
 ///
@@ -164,12 +171,16 @@ pub(crate) mod vislite;
 pub use bsd::vis;
 
 // Terminal capability and tty control.
+#[path = "../../nshedit-abi/src/compat/terminal.rs"]
 pub mod terminal;
+#[path = "../../nshedit-abi/src/compat/tty.rs"]
 pub mod tty;
 
 // Line buffer and screen refresh.
 pub mod chared;
+#[path = "../../nshedit-abi/src/compat/prompt.rs"]
 pub mod prompt;
+#[path = "../../nshedit-abi/src/compat/refresh.rs"]
 pub mod refresh;
 
 // Input dispatch and key binding.

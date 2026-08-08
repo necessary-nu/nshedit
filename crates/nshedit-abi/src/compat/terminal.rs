@@ -2618,4 +2618,5 @@ fn bad_echotc_value(el: &mut EditLine, silent: bool, arg: &[u32], what: &str) {
 }
 
 #[cfg(test)]
+#[path = "terminal/test.rs"]
 mod test;

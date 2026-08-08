@@ -1444,4 +1444,5 @@ pub(crate) fn re_clear_lines(el: &mut EditLine) {
 }
 
 #[cfg(test)]
+#[path = "refresh/test.rs"]
 mod test;
