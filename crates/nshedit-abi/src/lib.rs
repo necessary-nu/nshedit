@@ -41,6 +41,7 @@
 mod adapter;
 pub mod cdecl;
 pub mod chartype;
+mod compat;
 pub mod eln;
 pub mod filecomplete;
 pub mod histedit;
@@ -61,7 +62,7 @@ pub mod readline;
 /// through `std`, exactly as `libedit.so` does, so this is a declaration of a
 /// symbol that is present either way — not a dependency the port acquires.
 ///
-/// The core cannot do this itself: it records into [`nshedit::errno`] instead,
+/// The core cannot do this itself: it records into [`crate::compat::errno`] instead,
 /// and this module is what turns that record into the C's `errno`. Both are
 /// per-thread, and [`Mark`] is neither `Send` nor `Sync` so the copy between
 /// them cannot be split across two threads.
@@ -98,7 +99,7 @@ mod errno {
     /// Sample the core's `errno` before calling into it.
     #[must_use]
     pub(crate) fn mark() -> Mark {
-        Mark(nshedit::errno::writes(), PhantomData)
+        Mark(crate::compat::errno::writes(), PhantomData)
     }
 
     /// Copy what the core recorded since `mark` into the C's `errno`.
@@ -108,8 +109,8 @@ mod errno {
     /// over from an earlier failure is never republished — which is the C's
     /// discipline: written on failure, never cleared on success.
     pub(crate) fn publish(mark: Mark) {
-        if nshedit::errno::writes() != mark.0 {
-            set(nshedit::errno::errno());
+        if crate::compat::errno::writes() != mark.0 {
+            set(crate::compat::errno::errno());
         }
     }
 
@@ -119,7 +120,7 @@ mod errno {
     /// step because the C has one `errno` and code on both sides of this
     /// boundary reads it.
     pub(crate) fn set(e: c_int) {
-        nshedit::errno::set_errno(e);
+        crate::compat::errno::set_errno(e);
         // SAFETY: the accessor answers with this thread's `errno` slot, which
         // is valid for as long as the thread is.
         unsafe { *errno_location() = e };
@@ -160,9 +161,9 @@ mod errno {
             assert_eq!(get(), 7);
 
             let m = mark();
-            nshedit::errno::set_errno(nshedit::errno::EINVAL);
+            crate::compat::errno::set_errno(crate::compat::errno::EINVAL);
             publish(m);
-            assert_eq!(get(), nshedit::errno::EINVAL);
+            assert_eq!(get(), crate::compat::errno::EINVAL);
         }
     }
 }
@@ -210,7 +211,7 @@ pub(crate) mod cstdio {
     use core::ffi::{VaList, c_char, c_int, c_long, c_void};
     use std::io::{self, Write};
 
-    use nshedit::el::CFile;
+    use crate::compat::el::CFile;
 
     // These functions are POSIX and spelled the same in every libc this port
     // targets. None is `safe`: each dereferences caller-provided storage or a

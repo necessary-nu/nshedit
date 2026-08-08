@@ -7,7 +7,7 @@ use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
-use nshedit::chartype::CtBufferT;
+use crate::compat::chartype::CtBufferT;
 
 use super::{
     EnterOperation, GetOperation, HistEventGen, HistoryChar, HistoryHandle, SaveStream, input,
@@ -27,6 +27,16 @@ fn conversion_buffer() -> CtBufferT {
         wbuff: Vec::new(),
         wsize: 0,
     }
+}
+
+fn decode_libedit_entry(dst: &mut [u8], src: &[u8]) -> usize {
+    dst.fill(0);
+    let _ = bsd::vis::decode_into(dst, src, bsd::vis::Flags::NONE);
+    dst.iter().position(|&byte| byte == 0).unwrap_or(dst.len())
+}
+
+fn encode_libedit_entry(bytes: &[u8]) -> Vec<u8> {
+    bsd::vis::Encoder::new(bsd::vis::Flags::WHITE).encode(bytes)
 }
 
 // [spec:libedit:def:history.history-load-fn]
@@ -112,7 +122,7 @@ fn load_libedit<C: HistoryChar>(history: &mut HistoryHandle<C>, input: &mut dyn 
             capacity = wanted;
         }
 
-        let decoded_length = nshedit::histfile::vis_decode_into(&mut decoded, &line);
+        let decoded_length = decode_libedit_entry(&mut decoded, &line);
         let Some(text) = C::decode(Some(&decoded[..decoded_length]), &mut conversion) else {
             count = count.saturating_add(1);
             continue;
@@ -194,7 +204,7 @@ fn save_to<C: HistoryChar>(
         let Some(bytes) = C::encode(text, &mut conversion) else {
             return -1;
         };
-        let mut encoded = nshedit::histfile::encode_libedit_entry(bytes);
+        let mut encoded = encode_libedit_entry(bytes);
         encoded.push(b'\n');
         let _ = output.write_all(&encoded);
         written = written.saturating_add(1);

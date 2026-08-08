@@ -199,15 +199,12 @@ pub struct Termcapstr {
 
 // [spec:libedit:def:terminal.termcapval]
 /// One row of the flag/numeric-capability table: 8 rows, in the order the
-/// `T_*` indices define. Structurally identical to [`Termcapstr`]; the C
-/// declares it separately and so does this.
+/// `T_*` indices define.
 pub struct Termcapval {
     /// Termcap two-letter code in the C (`"am"`, `"pt"`, …), terminfo capname
     /// here. `MT`, `pt` and `xt` have no clean terminfo counterpart and
     /// are resolved per capability during the port.
     pub name: &'static str,
-    /// Human-readable description, shown by `telltc`.
-    pub long_name: &'static str,
 }
 
 /// Table-literal shorthand for [`Termcapstr`]: 39 braced literals read as
@@ -217,8 +214,8 @@ const fn cs(name: &'static str, long_name: &'static str) -> Termcapstr {
 }
 
 /// Table-literal shorthand for [`Termcapval`], as [`cs`].
-const fn cv(name: &'static str, long_name: &'static str) -> Termcapval {
-    Termcapval { name, long_name }
+const fn cv(name: &'static str) -> Termcapval {
+    Termcapval { name }
 }
 
 /// C: `static const struct termcapstr tstr[]`.
@@ -279,14 +276,14 @@ static TSTR: [Termcapstr; T_STR] = [
 /// `dest_tabs_magic_smso` share the capname, which is the mapping ncurses
 /// already makes.
 static TVAL: [Termcapval; T_VAL] = [
-    cv("am", "has automatic margins"),
-    cv("pt", "has physical tabs"),
-    cv("lines", "Number of lines"),
-    cv("cols", "Number of columns"),
-    cv("km", "Has meta key"),
-    cv("xt", "Tab chars destructive"),
-    cv("xenl", "newline ignored at right margin"),
-    cv("MT", "Has meta key"),
+    cv("am"),
+    cv("pt"),
+    cv("lines"),
+    cv("cols"),
+    cv("km"),
+    cv("xt"),
+    cv("xenl"),
+    cv("MT"),
 ];
 
 /// Which of the two capability tables [`resolve_cap`] is searching.

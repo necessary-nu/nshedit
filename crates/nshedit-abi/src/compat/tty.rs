@@ -73,6 +73,7 @@ pub const C_SWTCH: usize = 7;
 /// C: `#define C_DSWTCH 8`.
 pub const C_DSWTCH: usize = 8;
 /// C: `#define C_ERASE2 9`.
+#[cfg(test)]
 pub const C_ERASE2: usize = 9;
 /// C: `#define C_START 10`.
 pub const C_START: usize = 10;
@@ -96,13 +97,12 @@ pub const C_STATUS: usize = 18;
 pub const C_PAGE: usize = 19;
 /// C: `#define C_PGOFF 20`.
 pub const C_PGOFF: usize = 20;
-/// C: `#define C_KILL2 21`.
-pub const C_KILL2: usize = 21;
 /// C: `#define C_BRK 22`.
 ///
 /// Inert in both directions: neither `tty_get_chars` nor `tty_set_chars` has a
 /// `VBRK` assignment on any platform, and `tty_char_index` has no case for
 /// it (ERR-terminal-05).
+#[cfg(test)]
 pub const C_BRK: usize = 22;
 /// C: `#define C_MIN 23`.
 pub const C_MIN: usize = 23;

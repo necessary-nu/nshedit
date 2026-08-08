@@ -18,7 +18,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::io::Write;
 use std::path::Path;
 
-use nshedit::chartype::{CtBufferT, ct_decode_string, ct_encode_string};
+use crate::compat::chartype::{CtBufferT, ct_decode_string, ct_encode_string};
 use nshedit::domain::Direction;
 use nshedit::history::{
     DuplicatePolicy, HistoryCursor, HistoryEntry, HistoryId, HistoryStore, Navigation, PushResult,

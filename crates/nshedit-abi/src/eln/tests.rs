@@ -117,7 +117,7 @@ fn a_character_with_no_single_byte_form_is_lost_not_queued() {
     assert_eq!(c, 0);
     assert_eq!(
         std::io::Error::last_os_error().raw_os_error(),
-        Some(nshedit::errno::ERANGE),
+        Some(crate::compat::errno::ERANGE),
         "the one errno this layer produces itself"
     );
     // SAFETY: `el` is live.
@@ -246,7 +246,7 @@ fn the_narrow_line_view_calls_the_resize_hook_once_and_survives_re_entry() {
             const { std::cell::Cell::new(ptr::null_mut()) };
     }
 
-    unsafe extern "C" fn hook(el: *mut nshedit::el::EditLine, _arg: *mut c_void) {
+    unsafe extern "C" fn hook(el: *mut crate::compat::el::EditLine, _arg: *mut c_void) {
         CALLS.with(|c| c.set(c.get() + 1));
         CALLBACK_HANDLE.with(|handle| handle.set(el.cast()));
         // SAFETY: `el` is the handle the hook was installed against.
@@ -255,7 +255,7 @@ fn the_narrow_line_view_calls_the_resize_hook_once_and_survives_re_entry() {
     }
 
     let el = editline();
-    let f: nshedit::chared::ElZfuncT = hook;
+    let f: crate::compat::chared::ElZfuncT = hook;
     // SAFETY: `EL_RESIZE` takes an `el_zfunc_t` and an opaque cookie.
     assert_eq!(
         unsafe { el_wset(el, EL_RESIZE, f, ptr::null_mut::<c_void>()) },
@@ -342,7 +342,7 @@ fn parsing_an_argument_vector_runs_one_editrc_command() {
 /// forwarded.
 #[test]
 fn the_narrow_setter_decodes_and_records_that_it_was_narrow() {
-    unsafe extern "C" fn never_called(_: *mut nshedit::el::EditLine) -> *mut u32 {
+    unsafe extern "C" fn never_called(_: *mut crate::compat::el::EditLine) -> *mut u32 {
         ptr::null_mut()
     }
 
@@ -392,7 +392,7 @@ fn the_narrow_setter_decodes_and_records_that_it_was_narrow() {
 fn installing_history_through_the_narrow_setter_pins_the_bridge_narrow() {
     unsafe extern "C" fn hist(
         _: *mut c_void,
-        _: *mut nshedit::histedit::HistEventW,
+        _: *mut crate::compat::histedit::HistEventW,
         _: c_int,
         _: ...
     ) -> c_int {
@@ -414,7 +414,7 @@ fn installing_history_through_the_narrow_setter_pins_the_bridge_narrow() {
         let cleared = (&*el).el_flags & NARROW_HISTORY == 0;
         assert_eq!(
             cleared,
-            nshedit::el::mb_cur_max() == 1,
+            crate::compat::el::mb_cur_max() == 1,
             "the wide setter clears the flag only in a single-byte locale"
         );
     }
@@ -432,10 +432,10 @@ fn installing_history_through_the_narrow_setter_pins_the_bridge_narrow() {
 /// (ERR-core-api-17).
 #[test]
 fn the_narrow_getter_forwards_what_needs_no_conversion() {
-    unsafe extern "C" fn left(_: *mut nshedit::el::EditLine) -> *mut u32 {
+    unsafe extern "C" fn left(_: *mut crate::compat::el::EditLine) -> *mut u32 {
         ptr::null_mut()
     }
-    unsafe extern "C" fn right(_: *mut nshedit::el::EditLine) -> *mut u32 {
+    unsafe extern "C" fn right(_: *mut crate::compat::el::EditLine) -> *mut u32 {
         ptr::null_mut()
     }
 

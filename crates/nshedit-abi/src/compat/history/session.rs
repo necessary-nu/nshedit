@@ -55,12 +55,6 @@ impl HistorySession {
         self.store.push(line)
     }
 
-    /// Remove all records and return this traversal to the live line.
-    pub fn clear(&mut self) {
-        self.store.clear();
-        self.cursor.reset();
-    }
-
     fn select(&mut self, id: HistoryId) -> Option<HistLine> {
         let entry = self.store.select(&mut self.cursor, id)?;
         Some(compatibility_line(entry))

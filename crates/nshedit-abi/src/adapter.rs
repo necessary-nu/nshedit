@@ -13,7 +13,7 @@ use core::ops::{Deref, DerefMut};
 use std::ffi::CString;
 use std::io;
 
-use nshedit::chartype::CtBufferT;
+use crate::compat::chartype::CtBufferT;
 use nshedit::domain::{EditorConfig, TerminalMode, Text, TextUnit};
 use nshedit::editor::{
     Continuation, Editor, QuoteStyle, TerminalControl, Tokenization, Tokenizer as NativeTokenizer,
@@ -83,19 +83,19 @@ impl EditLineBoundary {
 /// native [`Editor`] has a separate representation and is never cast to C.
 #[repr(C)]
 pub struct EditLine {
-    compatibility: ManuallyDrop<nshedit::el::EditLine>,
+    compatibility: ManuallyDrop<crate::compat::el::EditLine>,
     native: Editor<CompatibilityTerminal>,
     boundary: EditLineBoundary,
 }
 
 impl EditLine {
     pub(crate) fn from_compatibility(
-        compatibility: Box<nshedit::el::EditLine>,
+        compatibility: Box<crate::compat::el::EditLine>,
     ) -> Option<Box<Self>> {
         let native = match Editor::new(EditorConfig::default(), CompatibilityTerminal) {
             Ok(native) => native,
             Err(_) => {
-                nshedit::el::el_end(Some(compatibility));
+                crate::compat::el::el_end(Some(compatibility));
                 return None;
             }
         };
@@ -108,7 +108,7 @@ impl EditLine {
         Some(owner)
     }
 
-    pub(crate) fn compatibility_ptr(&mut self) -> *mut nshedit::el::EditLine {
+    pub(crate) fn compatibility_ptr(&mut self) -> *mut crate::compat::el::EditLine {
         core::ptr::from_mut(&mut **self)
     }
 
@@ -157,7 +157,7 @@ impl EditLine {
 }
 
 impl Deref for EditLine {
-    type Target = nshedit::el::EditLine;
+    type Target = crate::compat::el::EditLine;
 
     fn deref(&self) -> &Self::Target {
         &self.compatibility
@@ -175,7 +175,7 @@ impl Drop for EditLine {
         // SAFETY: this is the only `take`; `compatibility` is never exposed as
         // an owning value and `ManuallyDrop` suppresses the automatic drop.
         let compatibility = unsafe { ManuallyDrop::take(&mut self.compatibility) };
-        nshedit::el::el_end(Some(Box::new(compatibility)));
+        crate::compat::el::el_end(Some(Box::new(compatibility)));
     }
 }
 

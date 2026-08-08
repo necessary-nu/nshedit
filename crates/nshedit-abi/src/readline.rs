@@ -37,9 +37,9 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::{Cell, RefCell};
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use nshedit::chartype::{CtBufferT, ct_decode_string};
-use nshedit::filecomplete::{self, FilenameCompletionState};
-use nshedit::tty::{C_EOF, C_REPRINT, TS_IO};
+use crate::compat::chartype::{CtBufferT, ct_decode_string};
+use crate::compat::filecomplete::{self, FilenameCompletionState};
+use crate::compat::tty::{C_EOF, C_REPRINT, TS_IO};
 use std::os::fd::AsRawFd;
 
 use crate::adapter::EditLine;
@@ -1297,7 +1297,7 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
         let Ok(program) = core::str::from_utf8(program_bytes) else {
             return -1;
         };
-        E = nshedit::el::el_init_fd_preserving_terminal(
+        E = crate::compat::el::el_init_fd_preserving_terminal(
             program,
             rl_instream,
             rl_outstream,
@@ -3550,10 +3550,9 @@ pub unsafe extern "C" fn rl_add_defun(
         el_set_va(E, EL_ADDFN, name, name, rl_bind_wrapper as *const c_void);
         // strvis form: control characters as `^X`, other non-printables as
         // `\nnn`, whitespace encoded, no backslash doubling.
-        let vised = nshedit::vis::Encoder::new(nshedit::vis::Flags::from_bits(
-            (VIS_WHITE | VIS_NOSLASH) as u32,
-        ))
-        .encode_byte(c as u8, 0);
+        let vised =
+            bsd::vis::Encoder::new(bsd::vis::Flags::from_bits((VIS_WHITE | VIS_NOSLASH) as u32))
+                .encode_byte(c as u8, 0);
         // The C's `char dest[8]`. One byte cannot encode past four, but the
         // copy is bounded rather than assumed.
         for (slot, &b) in dest.iter_mut().zip(&vised[..vised.len().min(7)]) {
@@ -4651,10 +4650,9 @@ mod vis_flags_test {
     /// itself and the binding went to a different key entirely.
     #[test]
     fn a_space_encodes_to_an_octal_escape() {
-        let out = nshedit::vis::Encoder::new(nshedit::vis::Flags::from_bits(
-            (VIS_WHITE | VIS_NOSLASH) as u32,
-        ))
-        .encode_byte(b' ', 0);
+        let out =
+            bsd::vis::Encoder::new(bsd::vis::Flags::from_bits((VIS_WHITE | VIS_NOSLASH) as u32))
+                .encode_byte(b' ', 0);
         assert_eq!(out, b"\\040");
     }
 }

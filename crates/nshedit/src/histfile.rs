@@ -409,48 +409,6 @@ fn cobs_decode(frame: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-// ---------------------------------------------------------------------------
-// The `bsd` seam
-// ---------------------------------------------------------------------------
-//
-// Reading the legacy `_HiStOrY_V2_` format, and nothing else. What is left
-// here is the one direction `crate::vislite` does not cover: `unvis` has to
-// accept every escape form `vis` can emit, including the `VIS_CSTYLE` and
-// `VIS_HTTPSTYLE` ones nothing in this crate produces, so it is a decoder for
-// the whole language rather than a subset of it.
-//
-// Writing does not come through here any more. Both writers want an encoder —
-// the listing `strvis(…, VIS_NL)`, the save `strvis(…, VIS_WHITE)` — and
-// `vislite` supplies both with no feature behind them. That is not a
-// convenience: `vis_encode` answering `None` on a default build made
-// `history_save` truncate the user's file and then fail, and made the
-// `history` builtin do nothing at all.
-
-/// `strnunvis(dst, dlen, src)`. `dst` is zeroed first and the decoded length
-/// found by scanning, because a bad escape leaves the successfully decoded
-/// prefix — the C's policy — and `decode_into` writes that prefix without
-/// measuring it.
-#[cfg(feature = "bsd")]
-pub fn vis_decode_into(dst: &mut [u8], src: &[u8]) -> usize {
-    dst.fill(0);
-    let _ = bsd::vis::decode_into(dst, src, bsd::vis::Flags::NONE);
-    dst.iter().position(|&b| b == 0).unwrap_or(dst.len())
-}
-
-#[cfg(not(feature = "bsd"))]
-pub fn vis_decode_into(_dst: &mut [u8], _src: &[u8]) -> usize {
-    0
-}
-
-/// Encode one entry for libedit's V2 line-oriented history format.
-///
-/// The returned bytes contain no trailing newline. Space, tab, newline, and
-/// backslash are escaped exactly as `strvis(3)` with `VIS_WHITE` does.
-#[must_use]
-pub fn encode_libedit_entry(bytes: &[u8]) -> Vec<u8> {
-    crate::vislite::encode(crate::vislite::Escape::White, bytes)
-}
-
 #[cfg(test)]
 mod test {
     use super::*;

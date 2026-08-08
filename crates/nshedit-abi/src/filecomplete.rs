@@ -36,7 +36,7 @@ use core::ptr;
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 
-use nshedit::filecomplete::{self, FilenameCompletionState};
+use crate::compat::filecomplete::{self, FilenameCompletionState};
 
 use crate::adapter::EditLine;
 use crate::cdecl::histedit::CC_ERROR;

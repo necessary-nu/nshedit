@@ -178,7 +178,6 @@ assertions (
     {id cross-concern-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-08T13:15:16.991315761Z}
     {id greenfield-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:17:31.852523476Z}
     {id greenfield-abi-oracle, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:46:10.110061941Z}
-    {id greenfield-public-firewall, kind @doing, author "brendan@necessary.nu", at 2026-08-08T22:19:30.952425762Z}
 )
 
 impl_evidence (
@@ -248,7 +247,11 @@ impl_evidence (
     ), rule_versions_seen (
         {id workspace.no-legacy-allows, version 0}
     )}
-    {id greenfield-public-firewall}
+    {id greenfield-public-firewall, covered_rules (
+        core.public-surface
+    ), covered_claims (
+        {impl_name native-impl, rule core.public-surface}
+    )}
     {id greenfield-read-driver, covered_rules (
         core.read-driver
     ), covered_claims (

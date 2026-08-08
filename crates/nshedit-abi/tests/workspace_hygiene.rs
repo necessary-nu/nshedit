@@ -127,6 +127,37 @@ fn the_format_gate_does_not_use_all() {
     }
 }
 
+// [spec:nshedit:req:core.public-surface/test]
+#[test]
+fn native_core_surface_is_safe() {
+    let root = repo_root();
+    let source = fs::read_to_string(root.join("crates/nshedit/src/lib.rs"))
+        .expect("read the native core facade");
+
+    assert!(
+        source.contains("#![forbid(unsafe_code)]"),
+        "the native core must reject unsafe declarations and implementations"
+    );
+    assert!(
+        !source.contains("#[path"),
+        "the native facade must not compile compatibility sources by path"
+    );
+
+    let public_modules: Vec<&str> = source
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("pub mod ")
+                .and_then(|module| module.strip_suffix(';'))
+        })
+        .collect();
+    assert_eq!(
+        public_modules,
+        ["domain", "editor", "histfile", "history", "tokenizer"],
+        "the native facade exposed a module outside the semantic Rust API"
+    );
+}
+
 // [spec:nshedit:req:workspace.no-legacy-allows/test]
 #[test]
 fn first_party_rust_rejects_allow_attributes() {

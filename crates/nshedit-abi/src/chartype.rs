@@ -8,7 +8,7 @@
 //! is the contract, so they are exported here.
 //!
 //! Everything else in `chartype.c` is `libedit_private` and stays inside
-//! [`nshedit::chartype`].
+//! [`crate::compat::chartype`].
 //!
 //! # The caller's `ct_buffer_t`
 //!
@@ -19,7 +19,7 @@
 //! *in it*, exactly as the C's `el_realloc`ed blocks do, so a caller can read
 //! `conv.cbuff` back and find the same pointer the call returned.
 //!
-//! The core's [`nshedit::chartype::CtBufferT`] is `Vec`-shaped and does not
+//! The core's [`crate::compat::chartype::CtBufferT`] is `Vec`-shaped and does not
 //! have that layout, so each call lifts the four words into one, runs the
 //! core, and lowers it back. See [`lift`] and [`lower`] for what that costs
 //! and what it requires of the caller.
@@ -27,14 +27,14 @@
 use core::ffi::c_char;
 use core::ptr;
 
-use nshedit::chartype::CtBufferT;
+use crate::compat::chartype::CtBufferT;
 
 /// C: `typedef struct ct_buffer_t { char *cbuff; size_t csize; wchar_t
 /// *wbuff; size_t wsize; } ct_buffer_t;` — `def:chartype.ct-buffer-t`, in the
 /// layout a C caller declares.
 ///
 /// The core carries the same four fields as owning `Vec`s
-/// ([`nshedit::chartype::CtBufferT`]); this is the ABI face of it, and the
+/// ([`crate::compat::chartype::CtBufferT`]); this is the ABI face of it, and the
 /// two are bridged per call rather than transmuted.
 ///
 /// `csize` and `wsize` are the C's *allocated element counts*, not the amount
@@ -201,8 +201,8 @@ pub unsafe extern "C" fn ct_encode_string(s: *const u32, conv: *mut CtBufferC) -
     // blocks `lower` put there.
     let mut buf = unsafe { lift(conv) };
     // SAFETY: `s` is a terminated wide string.
-    let ok =
-        nshedit::chartype::ct_encode_string(Some(unsafe { wide_upto_nul(s) }), &mut buf).is_some();
+    let ok = crate::compat::chartype::ct_encode_string(Some(unsafe { wide_upto_nul(s) }), &mut buf)
+        .is_some();
     // SAFETY: `buf` owns exactly the blocks `lift` took.
     unsafe { lower(conv, buf) };
     if ok {
@@ -241,7 +241,7 @@ pub unsafe extern "C" fn ct_decode_string(s: *const c_char, conv: *mut CtBufferC
     let bytes = unsafe { core::ffi::CStr::from_ptr(s) }.to_bytes();
     // SAFETY: as `ct_encode_string`.
     let mut buf = unsafe { lift(conv) };
-    let ok = nshedit::chartype::ct_decode_string(Some(bytes), &mut buf).is_some();
+    let ok = crate::compat::chartype::ct_decode_string(Some(bytes), &mut buf).is_some();
     // SAFETY: as `ct_encode_string`.
     unsafe { lower(conv, buf) };
     if ok {

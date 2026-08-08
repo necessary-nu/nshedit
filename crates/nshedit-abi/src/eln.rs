@@ -19,7 +19,7 @@
 //! over with a copy: the C caller is promised a pointer that stays valid until
 //! the next call which writes the narrow half, and code in the wild relies on
 //! it (`readline.c`'s own `_resize_fun` does). So every one of them returns
-//! [`nshedit::chartype::ct_encode_string`]'s slice `as_ptr()` — the start of
+//! [`crate::compat::chartype::ct_encode_string`]'s slice `as_ptr()` — the start of
 //! the adapter's `Vec<u8>` — and the next encode into the same `EditLine`
 //! overwrites it, or reallocates and dangles it, exactly as `realloc` does in
 //! the C. Nothing here copies, caches or leaks a second buffer, and the
@@ -34,10 +34,10 @@
 use core::ffi::{CStr, c_char, c_int, c_void};
 use core::ptr;
 
-use nshedit::chartype::{ct_decode_string, ct_enc_width, ct_encode_char, ct_encode_string};
-use nshedit::el::NARROW_HISTORY;
-use nshedit::hist::HistFunT;
-use nshedit::prompt::ElPfuncT;
+use crate::compat::chartype::{ct_decode_string, ct_enc_width, ct_encode_char, ct_encode_string};
+use crate::compat::el::NARROW_HISTORY;
+use crate::compat::hist::HistFunT;
+use crate::compat::prompt::ElPfuncT;
 
 use crate::adapter::EditLine;
 use crate::cdecl::histedit::LineInfo;
@@ -184,7 +184,7 @@ pub unsafe extern "C" fn el_getc(el: *mut EditLine, cp: *mut c_char) -> c_int {
             // that a later core read cannot disagree with what the caller
             // sees.
             None => {
-                crate::errno::set(nshedit::errno::ERANGE);
+                crate::errno::set(crate::compat::errno::ERANGE);
                 -1
             }
             // Returns 1, not `num_read` — the same value, since `el_wgetc`
@@ -492,11 +492,11 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         let argc = argv.len() as c_int;
 
         return match op {
-            EL_BIND => nshedit::map::map_bind(el, argc, &argv),
-            EL_TELLTC => nshedit::terminal::terminal_telltc(el, argc, &argv),
-            EL_SETTC => nshedit::terminal::terminal_settc(el, argc, &argv),
-            EL_ECHOTC => nshedit::terminal::terminal_echotc(el, argc, &argv),
-            _ => nshedit::tty::tty_stty(el, argc, &argv),
+            EL_BIND => crate::compat::map::map_bind(el, argc, &argv),
+            EL_TELLTC => crate::compat::terminal::terminal_telltc(el, argc, &argv),
+            EL_SETTC => crate::compat::terminal::terminal_settc(el, argc, &argv),
+            EL_ECHOTC => crate::compat::terminal::terminal_echotc(el, argc, &argv),
+            _ => crate::compat::tty::tty_stty(el, argc, &argv),
         };
     }
 
@@ -525,7 +525,7 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         // it whichever entry point set the history, and the narrow store's -1
         // comes from the NARROW_HISTORY check ahead of it rather than from an
         // absent hook.
-        let rv = nshedit::hist::hist_set(el, f, ptr, Some(crate::history::hist_settings));
+        let rv = crate::compat::hist::hist_set(el, f, ptr, Some(crate::history::hist_settings));
         el.el_flags |= NARROW_HISTORY;
         return rv;
     }
@@ -549,7 +549,7 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         } else {
             0
         };
-        return nshedit::prompt::prompt_set(el, f, esc, op, 0);
+        return crate::compat::prompt::prompt_set(el, f, esc, op, 0);
     }
 
     if op == EL_EDITOR || op == EL_WORDCHARS {
@@ -568,9 +568,9 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         // `el_lgcyconv.wbuff`, which outlives this call.
         let s = unsafe { wide_upto_nul(wide) };
         return if op == EL_EDITOR {
-            nshedit::map::map_set_editor(el, s)
+            crate::compat::map::map_set_editor(el, s)
         } else {
-            nshedit::map::map_set_wordchars(el, s)
+            crate::compat::map::map_set_wordchars(el, s)
         };
     }
 
@@ -642,7 +642,7 @@ unsafe fn el_get_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
             // SAFETY: the selected operation takes an `el_pfunc_t *`.
             let out = unsafe { ap.next_arg::<*mut c_void>() };
             let callback = unsafe { out.cast::<Option<ElPfuncT>>().as_mut() };
-            nshedit::prompt::prompt_get(el, callback, None, op)
+            crate::compat::prompt::prompt_get(el, callback, None, op)
         }
 
         // The C gets a wide escape character from the shared prompt helper,
@@ -654,7 +654,7 @@ unsafe fn el_get_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
             let callback = unsafe { out.cast::<Option<ElPfuncT>>().as_mut() };
             let escape_out = unsafe { ap.next_arg::<*mut c_void>() }.cast::<c_char>();
             let mut escape = 0u32;
-            let result = nshedit::prompt::prompt_get(el, callback, Some(&mut escape), op);
+            let result = crate::compat::prompt::prompt_get(el, callback, Some(&mut escape), op);
             if !escape_out.is_null() {
                 // SAFETY: a non-null `char *` is the operation's out slot.
                 unsafe { *escape_out = escape as c_char };
@@ -674,7 +674,7 @@ unsafe fn el_get_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
 
             let (result, narrow) = if op == EL_EDITOR {
                 let mut editor: &'static [u32] = &[];
-                let result = nshedit::map::map_get_editor(el, &mut editor);
+                let result = crate::compat::map::map_get_editor(el, &mut editor);
                 let narrow = (result == 0)
                     .then(|| ct_encode_string(Some(editor), el.narrow_conversion_mut()))
                     .flatten()
@@ -682,7 +682,7 @@ unsafe fn el_get_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
                 (result, narrow)
             } else {
                 let mut wordchars = None;
-                let result = nshedit::map::map_get_wordchars(el, &mut wordchars);
+                let result = crate::compat::map::map_get_wordchars(el, &mut wordchars);
                 let narrow = (result == 0)
                     .then(|| ct_encode_string(wordchars.as_deref(), el.narrow_conversion_mut()))
                     .flatten()

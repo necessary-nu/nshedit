@@ -2,11 +2,9 @@
 //!
 //! This module has no C counterpart. `plan/decisions/no-c-ffi.md` bars the
 //! core from linking libc, so the real thread-local `errno` that the `sem`
-//! rules promise — `ENOSPC` for an undersized destination in
-//! `sem:vis.istrsenvisx-fn` and `sem:unvis.strnunvisx-fn`, `ENOMEM` for the
-//! overflow guard, `EINVAL` for a decoder handed an impossible state, `ERANGE`
-//! for a character with no single-byte form in `sem:eln.el-getc-fn` — is
-//! recorded here. The numbers are Linux's, which is the whole of
+//! rules promise — including `ERANGE` for a character with no single-byte
+//! form in `sem:eln.el-getc-fn` — is recorded here. The numbers are Linux's,
+//! which is the whole of
 //! `plan/decisions/posix-only-scope.md`'s target.
 //!
 //! The read path's set lives here too — `EINTR`, `EILSEQ`, `EWOULDBLOCK`,
@@ -59,6 +57,7 @@ pub const EILSEQ: i32 = 84;
 pub const EINTR: i32 = 4;
 
 /// C: `EINVAL`.
+#[cfg(test)]
 pub const EINVAL: i32 = 22;
 
 /// C: `EIO`. Only a fallback: every `io::Error` a raw `read(2)` produces on
@@ -66,10 +65,8 @@ pub const EINVAL: i32 = 22;
 /// one.
 pub const EIO: i32 = 5;
 
-/// C: `ENOMEM`.
-pub const ENOMEM: i32 = 12;
-
 /// C: `ENOSPC`.
+#[cfg(test)]
 pub const ENOSPC: i32 = 28;
 
 /// C: `ERANGE`.

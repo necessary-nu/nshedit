@@ -260,10 +260,8 @@ version = "0.0.0"
 dependencies = [
  "bsd",
  "bstr",
- "nshedit-plat",
  "nshterm",
  "postcard",
- "regex",
  "unicode-width",
 ]
 
@@ -271,9 +269,12 @@ dependencies = [
 name = "nshedit-abi"
 version = "0.0.0"
 dependencies = [
+ "bsd",
  "cbindgen",
  "nshedit",
  "nshedit-plat",
+ "nshterm",
+ "regex",
 ]
 
 [[package]]

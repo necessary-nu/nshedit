@@ -7,27 +7,10 @@
 //! the guarantee that an entry cannot split itself across printed lines. That
 //! is `VIS_NL`, and the C reaches it through `strvis`.
 //!
-//! Routing it through the `bsd` crate made a human-readable listing depend on
-//! an optional feature. `bsd` is off by default, the seam in
-//! [`crate::compat::histfile`] answers `None` when it is off, and `hist_command` turns
-//! a `None` into the C's -1 — so on the build that actually ships, the
-//! `history` builtin printed nothing and reported failure. A listing is not
-//! the place to carry an optional dependency.
-//!
 //! What `VIS_NL` needs is a small fraction of `vis(3)`: no `VIS_CSTYLE`, no
 //! `VIS_HTTPSTYLE` or `VIS_MIMESTYLE`, no `VIS_GLOB`/`VIS_SHELL`, no caller
-//! extra list, no bound to truncate at, and no decoder. Reading history files
-//! still needs the whole engine in the other direction, and
-//! [`crate::compat::histfile::vis_decode_into`] still takes it from `bsd`; this module
-//! does not touch that path.
-//!
-//! # Why it lives here and not in `histfile`
-//!
-//! `histfile` is the native container format, and its `bsd` seam exists for
-//! one thing: reading a legacy `_HiStOrY_V2_` file somebody already has. The
-//! listing escape is neither a file format nor legacy. Keeping it apart leaves
-//! that seam as the four `cfg`s it is documented to be, and gives the encoder
-//! somewhere to carry its own derivation and its own differential.
+//! extra list, no bound to truncate at, and no decoder. Legacy history-file
+//! persistence uses `bsd::vis` directly at the ABI boundary.
 //!
 //! # The algorithm, and where it came from
 //!
@@ -63,20 +46,14 @@ use crate::compat::locale::{self, Charset, MB_LEN_MAX, Mb};
 
 /// Which of `vis(3)`'s whitespace flags are set.
 ///
-/// The whole flag word is not modelled because only two combinations are
-/// reachable from this crate, and a flag nobody passes is a branch nobody
-/// tests. `VIS_NOSLASH` is never set and `VIS_CSTYLE` never is either, which
-/// is what fixes the escape forms below.
+/// The whole flag word is not modelled because only `VIS_NL` is reachable.
+/// `VIS_NOSLASH` and `VIS_CSTYLE` are never set, which fixes the escape forms
+/// below.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Escape {
     /// `VIS_NL` — the `history` listing. A newline would otherwise split one
-    /// entry across two printed lines; a space or tab in an entry is content
-    /// and stays literal.
+    /// entry across two printed lines; spaces and tabs stay literal.
     Nl,
-    /// `VIS_WHITE`, i.e. `VIS_SP | VIS_TAB | VIS_NL` — the legacy history file,
-    /// where one line is exactly one entry and any literal whitespace would
-    /// make the parse ambiguous.
-    White,
 }
 
 impl Escape {
@@ -86,10 +63,8 @@ impl Escape {
     /// A NUL is not in it and does not need to be — see [`is_extra`].
     fn extra(self) -> &'static [u32] {
         const NL: [u32; 2] = [b'\n' as u32, b'\\' as u32];
-        const WHITE: [u32; 4] = [b' ' as u32, b'\t' as u32, b'\n' as u32, b'\\' as u32];
         match self {
             Escape::Nl => &NL,
-            Escape::White => &WHITE,
         }
     }
 }

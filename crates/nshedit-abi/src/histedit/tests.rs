@@ -1,5 +1,5 @@
 use super::*;
-use nshedit::prompt::ElPfuncT;
+use crate::compat::prompt::ElPfuncT;
 use std::ffi::CStr;
 
 /// A live handle with all three descriptors deliberately unusable: -1
@@ -336,7 +336,7 @@ fn the_word_characters_survive_a_round_trip_and_an_editor_switch_resets_them() {
 /// `EL_PROMPT` passes a NULL escape-character pointer.
 #[test]
 fn the_escape_form_of_the_prompt_op_does_not_round_trip() {
-    unsafe extern "C" fn never_called(_: *mut nshedit::el::EditLine) -> *mut u32 {
+    unsafe extern "C" fn never_called(_: *mut crate::compat::el::EditLine) -> *mut u32 {
         core::ptr::null_mut()
     }
 

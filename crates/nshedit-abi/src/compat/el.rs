@@ -279,21 +279,6 @@ impl EditLine {
     /// So this takes a shared handle rather than a value, and dropping the
     /// editor leaves the caller's history intact.
     ///
-    /// [`crate::compat::history::HistorySession`] implements [`EditorHistory`], so the
-    /// built-in store needs no adapter:
-    ///
-    /// ```no_run
-    /// # use std::cell::RefCell;
-    /// # use std::rc::Rc;
-    /// # use nshedit::el::EditLine;
-    /// # use nshedit::history::HistorySession;
-    /// # fn f(el: &mut EditLine) {
-    /// let history = Rc::new(RefCell::new(HistorySession::default()));
-    /// el.set_history(history.clone());
-    /// // `el` may now be dropped; `history` outlives it and keeps its entries.
-    /// # }
-    /// ```
-    ///
     /// Replaces whatever was attached, C or Rust.
     pub fn set_history(&mut self, history: Rc<RefCell<dyn EditorHistory>>) {
         self.el_history.src = HistSource::Rust(history);
@@ -526,79 +511,6 @@ pub(crate) fn el_getenv(el: &EditLine, name: &str) -> Option<OsString> {
     // now, so nothing outlives that window.
     let bytes = unsafe { CStr::from_ptr(value) }.to_bytes().to_vec();
     Some(OsString::from_vec(bytes))
-}
-
-/// C: `fileno(3)`.
-///
-/// A [`CFile`] is an opaque C `FILE *`; its descriptor lives inside the C
-/// library's own object, which `plan/decisions/no-c-ffi.md` forbids this
-/// crate from linking against and therefore from reading. There is no route
-/// to the real answer here, so this reports -1 — which is exactly what the C
-/// stores for a stream that has no underlying descriptor, and
-/// `sem:el.el-init-fn` and ERR-core-api-06 (disposition: reproduce the
-/// -1-descriptor outcome) describe what follows from it: construction still
-/// reports success, `tty_init` then fails, `NO_TTY` gets set, and nothing
-/// else notices.
-///
-/// The real `fileno` belongs to the ABI crate, which is what owns the
-/// `FILE *` in the first place, and that is where it now lives: the exported
-/// `el_init` calls it and goes straight to [`el_init_fd`], so no C caller
-/// reaches this stub. It stays so the C's call graph has a Rust counterpart
-/// and so [`el_init`] below reads as the rule writes it; it is not a working
-/// stdio bridge, and a Rust caller with a real stream has a descriptor for it
-/// and should call [`el_init_fd`].
-fn fileno(_stream: CFile) -> i32 {
-    -1
-}
-
-// [spec:libedit:def:el.el-init-fn]
-// [spec:libedit:sem:el.el-init-fn]
-/// C: `EditLine *el_init(const char *prog, FILE *fin, FILE *fout, FILE *ferr)`.
-///
-/// Constructs an editor from three streams, deriving the three descriptors
-/// from them. One tail call to [`el_init_fd`] with `fileno` of each stream;
-/// `None` is the C's NULL return.
-///
-/// `prog` is a `&str` because the C's NULL and undecodable cases are
-/// undefined behaviour rather than behaviour to reproduce. The streams stay
-/// [`CFile`]: they are borrowed for the whole lifetime of the editor, never
-/// duplicated and never closed, so there is nothing here to own.
-///
-/// # Not the entry point. Use [`el_init_fd`]
-///
-/// Hidden for the same reason [`crate::compat::hist::hist_set`] is: it is here so
-/// `nshedit-abi` has a Rust counterpart to call, and a Rust caller cannot use
-/// it correctly. A `FILE *` is the C library's object and
-/// `plan/decisions/no-c-ffi.md` reserves reaching into one for the ABI crate,
-/// which does it properly through `cstdio::fileno_of`. The [`fileno`] this
-/// calls is a stub that answers -1 unconditionally.
-///
-/// So an editor built here has all three descriptors at -1. Every read is
-/// `EBADF`, `el_wgets` reports that as end of file (ERR-input-24), and the
-/// editor exits before a key is pressed — no prompt, no echo, and no
-/// diagnostic, because the C stores a `fileno` of -1 undiagnosed and still
-/// reports success. That weak reporting is faithful and is exactly what makes
-/// this silent: in the C the -1 means "this stream had no descriptor", and
-/// here it means nothing at all.
-///
-/// A Rust caller has real descriptors already. [`el_init_fd`] takes them.
-#[doc(hidden)]
-pub fn el_init(prog: &str, fin: CFile, fout: CFile, ferr: CFile) -> Option<Box<EditLine>> {
-    // The whole body, one tail call. Nothing is validated: the C's `fileno`
-    // runs before any check, so a NULL stream is a null dereference
-    // (ERR-core-api-06, disposition `define` for that half — [`CFile`] is a
-    // raw pointer here and is never dereferenced, so a null one is simply
-    // stored). The evaluation order of the three calls is unspecified in C
-    // and has no observable consequence; left to right here.
-    el_init_fd(
-        prog,
-        fin,
-        fout,
-        ferr,
-        fileno(fin),
-        fileno(fout),
-        fileno(ferr),
-    )
 }
 
 // [spec:libedit:def:el.el-init-internal-fn]

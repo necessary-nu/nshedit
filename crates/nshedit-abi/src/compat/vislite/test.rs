@@ -104,7 +104,6 @@ fn show(bytes: &[u8]) -> String {
 
 /// Twenty bytes either side of `at`, so that a disagreement inside the
 /// all-256-bytes input reports the disagreement rather than the input.
-#[cfg(feature = "bsd")]
 fn around(bytes: &[u8], at: usize) -> String {
     let lo = at.saturating_sub(20);
     let hi = (at + 20).min(bytes.len());
@@ -117,20 +116,15 @@ fn around(bytes: &[u8], at: usize) -> String {
 }
 
 /// The C-locale arm against `bsd::vis`, byte for byte over the whole corpus,
-/// in both flag sets.
+/// with `VIS_NL`.
 ///
 /// This is the check the encoder exists to pass: it was written by reading
-/// `src/vis.c`, and reading is a guess until something measures it. `WHITE`
-/// matters as much as `NL` — it is what `history_save` writes with, and a
-/// wrong escape there is a history file that reloads as different text.
+/// `src/vis.c`, and reading is a guess until something measures it.
 #[test]
-#[cfg(feature = "bsd")]
 fn the_c_locale_arm_matches_bsd_vis_byte_for_byte() {
     check_against_bsd(Escape::Nl, bsd::vis::Flags::NL);
-    check_against_bsd(Escape::White, bsd::vis::Flags::WHITE);
 }
 
-#[cfg(feature = "bsd")]
 fn check_against_bsd(esc: Escape, flags: bsd::vis::Flags) {
     let oracle = bsd::vis::Encoder::new(flags);
 
