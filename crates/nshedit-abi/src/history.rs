@@ -18,7 +18,6 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::io::Write;
 use std::path::Path;
 
-use crate::compat::chartype::{CtBufferT, ct_decode_string, ct_encode_string};
 use nshedit::domain::Direction;
 use nshedit::history::{
     DuplicatePolicy, HistoryCursor, HistoryEntry, HistoryId, HistoryStore, Navigation, PushResult,
@@ -27,6 +26,7 @@ use nshedit::history::{
 use crate::adapter::BoundaryChar;
 use crate::cdecl::handles::History as OpaqueHistory;
 use crate::cdecl::histedit::HistEventGen;
+use crate::conversion::{ConversionBuffer, decode_bytes, encode_wide};
 
 pub(crate) use dispatch::{dispatch, hist_settings};
 
@@ -102,9 +102,9 @@ error_tables!(
 pub(crate) trait HistoryChar: BoundaryChar + 'static {
     fn errors() -> &'static [&'static [Self]; 16];
 
-    fn decode<'a>(bytes: Option<&'a [u8]>, buffer: &'a mut CtBufferT) -> Option<&'a [Self]>;
+    fn decode<'a>(bytes: Option<&'a [u8]>, buffer: &'a mut ConversionBuffer) -> Option<&'a [Self]>;
 
-    fn encode<'a>(text: Option<&'a [Self]>, buffer: &'a mut CtBufferT) -> Option<&'a [u8]>;
+    fn encode<'a>(text: Option<&'a [Self]>, buffer: &'a mut ConversionBuffer) -> Option<&'a [u8]>;
 }
 
 impl HistoryChar for c_char {
@@ -112,14 +112,17 @@ impl HistoryChar for c_char {
         &NARROW_ERRORS
     }
 
-    fn decode<'a>(bytes: Option<&'a [u8]>, _buffer: &'a mut CtBufferT) -> Option<&'a [Self]> {
+    fn decode<'a>(
+        bytes: Option<&'a [u8]>,
+        _buffer: &'a mut ConversionBuffer,
+    ) -> Option<&'a [Self]> {
         let bytes = bytes?;
         // SAFETY: `c_char` and `u8` have identical layout and every bit
         // pattern is valid for both.
         Some(unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast::<c_char>(), bytes.len()) })
     }
 
-    fn encode<'a>(text: Option<&'a [Self]>, _buffer: &'a mut CtBufferT) -> Option<&'a [u8]> {
+    fn encode<'a>(text: Option<&'a [Self]>, _buffer: &'a mut ConversionBuffer) -> Option<&'a [u8]> {
         let text = text?;
         // SAFETY: as in `decode`.
         Some(unsafe { core::slice::from_raw_parts(text.as_ptr().cast::<u8>(), text.len()) })
@@ -131,12 +134,12 @@ impl HistoryChar for u32 {
         &WIDE_ERRORS
     }
 
-    fn decode<'a>(bytes: Option<&'a [u8]>, buffer: &'a mut CtBufferT) -> Option<&'a [Self]> {
-        ct_decode_string(bytes, buffer)
+    fn decode<'a>(bytes: Option<&'a [u8]>, buffer: &'a mut ConversionBuffer) -> Option<&'a [Self]> {
+        decode_bytes(bytes, buffer)
     }
 
-    fn encode<'a>(text: Option<&'a [Self]>, buffer: &'a mut CtBufferT) -> Option<&'a [u8]> {
-        ct_encode_string(text, buffer)
+    fn encode<'a>(text: Option<&'a [Self]>, buffer: &'a mut ConversionBuffer) -> Option<&'a [u8]> {
+        encode_wide(text, buffer)
     }
 }
 

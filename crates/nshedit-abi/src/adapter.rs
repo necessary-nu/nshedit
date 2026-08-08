@@ -13,13 +13,13 @@ use core::ops::{Deref, DerefMut};
 use std::ffi::CString;
 use std::io;
 
-use crate::compat::chartype::CtBufferT;
 use nshedit::domain::{EditorConfig, TerminalMode, Text, TextUnit};
 use nshedit::editor::{
     Continuation, Editor, QuoteStyle, TerminalControl, Tokenization, Tokenizer as NativeTokenizer,
 };
 
 use crate::cdecl::histedit::{LineInfo, LineInfoWide as LineInfoW};
+use crate::conversion::ConversionBuffer;
 
 /// Terminal ownership remains with the translated engine during the bounded
 /// ABI cutover. This controller lets the native editor own an explicit RAII
@@ -41,7 +41,7 @@ impl TerminalControl for CompatibilityTerminal {
 }
 
 struct EditLineBoundary {
-    narrow_conversion: CtBufferT,
+    narrow_conversion: ConversionBuffer,
     narrow_line: Box<LineInfo>,
     wide_line: Box<LineInfoW>,
     terminal_name: Option<CString>,
@@ -51,12 +51,7 @@ struct EditLineBoundary {
 impl EditLineBoundary {
     fn new() -> Self {
         Self {
-            narrow_conversion: CtBufferT {
-                cbuff: Vec::new(),
-                csize: 0,
-                wbuff: Vec::new(),
-                wsize: 0,
-            },
+            narrow_conversion: ConversionBuffer::default(),
             narrow_line: Box::new(LineInfo {
                 buffer: core::ptr::null(),
                 cursor: core::ptr::null(),
@@ -112,7 +107,7 @@ impl EditLine {
         core::ptr::from_mut(&mut **self)
     }
 
-    pub(crate) fn narrow_conversion_mut(&mut self) -> &mut CtBufferT {
+    pub(crate) fn narrow_conversion_mut(&mut self) -> &mut ConversionBuffer {
         &mut self.boundary.narrow_conversion
     }
 

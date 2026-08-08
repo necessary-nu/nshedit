@@ -42,6 +42,7 @@ mod adapter;
 pub mod cdecl;
 pub mod chartype;
 mod compat;
+mod conversion;
 pub mod eln;
 pub mod filecomplete;
 pub mod histedit;

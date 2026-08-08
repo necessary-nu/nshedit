@@ -2519,6 +2519,14 @@ children (
                     native-impl ([spec:nshedit:req:core.no-compat-internals])
                 }
                 deps (greenfield-public-firewall)
+                log (
+                    {
+                        at 2026-08-08T22:53:40.733464415Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

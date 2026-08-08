@@ -34,13 +34,13 @@
 use core::ffi::{CStr, c_char, c_int, c_void};
 use core::ptr;
 
-use crate::compat::chartype::{ct_decode_string, ct_enc_width, ct_encode_char, ct_encode_string};
 use crate::compat::el::NARROW_HISTORY;
 use crate::compat::hist::HistFunT;
 use crate::compat::prompt::ElPfuncT;
 
 use crate::adapter::EditLine;
 use crate::cdecl::histedit::LineInfo;
+use crate::conversion::{decode_bytes, encode_one, encode_wide, encoded_width};
 use crate::histedit::{
     EL_BIND, EL_CLIENTDATA, EL_ECHOTC, EL_EDITMODE, EL_EDITOR, EL_GETCFN, EL_GETFP, EL_GETTC,
     EL_HIST, EL_PREP_TERM, EL_PROMPT, EL_PROMPT_ESC, EL_RPROMPT, EL_RPROMPT_ESC, EL_SAFEREAD,
@@ -63,7 +63,7 @@ const FROM_ELLINE: i32 = 0x200;
 /// initial shift state of the current `LC_CTYPE`.
 fn wctob(c: u32) -> Option<u8> {
     let mut byte = [0u8; 1];
-    (ct_encode_char(&mut byte, c) == 1).then_some(byte[0])
+    (encode_one(&mut byte, c) == 1).then_some(byte[0])
 }
 
 /// The C's `const wchar_t *` as a slice: everything up to, and not including,
@@ -99,7 +99,7 @@ unsafe fn sum_enc_widths(from: *const u32, to: *const u32) -> usize {
     let mut total = 0usize;
     let mut p = from;
     while p < to {
-        total += ct_enc_width(unsafe { *p });
+        total += encoded_width(unsafe { *p });
         p = unsafe { p.add(1) };
     }
     total
@@ -138,7 +138,7 @@ unsafe fn bytes_upto_nul<'a>(p: *const c_char) -> Option<&'a [u8]> {
 unsafe fn decode_through_lgcyconv(el: *mut EditLine, str_: *const c_char) -> *const u32 {
     let bytes = unsafe { bytes_upto_nul(str_) };
     let conv = unsafe { (&mut *el).narrow_conversion_mut() };
-    ct_decode_string(bytes, conv).map_or(ptr::null(), <[u32]>::as_ptr)
+    decode_bytes(bytes, conv).map_or(ptr::null(), <[u32]>::as_ptr)
 }
 
 // [spec:libedit:def:eln.el-getc-fn]
@@ -271,7 +271,7 @@ pub unsafe extern "C" fn el_gets(el: *mut EditLine, nread: *mut c_int) -> *const
             while i < n {
                 // A character the locale cannot encode contributes 0, matching
                 // step 3 dropping it.
-                nwread += ct_enc_width(unsafe { *tmp.add(i as usize) });
+                nwread += encoded_width(unsafe { *tmp.add(i as usize) });
                 i += 1;
             }
             // The count excludes the terminator `ct_encode_string` appends.
@@ -292,7 +292,7 @@ pub unsafe extern "C" fn el_gets(el: *mut EditLine, nread: *mut c_int) -> *const
         Some(unsafe { wide_upto_nul(tmp) })
     };
     let conv = unsafe { (&mut *el).narrow_conversion_mut() };
-    let out = ct_encode_string(s, conv).map_or(ptr::null(), |b| b.as_ptr().cast::<c_char>());
+    let out = encode_wide(s, conv).map_or(ptr::null(), |b| b.as_ptr().cast::<c_char>());
 
     crate::errno::publish(mark);
     out
@@ -343,7 +343,7 @@ pub unsafe extern "C" fn el_parse(
             continue;
         };
         let conv = unsafe { (&mut *el).narrow_conversion_mut() };
-        match ct_decode_string(Some(bytes), conv) {
+        match decode_bytes(Some(bytes), conv) {
             Some(w) => {
                 let mut v = Vec::with_capacity(w.len() + 1);
                 v.extend_from_slice(w);
@@ -474,7 +474,7 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
             let conv = unsafe { (&mut *el_ptr).narrow_conversion_mut() };
             // C: `ct_decode_argv`, whose NULL return is -1 without calling
             // the handler.
-            let Some(w) = ct_decode_string(Some(bytes), conv) else {
+            let Some(w) = decode_bytes(Some(bytes), conv) else {
                 return -1;
             };
             let mut v = Vec::with_capacity(w.len() + 1);
@@ -676,7 +676,7 @@ unsafe fn el_get_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
                 let mut editor: &'static [u32] = &[];
                 let result = crate::compat::map::map_get_editor(el, &mut editor);
                 let narrow = (result == 0)
-                    .then(|| ct_encode_string(Some(editor), el.narrow_conversion_mut()))
+                    .then(|| encode_wide(Some(editor), el.narrow_conversion_mut()))
                     .flatten()
                     .map_or(ptr::null(), |bytes| bytes.as_ptr().cast());
                 (result, narrow)
@@ -684,14 +684,14 @@ unsafe fn el_get_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
                 let mut wordchars = None;
                 let result = crate::compat::map::map_get_wordchars(el, &mut wordchars);
                 let narrow = (result == 0)
-                    .then(|| ct_encode_string(wordchars.as_deref(), el.narrow_conversion_mut()))
+                    .then(|| encode_wide(wordchars.as_deref(), el.narrow_conversion_mut()))
                     .flatten()
                     .map_or(ptr::null(), |bytes| bytes.as_ptr().cast());
                 (result, narrow)
             };
             // SAFETY: `out` was checked above and points at the caller's slot.
             unsafe { *out = narrow };
-            if el.narrow_conversion_mut().csize == 0 {
+            if el.narrow_conversion_mut().byte_allocation() == 0 {
                 -1
             } else {
                 result
@@ -746,7 +746,7 @@ pub unsafe extern "C" fn el_line(el: *mut EditLine) -> *const LineInfo {
         Some(unsafe { wide_upto_nul(buffer) })
     };
     let conv = unsafe { (&mut *el).narrow_conversion_mut() };
-    let encoded = ct_encode_string(s, conv).map_or(ptr::null(), |b| b.as_ptr().cast::<c_char>());
+    let encoded = encode_wide(s, conv).map_or(ptr::null(), |b| b.as_ptr().cast::<c_char>());
     unsafe { (*info).buffer = encoded };
 
     // Step 4: two independently recomputed byte offsets, not measurements of

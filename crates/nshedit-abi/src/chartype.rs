@@ -7,8 +7,8 @@
 //! as many words, and Debian's `libedit.so.2` exports both. The symbol table
 //! is the contract, so they are exported here.
 //!
-//! Everything else in `chartype.c` is `libedit_private` and stays inside
-//! [`crate::compat::chartype`].
+//! Everything else is private boundary implementation in
+//! [`crate::conversion`].
 //!
 //! # The caller's `ct_buffer_t`
 //!
@@ -19,23 +19,20 @@
 //! *in it*, exactly as the C's `el_realloc`ed blocks do, so a caller can read
 //! `conv.cbuff` back and find the same pointer the call returned.
 //!
-//! The core's [`crate::compat::chartype::CtBufferT`] is `Vec`-shaped and does not
-//! have that layout, so each call lifts the four words into one, runs the
-//! core, and lowers it back. See [`lift`] and [`lower`] for what that costs
-//! and what it requires of the caller.
+//! The owning [`crate::conversion::ConversionBuffer`] does not have that
+//! layout, so each call lifts the four words into one and lowers it back.
 
 use core::ffi::c_char;
 use core::ptr;
 
-use crate::compat::chartype::CtBufferT;
+use crate::conversion::{ConversionBuffer, decode_bytes, encode_wide};
 
 /// C: `typedef struct ct_buffer_t { char *cbuff; size_t csize; wchar_t
 /// *wbuff; size_t wsize; } ct_buffer_t;` — `def:chartype.ct-buffer-t`, in the
 /// layout a C caller declares.
 ///
-/// The core carries the same four fields as owning `Vec`s
-/// ([`crate::compat::chartype::CtBufferT`]); this is the ABI face of it, and the
-/// two are bridged per call rather than transmuted.
+/// The boundary carries the blocks as owning `Vec`s; this is their ABI face,
+/// bridged per call rather than transmuted.
 ///
 /// `csize` and `wsize` are the C's *allocated element counts*, not the amount
 /// in use, and each is the length of the block its pointer names.
@@ -68,17 +65,14 @@ pub struct CtBufferC {
 ///
 /// `conv` must be non-NULL and point at a live, correctly aligned `CtBufferC`
 /// whose two blocks came from [`lower`].
-unsafe fn lift(conv: *mut CtBufferC) -> CtBufferT {
+unsafe fn lift(conv: *mut CtBufferC) -> ConversionBuffer {
     // SAFETY: the caller guarantees a live struct.
     let c = unsafe { &mut *conv };
-    CtBufferT {
-        // SAFETY: as the function's contract.
-        cbuff: unsafe { take(c.cbuff.cast::<u8>(), c.csize) },
-        csize: c.csize,
-        // SAFETY: as above.
-        wbuff: unsafe { take(c.wbuff, c.wsize) },
-        wsize: c.wsize,
-    }
+    // SAFETY: as the function's contract.
+    let bytes = unsafe { take(c.cbuff.cast::<u8>(), c.csize) };
+    // SAFETY: as above.
+    let wide = unsafe { take(c.wbuff, c.wsize) };
+    ConversionBuffer::from_parts(bytes, wide)
 }
 
 /// The core's owning struct back into the caller's four words.
@@ -93,17 +87,10 @@ unsafe fn lift(conv: *mut CtBufferC) -> CtBufferT {
 ///
 /// `conv` must be non-NULL and point at a live, correctly aligned
 /// `CtBufferC`, whose current blocks `buf` already owns.
-unsafe fn lower(conv: *mut CtBufferC, buf: CtBufferT) {
-    let CtBufferT {
-        cbuff,
-        csize,
-        wbuff,
-        wsize,
-    } = buf;
-    debug_assert!(cbuff.is_empty() || cbuff.len() == csize);
-    debug_assert!(wbuff.is_empty() || wbuff.len() == wsize);
-    let (cp, cn) = give(cbuff);
-    let (wp, wn) = give(wbuff);
+unsafe fn lower(conv: *mut CtBufferC, buffer: ConversionBuffer) {
+    let (bytes, wide) = buffer.into_parts();
+    let (cp, cn) = give(bytes);
+    let (wp, wn) = give(wide);
     // SAFETY: the caller guarantees a live struct.
     let c = unsafe { &mut *conv };
     c.cbuff = cp.cast::<c_char>();
@@ -201,8 +188,7 @@ pub unsafe extern "C" fn ct_encode_string(s: *const u32, conv: *mut CtBufferC) -
     // blocks `lower` put there.
     let mut buf = unsafe { lift(conv) };
     // SAFETY: `s` is a terminated wide string.
-    let ok = crate::compat::chartype::ct_encode_string(Some(unsafe { wide_upto_nul(s) }), &mut buf)
-        .is_some();
+    let ok = encode_wide(Some(unsafe { wide_upto_nul(s) }), &mut buf).is_some();
     // SAFETY: `buf` owns exactly the blocks `lift` took.
     unsafe { lower(conv, buf) };
     if ok {
@@ -241,7 +227,7 @@ pub unsafe extern "C" fn ct_decode_string(s: *const c_char, conv: *mut CtBufferC
     let bytes = unsafe { core::ffi::CStr::from_ptr(s) }.to_bytes();
     // SAFETY: as `ct_encode_string`.
     let mut buf = unsafe { lift(conv) };
-    let ok = crate::compat::chartype::ct_decode_string(Some(bytes), &mut buf).is_some();
+    let ok = decode_bytes(Some(bytes), &mut buf).is_some();
     // SAFETY: as `ct_encode_string`.
     unsafe { lower(conv, buf) };
     if ok {

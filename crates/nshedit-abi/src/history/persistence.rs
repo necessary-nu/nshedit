@@ -7,7 +7,7 @@ use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
-use crate::compat::chartype::CtBufferT;
+use crate::conversion::ConversionBuffer;
 
 use super::{
     EnterOperation, GetOperation, HistEventGen, HistoryChar, HistoryHandle, SaveStream, input,
@@ -17,15 +17,6 @@ fn empty_event<C>() -> HistEventGen<C> {
     HistEventGen {
         num: 0,
         str: ptr::null(),
-    }
-}
-
-fn conversion_buffer() -> CtBufferT {
-    CtBufferT {
-        cbuff: Vec::new(),
-        csize: 0,
-        wbuff: Vec::new(),
-        wsize: 0,
     }
 }
 
@@ -62,7 +53,7 @@ fn load_native<C: HistoryChar>(history: &mut HistoryHandle<C>, input: &mut dyn R
     let mut failed = input.read_to_end(&mut bytes).is_err();
     let (records, fault) = nshedit::histfile::read_all(&bytes);
     failed |= fault.is_some();
-    let mut conversion = conversion_buffer();
+    let mut conversion = ConversionBuffer::default();
     let mut event = empty_event();
     let mut count: c_int = 0;
 
@@ -98,7 +89,7 @@ fn load_libedit<C: HistoryChar>(history: &mut HistoryHandle<C>, input: &mut dyn 
 
     let mut capacity = 1024usize;
     let mut decoded = vec![0; capacity];
-    let mut conversion = conversion_buffer();
+    let mut conversion = ConversionBuffer::default();
     let mut event = empty_event();
     let mut count: c_int = 0;
 
@@ -175,7 +166,7 @@ fn save_to<C: HistoryChar>(
         return -1;
     }
 
-    let mut conversion = conversion_buffer();
+    let mut conversion = ConversionBuffer::default();
     let mut event = empty_event();
     let mut result;
     if count != usize::MAX {

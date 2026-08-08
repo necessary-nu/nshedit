@@ -37,7 +37,6 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::{Cell, RefCell};
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use crate::compat::chartype::{CtBufferT, ct_decode_string};
 use crate::compat::filecomplete::{self, FilenameCompletionState};
 use crate::compat::tty::{C_EOF, C_REPRINT, TS_IO};
 use std::os::fd::AsRawFd;
@@ -52,6 +51,7 @@ use crate::cdecl::histedit::{
 use crate::cdecl::readline::{
     CFile, HistEntry, HistdataT, HistoryState, KEYMAP_SIZE, Keymap, KeymapEntry, RlCommandFuncT,
 };
+use crate::conversion::{ConversionBuffer, decode_bytes};
 use crate::{cenv, clocale, cstdio};
 use bridge::{
     NO_TTY, em_kill_line, passwd_home_dir, re_putc, tty_end, tty_get_signal_character, tty_init,
@@ -675,11 +675,11 @@ thread_local! {
     /// C: `static ct_buffer_t wbreak_conv, sprefix_conv;` inside
     /// `rl_complete` — the wide forms of the two break-character strings,
     /// grown as needed and never freed (ERR-encoding-11).
-    static WBREAK_CONV: RefCell<CtBufferT> = const {
-        RefCell::new(CtBufferT { cbuff: Vec::new(), csize: 0, wbuff: Vec::new(), wsize: 0 })
+    static WBREAK_CONV: RefCell<ConversionBuffer> = const {
+        RefCell::new(ConversionBuffer::new())
     };
-    static SPREFIX_CONV: RefCell<CtBufferT> = const {
-        RefCell::new(CtBufferT { cbuff: Vec::new(), csize: 0, wbuff: Vec::new(), wsize: 0 })
+    static SPREFIX_CONV: RefCell<ConversionBuffer> = const {
+        RefCell::new(ConversionBuffer::new())
     };
 }
 
@@ -3308,9 +3308,8 @@ pub unsafe extern "C" fn rl_complete(ignore: c_int, invoking_key: c_int) -> c_in
                 // `rl_special_prefixes` are not consulted at all
                 // (ERR-readline-50, reproduced).
                 let word_break =
-                    ct_decode_string(c_bytes_opt(rl_basic_word_break_characters), wconv)
-                        .unwrap_or(&[]);
-                let special = ct_decode_string(c_bytes_opt(breakchars), sconv);
+                    decode_bytes(c_bytes_opt(rl_basic_word_break_characters), wconv).unwrap_or(&[]);
+                let special = decode_bytes(c_bytes_opt(breakchars), sconv);
                 let generator: Option<&mut filecomplete::CompleteFunc> = if has_generator {
                     Some(&mut generator)
                 } else {
