@@ -29,13 +29,6 @@
 //!
 //! Blockers, all of them outside this file, each marked at the site:
 //!
-//! - **The narrow `el_set`/`el_get` dispatch is unwritten.** This file calls
-//!   `el_set`, `el_get` and `history` the way `readline.c` does — through a
-//!   variadic declaration of the exported symbol — so the call sites are
-//!   right and `history`'s tail is read. `el_set` and `el_get` are variadic
-//!   now too (`abi-varargs`) but still dispatch on no op, so the calls to
-//!   them are accepted and ignored; see [`crate::eln::el_set`]. This was
-//!   `c_variadic` being unstable and is not any more.
 //! - **`libedit_private` entry points `readline.c` calls directly are
 //!   `pub(crate)` in the core**: `tty_init`, `tty_end`,
 //!   `tty_get_signal_character`, `re_putc`, `em_kill_line` and
@@ -751,10 +744,8 @@ static ABORT_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 // `readline.c` reaches `el_set`, `el_get` and `history` through the same
 // public symbols an application would, so the port does too rather than
 // reaching around them into the core. Declaring them variadic is what lets a
-// Rust call site pass the tail; *reading* that tail is the callee's problem.
-// `history` reads it. `el_set` and `el_get` are variadic and read nothing —
-// the narrow dispatch is unwritten, see the module docs — so those calls
-// carry their arguments correctly and the callee ignores them.
+// Rust call site pass the tail; *reading* that tail is the callee's problem,
+// and all three of them read it.
 // ---------------------------------------------------------------------------
 
 // `EditLine` and `History` are opaque handles the C only ever passes by
@@ -777,6 +768,18 @@ unsafe extern "C" {
     #[link_name = "history"]
     fn history_va(h: *mut History, ev: *mut HistEvent, op: c_int, ...) -> c_int;
 }
+
+/// C: `HistEvent ev;` — the out-parameter every [`history_va`] call needs.
+///
+/// The C's is an uninitialised local, so a failing op leaves it holding
+/// whatever was on the stack, and the callers that read `ev.num` without
+/// checking the status — `readline()`, `add_history` — read exactly that.
+/// Starting from zero is what makes those reads deterministic; it is the only
+/// respect in which the declaration differs from the C's.
+const EMPTY_EVENT: HistEvent = HistEvent {
+    num: 0,
+    str: ptr::null(),
+};
 // ---------------------------------------------------------------------------
 // Memory a C caller frees, and the C strings this file reads.
 // ---------------------------------------------------------------------------
@@ -892,6 +895,35 @@ pub(crate) unsafe fn c_dup(b: &[u8]) -> *mut c_char {
         *p.add(b.len()) = 0;
     }
     p.cast()
+}
+
+/// The C's `while (arr[n] != NULL) n++` — the length of a NULL-terminated
+/// `char **`, not counting the terminator.
+///
+/// # Safety
+///
+/// `p` must be non-NULL and NULL-terminated.
+unsafe fn c_array_len(p: *const *mut c_char) -> usize {
+    let mut n = 0;
+    // SAFETY: the caller guarantees the terminator is reached.
+    while !unsafe { *p.add(n) }.is_null() {
+        n += 1;
+    }
+    n
+}
+
+/// [`c_free_str`] over every element — the cleanup the completion and
+/// tokenizer entry points do to the strings they had collected before an
+/// allocation failure made them report NULL.
+///
+/// # Safety
+///
+/// As [`c_free_str`], for every element.
+unsafe fn c_free_each(list: &[*mut c_char]) {
+    for &p in list {
+        // SAFETY: the caller guarantees every element.
+        unsafe { c_free_str(p) }
+    }
 }
 
 /// The C's `const char *` as a byte slice: everything up to the NUL.
@@ -1097,18 +1129,13 @@ fn attempted_completion_adapter(text: &str, start: i32, end: i32) -> Option<Vec<
         if matches.is_null() {
             return None;
         }
-        let mut out = Vec::new();
-        let mut i = 0;
-        loop {
-            let m = *matches.add(i);
-            if m.is_null() {
-                break;
-            }
+        let n = c_array_len(matches);
+        let mut out = Vec::with_capacity(n);
+        for &m in core::slice::from_raw_parts(matches, n) {
             out.push(String::from_utf8_lossy(c_bytes(m)).into_owned());
             c_free_str(m);
-            i += 1;
         }
-        c_free_array(matches, i + 1);
+        c_free_array(matches, n + 1);
         Some(out)
     }
 }
@@ -1324,10 +1351,7 @@ pub unsafe extern "C" fn rl_restore_prompt() {
 // [spec:libedit:sem:readline.rl-initialize-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rl_initialize() -> c_int {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state; every editor call below is the
     // one `readline.c` makes, in its order.
     unsafe {
@@ -1552,10 +1576,7 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn readline(p: *const c_char) -> *mut c_char {
     let prompt = p;
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     let mut buf: *mut c_char;
     // SAFETY: single-threaded module state.
     unsafe {
@@ -1707,10 +1728,7 @@ pub unsafe extern "C" fn get_history_event(
     cindex: *mut c_int,
     qchar: c_int,
 ) -> *const c_char {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: `cmd` is a NUL-terminated string and `cindex` a live `int`.
     unsafe {
         let s = c_bytes(cmd);
@@ -2450,10 +2468,7 @@ pub unsafe extern "C" fn history_arg_extract(
             return ptr::null_mut();
         }
 
-        let mut count = 0;
-        while !(*arr.add(count)).is_null() {
-            count += 1;
-        }
+        let count = c_array_len(arr);
 
         let mut result: *mut c_char = ptr::null_mut();
         // An array that is present but empty takes the cleanup exit.
@@ -2494,9 +2509,7 @@ pub unsafe extern "C" fn history_arg_extract(
             }
         }
 
-        for i in 0..count {
-            c_free_str(*arr.add(i));
-        }
+        c_free_each(core::slice::from_raw_parts(arr, count));
         c_free_array(arr, count + 1);
 
         result
@@ -2544,9 +2557,7 @@ pub unsafe extern "C" fn history_tokenize(str_: *const c_char) -> *mut *mut c_ch
 
             let temp = c_dup(&s[start.min(s.len())..i.min(s.len())]);
             if temp.is_null() {
-                for t in &tokens {
-                    c_free_str(*t);
-                }
+                c_free_each(&tokens);
                 return ptr::null_mut();
             }
             tokens.push(temp);
@@ -2563,9 +2574,7 @@ pub unsafe extern "C" fn history_tokenize(str_: *const c_char) -> *mut *mut c_ch
 
         let out: *mut *mut c_char = c_alloc_array(tokens.len() + 1);
         if out.is_null() {
-            for t in &tokens {
-                c_free_str(*t);
-            }
+            c_free_each(&tokens);
             return ptr::null_mut();
         }
         for (i, t) in tokens.iter().enumerate() {
@@ -2588,10 +2597,7 @@ fn strchr_nonul(s: &[u8], c: u8) -> bool {
 // [spec:libedit:sem:readline.stifle-history-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn stifle_history(max: c_int) {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state.
     unsafe {
         lazy_init();
@@ -2628,10 +2634,7 @@ pub unsafe extern "C" fn stifle_history(max: c_int) {
 // [spec:libedit:sem:readline.unstifle-history-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn unstifle_history() -> c_int {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state.
     unsafe {
         // There is no lazy-init guard here, unlike almost every other history
@@ -2705,25 +2708,34 @@ fn errno_of(e: &std::io::Error) -> c_int {
 ///
 /// # Safety
 ///
-/// `filename` must be NULL or a NUL-terminated string.
+/// `filename` must be NULL or a NUL-terminated string. The result borrows
+/// from either the caller's string or the process-lifetime cache
+/// `_default_history_file` keeps.
+unsafe fn history_file_name(filename: *const c_char) -> Result<*const c_char, c_int> {
+    if !filename.is_null() {
+        return Ok(filename);
+    }
+    let d = _default_history_file();
+    if d.is_null() {
+        // The C's "whatever `getpwuid` left", read from the C's own `errno`
+        // because that is where the failing lookup wrote.
+        return Err(crate::errno::get());
+    }
+    Ok(d)
+}
+
+/// [`history_file_name`] for the two entry points that open the file
+/// themselves rather than handing the name to `history()`.
+///
+/// # Safety
+///
+/// As [`history_file_name`].
 unsafe fn history_file_path(filename: *const c_char) -> Result<std::path::PathBuf, c_int> {
     // SAFETY: the caller guarantees the string.
-    unsafe {
-        let name = if filename.is_null() {
-            let d = _default_history_file();
-            if d.is_null() {
-                // The C's "whatever `getpwuid` left", read from the C's own
-                // `errno` because that is where the failing lookup wrote.
-                return Err(crate::errno::get());
-            }
-            c_bytes(d)
-        } else {
-            c_bytes(filename)
-        };
-        Ok(std::path::PathBuf::from(
-            String::from_utf8_lossy(name).into_owned(),
-        ))
-    }
+    let name = unsafe { c_bytes(history_file_name(filename)?) };
+    Ok(std::path::PathBuf::from(
+        String::from_utf8_lossy(name).into_owned(),
+    ))
 }
 
 // [spec:libedit:def:readline.history-truncate-file-fn]
@@ -2831,22 +2843,14 @@ fn truncate_through_temp(fp: &mut std::fs::File, tp: &mut std::fs::File, nlines:
 // [spec:libedit:sem:readline.read-history-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn read_history(filename: *const c_char) -> c_int {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state; `filename` is NULL or a
     // NUL-terminated string.
     unsafe {
         lazy_init();
-        let name = if filename.is_null() {
-            let d = _default_history_file();
-            if d.is_null() {
-                return crate::errno::get();
-            }
-            d
-        } else {
-            filename
+        let name = match history_file_name(filename) {
+            Ok(n) => n,
+            Err(e) => return e,
         };
         // The C's `errno = 0`, cleared in both homes so that neither a stale
         // platform value nor a stale core one can be mistaken for this call's
@@ -2879,21 +2883,13 @@ pub unsafe extern "C" fn read_history(filename: *const c_char) -> c_int {
 // [spec:libedit:sem:readline.write-history-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn write_history(filename: *const c_char) -> c_int {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: as `read_history`.
     unsafe {
         lazy_init();
-        let name = if filename.is_null() {
-            let d = _default_history_file();
-            if d.is_null() {
-                return crate::errno::get();
-            }
-            d
-        } else {
-            filename
+        let name = match history_file_name(filename) {
+            Ok(n) => n,
+            Err(e) => return e,
         };
         // No `errno = 0` here — unlike `read_history` the C does not clear it,
         // so a value left over from before the call is what a failure with no
@@ -2915,10 +2911,10 @@ pub unsafe extern "C" fn write_history(filename: *const c_char) -> c_int {
 // [spec:libedit:sem:readline.append-history-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_int {
-    let ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    // No [`EMPTY_EVENT`] here. The C declares one for its `H_NSAVE_FP` call,
+    // and this is the one history entry point that does not make that call —
+    // see the note on `history_save_fd` below — so there is no out-parameter
+    // to declare.
     // SAFETY: as `read_history`.
     unsafe {
         lazy_init();
@@ -2941,26 +2937,21 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
         // enumeration — the argument there is about a caller's opaque object,
         // which this is not.
         //
-        // A NULL cookie is what goes over instead: `H_NSAVE_FP` then fails
-        // its cookie write and reports -1/`_HE_HIST_WRITE`, which surfaces
-        // here as the errno below. It must NOT be a fabricated pointer — the
-        // dispatcher now calls the real `ftell` on whatever arrives, so a
-        // `Box<File>` cast to `CFile` would be handed to the C library as a
-        // `FILE *`.
+        // The route out is `nshedit::history::history_save_fd`, which is
+        // `history_save_fp` with the caller's stream replaced by a descriptor
+        // — exactly the shape this function has: it opened the file ITSELF, so
+        // there is no application-owned `FILE *` to respect and nothing on
+        // `no-c-ffi`'s enumeration to reach for. That distinction is the whole
+        // reason the decision permits this and not `fdopen`.
         //
-        // The route out is `nshedit::history::history_save_fd`, and this takes
-        // it. A NULL cookie used to go over instead, so `H_NSAVE_FP` failed
-        // its cookie write, `append_history` returned EINVAL and the file it
-        // had just opened was closed empty — measured by
-        // `conformance/driver/readline_api.c`, which is what turned "a gap
-        // recorded here" into "this function does not work".
-        //
-        // `history_save_fd` is `history_save_fp` with the caller's stream
-        // replaced by a descriptor, which is exactly the shape this function
-        // has: it opened the file ITSELF, so there is no application-owned
-        // `FILE *` to respect and nothing on `no-c-ffi`'s enumeration to reach
-        // for. That distinction is the whole reason the decision permits this
-        // and not `fdopen`.
+        // Neither a NULL nor a fabricated cookie is an alternative. A NULL one
+        // used to go over to `H_NSAVE_FP`, which then failed its cookie write,
+        // so `append_history` returned EINVAL and the file it had just opened
+        // was closed empty — measured by `conformance/driver/readline_api.c`,
+        // which is what turned "a gap recorded here" into "this function does
+        // not work". A fabricated pointer is worse: the dispatcher calls the
+        // real `ftell` on whatever arrives, so a `Box<File>` cast to `CFile`
+        // would be handed to the C library as a `FILE *`.
         //
         // The descriptor is borrowed: `fp` still owns it and closes it below,
         // as the C's `fclose` does.
@@ -2978,7 +2969,6 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
         // `O_APPEND` already forces every write to the end, so seeking
         // changes only what the position REPORTS, which is precisely the
         // question `at_start` is asking.
-        let _ = ev;
         let _ = fp.seek(SeekFrom::End(0));
         // As `write_history`: sampled, not cleared.
         let mark = crate::errno::mark();
@@ -3003,10 +2993,7 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
 // [spec:libedit:sem:readline.history-get-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn history_get(num: c_int) -> *mut HistEntry {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state; the returned entry is the shared
     // `she` static, invalidated by the next call.
     unsafe {
@@ -3050,10 +3037,7 @@ pub unsafe extern "C" fn history_get(num: c_int) -> *mut HistEntry {
 // [spec:libedit:sem:readline.add-history-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn add_history(line: *const c_char) -> c_int {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state; `line` is copied by the history.
     unsafe {
         lazy_init();
@@ -3082,10 +3066,7 @@ pub unsafe extern "C" fn add_history(line: *const c_char) -> c_int {
 // [spec:libedit:sem:readline.remove-history-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remove_history(num: c_int) -> *mut HistEntry {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state; the returned entry and its line
     // are heap blocks the caller owns.
     unsafe {
@@ -3124,10 +3105,7 @@ pub unsafe extern "C" fn replace_history_entry(
     line: *const c_char,
     data: HistdataT,
 ) -> *mut HistEntry {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state.
     unsafe {
         lazy_init();
@@ -3178,10 +3156,7 @@ pub unsafe extern "C" fn replace_history_entry(
 // [spec:libedit:sem:readline.clear-history-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn clear_history() {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state.
     unsafe {
         lazy_init();
@@ -3209,10 +3184,7 @@ pub unsafe extern "C" fn where_history() -> c_int {
 // [spec:libedit:sem:readline.history-list-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn history_list() -> *mut *mut HistEntry {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state. The arrays, the entries and the
     // line strings are all borrowed; the whole result is invalidated by the
     // next call, and there is no lazy-init guard, as in the C.
@@ -3257,10 +3229,7 @@ pub unsafe extern "C" fn history_list() -> *mut *mut HistEntry {
 // [spec:libedit:sem:readline.current-history-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn current_history() -> *mut HistEntry {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state; the result is the shared `rl_he`
     // static, overwritten by the next navigation call.
     unsafe {
@@ -3287,10 +3256,7 @@ pub unsafe extern "C" fn current_history() -> *mut HistEntry {
 // [spec:libedit:sem:readline.history-total-bytes-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn history_total_bytes() -> c_int {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state.
     unsafe {
         // No lazy-init guard, as in the C (ERR-readline-11, UB): a NULL
@@ -3346,10 +3312,7 @@ pub unsafe extern "C" fn history_set_pos(pos: c_int) -> c_int {
 // [spec:libedit:sem:readline.previous-history-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn previous_history() -> *mut HistEntry {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state.
     unsafe {
         // readline's "previous" means further back in time, which is
@@ -3373,10 +3336,7 @@ pub unsafe extern "C" fn previous_history() -> *mut HistEntry {
 // [spec:libedit:sem:readline.next-history-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn next_history() -> *mut HistEntry {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state.
     unsafe {
         if history_offset >= history_length {
@@ -3398,10 +3358,7 @@ pub unsafe extern "C" fn next_history() -> *mut HistEntry {
 // [spec:libedit:sem:readline.history-search-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn history_search(str_: *const c_char, direction: c_int) -> c_int {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: `str_` is a NUL-terminated string; single-threaded module state.
     unsafe {
         if H.is_null() || history_va(H, &mut ev, H_CURR) != 0 {
@@ -3445,10 +3402,7 @@ fn find_substring(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 // [spec:libedit:sem:readline.history-search-prefix-fn]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn history_search_prefix(str_: *const c_char, direction: c_int) -> c_int {
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: `str_` is a NUL-terminated string; single-threaded module state.
     unsafe {
         // No lazy init, no global read or written, and the event is filled
@@ -3480,10 +3434,7 @@ pub unsafe extern "C" fn history_search_pos(
     pos: c_int,
 ) -> c_int {
     let _ = direction; /* declared unused: the sign of `pos` carries it */
-    let mut ev = HistEvent {
-        num: 0,
-        str: ptr::null(),
-    };
+    let mut ev = EMPTY_EVENT;
     // SAFETY: `str_` is a NUL-terminated string; single-threaded module state.
     unsafe {
         let off = if pos > 0 { pos } else { -pos };
@@ -3902,10 +3853,8 @@ pub unsafe extern "C" fn rl_insert(count: c_int, c: c_int) -> c_int {
         // the current binding for it is will run. GNU readline's `rl_insert`
         // inserts into the line instead; the two are swapped relative to
         // readline (ERR-readline-42, reproduced).
-        let mut count = count;
-        while count > 0 {
+        for _ in 0..count {
             crate::eln::el_push(E, arr.as_ptr());
-            count -= 1;
         }
 
         0
@@ -4148,10 +4097,8 @@ pub unsafe extern "C" fn rl_get_previous_history(count: c_int, key: c_int) -> c_
         // Pushes the key back `count` times rather than moving through the
         // history, so it only works if `key` is bound to a history-recall
         // command; no history global is touched (ERR-readline-44).
-        let mut count = count;
-        while count > 0 {
+        for _ in 0..count {
             crate::eln::el_push(E, a.as_ptr());
-            count -= 1;
         }
         0
     }
@@ -4281,18 +4228,24 @@ fn _rl_event_read_char(el: *mut EditLine, wc: *mut u32) -> c_int {
             // non-blocking — the C's EAGAIN arm, and the case an event-hook
             // consumer sets up. Otherwise the read blocks and the hook is
             // called once per character.
-            num_read = read_one_byte((*el).el_infd, &mut ch);
-            if num_read == WOULD_BLOCK {
-                num_read = 0;
-                continue;
+            match read_one_byte((*el).el_infd, &mut ch) {
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    num_read = 0;
+                    continue;
+                }
+                Err(_) => {
+                    num_read = -1;
+                    break;
+                }
+                // The C also retries on a zero-length read, which under
+                // FIONREAD means "nothing pending yet". A blocking read
+                // answers 0 only at end of input, so the port stops rather
+                // than spinning.
+                Ok(n) => {
+                    num_read = n as c_int;
+                    break;
+                }
             }
-            if num_read < 0 {
-                break;
-            }
-            // The C also retries on a zero-length read, which under FIONREAD
-            // means "nothing pending yet". A blocking read answers 0 only at
-            // end of input, so the port stops rather than spinning.
-            break;
         }
         // The hook cleared itself: put the builtin reader back.
         if { rl_event_hook }.is_none() && !el.is_null() {
@@ -4306,30 +4259,24 @@ fn _rl_event_read_char(el: *mut EditLine, wc: *mut u32) -> c_int {
     }
 }
 
-/// [`read_one_byte`]'s answer for the C's `EAGAIN`: the descriptor is
-/// non-blocking and has nothing to give yet.
-const WOULD_BLOCK: c_int = -2;
-
 /// One byte from a descriptor, without taking ownership of it.
 ///
 /// `std::fs::File` is the only reader the port can build from a raw
 /// descriptor without libc; the descriptor is handed straight back so the
-/// `File` never closes it.
-fn read_one_byte(fd: i32, out: &mut u8) -> c_int {
+/// `File` never closes it. The C's `EAGAIN` — the one error its caller tells
+/// apart from the rest — arrives as [`std::io::ErrorKind::WouldBlock`], so no
+/// sentinel return has to stand in for it.
+fn read_one_byte(fd: i32, out: &mut u8) -> std::io::Result<usize> {
     use std::os::fd::{FromRawFd, IntoRawFd};
     if fd < 0 {
-        return -1;
+        return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
     }
     // SAFETY: the descriptor is EditLine's own and stays open — `into_raw_fd`
     // below gives it back rather than closing it.
     let mut f = unsafe { std::fs::File::from_raw_fd(fd) };
     let r = f.read(core::slice::from_mut(out));
     let _ = f.into_raw_fd();
-    match r {
-        Ok(n) => n as c_int,
-        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => WOULD_BLOCK,
-        Err(_) => -1,
-    }
+    r
 }
 
 /// C: `static void _rl_update_pos(void);` — republishes `el_line` into
@@ -4590,14 +4537,14 @@ pub unsafe extern "C" fn rl_completion_matches(
         // The shortest common prefix over *adjacent* pairs, which is only
         // meaningful if the array is sorted — so the broken sort corrupts this
         // too.
-        let mut min = usize::MAX;
-        for i in 1..list.len() - 1 {
-            let (a, b) = (c_bytes(list[i]), c_bytes(list[i + 1]));
-            let j = a.iter().zip(b).take_while(|(x, y)| x == y).count();
-            if min > j {
-                min = j;
-            }
-        }
+        let min = list[1..]
+            .windows(2)
+            .map(|pair| {
+                let (a, b) = (c_bytes(pair[0]), c_bytes(pair[1]));
+                a.iter().zip(b).take_while(|(x, y)| x == y).count()
+            })
+            .min()
+            .unwrap_or(usize::MAX);
 
         if min == 0 && *str_ != 0 {
             /* the matches share nothing, so offer the original text back */
@@ -5046,9 +4993,7 @@ pub unsafe extern "C" fn completion_matches(
             if p.is_null() {
                 // The C frees only the array and leaks the matches; the port
                 // releases what it allocated and reports the same NULL.
-                for q in &list {
-                    c_free_str(*q);
-                }
+                c_free_each(&list);
                 return ptr::null_mut();
             }
             list.push(p);

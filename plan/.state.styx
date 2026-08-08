@@ -149,4 +149,5 @@ assertions (
     {id input-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:03:58.507609972Z}
     {id modes-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:07:33.617601976Z}
     {id completion-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:29:36.110990454Z}
+    {id readline-compat-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:59:31.412543707Z}
 )

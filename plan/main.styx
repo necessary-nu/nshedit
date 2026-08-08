@@ -1053,6 +1053,28 @@ children (
                 title "Idiomatize the readline compatibility surface"
                 deps (readline-compat-tests)
                 sealed true
+                log (
+                    {
+                        at 2026-08-08T11:36:12.152649959Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T11:59:20.9116563Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "5094 to 5039 lines, 141 to 144 functions, 153 exported symbols unchanged, 167 annotations unchanged. The rejected list is the deliverable here as much as the changes, because dec:libedit:idiomatic-care freezes the C shape in this crate on purpose and most of what looks refactorable is the ABI.\n\nWHAT WAS DONE. Three stale docs, and they mattered: the module docs and the extern block comment both still listed \"the narrow el_set/el_get dispatch is unwritten, still dispatch on no op\" as an open blocker, which has been false since abi-elset-dispatch and which two of this file's own tests disprove. append_history's comment block contradicted itself across two paragraphs about whether a NULL cookie goes over. Then: the path-resolution triplicated across read_history, write_history and history_file_path became one history_file_name; twenty-one spelled-out zeroed HistEvent literals became one EMPTY_EVENT const whose doc records why the port zeroes what the C leaves uninitialised; two C-array walks and three free-what-was-collected loops got named helpers; and read_one_byte's private WOULD_BLOCK == -2 sentinel became io::Result, with the C-facing return unchanged.\n\nTWELVE CANDIDATES REJECTED, and the reasons are the useful part. rl_bind_key's retval accumulator is narrated as literal steps by its own rule, so early returns would put code out of step-for-step correspondence for no behavioural gain. strcmp_pointer_repr's byte loop IS ERR-readline-01 rather than a helper around it — an iterator form would hide the defect the function exists to exhibit. strchr and strchr_nonul differ precisely in whether the terminator matches, load-bearing at both call sites. readline()'s loop-with-break is the setjmp emulation and continue is the longjmp. history_search and history_search_pos look alike and have different directions, returns, rules and errata. And _rl_completion_append_character_function versus append_char_str are not two renderings of one global: the first is the C's shared-char[2] face with its own rule and test, the second is the shape filecomplete's AppFunc takes.\n\nONE CHANGE TOUCHED CODE UNDER AN UNTESTED RULE, and it was declared. rl_initialize is covered by rl-getc-function-fn, whose claim — the hook is sampled once for non-NULL-ness — has no oracle. Its HistEvent literal became EMPTY_EVENT; the const is field-for-field identical, the ev it declares is used only for H_SETSIZE, and the sampling block itself is byte-for-byte untouched. The other four untested rules' functions were not touched at all.\n\nA RULE WHOSE STATED REASON IS INVERTED. sem:readline.rl-get-previous-history-fn says the C's `while (count--)` means \"a count of 0 or negative pushes nothing, because the test is a post-decrement\". That is backwards: with count == -1 the controlling expression is -1, which is TRUE, so the C pushes and keeps decrementing until signed overflow. Only count == 0 pushes nothing. The port implements what the rule PRESCRIBES — nothing for <= 0 — which is the safe reading, so no code is wrong; but the justification does not hold and the negative-count case is unregistered UB in the C. Contrast sem:readline.rl-insert-fn, which describes its `for (; count > 0; count--)` correctly.\n\nA CORRECTION TO MY OWN BRIEF. I said readline.rs reimplements ct_enc_width as a private enc_width. It does not — that stand-in is in eln.rs:105 with wctob and sum_enc_widths beside it, out of this node's scope. The underlying gap is real and located elsewhere: nshedit::chartype::ct_enc_width is pub(crate).\n\nFIVE CORE ITEMS STILL pub(crate) AND WHAT EACH COSTS. tty_get_signal_character is the one that matters: it is why rl_echo_signal_char has a hard -1 stand-in and always takes its early return, and publishing it in nshedit::tty is what closes that rule — the only one of the five blocked by code rather than by needing a terminal. Then tty_init, tty_end, re_putc, em_kill_line and el_init_internal, which keep five stand-ins and the NO_RESET gap alive. And both crate::stdio and crate::vislite are pub(crate), so this crate cannot reach either even where it would want to — though rl_out_write specifically must NOT use stdio, because stdio writes the editor's el_outfd while rl_out_write must write the application's rl_outstream."
+                    }
+
+                    {
+                        at 2026-08-08T11:59:31.412543707Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
             }
         )
         sealed true
