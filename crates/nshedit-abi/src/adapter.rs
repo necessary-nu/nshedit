@@ -285,6 +285,7 @@ impl BoundaryChar for u32 {
     }
 }
 
+// [spec:libedit:def:tokenizer.quote-t]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum BoundaryState {
     #[default]
@@ -359,6 +360,8 @@ impl TokenizerHandle<u32> {
 }
 
 impl<C> TokenizerHandle<C> {
+    // [spec:libedit:def:tokenizer.fun-tok-init-fn]
+    // [spec:libedit:sem:tokenizer.fun-tok-init-fn]
     fn new(separators: &[C]) -> Box<Self>
     where
         C: BoundaryChar,
@@ -409,6 +412,10 @@ impl<C> TokenizerHandle<C> {
         // can observe that historical defect after a following empty parse.
     }
 
+    // [spec:libedit:def:tokenizer.fun-tok-line-fn]
+    // [spec:libedit:sem:tokenizer.fun-tok-line-fn]
+    // [spec:libedit:def:tokenizer.fun-tok-str-fn]
+    // [spec:libedit:sem:tokenizer.fun-tok-str-fn]
     pub(crate) fn tokenize(&mut self, input: &[C], cursor: Option<usize>) -> TokenizeOutcome<C>
     where
         C: BoundaryChar,
@@ -591,6 +598,8 @@ impl<C> TokenizerHandle<C> {
         }
     }
 
+    // [spec:libedit:def:tokenizer.fun-tok-finish-fn]
+    // [spec:libedit:sem:tokenizer.fun-tok-finish-fn]
     fn publish<'a>(
         &mut self,
         tokens: impl IntoIterator<Item = &'a Text>,

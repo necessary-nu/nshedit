@@ -1,15 +1,13 @@
 //! Ported from `src/parse.c`; rules live in `docs/spec/port/src/parse.md`.
 
+use crate::domain::{Text, TextUnit};
+use crate::editor::{Tokenization, Tokenizer};
 use crate::el::{EditLine, el_editmode};
 use crate::hist::hist_command;
 use crate::map::map_bind;
 use crate::search::el_match;
 use crate::terminal::{terminal_echotc, terminal_settc, terminal_telltc};
-use crate::tokenizer::{tok_wend, tok_winit, tok_wstr};
 use crate::tty::tty_stty;
-
-/// The empty wide string, for an `argv` slot the tokenizer left unpublished.
-const EMPTY: &[u32] = &[];
 
 /// The C's `s[i]` on a NUL-terminated `const wchar_t *`: one element past the
 /// content reads as the terminator.
@@ -149,66 +147,67 @@ fn cmd_history(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     hist_command(el, argc, ptrs.as_ptr())
 }
 
-/// The word at `off` in the tokenizer's flat word buffer. `tok_finish` packs
-/// the words back to back, each NUL terminated
-/// (`sem:tokenizer.fun-tok-finish-fn`), so the word ends at the next 0.
-fn word_at(wspace: &[u32], off: usize) -> &[u32] {
-    if off >= wspace.len() {
-        return EMPTY;
+fn wide_text(text: &Text) -> Vec<u32> {
+    text.as_units()
+        .iter()
+        .map(|unit| match unit {
+            TextUnit::Scalar(character) => u32::from(*character),
+            TextUnit::RawByte(byte) => u32::from(*byte),
+            TextUnit::CompatibilityWide(value) => value.get(),
+        })
+        .collect()
+}
+
+/// Parse one physical editrc line into owned wide words.
+fn editrc_words(line: &[u32]) -> Option<Vec<Vec<u32>>> {
+    let input: Text = line
+        .iter()
+        .copied()
+        .take_while(|unit| *unit != 0)
+        .map(TextUnit::from_wide)
+        .collect();
+    let cursor = input.index(input.len()).ok()?;
+    let Tokenization::Complete(parsed) = Tokenizer::default().tokenize(&input, cursor).ok()? else {
+        return None;
+    };
+
+    // A final unquoted backslash-newline is a request for another physical
+    // line, not a completed logical command. An ordinary newline finishes a
+    // token at the newline's index; an escaped one reaches the input end.
+    if input.as_units().last() == Some(&TextUnit::Scalar('\n'))
+        && parsed
+            .tokens()
+            .last()
+            .is_some_and(|token| token.source().end().get() == input.len())
+    {
+        return None;
     }
-    wcs(&wspace[off..])
+
+    Some(
+        parsed
+            .tokens()
+            .iter()
+            .map(|token| wide_text(token.value()))
+            .collect(),
+    )
 }
 
 // [spec:libedit:def:parse.parse-line-fn]
 // [spec:libedit:sem:parse.parse-line-fn]
 /// Tokenize one editrc line and dispatch it through [`el_wparse`].
 ///
-/// Two unchecked failures in the C are defined here rather than reproduced,
-/// both of them undefined behaviour:
-///
-/// - `ERR-input-13` — `tok_winit`'s NULL return is not checked and
-///   `tok_wstr` then dereferences it. Defined: the allocation failure is
-///   reported, as -1.
-/// - `ERR-input-14` — `tok_wstr`'s status is discarded, and on any non-zero
-///   status (unmatched `'`, unmatched `"`, a dangling backslash-newline, or
-///   an internal allocation failure) it returns without writing `argc` or
-///   `argv`, which the C hands to `el_wparse` uninitialised. Defined: the
-///   malformed line is reported as -1, which is what the rule directs and
-///   what `el_source` already does with an unknown command — it stops
-///   reading the file.
+/// Native tokenization returns owned words and typed continuation reasons, so
+/// neither unchecked C failure is representable here: there is no nullable
+/// tokenizer allocation (`ERR-input-13`), and incomplete quote/escape syntax
+/// cannot expose uninitialised `argc` or `argv` (`ERR-input-14`). A malformed
+/// line is reported as -1, which stops `el_source` just like an unknown
+/// command.
 pub(crate) fn parse_line(el: &mut EditLine, line: &[u32]) -> i32 {
-    let Some(mut tok) = tok_winit(None) else {
+    let Some(storage) = editrc_words(line) else {
         return -1;
     };
-
-    let mut argc: i32 = 0;
-    if tok_wstr(&mut tok, line, &mut argc) != 0 {
-        tok_wend(tok);
-        return -1;
-    }
-
-    // The C's `argv` aliases the tokenizer's own array; here the slots are
-    // offsets into `wspace`, so the words are resolved against it. A slot the
-    // tokenizer left unpublished is the C's NULL, which never appears below
-    // `argc` on a successful parse.
-    let n = usize::try_from(argc).unwrap_or(0);
-    let words: Vec<&[u32]> = tok
-        .argv
-        .iter()
-        .take(n)
-        .map(|slot| match *slot {
-            Some(off) => word_at(&tok.wspace, off),
-            None => EMPTY,
-        })
-        .collect();
-
-    let rv = el_wparse(el, argc, &words);
-
-    // Nothing reachable from `words` may outlive the tokenizer, which owns
-    // the word storage; the borrow ends above and `tok_wend` frees it.
-    drop(words);
-    tok_wend(tok);
-    rv
+    let words: Vec<&[u32]> = storage.iter().map(Vec::as_slice).collect();
+    el_wparse(el, words.len() as i32, &words)
 }
 
 // [spec:libedit:def:parse.el-wparse-fn]
@@ -533,6 +532,24 @@ mod tests {
         let r#in = w(s);
         let mut out = vec![0u32; r#in.len() + 1];
         parse_string(&mut out, &r#in).map(<[u32]>::to_vec)
+    }
+
+    // [spec:libedit:sem:parse.parse-line-fn/test]
+    #[test]
+    fn native_editrc_words() {
+        assert_eq!(
+            editrc_words(&w("bind 'x y'")),
+            Some(vec![w("bind"), w("x y")])
+        );
+        assert_eq!(editrc_words(&w("bind 'x y")), None);
+        assert_eq!(editrc_words(&w("bind x\\\n")), None);
+        assert_eq!(
+            editrc_words(&w("bind x\nignored")),
+            Some(vec![w("bind"), w("x")])
+        );
+
+        let non_scalar = [u32::from(b'x'), 0xd800];
+        assert_eq!(editrc_words(&non_scalar), Some(vec![non_scalar.to_vec()]));
     }
 
     /// The dispatch table is the entire editrc vocabulary, and a name paired

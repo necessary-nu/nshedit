@@ -197,10 +197,10 @@ fn abi_shape() {
 /// `SIGABRT` — all eight narrow entry points routed to a `core_gap()` in
 /// `crates/nshedit-abi/src/histedit.rs`, because `nshedit` had no narrow
 /// instantiation of `historyn.c` or `tokenizern.c`. Both are live now:
-/// `nshedit::history` and `nshedit::tokenizer` are generic over the character
-/// type and instantiated at `u32` and `c_char`, so the narrow entry points
-/// call the same source the wide ones do. They are still probed in a forked
-/// child, which is what would let the rest of a run survive a regression.
+/// history retains one translated generic implementation during its cutover,
+/// while both tokenizer families convert at the ABI boundary and use the
+/// same native owned parser. They are still probed in a forked child, which
+/// is what would let the rest of a run survive a regression.
 #[test]
 fn differential_traces() {
     let _stages = stage_lock();

@@ -769,6 +769,8 @@ pub unsafe extern "C" fn tok_init(ifs: *const c_char) -> *mut Tokenizer {
 
 // [spec:libedit:def:histedit.tok-end-fn]
 // [spec:libedit:sem:histedit.tok-end-fn]
+// [spec:libedit:def:tokenizer.fun-tok-end-fn]
+// [spec:libedit:sem:tokenizer.fun-tok-end-fn]
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn tok_end(tok: *mut Tokenizer) {
