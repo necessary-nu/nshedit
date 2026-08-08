@@ -91,10 +91,17 @@ states where those semantics may live and what the native Rust API must be.
 > MAY remain only in those existing compatibility modules;
 > `core.no-compat-internals` governs its final removal.
 
-> [spec:nshedit:req:core.token-completion]
-> Native tokenization and completion MUST return owned or explicitly borrowed
-> typed results. Null-terminated pointer arrays, thread-local return storage,
-> C generators, and integer status protocols MUST remain in the ABI adapter.
+> [spec:nshedit:req:core.token-completion+1]
+> Native tokenization and completion MUST use owned `Text`, checked source
+> spans and cursor positions, and explicit token, continuation, query,
+> candidate, edit, and outcome types. Completion across the host-effect
+> boundary MUST own its request and response, and applying a response MUST
+> reject a stale line snapshot before changing editor state. Null-terminated
+> pointer arrays, thread-local return storage, C generators, and integer status
+> protocols MUST NOT be reachable from the native `Editor`. Until the ABI
+> adapter replaces the transliterated compatibility path, those C-shaped
+> mechanisms MAY remain only in the existing compatibility modules;
+> `core.no-compat-internals` governs their final removal.
 
 > [spec:nshedit:req:core.terminal-render+1]
 > The native terminal profile, tty mode, prompts, render plan, and committed

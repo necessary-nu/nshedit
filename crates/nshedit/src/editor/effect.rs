@@ -8,11 +8,9 @@ use std::ffi::OsString;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::domain::{
-    CommandName, Direction, Error, Outcome, Prompt, ScreenSize, Text, TextIndex, TextUnit,
-};
+use crate::domain::{CommandName, Direction, Outcome, Prompt, ScreenSize, Text, TextUnit};
 
-use super::{Editor, TerminalControl};
+use super::{CompletionCandidates, CompletionQuery, Editor, TerminalControl};
 
 mod sealed {
     pub trait Sealed {}
@@ -130,34 +128,14 @@ impl Effect for ResizeEffect {
 /// Ask the host to complete the logical line at a checked cursor boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CompletionEffect {
-    line: Text,
-    cursor: TextIndex,
-}
-
-impl CompletionEffect {
-    /// Own the completion subject after revalidating its cursor.
-    pub fn new(line: Text, cursor: TextIndex) -> Result<Self, Error> {
-        line.index(cursor.get())?;
-        Ok(Self { line, cursor })
-    }
-
-    /// The complete logical line supplied to the host.
-    #[must_use]
-    pub fn line(&self) -> &Text {
-        &self.line
-    }
-
-    /// The checked completion boundary in [`Self::line`].
-    #[must_use]
-    pub const fn cursor(&self) -> TextIndex {
-        self.cursor
-    }
+    /// Snapshot-bound completion input produced by the native tokenizer.
+    pub query: CompletionQuery,
 }
 
 impl sealed::Sealed for CompletionEffect {}
 
 impl Effect for CompletionEffect {
-    type Response = EffectResult<Vec<Text>>;
+    type Response = EffectResult<CompletionCandidates>;
 }
 
 /// Ask the host to look up an environment value without assuming Unicode.
@@ -444,11 +422,13 @@ mod tests {
             Ok(Some(Text::from("ls -l"))),
         );
         accepts(ResizeEffect, Ok(ScreenSize::new(24, 80).unwrap()));
-        let line = Text::from("ec");
-        let cursor = line.index(2).unwrap();
+        let completion_editor = editor();
+        let query = completion_editor
+            .completion_query(&super::super::Tokenizer::default())
+            .unwrap();
         accepts(
-            CompletionEffect::new(line, cursor).unwrap(),
-            Ok(vec![Text::from("echo")]),
+            CompletionEffect { query },
+            Ok(vec![super::super::CompletionCandidate::new("echo")].into()),
         );
         accepts(
             EnvironmentEffect {

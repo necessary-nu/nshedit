@@ -2422,9 +2422,24 @@ children (
                 priority 0
                 kind @refactor
                 implements {
-                    native-impl ([spec:nshedit:req:core.token-completion])
+                    native-impl ([spec:nshedit:req:core.token-completion+1])
                 }
                 deps (greenfield-line-commands)
+                log (
+                    {
+                        at 2026-08-08T18:25:29.108858237Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T18:30:30.224867938Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Corrected core.token-completion to v1 because v0 required null-terminated arrays, thread-local results, C generators, and integer protocols to have already moved into nshedit-abi even though greenfield-abi-adapter depends on the later read driver and this concern. V1 governs the native Editor immediately and permits those mechanisms only in the existing compatibility modules until core.no-compat-internals. The native design returns owned cooked tokens with checked source spans and typed continuation/cursor state; completion crosses the effect boundary as an owned snapshot-bound query and typed candidate collection, rejects stale responses, and applies at most one atomic undoable edit. Recorded in [dec:libedit:native-token-completion]."
+                    }
+                )
             }
 
             {

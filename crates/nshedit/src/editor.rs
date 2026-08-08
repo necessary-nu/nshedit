@@ -17,13 +17,25 @@ use crate::domain::{
 // [spec:nshedit:req:core.effect-hooks]
 pub mod effect;
 
+// [spec:nshedit:req:core.token-completion+1]
+mod completion;
+
 // [spec:nshedit:req:core.line-commands]
 mod line;
 
 // [spec:nshedit:req:core.terminal-render+1]
 mod render;
 
+mod token;
+
+pub use completion::{
+    CompletionCandidate, CompletionCandidates, CompletionEdit, CompletionOutcome, CompletionQuery,
+};
 pub use render::{BaudRate, CapabilityKind, RenderError, RenderSummary, TerminalProfile};
+pub use token::{
+    Continuation, QuoteStyle, Token, TokenCursor, TokenIndex, TokenOffset, Tokenization,
+    TokenizedLine, Tokenizer,
+};
 
 /// Safe terminal lifecycle operations owned by one editor session.
 ///
@@ -362,6 +374,7 @@ mod tests {
 
     use super::*;
     use crate::domain::{Buffering, EditingMode, TerminalLiteral};
+    use crate::editor::effect::CompletionEffect;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Event {
@@ -539,6 +552,25 @@ mod tests {
         assert_eq!(summary.cursor().column(), 7);
         assert_eq!(editor.screen_cursor(), Some(summary.cursor()));
         assert!(output.windows(7).any(|bytes| bytes == b"p> \x1b[1m"));
+    }
+
+    #[test]
+    fn completion_effect_owns_values() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut editor =
+            Editor::new(EditorConfig::default(), MockTerminal::recording(&events)).unwrap();
+        editor.execute(Action::Insert(Text::from("ec"))).unwrap();
+        let query = editor.completion_query(&Tokenizer::default()).unwrap();
+        let pending = editor
+            .suspend(CompletionEffect {
+                query: query.clone(),
+            })
+            .unwrap();
+        let candidates = vec![CompletionCandidate::new("echo").with_suffix(" ")].into();
+        let response = editor.resume(&pending, Ok(candidates)).unwrap().unwrap();
+
+        editor.apply_completion(&query, response).unwrap();
+        assert_eq!(editor.line(), &Text::from("echo "));
     }
 
     // [spec:nshedit:req:core.rust-io+1/test]

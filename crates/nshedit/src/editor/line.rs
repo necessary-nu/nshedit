@@ -295,7 +295,7 @@ impl State {
         Outcome::CursorMoved(self.cursor)
     }
 
-    fn replace_at(
+    pub(super) fn replace_at(
         &mut self,
         replacement: Text,
         start: usize,

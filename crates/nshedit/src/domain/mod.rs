@@ -125,6 +125,7 @@ pub enum Error {
     EmptyKeySequence,
     EmptySearchPattern,
     SearchPatternNotSet,
+    StaleCompletionResponse,
     MarkNotSet,
     TextLengthOverflow,
     ScalarWideValue(u32),
@@ -160,6 +161,9 @@ impl fmt::Display for Error {
             Self::EmptyKeySequence => formatter.write_str("a key sequence cannot be empty"),
             Self::EmptySearchPattern => formatter.write_str("a search pattern cannot be empty"),
             Self::SearchPatternNotSet => formatter.write_str("no search pattern has been set"),
+            Self::StaleCompletionResponse => {
+                formatter.write_str("the completion response targets an earlier line state")
+            }
             Self::MarkNotSet => formatter.write_str("no line mark has been set"),
             Self::TextLengthOverflow => {
                 formatter.write_str("the resulting logical text length cannot be represented")
