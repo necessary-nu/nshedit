@@ -571,6 +571,22 @@ children (
                     }
                 )
             }
+
+            {
+                id history-save-truncates
+                title "A default build truncates the user's history file to a header and the next load calls it valid"
+                priority 1
+                kind @fix
+                deps (history-listing-escape)
+                log (
+                    {
+                        at 2026-08-08T01:47:24.130697479Z
+                        author "brendan@necessary.nu"
+                        kind @blocker
+                        text "SILENT DATA LOSS ON THE BUILD THAT SHIPS. Found by history-tests, pinned there in a_build_without_vis_cannot_write_the_legacy_format, and not fixed by that node because it is a defect rather than a missing test.\n\nThe sequence. history_save opens the file O_TRUNC. history_save_out then writes the 13-byte _HiStOrY_V2_ cookie, calls vis_encode for the first entry, gets None because the `bsd` feature is off, and returns -1. What is left on disk is the cookie and nothing else. The user's history is gone.\n\nThe second half is what makes it silent. history_load ACCEPTS that file — a valid cookie with no data lines is a legal empty history, not a corrupt one — so it reports zero entries and no error. Nothing anywhere says the file was destroyed. A user who runs a shell built this way loses their history and is told the file was empty.\n\nWHO IS AFFECTED. nshedit-abi pulls features = [\"bsd\"], so a C caller going through the ABI is fine and the conformance harness never sees this. A Rust program linking nshedit with default features is not fine — which is nsh, the reason this library exists.\n\nWHY IT SURVIVED. The vis stub is deliberate and documented: histfile.rs has a_legacy_file_is_unreadable_without_the_bsd_feature, and vis_encode's own comment says None must become the C's failure return \"never into unescaped output, which would be a wrong answer rather than a missing one\". That reasoning is right for the LISTING, where a failed escape means a line is not printed. It is wrong for SAVE, where the failure lands after the truncate and the cost is the file rather than the output.\n\nWHAT THE FIX PROBABLY IS. history-listing-escape just built vislite, a native strvis for VIS_NL with no bsd dependency. H_SAVE needs VIS_WHITE, which is VIS_SP|VIS_TAB|VIS_NL — the same encoder with three characters in the extra list instead of one. Extending vislite to take the flag set removes the None arm from the save path entirely and the failure mode with it.\n\nTwo things to get right whatever the fix. The truncate must not happen before the write can succeed — write to a temporary and rename, so a failure of any kind leaves the old file intact. And a cookie-only file should be distinguishable from a deliberately empty one, or the next occurrence of any write failure is equally silent.\n\nDo not close this by adding `bsd` to the default features. That would fix the symptom by making the default build depend on a sibling checkout, and it would leave the truncate-then-fail ordering in place for every other way a write can fail."
+                    }
+                )
+            }
         )
     }
 
