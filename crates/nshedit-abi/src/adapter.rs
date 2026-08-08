@@ -18,7 +18,6 @@ use nshedit::domain::{EditorConfig, TerminalMode, Text, TextUnit};
 use nshedit::editor::{
     Continuation, Editor, QuoteStyle, TerminalControl, Tokenization, Tokenizer as NativeTokenizer,
 };
-use nshedit::history::HistoryStore;
 
 use crate::cdecl::histedit::{LineInfo, LineInfoWide as LineInfoW};
 
@@ -177,59 +176,6 @@ impl Drop for EditLine {
         // an owning value and `ManuallyDrop` suppresses the automatic drop.
         let compatibility = unsafe { ManuallyDrop::take(&mut self.compatibility) };
         nshedit::el::el_end(Some(Box::new(compatibility)));
-    }
-}
-
-// [spec:nshedit:req:abi.opaque-owner]
-/// Allocation behind either incomplete C history handle.
-pub struct HistoryHandle<C: nshedit::history::HistChar> {
-    compatibility: Option<Box<nshedit::history::HistoryGen<C>>>,
-    native: HistoryStore,
-}
-
-pub type History = HistoryHandle<c_char>;
-pub type HistoryW = HistoryHandle<u32>;
-
-impl<C: nshedit::history::HistChar> HistoryHandle<C> {
-    pub(crate) fn from_compatibility(
-        compatibility: *mut nshedit::history::HistoryGen<C>,
-    ) -> *mut Self {
-        if compatibility.is_null() {
-            return core::ptr::null_mut();
-        }
-        // SAFETY: the compatibility constructor returned this allocation and
-        // transferred ownership to the ABI boundary.
-        let compatibility = unsafe { Box::from_raw(compatibility) };
-        let owner = Box::new(Self {
-            compatibility: Some(compatibility),
-            native: HistoryStore::new(),
-        });
-        debug_assert!(owner.native.is_empty());
-        Box::into_raw(owner)
-    }
-
-    pub(crate) fn compatibility_ptr(&mut self) -> *mut nshedit::history::HistoryGen<C> {
-        self.compatibility
-            .as_deref_mut()
-            .map_or(core::ptr::null_mut(), core::ptr::from_mut)
-    }
-
-    pub(crate) fn compatibility_mut(&mut self) -> &mut nshedit::history::HistoryGen<C> {
-        self.compatibility
-            .as_deref_mut()
-            .expect("a live history owns its compatibility state")
-    }
-
-    pub(crate) fn take_compatibility(&mut self) -> Option<Box<nshedit::history::HistoryGen<C>>> {
-        self.compatibility.take()
-    }
-}
-
-impl<C: nshedit::history::HistChar> Drop for HistoryHandle<C> {
-    fn drop(&mut self) {
-        if let Some(compatibility) = self.compatibility.take() {
-            nshedit::history::history_end_gen(Box::into_raw(compatibility));
-        }
     }
 }
 

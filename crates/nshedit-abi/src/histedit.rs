@@ -73,23 +73,22 @@ use nshedit::chared::{ElAfuncT, ElZfuncT};
 use nshedit::el::{CFile, FuncT};
 use nshedit::hist::HistFunT;
 use nshedit::histedit::ElRfuncT;
-use nshedit::history::{
-    HistoryArg, HistoryEfunT, HistoryGfunT, HistorySfunT, HistoryVfunT, SaveStream,
-};
 use nshedit::map::ElFuncT;
 use nshedit::prompt::ElPfuncT;
 
 // Renamed on import so the signatures below read as `histedit.h` writes
 // them; see the note on `LineInfoWide`.
-use crate::adapter::{
-    BoundaryContinuation, EditLine, History, HistoryHandle, HistoryW, TokenizeOutcome, Tokenizer,
-    TokenizerW,
-};
+use crate::adapter::{BoundaryContinuation, EditLine, TokenizeOutcome, Tokenizer, TokenizerW};
+use crate::cdecl::handles::{History, HistoryW};
 use crate::cdecl::histedit::{
     HistEvent, HistEventGen, HistEventWide as HistEventW, LineInfo, LineInfoGen,
     LineInfoWide as LineInfoW, WcharT,
 };
 use crate::cstdio::{self, CFileWriter};
+use crate::history::{
+    CallbackSet, ClearCallback, DispatchArg, EnterCallback, GetCallback, HistoryChar,
+    HistoryHandle, HistoryOwner, HistoryWideOwner, SaveStream, SelectCallback,
+};
 
 // ---------------------------------------------------------------------------
 // `el_set`/`el_get` operation codes. C: `histedit.h`, which defines them as
@@ -716,7 +715,7 @@ pub unsafe extern "C" fn history_init() -> *mut History {
     // `H_END` frees it from inside `history` — and NULL is the C's allocation
     // failure. The retained maximum starts at 0, so `H_SETSIZE` is required
     // before any `H_ENTER` keeps anything.
-    HistoryHandle::from_compatibility(nshedit::history::history_init())
+    HistoryOwner::new_raw().cast()
 }
 
 // [spec:libedit:def:histedit.history-end-fn]
@@ -727,10 +726,8 @@ pub unsafe extern "C" fn history_end(h: *mut History) {
     // `h` must be non-NULL; there is no check and calling it twice is a double
     // free. Every `HistEvent.str` from this handle is dangling afterwards
     // except those from `H_DEL`/`H_DELDATA`, which the caller owns.
-    if !h.is_null() {
-        // SAFETY: `h` is the ABI allocation returned by `history_init`.
-        drop(unsafe { Box::from_raw(h) });
-    }
+    // SAFETY: `h` is NULL or the allocation returned by `history_init`.
+    unsafe { crate::history::end(h.cast::<HistoryOwner>()) };
 }
 
 /// C: `int history(History *, HistEvent *, int, ...);`
@@ -750,7 +747,7 @@ pub unsafe extern "C" fn history(h: *mut History, ev: *mut HistEvent, op: c_int,
     // unchanged: the path was already narrow in both instantiations, and so
     // was the file.
     // SAFETY: this function's own contract, forwarded unchanged.
-    unsafe { history_dispatch::<c_char>(h, ev, op, ap) }
+    unsafe { history_dispatch::<c_char>(h.cast::<HistoryOwner>(), ev, op, ap) }
 }
 
 // [spec:libedit:def:histedit.tok-init-fn]
@@ -1627,7 +1624,7 @@ pub unsafe extern "C" fn history_winit() -> *mut HistoryW {
     // `history_w`, which no borrow could express. NULL is the C's allocation
     // failure. The retained maximum starts at 0, so `H_SETSIZE` is required
     // before any `H_ENTER` keeps anything.
-    HistoryHandle::from_compatibility(nshedit::history::history_winit())
+    HistoryWideOwner::new_raw().cast()
 }
 
 // [spec:libedit:def:histedit.history-wend-fn]
@@ -1638,18 +1635,16 @@ pub unsafe extern "C" fn history_wend(h: *mut HistoryW) {
     // `h` must be non-NULL; there is no check and calling it twice is a
     // double free. Every `HistEventW.str` from this handle is dangling
     // afterwards except those from `H_DEL`/`H_DELDATA`, which the caller owns.
-    if !h.is_null() {
-        // SAFETY: `h` is the ABI allocation returned by `history_winit`.
-        drop(unsafe { Box::from_raw(h) });
-    }
+    // SAFETY: `h` is NULL or the allocation returned by `history_winit`.
+    unsafe { crate::history::end(h.cast::<HistoryWideOwner>()) };
 }
 
-/// The varargs tail of `history_w`/`history`, walked and handed to the core as
-/// a `HistoryArg`.
+/// The varargs tail of `history_w`/`history`, walked into the ABI adapter's
+/// closed [`DispatchArg`] form.
 ///
 /// The op enumeration below is the whole of this function: each code names how
 /// many trailing arguments it has and what they are, which is what the core's
-/// `HistoryArg` is a closed form of, and it is also exactly how many `va_arg`
+/// [`DispatchArg`] is a closed form of, and it is also exactly how many `va_arg`
 /// reads the C makes. Only one entry in that table depends on the
 /// instantiation — the five string ops, whose argument is `const wchar_t *`
 /// wide and `const char *` narrow — so the table is written once and `C` picks
@@ -1659,7 +1654,7 @@ pub unsafe extern "C" fn history_wend(h: *mut HistoryW) {
 /// # Safety
 /// `h` and `ev` must be a live handle and a writable event of this
 /// instantiation, and the tail must carry what the op code says.
-unsafe fn history_dispatch<C: nshedit::history::HistChar>(
+unsafe fn history_dispatch<C: HistoryChar>(
     h: *mut HistoryHandle<C>,
     ev: *mut HistEventGen<C>,
     op: c_int,
@@ -1674,17 +1669,9 @@ unsafe fn history_dispatch<C: nshedit::history::HistChar>(
 
     // Neither `h` nor `ev` may be NULL; both are dereferenced unchecked, as
     // in the C.
-    // SAFETY: `ev` is the caller's out-parameter.
-    let ev = unsafe { &mut *ev.cast::<nshedit::histedit::HistEventGen<C>>() };
-
-    // `H_FUNC`'s assembled vtable. C: `TYPE(History) hf`, a stack local in
-    // `FUNW(history)`; hoisted out of the arm below only so the borrow the
-    // `HistoryArg` takes outlives the match.
-    let hf;
-
     // The caller's stream for `H_SAVE_FP`/`H_NSAVE_FP`, hoisted for the same
-    // reason: the core borrows it for the length of the call and never past
-    // it, so no `FILE *` outlives the operation that was handed it.
+    // reason: the adapter borrows it for the length of the call and never
+    // past it, so no `FILE *` outlives the operation that was handed it.
     let mut fp_out: Option<CFileWriter> = None;
 
     let arg = match op {
@@ -1697,43 +1684,37 @@ unsafe fn history_dispatch<C: nshedit::history::HistChar>(
             // SAFETY: for this op the eleven slots carry the state pointer and
             // then the ten vtable functions in exactly this order, per the
             // header and `sem:histedit.history-w-fn`.
-            hf = nshedit::history::HistoryGen::<C> {
-                h_ref: unsafe { ap.next_arg::<*mut c_void>() },
-                // Not read by anything this op reaches: the C's `hf` is an
-                // uninitialised stack local except for the eleven fields it
-                // fills, and `history_set_fun` copies only the ten callbacks.
-                // The dispatch's own `h->h_ent = -1` is the core's.
-                h_ent: 0,
-                h_first: unsafe { fn_arg::<HistoryGfunT<C>>(&mut ap) },
-                h_next: unsafe { fn_arg::<HistoryGfunT<C>>(&mut ap) },
-                h_last: unsafe { fn_arg::<HistoryGfunT<C>>(&mut ap) },
-                h_prev: unsafe { fn_arg::<HistoryGfunT<C>>(&mut ap) },
-                h_curr: unsafe { fn_arg::<HistoryGfunT<C>>(&mut ap) },
-                h_set: unsafe { fn_arg::<HistorySfunT<C>>(&mut ap) },
-                h_clear: unsafe { fn_arg::<HistoryVfunT<C>>(&mut ap) },
-                h_enter: unsafe { fn_arg::<HistoryEfunT<C>>(&mut ap) },
-                h_add: unsafe { fn_arg::<HistoryEfunT<C>>(&mut ap) },
-                h_del: unsafe { fn_arg::<HistorySfunT<C>>(&mut ap) },
-            };
-            HistoryArg::Funcs(&hf)
+            DispatchArg::Callbacks(CallbackSet {
+                reference: unsafe { ap.next_arg::<*mut c_void>() },
+                first: unsafe { fn_arg::<GetCallback<C>>(&mut ap) },
+                next: unsafe { fn_arg::<GetCallback<C>>(&mut ap) },
+                last: unsafe { fn_arg::<GetCallback<C>>(&mut ap) },
+                previous: unsafe { fn_arg::<GetCallback<C>>(&mut ap) },
+                current: unsafe { fn_arg::<GetCallback<C>>(&mut ap) },
+                select: unsafe { fn_arg::<SelectCallback<C>>(&mut ap) },
+                clear: unsafe { fn_arg::<ClearCallback<C>>(&mut ap) },
+                enter: unsafe { fn_arg::<EnterCallback<C>>(&mut ap) },
+                add: unsafe { fn_arg::<EnterCallback<C>>(&mut ap) },
+                delete: unsafe { fn_arg::<SelectCallback<C>>(&mut ap) },
+            })
         }
 
         // One `int`.
         // SAFETY: the op's argument is an `int`.
         H_SETSIZE | H_SET | H_SETUNIQUE | H_DEL | H_NEXT_EVENT | H_PREV_EVENT => {
-            HistoryArg::Num(unsafe { ap.next_arg::<c_int>() })
+            DispatchArg::Number(unsafe { ap.next_arg::<c_int>() })
         }
 
         // No trailing argument. `H_CURR` included: the header comment's
         // `, const int)` is wrong.
         H_GETSIZE | H_FIRST | H_LAST | H_PREV | H_NEXT | H_CURR | H_END | H_CLEAR | H_GETUNIQUE => {
-            HistoryArg::None
+            DispatchArg::None
         }
 
         // One `const wchar_t *`.
         // SAFETY: the op's argument is a NUL-terminated string of this
         // instantiation's character type.
-        H_ADD | H_ENTER | H_APPEND | H_NEXT_STR | H_PREV_STR => HistoryArg::Str(
+        H_ADD | H_ENTER | H_APPEND | H_NEXT_STR | H_PREV_STR => DispatchArg::Text(
             unsafe { ap.next_arg::<*mut c_void>() }
                 .cast::<C>()
                 .cast_const(),
@@ -1742,19 +1723,15 @@ unsafe fn history_dispatch<C: nshedit::history::HistChar>(
         // One `const char *` filename — narrow in both instantiations,
         // because the on-disk format is bytes and is frozen.
         //
-        // The core takes `&str`, so a path that is not UTF-8 cannot be passed
-        // on; it is reported as the op's failure rather than opened under a
-        // different name. See the crate report — `history_load`/`history_save`
-        // want `&Path`.
         H_LOAD | H_SAVE => {
+            use std::ffi::OsStr;
+            use std::os::unix::ffi::OsStrExt;
+
             // SAFETY: the op's argument is a NUL-terminated path.
             let p = unsafe { ap.next_arg::<*mut c_void>() };
-            let path =
-                unsafe { cbytes(p.cast::<c_char>()) }.and_then(|b| core::str::from_utf8(b).ok());
-            match path {
-                Some(p) => HistoryArg::Path(p),
-                None => return -1,
-            }
+            let path = unsafe { cbytes(p.cast::<c_char>()) }
+                .map(|bytes| std::path::Path::new(OsStr::from_bytes(bytes)));
+            DispatchArg::Path(path)
         }
 
         // One `FILE *`, which the caller keeps and must close. The stream is
@@ -1764,9 +1741,9 @@ unsafe fn history_dispatch<C: nshedit::history::HistChar>(
         H_SAVE_FP => {
             // SAFETY: the op's argument is the caller's `FILE *`.
             let fp = unsafe { ap.next_arg::<*mut c_void>() };
-            HistoryArg::Fp(SaveStream {
+            DispatchArg::Stream(SaveStream {
                 at_start: cstdio::at_start(fp),
-                out: fp_out.insert(CFileWriter::new(fp)),
+                output: fp_out.insert(CFileWriter::new(fp)),
             })
         }
 
@@ -1778,11 +1755,11 @@ unsafe fn history_dispatch<C: nshedit::history::HistChar>(
             // SAFETY: the op's arguments are a `size_t` then a `FILE *`.
             let n = unsafe { ap.next_arg::<usize>() };
             let fp = unsafe { ap.next_arg::<*mut c_void>() };
-            HistoryArg::NSaveFp(
+            DispatchArg::LimitedStream(
                 n,
                 SaveStream {
                     at_start: cstdio::at_start(fp),
-                    out: fp_out.insert(CFileWriter::new(fp)),
+                    output: fp_out.insert(CFileWriter::new(fp)),
                 },
             )
         }
@@ -1793,7 +1770,7 @@ unsafe fn history_dispatch<C: nshedit::history::HistChar>(
             // SAFETY: the op's arguments are an `int` then a `void **`.
             let num = unsafe { ap.next_arg::<c_int>() };
             let d = unsafe { ap.next_arg::<*mut c_void>() };
-            HistoryArg::EvData(num, d.cast::<*mut c_void>())
+            DispatchArg::EventData(num, d.cast::<*mut c_void>())
         }
 
         // `const wchar_t *line` then `void *data`. It does not free the
@@ -1805,47 +1782,23 @@ unsafe fn history_dispatch<C: nshedit::history::HistChar>(
             // instantiation's character type then an opaque cookie.
             let line = unsafe { ap.next_arg::<*mut c_void>() };
             let d = unsafe { ap.next_arg::<*mut c_void>() };
-            HistoryArg::Replace(line.cast::<C>().cast_const(), d)
+            DispatchArg::Replace(line.cast::<C>().cast_const(), d)
         }
 
         // Anything else reads no argument and comes back -1 with `ev` set to
         // code 1, "unknown error" — which the core's default arm does, so it
         // is dispatched rather than short-circuited here.
-        _ => HistoryArg::None,
+        _ => DispatchArg::None,
     };
 
-    // `H_END` consumes both allocations. The compatibility dispatcher owns
-    // its inner box for this call so it can preserve the exact event result;
-    // dropping the outer owner then releases the native store and ABI state.
-    if op == H_END {
-        if h.is_null() {
-            return nshedit::history::history_gen(core::ptr::null_mut(), ev, op, HistoryArg::None);
-        }
-        // SAFETY: `h` is live and uniquely owned by the C caller until this
-        // consuming operation returns.
-        let mut owner = unsafe { Box::from_raw(h) };
-        let compatibility = owner
-            .take_compatibility()
-            .expect("a live history owns its compatibility state");
-        let result =
-            nshedit::history::history_gen(Box::into_raw(compatibility), ev, op, HistoryArg::None);
-        drop(owner);
-        return result;
-    }
-
-    let compatibility = if h.is_null() {
-        core::ptr::null_mut()
-    } else {
-        // SAFETY: non-consuming dispatch through a live ABI owner.
-        unsafe { &mut *h }.compatibility_ptr()
-    };
-
-    // Ownership on the way out, reproduced by the core and not touched here:
+    // Ownership on the way out is implemented by the ABI owner:
     // `H_DEL` and `H_DELDATA` hand the caller a string it owns and must free
     // (and which is NULL on an allocation failure); every other op's
     // `ev.str` points into libedit's storage or at a static message and must
     // not be freed.
-    nshedit::history::history_gen(compatibility, ev, op, arg)
+    // SAFETY: this function's own handle/event/tail contract, now expressed
+    // as one closed typed argument.
+    unsafe { crate::history::dispatch(h, ev, op, arg) }
 }
 
 /// C: `int history_w(HistoryW *, HistEventW *, int, ...);`
@@ -1865,7 +1818,7 @@ pub unsafe extern "C" fn history_w(
     // points into libedit's storage or at a static message and must not be
     // freed.
     // SAFETY: this function's own contract, forwarded unchanged.
-    unsafe { history_dispatch::<u32>(h, ev, op, ap) }
+    unsafe { history_dispatch::<u32>(h.cast::<HistoryWideOwner>(), ev, op, ap) }
 }
 
 // [spec:libedit:def:histedit.tok-winit-fn]

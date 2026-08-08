@@ -42,7 +42,8 @@ use nshedit::filecomplete::{self, FilenameCompletionState};
 use nshedit::tty::{C_EOF, C_REPRINT, TS_IO};
 use std::os::fd::AsRawFd;
 
-use crate::adapter::{EditLine, History};
+use crate::adapter::EditLine;
+use crate::cdecl::handles::History;
 use crate::cdecl::histedit::{
     CC_EOF, CC_ERROR, CC_NORM, CC_REFRESH, H_CLEAR, H_CURR, H_DELDATA, H_ENTER, H_FIRST, H_GETSIZE,
     H_LAST, H_LOAD, H_NEXT, H_NEXT_EVDATA, H_NEXT_EVENT, H_NEXT_STR, H_PREV, H_PREV_EVENT,

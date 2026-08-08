@@ -271,8 +271,8 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
         };
         // `crate::cstdio` reads and writes a stream the *application* owns;
         // this function instead makes a Rust file itself. Its route is
-        // `nshedit::history::history_save_fd`, which is
-        // `history_save_fp` with the caller's stream replaced by a descriptor
+        // The ABI history owner's descriptor writer is
+        // `H_NSAVE_FP` with the caller's stream replaced by a descriptor
         // — exactly the shape this function has: it opened the file ITSELF, so
         // there is no application-owned `FILE *` to respect and nothing on
         // `no-c-ffi`'s enumeration to reach for. That distinction is the whole
@@ -290,7 +290,7 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
         // The descriptor is borrowed: `fp` still owns it and closes it below,
         // as the C's `fclose` does.
         //
-        // Seek it to the end first, and this is load-bearing rather than
+        // Seek it to the end first; this is load-bearing rather than
         // tidiness. `history_save_fd` decides whether to write the
         // `_HiStOrY_V2_` cookie from `ftell(fp) == 0`, faithfully to the C.
         // The C reaches it through `fopen(filename, "a")`, and glibc
@@ -306,11 +306,7 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
         let _ = fp.seek(SeekFrom::End(0));
         // As `write_history`: sampled, not cleared.
         let mark = crate::errno::mark();
-        let rc = nshedit::history::history_save_fd(
-            (&mut *H).compatibility_mut(),
-            n as usize,
-            fp.as_raw_fd(),
-        );
+        let rc = crate::history::save_fd(H, n as usize, fp.as_raw_fd());
         // The C captures `errno` before `fclose`, which can overwrite it.
         let e = if rc == -1 {
             crate::errno::publish(mark);

@@ -174,7 +174,11 @@ pub fn sniff_len() -> usize {
 }
 
 /// libedit's own file starts with this, and has since it was V1.
-const LIBEDIT_COOKIE: &[u8] = b"_HiStOrY_V2_\n";
+/// Signature line used by libedit's legacy V2 history files.
+///
+/// This is public because compatibility adapters can read and write the
+/// format without importing libedit's C-shaped history implementation.
+pub const LIBEDIT_V2_HEADER: &[u8] = b"_HiStOrY_V2_\n";
 
 /// Which history file this is.
 ///
@@ -200,7 +204,7 @@ pub enum Format {
 /// changing the default silently loses everybody's history, and every switch
 /// becomes a migration someone has to be told about.
 pub fn detect(head: &[u8]) -> Format {
-    if head.starts_with(LIBEDIT_COOKIE) {
+    if head.starts_with(LIBEDIT_V2_HEADER) {
         Format::LibeditV2
     } else if is_native(head) {
         Format::Native
@@ -427,15 +431,24 @@ fn cobs_decode(frame: &[u8]) -> Option<Vec<u8>> {
 /// prefix — the C's policy — and `decode_into` writes that prefix without
 /// measuring it.
 #[cfg(feature = "bsd")]
-pub(crate) fn vis_decode_into(dst: &mut [u8], src: &[u8]) -> usize {
+pub fn vis_decode_into(dst: &mut [u8], src: &[u8]) -> usize {
     dst.fill(0);
     let _ = bsd::vis::decode_into(dst, src, bsd::vis::Flags::NONE);
     dst.iter().position(|&b| b == 0).unwrap_or(dst.len())
 }
 
 #[cfg(not(feature = "bsd"))]
-pub(crate) fn vis_decode_into(_dst: &mut [u8], _src: &[u8]) -> usize {
+pub fn vis_decode_into(_dst: &mut [u8], _src: &[u8]) -> usize {
     0
+}
+
+/// Encode one entry for libedit's V2 line-oriented history format.
+///
+/// The returned bytes contain no trailing newline. Space, tab, newline, and
+/// backslash are escaped exactly as `strvis(3)` with `VIS_WHITE` does.
+#[must_use]
+pub fn encode_libedit_entry(bytes: &[u8]) -> Vec<u8> {
+    crate::vislite::encode(crate::vislite::Escape::White, bytes)
 }
 
 #[cfg(test)]

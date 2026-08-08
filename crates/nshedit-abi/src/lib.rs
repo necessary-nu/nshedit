@@ -43,7 +43,7 @@ pub mod chartype;
 pub mod eln;
 pub mod filecomplete;
 pub mod histedit;
-pub mod history;
+mod history;
 pub mod readline;
 
 /// The platform's `errno`, which only this crate may touch.
