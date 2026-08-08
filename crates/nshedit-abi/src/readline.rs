@@ -25,31 +25,10 @@
 //! ERR-readline-18, ERR-readline-20 and ERR-readline-21 all record that
 //! those leaks are not observable.
 //!
-//! # What this cannot yet do
-//!
-//! Blockers, all of them outside this file, each marked at the site:
-//!
-//! - **`libedit_private` entry points `readline.c` calls directly are
-//!   `pub(crate)` in the core**: `tty_init`, `tty_end`,
-//!   `tty_get_signal_character`, `re_putc`, `em_kill_line` and
-//!   `el_init_internal` (which is the only way to ask for `NO_RESET`). The
-//!   stand-ins are gathered under "Core gaps" below.
-//! - **`ioctl(FIONREAD)`**, the poll in `_rl_event_read_char`.
-//!   `plan/decisions/platform-layer.md` defers whether to supply it: two
-//!   rules want it and the other does not compile in the C on glibc, so this
-//!   is the only real obligation and it is still open. `tcgetattr` (the
-//!   `ECHO` test in `rl_initialize`) and `raise(SIGTSTP)` (`_el_rl_tstp`) are
-//!   no longer gaps — both go through `nshedit-plat`.
-//! - **No `stdin`/`stdout`/`stderr`.** `fileno` is available now — see
-//!   [`crate::cstdio`], the third site on `plan/decisions/no-c-ffi.md`'s
-//!   enumeration — so an application's own `rl_instream`/`rl_outstream`
-//!   yields its own descriptors. The three standard streams are data objects
-//!   rather than functions and are not on that enumeration, so a `NULL`
-//!   `rl_instream`/`rl_outstream` still means "the standard descriptor" here
-//!   rather than being rewritten to the C stream object.
-//! - **The passwd database** is NSS through `nshedit-plat`, shared with the
-//!   core's `fn_tilde_expand`. The `/etc/passwd` parser this file used to
-//!   carry is deleted.
+//! Host facilities used by the layer are kept behind `nshedit-plat` or the
+//! ABI crate's C-interoperability modules. The core is reached only through
+//! safe functions, including the few translated operations that readline.c
+//! historically obtained through libedit-private linkage.
 
 use core::cmp::Ordering;
 use core::ffi::{CStr, c_char, c_int, c_uchar, c_ulong, c_void};
@@ -70,7 +49,12 @@ use nshedit::histedit::{
 use nshedit::tty::{C_EOF, C_REPRINT, TS_IO};
 use std::os::fd::AsRawFd;
 
-use crate::cstdio;
+use crate::{cenv, clocale, cstdio};
+use bridge::{
+    NO_TTY, em_kill_line, passwd_home_dir, re_putc, tty_end, tty_get_signal_character, tty_init,
+};
+
+mod bridge;
 
 /// C: `rl_command_func_t *` — the application's keystroke handler.
 ///
@@ -968,18 +952,8 @@ fn isspace(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
 }
 
-/// `fprintf(rl_outstream, ...)` for the two diagnostics `get_history_event`
-/// and `_history_expand_command` print.
-///
-/// The stream is the application's, so this goes through it — one `fputs`,
-/// buffered exactly as the C's `fprintf` is, so a caller that interleaves its
-/// own writes sees them in the order it wrote them. See [`crate::cstdio`].
-///
-/// A NULL `rl_outstream` reaches the process's standard output instead. The C
-/// cannot be here with a NULL one: `rl_initialize` defaults it to `stdout`,
-/// which is step 3 and the one part of that rule the port still cannot do —
-/// `stdout` is a data object and is not on `no-c-ffi`'s enumeration. Writing
-/// to descriptor 1 is what that stream would have done.
+/// Buffered diagnostics to the caller's configured C output stream.
+/// The Rust fallback only covers calls made before readline is initialized.
 fn rl_out_write(msg: &[u8]) {
     // SAFETY: single-threaded module state.
     let stream = unsafe { rl_outstream };
@@ -991,69 +965,6 @@ fn rl_out_write(msg: &[u8]) {
     let mut out = out.lock();
     let _ = out.write_all(msg);
     let _ = out.flush();
-}
-
-// ---------------------------------------------------------------------------
-// Core gaps
-//
-// `readline.c` calls these `libedit_private` entry points directly. Every one
-// of them is `pub(crate)` in the core, so this crate cannot reach it; the
-// stand-ins keep the call sites reading as the C does and are the list to work
-// through when the core publishes them.
-// ---------------------------------------------------------------------------
-
-/// C: `tty_init(el)` — needs `nshedit::tty::tty_init`.
-fn tty_init(el: *mut EditLine) {
-    let _ = el;
-}
-
-/// C: `tty_end(el, how)` — needs `nshedit::tty::tty_end`.
-fn tty_end(el: *mut EditLine, how: c_int) {
-    let _ = (el, how);
-}
-
-/// C: `re_putc(el, c, 0)` — needs `nshedit::refresh::re_putc`. Writes into
-/// the *virtual display array* without advancing the refresh cursor and
-/// without reaching the terminal, which is why `rl_ding` and friends are
-/// nearly no-ops even in the C (ERR-readline-25).
-fn re_putc(el: *mut EditLine, c: u32) {
-    let _ = (el, c);
-}
-
-/// C: `em_kill_line(el, 0)` — needs `nshedit::emacs::em_kill_line`.
-fn em_kill_line(el: *mut EditLine) {
-    let _ = el;
-}
-
-/// C: `tty_get_signal_character(el, sig)` — needs
-/// `nshedit::tty::tty_get_signal_character`. -1 is the C's own answer when
-/// `ECHOCTL` is clear or the signal has no character, so `rl_echo_signal_char`
-/// takes its documented early return until the core publishes it.
-fn tty_get_signal_character(el: *mut EditLine, sig: c_int) -> c_int {
-    let _ = (el, sig);
-    -1
-}
-
-/// C: `#define NO_TTY 0x002` (`el.h`) — the flag `readline()` tests before
-/// installing the event-hook reader. The core's copy is `pub(crate)`.
-const NO_TTY: i32 = 0x002;
-
-// ---------------------------------------------------------------------------
-// The passwd database
-//
-// `readline.c` uses `getpwuid(getuid())` and the
-// `setpwent`/`getpwent`/`endpwent` cursor. Both go through `nshedit-plat`,
-// which reaches NSS — so the `/etc/passwd` parser that used to stand here,
-// the second of the two the port carried, is deleted rather than kept as a
-// fallback. See `plan/decisions/platform-layer.md`, group 10.
-// ---------------------------------------------------------------------------
-
-/// `getpwuid(getuid())->pw_dir`.
-///
-/// The *real* uid, as the C's `getuid()` is. `None` where the C's `getpwuid`
-/// returns NULL.
-fn passwd_home_dir() -> Option<Vec<u8>> {
-    nshedit_plat::passwd::home_dir_by_uid(nshedit_plat::getuid())
 }
 
 // ---------------------------------------------------------------------------
@@ -1369,28 +1280,18 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
 
         rl_readline_state &= !RL_STATE_DONE;
 
-        // Steps 4 and 5's `fileno` is no longer a gap: an application that
-        // installs its own `rl_instream`/`rl_outstream` now gets *its*
-        // descriptors, which is the whole point of those exported globals.
-        //
-        // Step 3 still is one. `stdin` and `stdout` are data objects in the C
-        // library — and macros over an array on the BSDs — which
-        // `plan/decisions/no-c-ffi.md`'s enumeration does not reach, so a
-        // NULL stream keeps meaning "the standard one" instead of being
-        // rewritten to the C's own stream object, and falls back to the
-        // descriptor that stream carries at program start. Same for `stderr`,
-        // which step 5 passes as `ferr`.
-        let fdin = if rl_instream.is_null() {
-            0
-        } else {
-            cstdio::fileno_of(rl_instream)
-        };
-        let fdout = if rl_outstream.is_null() {
-            1
-        } else {
-            cstdio::fileno_of(rl_outstream)
-        };
-        let fderr = 2;
+        // Step 3. These must be the libc's actual stream objects: a caller can
+        // observe both pointer identity and their userspace buffering.
+        if rl_instream.is_null() {
+            rl_instream = cstdio::standard_input();
+        }
+        if rl_outstream.is_null() {
+            rl_outstream = cstdio::standard_output();
+        }
+        let error_stream = cstdio::standard_error();
+        let fdin = cstdio::fileno_of(rl_instream);
+        let fdout = cstdio::fileno_of(rl_outstream);
+        let fderr = cstdio::fileno_of(error_stream);
 
         // Step 4's `tcgetattr(fileno(rl_instream))` test for a clear `ECHO`,
         // both halves of which are answerable now — `fileno` through
@@ -1404,18 +1305,22 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
             None => 1,
         };
 
-        E = crate::histedit::el_init_fd(
-            rl_readline_name,
+        let Some(program_bytes) = c_bytes_opt(rl_readline_name) else {
+            return -1;
+        };
+        let Ok(program) = core::str::from_utf8(program_bytes) else {
+            return -1;
+        };
+        E = nshedit::el::el_init_fd_preserving_terminal(
+            program,
             rl_instream,
             rl_outstream,
-            ptr::null_mut(),
+            error_stream,
             fdin,
             fdout,
             fderr,
-        );
-        // Gap: `el_init_internal`, and with it the `NO_RESET` flag the C asks
-        // for, is `pub(crate)` in the core; `el_init_fd` passes flags of 0,
-        // so EditLine will reset the tty on teardown.
+        )
+        .map_or(ptr::null_mut(), Box::into_raw);
 
         if editmode == 0 {
             el_set_va(E, EL_EDITMODE, 0);
@@ -1470,10 +1375,16 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
         if !rl_terminal_name.is_null() {
             el_set_va(E, EL_TERMINAL, rl_terminal_name);
         } else {
-            // Writes the global with a pointer to EditLine's own copy: a
-            // borrowed pointer the application must not free and that dies
-            // with `e`.
-            el_get_va(E, EL_TERMINAL, &raw mut rl_terminal_name);
+            // `terminal_set` keeps this exact pointer in the C. The native
+            // core owns its terminal name, so restore the ABI's observable
+            // alias explicitly: environment storage for a non-empty TERM,
+            // otherwise the adapter's read-only `"dumb"` literal.
+            let term = cenv::get(c"TERM");
+            rl_terminal_name = if term.is_null() || *term == 0 {
+                c"dumb".as_ptr().cast_mut()
+            } else {
+                term
+            };
         }
 
         /*
@@ -2930,14 +2841,9 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
             Ok(f) => f,
             Err(e) => return errno_of(&e),
         };
-        // Gap, and a different one from the rest of this crate's `FILE *`
-        // work. `crate::cstdio` reads and writes a stream the *application*
-        // owns; this function has to *make* one, for a file it opened itself,
-        // and `fopen`/`fdopen` are not on `plan/decisions/no-c-ffi.md`'s
-        // enumeration — the argument there is about a caller's opaque object,
-        // which this is not.
-        //
-        // The route out is `nshedit::history::history_save_fd`, which is
+        // `crate::cstdio` reads and writes a stream the *application* owns;
+        // this function instead makes a Rust file itself. Its route is
+        // `nshedit::history::history_save_fd`, which is
         // `history_save_fp` with the caller's stream replaced by a descriptor
         // — exactly the shape this function has: it opened the file ITSELF, so
         // there is no application-owned `FILE *` to respect and nothing on
@@ -4221,13 +4127,15 @@ fn _rl_event_read_char(el: *mut EditLine, wc: *mut u32) -> c_int {
             if el.is_null() {
                 return -1;
             }
-            // Gap: the C polls with `ioctl(FIONREAD)` and reads only when a
-            // byte is pending, which is what makes the loop call the hook
-            // repeatedly (ERR-readline-33). The ioctl has no route here, so
-            // the retry only happens when the descriptor is itself
-            // non-blocking — the C's EAGAIN arm, and the case an event-hook
-            // consumer sets up. Otherwise the read blocks and the hook is
-            // called once per character.
+            // The successful zero result is not EOF: it means no byte can be
+            // read without blocking, so the busy loop invokes the hook again.
+            let Some(ready) = nshedit_plat::bytes_ready_to_read((*el).el_infd) else {
+                return -1;
+            };
+            if ready == 0 {
+                num_read = 0;
+                continue;
+            }
             match read_one_byte((*el).el_infd, &mut ch) {
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     num_read = 0;
@@ -4237,12 +4145,13 @@ fn _rl_event_read_char(el: *mut EditLine, wc: *mut u32) -> c_int {
                     num_read = -1;
                     break;
                 }
-                // The C also retries on a zero-length read, which under
-                // FIONREAD means "nothing pending yet". A blocking read
-                // answers 0 only at end of input, so the port stops rather
-                // than spinning.
+                // A race can consume the pending byte between FIONREAD and
+                // read; zero is retried just like the C's result.
                 Ok(n) => {
                     num_read = n as c_int;
+                    if n == 0 {
+                        continue;
+                    }
                     break;
                 }
             }
@@ -4423,16 +4332,6 @@ pub unsafe extern "C" fn rl_get_screen_size(rows: *mut c_int, cols: *mut c_int) 
 /// The one genuinely variadic entry point in this file, and the only one whose
 /// tail is a `printf` argument list rather than an enumerated per-op shape.
 //
-// THE FORMAT STRING IS INSTALLED UNEXPANDED. `c_variadic` is stable, so the
-// tail is now reachable — `abi-varargs` — but running the C's
-// `vsnprintf(msg, sizeof msg, format, args)` over it needs a `printf`
-// implementation, and `plan/decisions/no-c-ffi.md` enumerates the three sites
-// where a libc symbol may be named: `vsnprintf` is at none of them, and a
-// fourth site amends that decision before it is written. So the remaining
-// blocker is the formatter, not the `va_list`. Everything around it
-// is faithful — the 160-byte truncation, the prompt being overwritten rather
-// than saved, and the forced redisplay (ERR-readline-36) — so an application
-// whose message carries no conversions sees the C's behaviour exactly.
 // [spec:libedit:def:readline.rl-message-fn]
 // [spec:libedit:sem:readline.rl-message-fn]
 #[unsafe(no_mangle)]
@@ -4441,10 +4340,9 @@ pub unsafe extern "C" fn rl_message(format: *const c_char, ap: ...) {
     unsafe {
         let mut msg = [0u8; MAX_MESSAGE];
         if !format.is_null() {
-            let src = c_bytes(format);
-            // `vsnprintf` truncates silently at 159 characters plus NUL.
-            let n = src.len().min(MAX_MESSAGE - 1);
-            msg[..n].copy_from_slice(&src[..n]);
+            // `vsnprintf` truncates silently at 159 characters plus NUL. Its
+            // return is the untruncated length, which the C discards.
+            let _ = cstdio::format(&mut msg, format, ap);
         }
         // The message *becomes* `rl_prompt`, overwriting whatever was there,
         // so an application that did not call `rl_save_prompt` first loses the
@@ -4642,17 +4540,9 @@ pub unsafe extern "C" fn _rl_qsort_string_compare(
     // SAFETY: both are pointers to live `char *` elements.
     unsafe {
         // Not used anywhere in libedit: `rl_completion_matches` casts `strcmp`
-        // itself instead (ERR-readline-01). Kept because it is exported.
-        //
-        // Gap: `strcoll` needs `LC_COLLATE`, which the port has no route to,
-        // so this is byte order — which is what `strcoll` gives in the C
-        // locale.
-        let (a, b) = (c_bytes(*s1), c_bytes(*s2));
-        match a.cmp(b) {
-            Ordering::Less => -1,
-            Ordering::Equal => 0,
-            Ordering::Greater => 1,
-        }
+        // itself instead (ERR-readline-01). Kept because it is exported, and
+        // its ordering is the process's current LC_COLLATE rather than bytes.
+        clocale::compare(*s1, *s2)
     }
 }
 

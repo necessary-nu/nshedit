@@ -1003,6 +1003,25 @@ pub fn el_init_fd(
     el_init_internal(prog, fin, fout, ferr, fdin, fdout, fderr, 0)
 }
 
+/// Construct an editor without resetting terminal modes during tty setup.
+///
+/// This is the safe semantic distinction used by readline: the ordinary
+/// libedit constructor resets the saved modes during setup, while readline
+/// preserves them across repeated reads. Hidden until the native editor
+/// builder replaces the translated constructor surface.
+#[doc(hidden)]
+pub fn el_init_fd_preserving_terminal(
+    prog: &str,
+    fin: CFile,
+    fout: CFile,
+    ferr: CFile,
+    fdin: i32,
+    fdout: i32,
+    fderr: i32,
+) -> Option<Box<EditLine>> {
+    el_init_internal(prog, fin, fout, ferr, fdin, fdout, fderr, NO_RESET)
+}
+
 // [spec:libedit:def:el.el-end-fn]
 // [spec:libedit:sem:el.el-end-fn]
 /// C: `void el_end(EditLine *el)`.

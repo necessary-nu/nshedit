@@ -529,14 +529,45 @@ pub unsafe extern "C" fn fn_tilde_expand(txt: *const c_char) -> *mut c_char {
     let Some(bytes) = (unsafe { c_bytes_opt(txt) }) else {
         return ptr::null_mut();
     };
-    // The core takes a `&str`, so a path that is not valid UTF-8 cannot be
-    // handed through unchanged; reported as a core-signature gap.
-    let txt = String::from_utf8_lossy(bytes).into_owned();
-    match filecomplete::fn_tilde_expand(&txt) {
-        // SAFETY: the block is handed to the caller, who frees it.
-        Some(s) => unsafe { c_dup(s.as_bytes()) },
-        None => ptr::null_mut(),
+    if bytes.first() != Some(&b'~') {
+        // SAFETY: the block is handed to the caller, who frees it. Paths are
+        // bytes on the supported POSIX ABI, so no UTF-8 conversion belongs on
+        // this pass-through path.
+        return unsafe { c_dup(bytes) };
     }
+
+    // Locate the account name and preserve the C's `len == 0` defect when no
+    // slash is present: after a successful lookup, `~`/`~user` is appended in
+    // full after the home directory.
+    let (name, rest_at) = match bytes[1..].iter().position(|&byte| byte == b'/') {
+        None => (&bytes[1..], 0),
+        Some(relative) => (&bytes[1..relative + 1], relative + 2),
+    };
+    let home = if name.is_empty() {
+        nshedit_plat::passwd::home_dir_by_uid(nshedit_plat::getuid())
+    } else {
+        core::str::from_utf8(name)
+            .ok()
+            .and_then(nshedit_plat::passwd::home_dir_by_name)
+    };
+    let Some(home) = home else {
+        // Unknown (including non-UTF-8) account names are copied unchanged.
+        return unsafe { c_dup(bytes) };
+    };
+
+    let rest = &bytes[rest_at..];
+    let mut expanded = Vec::new();
+    if expanded
+        .try_reserve_exact(home.len() + 1 + rest.len())
+        .is_err()
+    {
+        return ptr::null_mut();
+    }
+    expanded.extend_from_slice(&home);
+    expanded.push(b'/');
+    expanded.extend_from_slice(rest);
+    // SAFETY: the block is handed to the caller, who frees it.
+    unsafe { c_dup(&expanded) }
 }
 
 // [spec:libedit:def:filecomplete.fn-filename-completion-function-fn]
@@ -570,8 +601,8 @@ pub unsafe extern "C" fn fn_filename_completion_function(
 
 #[cfg(test)]
 mod tests {
-    use super::{HookGuard, app_func_adapter, intern};
-    use core::ffi::c_char;
+    use super::{HookGuard, app_func_adapter, c_free_str, fn_tilde_expand, intern};
+    use core::ffi::{CStr, c_char};
 
     /// Interning is per distinct value, so a hook that returns a shared
     /// buffer does not leak once per call.
@@ -606,5 +637,20 @@ mod tests {
             assert_eq!(app_func_adapter("x"), "/", "the outer hook is restored");
         }
         assert_eq!(app_func_adapter("x"), "");
+    }
+
+    /// A POSIX path is bytes, so the ABI's copy-through route must not insert
+    /// UTF-8 replacement characters before handing ownership back to C.
+    // [spec:libedit:sem:filecomplete.fn-tilde-expand-fn/test]
+    #[test]
+    fn tilde_preserves_non_utf8_bytes() {
+        let input = [b'x', 0xff, b'y', 0];
+        // SAFETY: `input` is NUL-terminated; the returned block is freed below.
+        let expanded = unsafe { fn_tilde_expand(input.as_ptr().cast()) };
+        assert!(!expanded.is_null());
+        // SAFETY: the function returns a NUL-terminated allocation.
+        assert_eq!(unsafe { CStr::from_ptr(expanded) }.to_bytes(), &input[..3]);
+        // SAFETY: ownership of the allocation is ours.
+        unsafe { c_free_str(expanded) };
     }
 }

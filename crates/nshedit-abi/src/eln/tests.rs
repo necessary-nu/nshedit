@@ -418,18 +418,23 @@ fn installing_history_through_the_narrow_setter_pins_the_bridge_narrow() {
 }
 
 // [spec:libedit:sem:histedit.el-get-fn/test]
-/// What the narrow getter forwards, and what it still does not answer.
+/// What the narrow getter forwards and converts.
 ///
 /// The forwarded ops are the ones whose argument needs no conversion, and
 /// `EL_GETTC` is among them because capability names are `char *` in both
 /// APIs — which is what `rl_get_screen_size` depends on. Everything else
 /// still falls to the C's `default` arm: `EL_PREP_TERM` is a set-only op
 /// this wrapper pretends to forward and always answers -1
-/// (ERR-core-api-17), and `EL_EDITOR`/`EL_WORDCHARS`/the prompt family
-/// have no narrow arm yet, where the C answers them. That last group is a
-/// gap, not a reproduced defect, and this pins where it currently is.
+/// (ERR-core-api-17).
 #[test]
 fn the_narrow_getter_forwards_what_needs_no_conversion() {
+    unsafe extern "C" fn left(_: *mut EditLine) -> *mut u32 {
+        ptr::null_mut()
+    }
+    unsafe extern "C" fn right(_: *mut EditLine) -> *mut u32 {
+        ptr::null_mut()
+    }
+
     let el = editline();
     let cookie = 0xabc_usize as *mut c_void;
     let mut back: *mut c_void = ptr::null_mut();
@@ -456,11 +461,58 @@ fn the_narrow_getter_forwards_what_needs_no_conversion() {
         let mut junk: c_int = 0;
         assert_eq!(el_get(el, EL_PREP_TERM, &raw mut junk), -1);
 
-        // Not yet implemented on this side; the C answers 0 here with a
-        // pointer into `el_lgcyconv.cbuff`.
+        // Narrow string getters answer from `el_lgcyconv.cbuff`.
         let mut s: *const c_char = ptr::null();
-        assert_eq!(el_get(el, EL_EDITOR, &raw mut s), -1);
-        assert!(s.is_null());
+        assert_eq!(el_get(el, EL_EDITOR, &raw mut s), 0);
+        assert_eq!(CStr::from_ptr(s).to_bytes(), b"vi");
+
+        assert_eq!(el_get(el, EL_WORDCHARS, &raw mut s), 0);
+        assert_eq!(CStr::from_ptr(s).to_bytes(), b"_");
+
+        let mut callback: Option<ElPfuncT> = None;
+        assert_eq!(el_set(el, EL_PROMPT, left as ElPfuncT), 0);
+        assert_eq!(el_get(el, EL_PROMPT, &raw mut callback), 0);
+        assert_eq!(
+            callback.map(|f| f as usize),
+            Some(left as *const () as usize)
+        );
+
+        assert_eq!(el_set(el, EL_RPROMPT, right as ElPfuncT), 0);
+        callback = None;
+        assert_eq!(el_get(el, EL_RPROMPT, &raw mut callback), 0);
+        assert_eq!(
+            callback.map(|f| f as usize),
+            Some(right as *const () as usize)
+        );
+
+        assert_eq!(
+            el_set(el, EL_RPROMPT_ESC, right as ElPfuncT, b'!' as c_int),
+            0
+        );
+        callback = None;
+        let mut escape = 0 as c_char;
+        assert_eq!(
+            el_get(el, EL_PROMPT_ESC, &raw mut callback, &raw mut escape),
+            0
+        );
+        // ERR-core-api-14: both escape getters select the right prompt.
+        assert_eq!(
+            callback.map(|f| f as usize),
+            Some(right as *const () as usize)
+        );
+        assert_eq!(escape as u8, b'!');
+
+        callback = None;
+        escape = 0;
+        assert_eq!(
+            el_get(el, EL_RPROMPT_ESC, &raw mut callback, &raw mut escape),
+            0
+        );
+        assert_eq!(
+            callback.map(|f| f as usize),
+            Some(right as *const () as usize)
+        );
+        assert_eq!(escape as u8, b'!');
     }
     done(el);
 }

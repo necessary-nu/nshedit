@@ -2111,9 +2111,11 @@
 >     config file can override it.
 > 13. Terminal name: if `rl_terminal_name` is non-NULL it is pushed with
 >     `el_set(e, EL_TERMINAL, rl_terminal_name)`; otherwise `el_get(e,
->     EL_TERMINAL, &rl_terminal_name)` *writes* the global with a pointer to
->     EditLine's own copy of the terminal name — a borrowed pointer the
->     application must not free and that dies with `e`.
+>     EL_TERMINAL, &rl_terminal_name)` *writes* the global with the exact
+>     pointer `terminal_set` retained without copying: normally borrowed
+>     process-environment storage, or the read-only `"dumb"` literal when
+>     `TERM` is absent or unusable. The application must neither free nor
+>     mutate it; environment mutation may invalidate it.
 > 14. Registers `rl_complete` as an EditLine function (`el_set(e, EL_ADDFN,
 >     "rl_complete", "ReadLine compatible completion function",
 >     _el_rl_complete)`) and binds it to `^I`; this must come after the
@@ -3040,4 +3042,3 @@
 >    does return internally but is discarded here).
 >
 > No global is modified; `history_length` is not refreshed by this call.
-

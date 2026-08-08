@@ -2235,6 +2235,14 @@ children (
                     native-impl ([spec:nshedit:req:abi.complete-surface])
                 }
                 deps (greenfield-abi-oracle)
+                log (
+                    {
+                        at 2026-08-08T14:47:27.196007056Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

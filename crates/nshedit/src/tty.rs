@@ -945,7 +945,8 @@ fn tty_setup(el: &mut EditLine) -> i32 {
 
 // [spec:libedit:def:tty.tty-init-fn]
 // [spec:libedit:sem:tty.tty-init-fn]
-pub(crate) fn tty_init(el: &mut EditLine) -> i32 {
+#[doc(hidden)]
+pub fn tty_init(el: &mut EditLine) -> i32 {
     // Step 1. The mode is *asserted*, not observed: if the terminal happens
     // to be raw at this point, libedit now disagrees with reality.
     el.el_tty.t_mode = EX_IO as u8;
@@ -971,7 +972,8 @@ pub(crate) fn tty_init(el: &mut EditLine) -> i32 {
 
 // [spec:libedit:def:tty.tty-end-fn]
 // [spec:libedit:sem:tty.tty-end-fn]
-pub(crate) fn tty_end(el: &mut EditLine, how: i32) {
+#[doc(hidden)]
+pub fn tty_end(el: &mut EditLine, how: i32) {
     // Step 1.
     if el.el_flags & EDIT_DISABLED != 0 {
         return;
@@ -1824,7 +1826,8 @@ fn tty_setup_flags(el: &mut EditLine, tios: &mut Termios, mode: i32) {
 /// The consequence to carry forward: the readline echo-signal-char entry
 /// point is dead on this platform, and a caller must not read anything into
 /// its -1.
-pub(crate) fn tty_get_signal_character(el: &mut EditLine, sig: i32) -> i32 {
+#[doc(hidden)]
+pub fn tty_get_signal_character(el: &mut EditLine, sig: i32) -> i32 {
     // ERR-terminal-36, exactly as written: `MD_INP`, not `MD_LIN`.
     let ed = *tty__get_flag(&mut el.el_tty.t_ed, MD_INP as i32);
     if ed & plat::ECHOCTL == 0 {

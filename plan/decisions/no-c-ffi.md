@@ -10,6 +10,9 @@ scope {
         [spec:libedit:sem:el.el-wset-fn]
         [spec:libedit:sem:history.history-save-fp-fn]
         [spec:libedit:sem:readline.rl-initialize-fn]
+        [spec:libedit:sem:readline.rl-message-fn]
+        [spec:libedit:sem:readline.rl-qsort-string-compare-fn]
+        [spec:libedit:sem:readline.rl-terminal-name]
         [spec:nshedit:req:core.rust-io]
         [spec:nshedit:req:core.unsafe-free]
     )
@@ -34,8 +37,11 @@ consequences {
         "No build script searches for or links an optional C library. Terminal capabilities and other former library facilities are implemented in Rust."
         "nshedit contains no foreign declarations or unsafe code. It returns typed errors and operates on safe platform and I/O interfaces."
         "nshedit-plat owns the platform libc facilities for which no sound pure-Rust route exists: the signal family and NSS passwd family. It exposes safe operations to its consumers."
-        "nshedit-abi owns C interoperability facilities: the thread-local errno accessor and one cstdio module for fileno, position, buffered writes, formatting, flushing when the reference requires it, and access to the process's actual standard streams."
+        "nshedit-abi owns C interoperability facilities: the thread-local errno accessor; one cstdio module for fileno, position, buffered writes, formatting, flushing when the reference requires it, and the actual standard streams; borrowed environment identity; and C-locale collation."
         "stdin, stdout, and stderr are part of the existing cstdio exception, not a fourth category. The cstdio module uses target-specific functions, data symbols, or documented accessors behind cfg while presenting one internal interface."
+        "The cstdio boundary declares vsnprintf for rl_message because an erased C varargs list can contain arbitrary printf argument types and locale-sensitive conversions; no Rust formatter can interpret it without changing the ABI contract."
+        "nshedit-abi may call Linux secure_getenv solely to retain the borrowed environment pointer promised by rl_terminal_name. std::env and the native core intentionally return owned values and cannot reproduce that observable pointer lifetime or identity."
+        "nshedit-abi declares strcoll for the exported readline comparator because LC_COLLATE is process-global C-locale state and Rust's byte or Unicode ordering is not its specified order."
         "A caller-owned FILE object remains entirely in nshedit-abi. The core receives only safe semantic read, write, flush, and descriptor operations and never learns the object's representation."
         "Every new foreign declaration requires this decision to be amended with both the missing pure-Rust route and the spec rule that makes the facility observable."
     )
@@ -61,14 +67,16 @@ standard library. Most facilities have a sound Rust route and must take it.
 The remaining cases are narrow and dictated by an observable contract.
 
 Signals and NSS belong to the platform boundary because native Rust consumers
-need them too and rustix deliberately does not replace them. Errno and stdio
-belong to the ABI because they exist only as C caller state. In particular, a
+need them too and rustix deliberately does not replace them. Errno, stdio,
+borrowed environment identity, and C-locale collation belong to the ABI
+because they exist only as C caller or process state. In particular, a
 `FILE *` is not its descriptor: buffering, position, write ordering, and the
 identity of the process standard streams reside in the C library's opaque
 object. Converting it to a raw descriptor would implement a nearby but
-different contract.
+different contract. Likewise, copying `TERM` loses the pointer lifetime
+readline exposes, and byte or Unicode ordering is not `LC_COLLATE`.
 
-The core therefore sees neither family of representation. `nshedit-plat`
+The core therefore sees none of these representations. `nshedit-plat`
 contains the platform unsafety behind safe functions, while `nshedit-abi`
 contains the foreign objects and converts typed core failures to errno. The
 enumeration keeps that exception reviewable and prevents compatibility

@@ -1,11 +1,12 @@
 /*
  * Compatibility behaviours that were documented but not previously driven.
  *
- * This is an ordinary differential driver except that its initial port diff
- * is recorded exactly under conformance/known-gaps/. The next implementation
- * node removes each divergence and then removes that fixture; the harness
- * rejects both an unrecorded change and a stale fixture after equality.
+ * This began with an exact port-diff fixture under conformance/known-gaps/.
+ * The compatibility baseline closed every observation and removed that
+ * fixture; the driver remains as the regression proof that the completed
+ * surface stays equal to the oracle.
  */
+/* [spec:nshedit:req:abi.complete-surface+1/test] */
 #define _XOPEN_SOURCE 700
 #define _DEFAULT_SOURCE
 

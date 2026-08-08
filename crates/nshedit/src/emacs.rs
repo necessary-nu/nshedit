@@ -138,7 +138,8 @@ pub(crate) fn em_yank(el: &mut EditLine, c: u32) -> ElActionT {
 ///
 /// ERR-modes-57: the whole line, both sides of the cursor — GNU emacs binds
 /// `^U` to `universal-argument` and kills only forwards from point.
-pub(crate) fn em_kill_line(el: &mut EditLine, c: u32) -> ElActionT {
+#[doc(hidden)]
+pub fn em_kill_line(el: &mut EditLine, c: u32) -> ElActionT {
     let _ = c; // C: `wint_t c __attribute__((__unused__))`.
 
     kill_save(el, 0, el.el_line.lastchar);

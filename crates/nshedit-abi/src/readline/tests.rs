@@ -23,8 +23,8 @@ fn globals() -> MutexGuard<'static, ()> {
 // Pure functions; no global state, so no lock.
 // -----------------------------------------------------------------------
 
-/// The exported comparator orders by raw bytes and clamps its answer to
-/// -1/0/1, where `strcoll` is only promised to return the right sign.
+/// The exported comparator delegates to `strcoll`, whose result promises a
+/// sign rather than a particular negative or positive magnitude.
 ///
 /// Nothing in libedit calls it: `rl_completion_matches` sorts through a
 /// cast `strcmp` instead, which is ERR-readline-01. It is tested here
@@ -33,7 +33,7 @@ fn globals() -> MutexGuard<'static, ()> {
 /// libedit actually performs.
 // [spec:libedit:sem:readline.rl-qsort-string-compare-fn/test]
 #[test]
-fn the_unused_comparator_orders_by_bytes_and_clamps_its_answer() {
+fn unused_comparator_uses_strcoll() {
     // `qsort` hands a comparator the *addresses* of the elements, which
     // is why both parameters are `char **` and both are dereferenced.
     let mut apple = c"apple".as_ptr().cast_mut();
@@ -44,25 +44,18 @@ fn the_unused_comparator_orders_by_bytes_and_clamps_its_answer() {
     // SAFETY: every argument points at a live `*mut c_char` holding a
     // NUL-terminated string.
     unsafe {
-        assert_eq!(
-            _rl_qsort_string_compare(&raw mut apple, &raw mut banana),
-            -1
-        );
-        assert_eq!(_rl_qsort_string_compare(&raw mut banana, &raw mut apple), 1);
+        assert!(_rl_qsort_string_compare(&raw mut apple, &raw mut banana) < 0);
+        assert!(_rl_qsort_string_compare(&raw mut banana, &raw mut apple) > 0);
         assert_eq!(_rl_qsort_string_compare(&raw mut apple, &raw mut apple), 0);
 
-        // A prefix sorts before what extends it, and the gap of 's' is
-        // reported as 1 rather than as the difference `strcmp` would give.
-        assert_eq!(
-            _rl_qsort_string_compare(&raw mut apple, &raw mut apples),
-            -1
-        );
-        assert_eq!(_rl_qsort_string_compare(&raw mut apples, &raw mut apple), 1);
+        // A prefix sorts before what extends it.
+        assert!(_rl_qsort_string_compare(&raw mut apple, &raw mut apples) < 0);
+        assert!(_rl_qsort_string_compare(&raw mut apples, &raw mut apple) > 0);
 
-        // Byte order, not dictionary order: 'Z' (0x5a) precedes 'a'
-        // (0x61). A real `strcoll` under a non-C `LC_COLLATE` would
-        // answer the other way; the port has no route to the locale.
-        assert_eq!(_rl_qsort_string_compare(&raw mut upper, &raw mut apple), -1);
+        // The test process starts in the C locale, where byte ordering puts
+        // uppercase ASCII before lowercase. Other locales are covered by the
+        // differential conformance matrix.
+        assert!(_rl_qsort_string_compare(&raw mut upper, &raw mut apple) < 0);
     }
 }
 
@@ -207,17 +200,15 @@ fn erasing_the_entire_line_erases_nothing() {
 /// afterwards, so `rl_point` and `rl_end` go on describing the line that
 /// was just killed until something else refreshes them.
 ///
-/// The kill itself is not exercised here: `em_kill_line` is one of the
-/// core's `libedit_private` entry points this crate cannot reach yet and
-/// stands in as a no-op. What is pinned is the part that will not change
-/// when it lands — the return, and the globals left stale.
 // [spec:libedit:sem:readline.rl-kill-full-line-fn/test]
 #[test]
-fn killing_the_full_line_refreshes_none_of_the_position_globals() {
+fn full_line_kill_keeps_position_globals() {
     let _g = globals();
-    // SAFETY: single-threaded under the lock; `E` is NULL, which the C
-    // would pass on to `em_kill_line` unguarded.
+    let _ed = Piped::install();
+    // SAFETY: single-threaded under the lock; `E` is the fixture's editor.
     unsafe {
+        assert_eq!(crate::eln::el_insertstr(E, c"some text".as_ptr()), 0);
+        assert_eq!((*E).el_line.lastchar, 9);
         rl_point = 3;
         rl_end = 9;
 
@@ -227,6 +218,10 @@ fn killing_the_full_line_refreshes_none_of_the_position_globals() {
         let (point, end) = (rl_point, rl_end);
         assert_eq!(point, 3);
         assert_eq!(end, 9);
+        assert_eq!((*E).el_line.cursor, 0);
+        assert_eq!((*E).el_line.lastchar, 0);
+        let kill = &(*E).el_chared.c_kill;
+        assert_eq!(&kill.buf[..kill.last], &b"some text".map(u32::from));
 
         rl_point = 0;
         rl_end = 0;
@@ -727,6 +722,25 @@ impl Drop for Piped {
             crate::histedit::history_end(H);
             H = ptr::null_mut();
         }
+    }
+}
+
+/// `rl_message` delegates the erased argument list to the platform's C
+/// formatter, then applies libedit's fixed 159-byte payload limit.
+// [spec:libedit:sem:readline.rl-message-fn/test]
+#[test]
+fn messages_format_and_truncate() {
+    let _g = globals();
+    let _ed = Piped::install();
+    // SAFETY: each format string matches its argument list, and the editor is
+    // live for the forced redisplay.
+    unsafe {
+        rl_message(c"%s:%d".as_ptr(), c"item".as_ptr(), 42 as c_int);
+        assert_eq!(c_bytes(rl_prompt), b"item:42");
+
+        let long = std::ffi::CString::new(vec![b'x'; 200]).expect("no NUL");
+        rl_message(c"%s".as_ptr(), long.as_ptr());
+        assert_eq!(c_bytes(rl_prompt), vec![b'x'; MAX_MESSAGE - 1]);
     }
 }
 

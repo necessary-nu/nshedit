@@ -26,28 +26,15 @@
 //! decoding calls (`el_push`, `el_parse`, `el_insertstr`, `el_replacestr`)
 //! touch only the wide half, so a string handed out earlier survives them.
 //!
-//! # What the C does that this does not yet do
-//!
-//! **`el_get` answers -1 for the ops that need a narrowing conversion.**
-//! There is no arm for `EL_EDITOR`, `EL_WORDCHARS`, `EL_PROMPT`, `EL_RPROMPT`,
-//! `EL_PROMPT_ESC` or `EL_RPROMPT_ESC`, so the caller gets -1 and nothing
-//! written where the C answers 0 with a value. The setter side handles the
-//! same ops; only the getter half is missing.
-//!
-//! That is a gap this port introduced, not one it reproduces. Everything else
-//! dispatches: [`el_set`] forwards nine ops to [`crate::histedit::el_wset`],
-//! collects the list ops, decodes `EL_EDITOR` and `EL_WORDCHARS`, and handles
-//! `EL_HIST` and the prompt family; [`el_get`] forwards the ops that need no
-//! conversion, `EL_GETTC` and `EL_GETFP` among them.
-//!
-//! ERR-core-api-09 and ERR-core-api-18 were written when both functions were
-//! a blanket -1. They no longer describe this file.
+//! Both halves of the compatibility layer are complete: [`el_set`] forwards
+//! the operations that need no conversion, decodes the string operations and
+//! handles narrow callbacks; [`el_get`] mirrors that split and encodes its two
+//! string results into the editor's shared legacy buffer.
 
 use core::ffi::{CStr, c_char, c_int, c_void};
 use core::ptr;
-use std::cell::RefCell;
 
-use nshedit::chartype::{CtBufferT, ct_decode_string, ct_encode_string};
+use nshedit::chartype::{ct_decode_string, ct_enc_width, ct_encode_char, ct_encode_string};
 use nshedit::el::NARROW_HISTORY;
 use nshedit::hist::HistFunT;
 use nshedit::histedit::{EditLine, LineInfo};
@@ -69,61 +56,13 @@ use core::ffi::VaList;
 /// `el_flags` itself is a public field, so duplicating the constant is enough.
 const FROM_ELLINE: i32 = 0x200;
 
-thread_local! {
-    /// Scratch for [`enc_width`] and [`wctob`], which have to encode one
-    /// character at a time through the only public encoder the core offers.
-    ///
-    /// Deliberately *not* `el->el_scratch` or `el->el_lgcyconv`: the first is
-    /// the prompt's and the history bridge's, and `sem:eln.el-set-fn` records
-    /// that keeping it separate is what stops prompt rendering from disturbing
-    /// a string handed out by [`el_gets`]; the second is the buffer whose
-    /// contents are the ABI contract. Nothing hands out a pointer into this
-    /// one, so it is unobservable.
-    static ENC_SCRATCH: RefCell<CtBufferT> = const {
-        RefCell::new(CtBufferT { cbuff: Vec::new(), csize: 0, wbuff: Vec::new(), wsize: 0 })
-    };
-}
-
-/// Stand-in for the core's `ct_enc_width`, which is `pub(crate)`.
-///
-/// The C's is `wcrtomb` from a zeroed `mbstate_t`, counting bytes and
-/// answering 0 for a character the locale cannot encode. Encoding a
-/// one-character string through `ct_encode_string` answers the same for every
-/// input except two:
-///
-/// - `L'\0'`, which `ct_enc_width` measures as the one null byte `wcrtomb`
-///   writes while a *string* encoder stops there — special-cased below;
-/// - a character needing more than five bytes (U+4000000 and above under the
-///   glibc UTF-8 the port models), where `ct_encode_string` fails the whole
-///   encode and this answers 0 rather than 6. That input makes the encode this
-///   width is an offset *into* fail as well — the C calls `abort()` on it, and
-///   `sem:chartype.ct-encode-string-fn` defines a NULL return instead — so the
-///   sum is only ever read alongside a NULL string.
-///
-/// The shift-state difference `sem:eln.el-gets-fn` warns about cannot bite: the
-/// core's encoder carries no state (ERR-encoding-16).
-fn enc_width(c: u32) -> usize {
-    if c == 0 {
-        return 1;
-    }
-    ENC_SCRATCH.with_borrow_mut(|conv| ct_encode_string(Some(&[c]), conv).map_or(0, <[u8]>::len))
-}
-
-/// Stand-in for `wctob`, which lives behind the core's `pub(crate) locale`.
+/// `wctob` through the core's locale-aware single-character encoder.
 ///
 /// `None` is the C's `EOF`: `c` has no single-byte representation in the
-/// initial shift state of the current `LC_CTYPE`. `L'\0'` does have one — the
-/// null byte — and is special-cased for the same reason as in [`enc_width`].
-/// An allocation failure inside the encoder is indistinguishable from `EOF`
-/// here; the C could tell them apart, but only by not having a buffer at all.
+/// initial shift state of the current `LC_CTYPE`.
 fn wctob(c: u32) -> Option<u8> {
-    if c == 0 {
-        return Some(0);
-    }
-    ENC_SCRATCH.with_borrow_mut(|conv| match ct_encode_string(Some(&[c]), conv) {
-        Some([b]) => Some(*b),
-        _ => None,
-    })
+    let mut byte = [0u8; 1];
+    (ct_encode_char(&mut byte, c) == 1).then_some(byte[0])
 }
 
 /// The C's `const wchar_t *` as a slice: everything up to, and not including,
@@ -148,7 +87,7 @@ unsafe fn wide_upto_nul<'a>(p: *const u32) -> &'a [u32] {
     unsafe { core::slice::from_raw_parts(p, n) }
 }
 
-/// Sum of [`enc_width`] over the wide characters in `[from, to)` — the C's
+/// Sum of [`ct_enc_width`] over the wide characters in `[from, to)` — the C's
 /// two identical `for (p = winfo->buffer; p < ...; p++)` loops.
 ///
 /// # Safety
@@ -159,7 +98,7 @@ unsafe fn sum_enc_widths(from: *const u32, to: *const u32) -> usize {
     let mut total = 0usize;
     let mut p = from;
     while p < to {
-        total += enc_width(unsafe { *p });
+        total += ct_enc_width(unsafe { *p });
         p = unsafe { p.add(1) };
     }
     total
@@ -328,7 +267,7 @@ pub unsafe extern "C" fn el_gets(el: *mut EditLine, nread: *mut c_int) -> *const
             while i < n {
                 // A character the locale cannot encode contributes 0, matching
                 // step 3 dropping it.
-                nwread += enc_width(unsafe { *tmp.add(i as usize) });
+                nwread += ct_enc_width(unsafe { *tmp.add(i as usize) });
                 i += 1;
             }
             // The count excludes the terminator `ct_encode_string` appends.
@@ -428,8 +367,7 @@ pub unsafe extern "C" fn el_parse(
 
 /// C: `int el_set(EditLine *el, int op, ...);`
 ///
-/// Genuinely variadic, as `histedit.h` declares it — and reading nothing out
-/// of the tail, because the dispatch is not written. See the module header.
+/// Genuinely variadic, as `histedit.h` declares it.
 // [spec:libedit:def:eln.el-set-fn]
 // [spec:libedit:sem:eln.el-set-fn]
 #[unsafe(no_mangle)]
@@ -635,8 +573,7 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
 
 /// C: `int el_get(EditLine *el, int op, ...);`
 ///
-/// Genuinely variadic, as `histedit.h` declares it — and reading nothing out
-/// of the tail, because the dispatch is not written. See the module header.
+/// Genuinely variadic, as `histedit.h` declares it.
 // [spec:libedit:def:eln.el-get-fn]
 // [spec:libedit:sem:eln.el-get-fn]
 #[unsafe(no_mangle)]
@@ -684,55 +621,79 @@ const FORWARDED_TO_WGET: &[c_int] = &[
 ///
 /// # Safety
 /// The tail must carry the out-parameter the selected `op` defines.
-unsafe fn el_get_va(el: &mut EditLine, op: c_int, ap: VaList<'_>) -> c_int {
+unsafe fn el_get_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
     if FORWARDED_TO_WGET.contains(&op) {
         // SAFETY: the tail is untouched and carries what this op declares,
         // which is the same out-parameter the wide arm writes through.
         return unsafe { el_wget_va(el, op, ap) };
     }
 
-    // Everything else still takes the C's `default` arm. That is already the right answer for an unsupported
-    // `op`, for `EL_GETENV` (ERR-core-api-31), and for the eleven set-only
-    // ops — `EL_RESIZE`, `EL_ALIAS_TEXT`, `EL_ADDFN`, `EL_HIST`, `EL_BIND`,
-    // `EL_TELLTC`, `EL_SETTC`, `EL_ECHOTC`, `EL_SETTY`, `EL_SETFP`,
-    // `EL_REFRESH` — which have no `el_get` arm.
-    //
-    // What the arms owe, with the core items in brackets:
-    //
-    // - `EL_PROMPT` / `EL_RPROMPT` [`prompt_get`] — nothing is converted, and
-    //   the caller is not told whether the installed function was registered
-    //   narrow or wide; the two share one slot.
-    // - `EL_PROMPT_ESC` / `EL_RPROMPT_ESC` [`prompt_get`] — store
-    //   `*c = (char)wc` **unconditionally**, including the `'\0'` written when
-    //   `prompt_get` returned -1, never checking `c` for NULL, and truncating
-    //   the `wchar_t` to its low byte rather than encoding it. `el_wget` hands
-    //   back the full `wchar_t`. All of that is ERR-core-api-18, disposition
-    //   reproduce — except the unchecked NULL `c`, which is undefined and so
-    //   must be defined. Inherited from `prompt_get`: these ops retrieve the
-    //   *right* prompt's record, not the left one (ERR-core-api-14).
-    // - `EL_EDITOR` / `EL_WORDCHARS` — `el_wget` into a local `const wchar_t
-    //   *`, then `ct_encode_string` into `el_lgcyconv`, then overwrite `ret`
-    //   with -1 if `csize == 0`. That test is the only error detection and it
-    //   is a proxy for "the encode ran out of memory"; a NULL from `el_wget`
-    //   stores NULL through `*p` and leaves `ret` alone. **These are the only
-    //   two `el_get` ops that write the narrow half**, and what they write
-    //   through `*p` is `cbuff` itself, invalidated exactly as `el_gets`'s
-    //   result is. Every other op leaves a previously returned string intact.
-    // - `EL_TERMINAL`, `EL_SIGNAL`, `EL_EDITMODE`, `EL_SAFEREAD`,
-    //   `EL_UNBUFFERED`, `EL_PREP_TERM`, `EL_GETCFN`, `EL_CLIENTDATA`,
-    //   `EL_GETFP` — forwarded to `el_wget` unconverted. Two notes:
-    //   `EL_PREP_TERM` has no case in `el_wget`, so it consumes the caller's
-    //   `int *`, stores nothing and always returns -1 — a set-only op this
-    //   wrapper pretends to forward (ERR-core-api-17, disposition reproduce);
-    //   and `EL_GETCFN` hands back the *wide* reader, `el_rfunc_t` being
-    //   `int (*)(EditLine *, wchar_t *)` in both APIs.
-    // - `EL_GETTC` [`terminal_gettc`] — does not delegate. Builds
-    //   `char *argv[3]` of the literal `"gettc"`, the capability name and the
-    //   destination, and calls `terminal_gettc(el, 3, argv)`. Nothing is
-    //   converted: capability names are `char **` even in the wide API. Only
-    //   one capability is fetched per call and no sentinel is consumed,
-    //   despite the header's `..., NULL` (ERR-core-api-29).
-    -1
+    match op {
+        // The callback is stored in the same slot for the narrow and wide
+        // interfaces, so no conversion is involved.
+        EL_PROMPT | EL_RPROMPT => {
+            // SAFETY: the selected operation takes an `el_pfunc_t *`.
+            let out = unsafe { ap.next_arg::<*mut c_void>() };
+            let callback = unsafe { out.cast::<Option<ElPfuncT>>().as_mut() };
+            nshedit::prompt::prompt_get(el, callback, None, op)
+        }
+
+        // The C gets a wide escape character from the shared prompt helper,
+        // then stores only its low byte. A null byte out-parameter is caller
+        // UB there; define it as a skipped store here.
+        EL_PROMPT_ESC | EL_RPROMPT_ESC => {
+            // SAFETY: the operation takes `el_pfunc_t *` then `char *`.
+            let out = unsafe { ap.next_arg::<*mut c_void>() };
+            let callback = unsafe { out.cast::<Option<ElPfuncT>>().as_mut() };
+            let escape_out = unsafe { ap.next_arg::<*mut c_void>() }.cast::<c_char>();
+            let mut escape = 0u32;
+            let result = nshedit::prompt::prompt_get(el, callback, Some(&mut escape), op);
+            if !escape_out.is_null() {
+                // SAFETY: a non-null `char *` is the operation's out slot.
+                unsafe { *escape_out = escape as c_char };
+            }
+            result
+        }
+
+        // These are the only getter operations that overwrite the narrow
+        // half of `el_lgcyconv`. The returned pointer is the start of that
+        // buffer and therefore has exactly the C API's invalidation lifetime.
+        EL_EDITOR | EL_WORDCHARS => {
+            // SAFETY: the selected operation takes a `const char **`.
+            let out = unsafe { ap.next_arg::<*mut c_void>() }.cast::<*const c_char>();
+            if out.is_null() {
+                return -1;
+            }
+
+            let (result, narrow) = if op == EL_EDITOR {
+                let mut editor: &'static [u32] = &[];
+                let result = nshedit::map::map_get_editor(el, &mut editor);
+                let narrow = (result == 0)
+                    .then(|| ct_encode_string(Some(editor), &mut el.el_lgcyconv))
+                    .flatten()
+                    .map_or(ptr::null(), |bytes| bytes.as_ptr().cast());
+                (result, narrow)
+            } else {
+                let mut wordchars = None;
+                let result = nshedit::map::map_get_wordchars(el, &mut wordchars);
+                let narrow = (result == 0)
+                    .then(|| ct_encode_string(wordchars.as_deref(), &mut el.el_lgcyconv))
+                    .flatten()
+                    .map_or(ptr::null(), |bytes| bytes.as_ptr().cast());
+                (result, narrow)
+            };
+            // SAFETY: `out` was checked above and points at the caller's slot.
+            unsafe { *out = narrow };
+            if el.el_lgcyconv.csize == 0 {
+                -1
+            } else {
+                result
+            }
+        }
+
+        // Unsupported and set-only operations take the C's default arm.
+        _ => -1,
+    }
 }
 
 // [spec:libedit:def:eln.el-line-fn]

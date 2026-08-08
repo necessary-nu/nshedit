@@ -42,8 +42,8 @@
 // [spec:libedit:sem:chartype.ct-conv-cbuff-resize-fn/test]  crates/nshedit/src/chartype.rs:104
 // [spec:libedit:sem:chartype.ct-conv-wbuff-resize-fn/test]  crates/nshedit/src/chartype.rs:138
 // [spec:libedit:sem:chartype.ct-decode-string-fn/test]  crates/nshedit/src/chartype.rs:225
-// [spec:libedit:sem:chartype.ct-enc-width-fn/test]  crates/nshedit/src/chartype.rs:331
-// [spec:libedit:sem:chartype.ct-encode-char-fn/test]  crates/nshedit/src/chartype.rs:348
+// [spec:libedit:sem:chartype.ct-enc-width-fn/test]  crates/nshedit/src/chartype.rs:332
+// [spec:libedit:sem:chartype.ct-encode-char-fn/test]  crates/nshedit/src/chartype.rs:350
 // [spec:libedit:sem:chartype.ct-encode-string-fn/test]  crates/nshedit/src/chartype.rs:171
 // [spec:libedit:sem:histedit.history-w-fn/test]  crates/nshedit-abi/src/histedit.rs:1837
 // [spec:libedit:sem:histedit.history-wend-fn/test]  crates/nshedit-abi/src/histedit.rs:1648
@@ -104,24 +104,24 @@
 // [spec:libedit:sem:chared.el-cursor-fn/test]  crates/nshedit/src/chared.rs:1205
 // [spec:libedit:sem:chared.el-deletestr-fn/test]  crates/nshedit/src/chared.rs:1080
 // [spec:libedit:sem:chared.el-winsertstr-fn/test]  crates/nshedit/src/chared.rs:1043
-// [spec:libedit:sem:chartype.ct-chr-class-fn/test]  crates/nshedit/src/chartype.rs:540
-// [spec:libedit:sem:chartype.ct-visual-char-fn/test]  crates/nshedit/src/chartype.rs:472
-// [spec:libedit:sem:chartype.ct-visual-string-fn/test]  crates/nshedit/src/chartype.rs:383
+// [spec:libedit:sem:chartype.ct-chr-class-fn/test]  crates/nshedit/src/chartype.rs:542
+// [spec:libedit:sem:chartype.ct-visual-char-fn/test]  crates/nshedit/src/chartype.rs:474
+// [spec:libedit:sem:chartype.ct-visual-string-fn/test]  crates/nshedit/src/chartype.rs:385
 // [spec:libedit:sem:el.editline.el-getenv-fn/test]  crates/nshedit/src/el.rs:520
-// [spec:libedit:sem:el.el-editmode-fn/test]  crates/nshedit/src/el.rs:1393
-// [spec:libedit:sem:el.el-end-fn/test]  crates/nshedit/src/el.rs:1021
+// [spec:libedit:sem:el.el-editmode-fn/test]  crates/nshedit/src/el.rs:1412
+// [spec:libedit:sem:el.el-end-fn/test]  crates/nshedit/src/el.rs:1040
 // [spec:libedit:sem:el.el-init-fd-fn/test]  crates/nshedit/src/el.rs:988
 // [spec:libedit:sem:el.el-init-internal-fn/test]  crates/nshedit/src/el.rs:637
-// [spec:libedit:sem:el.el-reset-fn/test]  crates/nshedit/src/el.rs:1110
-// [spec:libedit:sem:el.el-resize-fn/test]  crates/nshedit/src/el.rs:1316
-// [spec:libedit:sem:el.el-source-fn/test]  crates/nshedit/src/el.rs:1206
+// [spec:libedit:sem:el.el-reset-fn/test]  crates/nshedit/src/el.rs:1129
+// [spec:libedit:sem:el.el-resize-fn/test]  crates/nshedit/src/el.rs:1335
+// [spec:libedit:sem:el.el-source-fn/test]  crates/nshedit/src/el.rs:1225
 // [spec:libedit:sem:el.el-wline-fn/test]  crates/nshedit-abi/src/histedit.rs:1574
 // [spec:libedit:sem:el.secure-getenv-fn/test]  crates/nshedit/src/el.rs:381
-// [spec:libedit:sem:eln.el-get-fn/test]  crates/nshedit-abi/src/eln.rs:643
-// [spec:libedit:sem:eln.el-insertstr-fn/test]  crates/nshedit-abi/src/eln.rs:834
-// [spec:libedit:sem:eln.el-line-fn/test]  crates/nshedit-abi/src/eln.rs:741
-// [spec:libedit:sem:eln.el-parse-fn/test]  crates/nshedit-abi/src/eln.rs:361
-// [spec:libedit:sem:eln.el-set-fn/test]  crates/nshedit-abi/src/eln.rs:436
+// [spec:libedit:sem:eln.el-get-fn/test]  crates/nshedit-abi/src/eln.rs:580
+// [spec:libedit:sem:eln.el-insertstr-fn/test]  crates/nshedit-abi/src/eln.rs:795
+// [spec:libedit:sem:eln.el-line-fn/test]  crates/nshedit-abi/src/eln.rs:702
+// [spec:libedit:sem:eln.el-parse-fn/test]  crates/nshedit-abi/src/eln.rs:300
+// [spec:libedit:sem:eln.el-set-fn/test]  crates/nshedit-abi/src/eln.rs:374
 // [spec:libedit:sem:hist.hist-command-fn/test]  crates/nshedit/src/hist.rs:430
 // [spec:libedit:sem:hist.hist-end-fn/test]  crates/nshedit/src/hist.rs:241
 // [spec:libedit:sem:hist.hist-init-fn/test]  crates/nshedit/src/hist.rs:215
@@ -180,7 +180,7 @@
 // [spec:libedit:sem:read.read-finish-fn/test]  crates/nshedit/src/read.rs:821
 // [spec:libedit:sem:read.read-init-fn/test]  crates/nshedit/src/read.rs:86
 // [spec:libedit:sem:read.read-prepare-fn/test]  crates/nshedit/src/read.rs:781
-// [spec:libedit:sem:refresh.re-clear-display-fn/test]  crates/nshedit/src/refresh.rs:1365
+// [spec:libedit:sem:refresh.re-clear-display-fn/test]  crates/nshedit/src/refresh.rs:1366
 // [spec:libedit:sem:search.search-end-fn/test]  crates/nshedit/src/search.rs:223
 // [spec:libedit:sem:search.search-init-fn/test]  crates/nshedit/src/search.rs:204
 // [spec:libedit:sem:sig.sig-clr-fn/test]  crates/nshedit/src/sig.rs:411
@@ -209,114 +209,115 @@
 // [spec:libedit:sem:terminal.tgetflag-fn/test]  crates/nshedit/src/terminal.rs:639
 // [spec:libedit:sem:terminal.tgetnum-fn/test]  crates/nshedit/src/terminal.rs:651
 // [spec:libedit:sem:terminal.tgetstr-fn/test]  crates/nshedit/src/terminal.rs:673
-// [spec:libedit:sem:tty.tty-bind-char-fn/test]  crates/nshedit/src/tty.rs:1113
-// [spec:libedit:sem:tty.tty-cookedmode-fn/test]  crates/nshedit/src/tty.rs:1361
+// [spec:libedit:sem:tty.tty-bind-char-fn/test]  crates/nshedit/src/tty.rs:1115
+// [spec:libedit:sem:tty.tty-cookedmode-fn/test]  crates/nshedit/src/tty.rs:1363
 // [spec:libedit:sem:tty.tty-getty-fn/test]  crates/nshedit/src/tty.rs:780
-// [spec:libedit:sem:tty.tty-init-fn/test]  crates/nshedit/src/tty.rs:948
-// [spec:libedit:sem:tty.tty-rawmode-fn/test]  crates/nshedit/src/tty.rs:1268
+// [spec:libedit:sem:tty.tty-init-fn/test]  crates/nshedit/src/tty.rs:949
+// [spec:libedit:sem:tty.tty-rawmode-fn/test]  crates/nshedit/src/tty.rs:1270
 // [spec:libedit:sem:tty.tty-setup-fn/test]  crates/nshedit/src/tty.rs:842
 
 // ---------------------------------------------------------------------------
-// conformance/driver/readline_api.c — 89 rules
+// conformance/driver/readline_api.c — 90 rules
 // ---------------------------------------------------------------------------
 // [spec:libedit:sem:chared.el-deletestr1-fn/test]  crates/nshedit/src/chared.rs:1110
 // [spec:libedit:sem:chared.el-wreplacestr-fn/test]  crates/nshedit/src/chared.rs:1172
-// [spec:libedit:sem:eln.el-replacestr-fn/test]  crates/nshedit-abi/src/eln.rs:855
+// [spec:libedit:sem:eln.el-replacestr-fn/test]  crates/nshedit-abi/src/eln.rs:816
 // [spec:libedit:sem:filecomplete.completion-matches-fn/test]  crates/nshedit/src/filecomplete.rs:747
 // [spec:libedit:sem:filecomplete.fn-display-match-list-fn/test]  crates/nshedit/src/filecomplete.rs:868
-// [spec:libedit:sem:filecomplete.fn-filename-completion-function-fn/test]  crates/nshedit-abi/src/filecomplete.rs:554
+// [spec:libedit:sem:filecomplete.fn-filename-completion-function-fn/test]  crates/nshedit-abi/src/filecomplete.rs:585
 // [spec:libedit:sem:filecomplete.fn-tilde-expand-fn/test]  crates/nshedit-abi/src/filecomplete.rs:527
 // [spec:libedit:sem:hist.hist-set-fn/test]  crates/nshedit/src/hist.rs:273
 // [spec:libedit:sem:histedit.el-deletestr1-fn/test]  crates/nshedit-abi/src/histedit.rs:659
-// [spec:libedit:sem:histedit.el-init-fd-fn/test]  crates/nshedit-abi/src/histedit.rs:472
 // [spec:libedit:sem:histedit.el-wreplacestr-fn/test]  crates/nshedit-abi/src/histedit.rs:1628
 // [spec:libedit:sem:histedit.history-fn/test]  crates/nshedit-abi/src/histedit.rs:698
 // [spec:libedit:sem:histedit.history-init-fn/test]  crates/nshedit-abi/src/histedit.rs:671
 // [spec:libedit:sem:prompt.prompt-set-fn/test]  crates/nshedit/src/prompt.rs:317
-// [spec:libedit:sem:readline.add-history-fn/test]  crates/nshedit-abi/src/readline.rs:3039
-// [spec:libedit:sem:readline.append-history-fn/test]  crates/nshedit-abi/src/readline.rs:2913
-// [spec:libedit:sem:readline.clear-history-fn/test]  crates/nshedit-abi/src/readline.rs:3158
-// [spec:libedit:sem:readline.completion-matches-fn/test]  crates/nshedit-abi/src/readline.rs:4954
-// [spec:libedit:sem:readline.current-history-fn/test]  crates/nshedit-abi/src/readline.rs:3231
-// [spec:libedit:sem:readline.default-history-file-fn/test]  crates/nshedit-abi/src/readline.rs:1244
-// [spec:libedit:sem:readline.filename-completion-function-fn/test]  crates/nshedit-abi/src/readline.rs:3492
-// [spec:libedit:sem:readline.get-history-event-fn/test]  crates/nshedit-abi/src/readline.rs:1726
-// [spec:libedit:sem:readline.getfrom-fn/test]  crates/nshedit-abi/src/readline.rs:1876
-// [spec:libedit:sem:readline.getto-fn/test]  crates/nshedit-abi/src/readline.rs:1958
-// [spec:libedit:sem:readline.history-arg-extract-fn/test]  crates/nshedit-abi/src/readline.rs:2458
-// [spec:libedit:sem:readline.history-expand-command-fn/test]  crates/nshedit-abi/src/readline.rs:2038
-// [spec:libedit:sem:readline.history-expand-fn/test]  crates/nshedit-abi/src/readline.rs:2309
-// [spec:libedit:sem:readline.history-get-fn/test]  crates/nshedit-abi/src/readline.rs:2995
-// [spec:libedit:sem:readline.history-get-history-state-fn/test]  crates/nshedit-abi/src/readline.rs:4662
-// [spec:libedit:sem:readline.history-is-stifled-fn/test]  crates/nshedit-abi/src/readline.rs:2658
-// [spec:libedit:sem:readline.history-list-fn/test]  crates/nshedit-abi/src/readline.rs:3186
-// [spec:libedit:sem:readline.history-search-fn/test]  crates/nshedit-abi/src/readline.rs:3360
-// [spec:libedit:sem:readline.history-search-pos-fn/test]  crates/nshedit-abi/src/readline.rs:3431
-// [spec:libedit:sem:readline.history-search-prefix-fn/test]  crates/nshedit-abi/src/readline.rs:3404
-// [spec:libedit:sem:readline.history-set-pos-fn/test]  crates/nshedit-abi/src/readline.rs:3295
-// [spec:libedit:sem:readline.history-tokenize-fn/test]  crates/nshedit-abi/src/readline.rs:2522
-// [spec:libedit:sem:readline.history-total-bytes-fn/test]  crates/nshedit-abi/src/readline.rs:3258
-// [spec:libedit:sem:readline.history-truncate-file-fn/test]  crates/nshedit-abi/src/readline.rs:2744
-// [spec:libedit:sem:readline.next-history-fn/test]  crates/nshedit-abi/src/readline.rs:3338
-// [spec:libedit:sem:readline.previous-history-fn/test]  crates/nshedit-abi/src/readline.rs:3314
-// [spec:libedit:sem:readline.read-history-fn/test]  crates/nshedit-abi/src/readline.rs:2845
-// [spec:libedit:sem:readline.remove-history-fn/test]  crates/nshedit-abi/src/readline.rs:3068
-// [spec:libedit:sem:readline.replace-fn/test]  crates/nshedit-abi/src/readline.rs:2011
-// [spec:libedit:sem:readline.replace-history-entry-fn/test]  crates/nshedit-abi/src/readline.rs:3103
-// [spec:libedit:sem:readline.resize-fun-fn/test]  crates/nshedit-abi/src/readline.rs:1221
-// [spec:libedit:sem:readline.rl-add-defun-fn/test]  crates/nshedit-abi/src/readline.rs:3937
-// [spec:libedit:sem:readline.rl-bind-key-fn/test]  crates/nshedit-abi/src/readline.rs:3774
-// [spec:libedit:sem:readline.rl-bind-key-in-map-fn/test]  crates/nshedit-abi/src/readline.rs:4751
-// [spec:libedit:sem:readline.rl-compat-sub-fn/test]  crates/nshedit-abi/src/readline.rs:1681
-// [spec:libedit:sem:readline.rl-completion-matches-fn/test]  crates/nshedit-abi/src/readline.rs:4488
-// [spec:libedit:sem:readline.rl-copy-text-fn/test]  crates/nshedit-abi/src/readline.rs:4312
-// [spec:libedit:sem:readline.rl-crlf-fn/test]  crates/nshedit-abi/src/readline.rs:4859
-// [spec:libedit:sem:readline.rl-delete-text-fn/test]  crates/nshedit-abi/src/readline.rs:4389
-// [spec:libedit:sem:readline.rl-ding-fn/test]  crates/nshedit-abi/src/readline.rs:4874
-// [spec:libedit:sem:readline.rl-display-match-list-fn/test]  crates/nshedit-abi/src/readline.rs:3590
-// [spec:libedit:sem:readline.rl-filename-completion-function-fn/test]  crates/nshedit-abi/src/readline.rs:4588
-// [spec:libedit:sem:readline.rl-forced-update-display-fn/test]  crates/nshedit-abi/src/readline.rs:4602
-// [spec:libedit:sem:readline.rl-free-line-state-fn/test]  crates/nshedit-abi/src/readline.rs:4795
-// [spec:libedit:sem:readline.rl-generic-bind-fn/test]  crates/nshedit-abi/src/readline.rs:4735
-// [spec:libedit:sem:readline.rl-get-keymap-fn/test]  crates/nshedit-abi/src/readline.rs:4718
-// [spec:libedit:sem:readline.rl-get-screen-size-fn/test]  crates/nshedit-abi/src/readline.rs:4406
-// [spec:libedit:sem:readline.rl-initialize-fn/test]  crates/nshedit-abi/src/readline.rs:1353
-// [spec:libedit:sem:readline.rl-insert-text-fn/test]  crates/nshedit-abi/src/readline.rs:3867
-// [spec:libedit:sem:readline.rl-kill-text-fn/test]  crates/nshedit-abi/src/readline.rs:4697
-// [spec:libedit:sem:readline.rl-make-bare-keymap-fn/test]  crates/nshedit-abi/src/readline.rs:4709
-// [spec:libedit:sem:readline.rl-message-fn/test]  crates/nshedit-abi/src/readline.rs:4439
-// [spec:libedit:sem:readline.rl-on-new-line-fn/test]  crates/nshedit-abi/src/readline.rs:4786
-// [spec:libedit:sem:readline.rl-parse-and-bind-fn/test]  crates/nshedit-abi/src/readline.rs:4145
-// [spec:libedit:sem:readline.rl-read-init-file-fn/test]  crates/nshedit-abi/src/readline.rs:4132
-// [spec:libedit:sem:readline.rl-replace-line-fn/test]  crates/nshedit-abi/src/readline.rs:4366
-// [spec:libedit:sem:readline.rl-restore-prompt-fn/test]  crates/nshedit-abi/src/readline.rs:1333
-// [spec:libedit:sem:readline.rl-save-prompt-fn/test]  crates/nshedit-abi/src/readline.rs:1311
-// [spec:libedit:sem:readline.rl-set-key-fn/test]  crates/nshedit-abi/src/readline.rs:4764
-// [spec:libedit:sem:readline.rl-set-keymap-fn/test]  crates/nshedit-abi/src/readline.rs:4727
-// [spec:libedit:sem:readline.rl-set-keymap-name-fn/test]  crates/nshedit-abi/src/readline.rs:4900
-// [spec:libedit:sem:readline.rl-set-prompt-fn/test]  crates/nshedit-abi/src/readline.rs:1269
-// [spec:libedit:sem:readline.rl-set-screen-size-fn/test]  crates/nshedit-abi/src/readline.rs:4460
-// [spec:libedit:sem:readline.rl-stuff-char-fn/test]  crates/nshedit-abi/src/readline.rs:4193
-// [spec:libedit:sem:readline.rl-update-pos-fn/test]  crates/nshedit-abi/src/readline.rs:4286
-// [spec:libedit:sem:readline.rl-variable-bind-fn/test]  crates/nshedit-abi/src/readline.rs:4176
-// [spec:libedit:sem:readline.stifle-history-fn/test]  crates/nshedit-abi/src/readline.rs:2599
-// [spec:libedit:sem:readline.tilde-expand-fn/test]  crates/nshedit-abi/src/readline.rs:3482
-// [spec:libedit:sem:readline.unstifle-history-fn/test]  crates/nshedit-abi/src/readline.rs:2636
-// [spec:libedit:sem:readline.username-completion-function-fn/test]  crates/nshedit-abi/src/readline.rs:3504
-// [spec:libedit:sem:readline.using-history-fn/test]  crates/nshedit-abi/src/readline.rs:1667
-// [spec:libedit:sem:readline.where-history-fn/test]  crates/nshedit-abi/src/readline.rs:3176
-// [spec:libedit:sem:readline.write-history-fn/test]  crates/nshedit-abi/src/readline.rs:2885
+// [spec:libedit:sem:readline.add-history-fn/test]  crates/nshedit-abi/src/readline.rs:2945
+// [spec:libedit:sem:readline.append-history-fn/test]  crates/nshedit-abi/src/readline.rs:2824
+// [spec:libedit:sem:readline.clear-history-fn/test]  crates/nshedit-abi/src/readline.rs:3064
+// [spec:libedit:sem:readline.completion-matches-fn/test]  crates/nshedit-abi/src/readline.rs:4844
+// [spec:libedit:sem:readline.current-history-fn/test]  crates/nshedit-abi/src/readline.rs:3137
+// [spec:libedit:sem:readline.default-history-file-fn/test]  crates/nshedit-abi/src/readline.rs:1155
+// [spec:libedit:sem:readline.filename-completion-function-fn/test]  crates/nshedit-abi/src/readline.rs:3398
+// [spec:libedit:sem:readline.get-history-event-fn/test]  crates/nshedit-abi/src/readline.rs:1637
+// [spec:libedit:sem:readline.getfrom-fn/test]  crates/nshedit-abi/src/readline.rs:1787
+// [spec:libedit:sem:readline.getto-fn/test]  crates/nshedit-abi/src/readline.rs:1869
+// [spec:libedit:sem:readline.history-arg-extract-fn/test]  crates/nshedit-abi/src/readline.rs:2369
+// [spec:libedit:sem:readline.history-expand-command-fn/test]  crates/nshedit-abi/src/readline.rs:1949
+// [spec:libedit:sem:readline.history-expand-fn/test]  crates/nshedit-abi/src/readline.rs:2220
+// [spec:libedit:sem:readline.history-get-fn/test]  crates/nshedit-abi/src/readline.rs:2901
+// [spec:libedit:sem:readline.history-get-history-state-fn/test]  crates/nshedit-abi/src/readline.rs:4552
+// [spec:libedit:sem:readline.history-is-stifled-fn/test]  crates/nshedit-abi/src/readline.rs:2569
+// [spec:libedit:sem:readline.history-list-fn/test]  crates/nshedit-abi/src/readline.rs:3092
+// [spec:libedit:sem:readline.history-search-fn/test]  crates/nshedit-abi/src/readline.rs:3266
+// [spec:libedit:sem:readline.history-search-pos-fn/test]  crates/nshedit-abi/src/readline.rs:3337
+// [spec:libedit:sem:readline.history-search-prefix-fn/test]  crates/nshedit-abi/src/readline.rs:3310
+// [spec:libedit:sem:readline.history-set-pos-fn/test]  crates/nshedit-abi/src/readline.rs:3201
+// [spec:libedit:sem:readline.history-tokenize-fn/test]  crates/nshedit-abi/src/readline.rs:2433
+// [spec:libedit:sem:readline.history-total-bytes-fn/test]  crates/nshedit-abi/src/readline.rs:3164
+// [spec:libedit:sem:readline.history-truncate-file-fn/test]  crates/nshedit-abi/src/readline.rs:2655
+// [spec:libedit:sem:readline.next-history-fn/test]  crates/nshedit-abi/src/readline.rs:3244
+// [spec:libedit:sem:readline.previous-history-fn/test]  crates/nshedit-abi/src/readline.rs:3220
+// [spec:libedit:sem:readline.read-history-fn/test]  crates/nshedit-abi/src/readline.rs:2756
+// [spec:libedit:sem:readline.remove-history-fn/test]  crates/nshedit-abi/src/readline.rs:2974
+// [spec:libedit:sem:readline.replace-fn/test]  crates/nshedit-abi/src/readline.rs:1922
+// [spec:libedit:sem:readline.replace-history-entry-fn/test]  crates/nshedit-abi/src/readline.rs:3009
+// [spec:libedit:sem:readline.resize-fun-fn/test]  crates/nshedit-abi/src/readline.rs:1132
+// [spec:libedit:sem:readline.rl-add-defun-fn/test]  crates/nshedit-abi/src/readline.rs:3843
+// [spec:libedit:sem:readline.rl-bind-key-fn/test]  crates/nshedit-abi/src/readline.rs:3680
+// [spec:libedit:sem:readline.rl-bind-key-in-map-fn/test]  crates/nshedit-abi/src/readline.rs:4641
+// [spec:libedit:sem:readline.rl-compat-sub-fn/test]  crates/nshedit-abi/src/readline.rs:1592
+// [spec:libedit:sem:readline.rl-completion-matches-fn/test]  crates/nshedit-abi/src/readline.rs:4386
+// [spec:libedit:sem:readline.rl-copy-text-fn/test]  crates/nshedit-abi/src/readline.rs:4221
+// [spec:libedit:sem:readline.rl-crlf-fn/test]  crates/nshedit-abi/src/readline.rs:4749
+// [spec:libedit:sem:readline.rl-delete-text-fn/test]  crates/nshedit-abi/src/readline.rs:4298
+// [spec:libedit:sem:readline.rl-ding-fn/test]  crates/nshedit-abi/src/readline.rs:4764
+// [spec:libedit:sem:readline.rl-display-match-list-fn/test]  crates/nshedit-abi/src/readline.rs:3496
+// [spec:libedit:sem:readline.rl-filename-completion-function-fn/test]  crates/nshedit-abi/src/readline.rs:4486
+// [spec:libedit:sem:readline.rl-forced-update-display-fn/test]  crates/nshedit-abi/src/readline.rs:4500
+// [spec:libedit:sem:readline.rl-free-line-state-fn/test]  crates/nshedit-abi/src/readline.rs:4685
+// [spec:libedit:sem:readline.rl-generic-bind-fn/test]  crates/nshedit-abi/src/readline.rs:4625
+// [spec:libedit:sem:readline.rl-get-keymap-fn/test]  crates/nshedit-abi/src/readline.rs:4608
+// [spec:libedit:sem:readline.rl-get-screen-size-fn/test]  crates/nshedit-abi/src/readline.rs:4315
+// [spec:libedit:sem:readline.rl-initialize-fn/test]  crates/nshedit-abi/src/readline.rs:1264
+// [spec:libedit:sem:readline.rl-insert-text-fn/test]  crates/nshedit-abi/src/readline.rs:3773
+// [spec:libedit:sem:readline.rl-kill-text-fn/test]  crates/nshedit-abi/src/readline.rs:4587
+// [spec:libedit:sem:readline.rl-make-bare-keymap-fn/test]  crates/nshedit-abi/src/readline.rs:4599
+// [spec:libedit:sem:readline.rl-message-fn/test]  crates/nshedit-abi/src/readline.rs:4338
+// [spec:libedit:sem:readline.rl-on-new-line-fn/test]  crates/nshedit-abi/src/readline.rs:4676
+// [spec:libedit:sem:readline.rl-parse-and-bind-fn/test]  crates/nshedit-abi/src/readline.rs:4051
+// [spec:libedit:sem:readline.rl-read-init-file-fn/test]  crates/nshedit-abi/src/readline.rs:4038
+// [spec:libedit:sem:readline.rl-replace-line-fn/test]  crates/nshedit-abi/src/readline.rs:4275
+// [spec:libedit:sem:readline.rl-restore-prompt-fn/test]  crates/nshedit-abi/src/readline.rs:1244
+// [spec:libedit:sem:readline.rl-save-prompt-fn/test]  crates/nshedit-abi/src/readline.rs:1222
+// [spec:libedit:sem:readline.rl-set-key-fn/test]  crates/nshedit-abi/src/readline.rs:4654
+// [spec:libedit:sem:readline.rl-set-keymap-fn/test]  crates/nshedit-abi/src/readline.rs:4617
+// [spec:libedit:sem:readline.rl-set-keymap-name-fn/test]  crates/nshedit-abi/src/readline.rs:4790
+// [spec:libedit:sem:readline.rl-set-prompt-fn/test]  crates/nshedit-abi/src/readline.rs:1180
+// [spec:libedit:sem:readline.rl-set-screen-size-fn/test]  crates/nshedit-abi/src/readline.rs:4358
+// [spec:libedit:sem:readline.rl-stuff-char-fn/test]  crates/nshedit-abi/src/readline.rs:4099
+// [spec:libedit:sem:readline.rl-update-pos-fn/test]  crates/nshedit-abi/src/readline.rs:4195
+// [spec:libedit:sem:readline.rl-variable-bind-fn/test]  crates/nshedit-abi/src/readline.rs:4082
+// [spec:libedit:sem:readline.stifle-history-fn/test]  crates/nshedit-abi/src/readline.rs:2510
+// [spec:libedit:sem:readline.tilde-expand-fn/test]  crates/nshedit-abi/src/readline.rs:3388
+// [spec:libedit:sem:readline.unstifle-history-fn/test]  crates/nshedit-abi/src/readline.rs:2547
+// [spec:libedit:sem:readline.username-completion-function-fn/test]  crates/nshedit-abi/src/readline.rs:3410
+// [spec:libedit:sem:readline.using-history-fn/test]  crates/nshedit-abi/src/readline.rs:1578
+// [spec:libedit:sem:readline.where-history-fn/test]  crates/nshedit-abi/src/readline.rs:3082
+// [spec:libedit:sem:readline.write-history-fn/test]  crates/nshedit-abi/src/readline.rs:2796
+// [spec:libedit:sem:refresh.re-putc-fn/test]  crates/nshedit/src/refresh.rs:308
 // [spec:libedit:sem:search.el-match-fn/test]  crates/nshedit/src/search.rs:254
 // [spec:libedit:sem:terminal.terminal-gettc-fn/test]  crates/nshedit/src/terminal.rs:2325
+// [spec:libedit:sem:tty.tty-end-fn/test]  crates/nshedit/src/tty.rs:976
 
 // ---------------------------------------------------------------------------
-// conformance/driver/pty_edit.c — 65 rules
+// conformance/driver/pty_edit.c — 63 rules
 // ---------------------------------------------------------------------------
 // [spec:libedit:sem:chared.c-delbefore1-fn/test]  crates/nshedit/src/chared.rs:451
 // [spec:libedit:sem:chared.c-next-word-fn/test]  crates/nshedit/src/chared.rs:569
 // [spec:libedit:sem:chared.c-prev-word-fn/test]  crates/nshedit/src/chared.rs:524
 // [spec:libedit:sem:chared.ce-isword-fn/test]  crates/nshedit/src/chared.rs:477
-// [spec:libedit:sem:chartype.ct-visual-width-fn/test]  crates/nshedit/src/chartype.rs:439
+// [spec:libedit:sem:chartype.ct-visual-width-fn/test]  crates/nshedit/src/chartype.rs:441
 // [spec:libedit:sem:common.ed-insert-fn/test]  crates/nshedit/src/common.rs:217
 // [spec:libedit:sem:common.ed-kill-line-fn/test]  crates/nshedit/src/common.rs:363
 // [spec:libedit:sem:common.ed-move-to-beg-fn/test]  crates/nshedit/src/common.rs:405
@@ -328,14 +329,14 @@
 // [spec:libedit:sem:common.ed-prev-history-fn/test]  crates/nshedit/src/common.rs:741
 // [spec:libedit:sem:common.ed-prev-word-fn/test]  crates/nshedit/src/common.rs:504
 // [spec:libedit:sem:common.ed-transpose-chars-fn/test]  crates/nshedit/src/common.rs:436
-// [spec:libedit:sem:eln.el-gets-fn/test]  crates/nshedit-abi/src/eln.rs:289
-// [spec:libedit:sem:emacs.em-capitol-case-fn/test]  crates/nshedit/src/emacs.rs:292
+// [spec:libedit:sem:eln.el-gets-fn/test]  crates/nshedit-abi/src/eln.rs:228
+// [spec:libedit:sem:emacs.em-capitol-case-fn/test]  crates/nshedit/src/emacs.rs:293
 // [spec:libedit:sem:emacs.em-delete-or-list-fn/test]  crates/nshedit/src/emacs.rs:20
-// [spec:libedit:sem:emacs.em-delete-prev-char-fn/test]  crates/nshedit/src/emacs.rs:514
-// [spec:libedit:sem:emacs.em-kill-line-fn/test]  crates/nshedit/src/emacs.rs:141
-// [spec:libedit:sem:emacs.em-lower-case-fn/test]  crates/nshedit/src/emacs.rs:336
-// [spec:libedit:sem:emacs.em-next-word-fn/test]  crates/nshedit/src/emacs.rs:237
-// [spec:libedit:sem:emacs.em-upper-case-fn/test]  crates/nshedit/src/emacs.rs:261
+// [spec:libedit:sem:emacs.em-delete-prev-char-fn/test]  crates/nshedit/src/emacs.rs:515
+// [spec:libedit:sem:emacs.em-kill-line-fn/test]  crates/nshedit/src/emacs.rs:142
+// [spec:libedit:sem:emacs.em-lower-case-fn/test]  crates/nshedit/src/emacs.rs:337
+// [spec:libedit:sem:emacs.em-next-word-fn/test]  crates/nshedit/src/emacs.rs:238
+// [spec:libedit:sem:emacs.em-upper-case-fn/test]  crates/nshedit/src/emacs.rs:262
 // [spec:libedit:sem:emacs.em-yank-fn/test]  crates/nshedit/src/emacs.rs:94
 // [spec:libedit:sem:hist.hist-get-fn/test]  crates/nshedit/src/hist.rs:314
 // [spec:libedit:sem:histedit.el-wgets-fn/test]  crates/nshedit-abi/src/histedit.rs:849
@@ -350,16 +351,15 @@
 // [spec:libedit:sem:read.read-char-fn/test]  crates/nshedit/src/read.rs:460
 // [spec:libedit:sem:read.read-getcmd-fn/test]  crates/nshedit/src/read.rs:275
 // [spec:libedit:sem:refresh.re-addc-fn/test]  crates/nshedit/src/refresh.rs:178
-// [spec:libedit:sem:refresh.re-clear-eol-fn/test]  crates/nshedit/src/refresh.rs:639
-// [spec:libedit:sem:refresh.re-copy-and-pad-fn/test]  crates/nshedit/src/refresh.rs:1082
-// [spec:libedit:sem:refresh.re-fastaddc-fn/test]  crates/nshedit/src/refresh.rs:1300
-// [spec:libedit:sem:refresh.re-fastputc-fn/test]  crates/nshedit/src/refresh.rs:1207
-// [spec:libedit:sem:refresh.re-goto-bottom-fn/test]  crates/nshedit/src/refresh.rs:512
-// [spec:libedit:sem:refresh.re-putc-fn/test]  crates/nshedit/src/refresh.rs:307
-// [spec:libedit:sem:refresh.re-refresh-cursor-fn/test]  crates/nshedit/src/refresh.rs:1116
-// [spec:libedit:sem:refresh.re-refresh-fn/test]  crates/nshedit/src/refresh.rs:361
-// [spec:libedit:sem:refresh.re-strncopy-fn/test]  crates/nshedit/src/refresh.rs:616
-// [spec:libedit:sem:refresh.re-update-line-fn/test]  crates/nshedit/src/refresh.rs:674
+// [spec:libedit:sem:refresh.re-clear-eol-fn/test]  crates/nshedit/src/refresh.rs:640
+// [spec:libedit:sem:refresh.re-copy-and-pad-fn/test]  crates/nshedit/src/refresh.rs:1083
+// [spec:libedit:sem:refresh.re-fastaddc-fn/test]  crates/nshedit/src/refresh.rs:1301
+// [spec:libedit:sem:refresh.re-fastputc-fn/test]  crates/nshedit/src/refresh.rs:1208
+// [spec:libedit:sem:refresh.re-goto-bottom-fn/test]  crates/nshedit/src/refresh.rs:513
+// [spec:libedit:sem:refresh.re-refresh-cursor-fn/test]  crates/nshedit/src/refresh.rs:1117
+// [spec:libedit:sem:refresh.re-refresh-fn/test]  crates/nshedit/src/refresh.rs:362
+// [spec:libedit:sem:refresh.re-strncopy-fn/test]  crates/nshedit/src/refresh.rs:617
+// [spec:libedit:sem:refresh.re-update-line-fn/test]  crates/nshedit/src/refresh.rs:675
 // [spec:libedit:sem:terminal.terminal-clear-eol-fn/test]  crates/nshedit/src/terminal.rs:1476
 // [spec:libedit:sem:terminal.terminal-flush-fn/test]  crates/nshedit/src/terminal.rs:2105
 // [spec:libedit:sem:terminal.terminal-move-to-char-fn/test]  crates/nshedit/src/terminal.rs:1212
@@ -367,26 +367,28 @@
 // [spec:libedit:sem:terminal.terminal-overwrite-fn/test]  crates/nshedit/src/terminal.rs:1317
 // [spec:libedit:sem:terminal.terminal-putc-fn/test]  crates/nshedit/src/terminal.rs:2074
 // [spec:libedit:sem:terminal.terminal-writec-fn/test]  crates/nshedit/src/terminal.rs:2119
-// [spec:libedit:sem:tty.tty-end-fn/test]  crates/nshedit/src/tty.rs:974
-// [spec:libedit:sem:tty.tty-get-flag-fn/test]  crates/nshedit/src/tty.rs:1194
-// [spec:libedit:sem:tty.tty-getchar-fn/test]  crates/nshedit/src/tty.rs:1076
-// [spec:libedit:sem:tty.tty-getspeed-fn/test]  crates/nshedit/src/tty.rs:1010
-// [spec:libedit:sem:tty.tty-setchar-fn/test]  crates/nshedit/src/tty.rs:1098
+// [spec:libedit:sem:tty.tty-get-flag-fn/test]  crates/nshedit/src/tty.rs:1196
+// [spec:libedit:sem:tty.tty-getchar-fn/test]  crates/nshedit/src/tty.rs:1078
+// [spec:libedit:sem:tty.tty-getspeed-fn/test]  crates/nshedit/src/tty.rs:1012
+// [spec:libedit:sem:tty.tty-setchar-fn/test]  crates/nshedit/src/tty.rs:1100
 // [spec:libedit:sem:tty.tty-setty-fn/test]  crates/nshedit/src/tty.rs:811
-// [spec:libedit:sem:tty.tty-setup-flags-fn/test]  crates/nshedit/src/tty.rs:1778
-// [spec:libedit:sem:tty.tty-update-char-fn/test]  crates/nshedit/src/tty.rs:1244
-// [spec:libedit:sem:tty.tty-update-flag-fn/test]  crates/nshedit/src/tty.rs:1206
-// [spec:libedit:sem:tty.tty-update-flags-fn/test]  crates/nshedit/src/tty.rs:1219
+// [spec:libedit:sem:tty.tty-setup-flags-fn/test]  crates/nshedit/src/tty.rs:1780
+// [spec:libedit:sem:tty.tty-update-char-fn/test]  crates/nshedit/src/tty.rs:1246
+// [spec:libedit:sem:tty.tty-update-flag-fn/test]  crates/nshedit/src/tty.rs:1208
+// [spec:libedit:sem:tty.tty-update-flags-fn/test]  crates/nshedit/src/tty.rs:1221
 
 // ---------------------------------------------------------------------------
-// conformance/driver/abi_gaps.c — 6 rules
+// conformance/driver/abi_gaps.c — 9 rules
 // ---------------------------------------------------------------------------
+// [spec:libedit:sem:map.map-get-editor-fn/test]  crates/nshedit/src/map.rs:1294
+// [spec:libedit:sem:map.map-get-wordchars-fn/test]  crates/nshedit/src/map.rs:1333
 // [spec:libedit:sem:map.map-set-wordchars-fn/test]  crates/nshedit/src/map.rs:1314
+// [spec:libedit:sem:prompt.prompt-get-fn/test]  crates/nshedit/src/prompt.rs:368
 // [spec:libedit:sem:read.el-read-setfn-fn/test]  crates/nshedit/src/read.rs:143
-// [spec:libedit:sem:readline.get-prompt-fn/test]  crates/nshedit-abi/src/readline.rs:1175
-// [spec:libedit:sem:readline.readline-fn/test]  crates/nshedit-abi/src/readline.rs:1577
-// [spec:libedit:sem:readline.rl-event-read-char-fn/test]  crates/nshedit-abi/src/readline.rs:4211
-// [spec:libedit:sem:readline.rl-kill-full-line-fn/test]  crates/nshedit-abi/src/readline.rs:4681
+// [spec:libedit:sem:readline.get-prompt-fn/test]  crates/nshedit-abi/src/readline.rs:1086
+// [spec:libedit:sem:readline.readline-fn/test]  crates/nshedit-abi/src/readline.rs:1488
+// [spec:libedit:sem:readline.rl-event-read-char-fn/test]  crates/nshedit-abi/src/readline.rs:4117
+// [spec:libedit:sem:readline.rl-kill-full-line-fn/test]  crates/nshedit-abi/src/readline.rs:4571
 
 // ---------------------------------------------------------------------------
 // conformance/aux/ub_corpus.c — 0 rules
@@ -396,16 +398,16 @@
 ///
 /// A rule reached by more than one driver is attributed to the first that
 /// reaches it, so these sum to the total. The overlap is large and that is
-/// expected — 332 of 332 rules are reached by more than one,
+/// expected — 334 of 334 rules are reached by more than one,
 /// because every driver goes through the same lifecycle and allocator paths.
 #[test]
 fn the_claim_list_is_what_coverage_measured() {
     // Regenerate with ./conformance/coverage.sh, verify with --check.
-    // 332 rules across 6 drivers, measured under -C instrument-coverage.
-    assert_eq!(CLAIMED, 332);
+    // 334 rules across 6 drivers, measured under -C instrument-coverage.
+    assert_eq!(CLAIMED, 334);
 }
 
 /// How many `/test` facets this file carries. The generator and the
 /// annotations above are written together, so a hand edit to either
 /// desynchronises them and `coverage.sh --check` says so.
-const CLAIMED: usize = 332;
+const CLAIMED: usize = 334;

@@ -101,6 +101,21 @@ pub fn fcntl_setfl(fd: i32, flags: i32) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Pending input
+// ---------------------------------------------------------------------------
+
+/// Number of bytes a read can consume without blocking (`FIONREAD`).
+///
+/// `None` is the ioctl's `-1`. A zero count is a successful observation and
+/// is deliberately distinct: readline's event-hook reader busy-spins and
+/// calls the application hook again when no byte is ready.
+#[must_use]
+pub fn bytes_ready_to_read(fd: i32) -> Option<u64> {
+    let fd = borrow(fd)?;
+    rustix::io::ioctl_fionread(fd).ok()
+}
+
+// ---------------------------------------------------------------------------
 // Process credentials
 // ---------------------------------------------------------------------------
 
@@ -359,6 +374,27 @@ mod tests {
     fn a_negative_descriptor_fails_the_way_the_c_does() {
         assert!(fcntl_getfl(-1).is_none());
         assert!(!fcntl_setfl(-1, 0));
+        assert!(bytes_ready_to_read(-1).is_none());
+    }
+
+    /// The safe FIONREAD seam distinguishes an empty descriptor from one with
+    /// pending bytes and tracks consumption without taking ownership.
+    #[test]
+    fn pending_input_reports_the_kernel_queue() {
+        use std::io::{Read, Write};
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixStream;
+
+        let (mut reader, mut writer) = UnixStream::pair().expect("socket pair");
+        assert_eq!(bytes_ready_to_read(reader.as_raw_fd()), Some(0));
+
+        writer.write_all(b"abc").expect("write test bytes");
+        assert_eq!(bytes_ready_to_read(reader.as_raw_fd()), Some(3));
+
+        let mut byte = [0u8; 1];
+        reader.read_exact(&mut byte).expect("read one byte");
+        assert_eq!(byte, [b'a']);
+        assert_eq!(bytes_ready_to_read(reader.as_raw_fd()), Some(2));
     }
 
     /// `sem:read.read-fixio-fn`'s side effect is a permanent clear of

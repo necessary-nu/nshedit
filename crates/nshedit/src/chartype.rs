@@ -328,7 +328,8 @@ pub(crate) fn ct_decode_argv(
 
 // [spec:libedit:def:chartype.ct-enc-width-fn]
 // [spec:libedit:sem:chartype.ct-enc-width-fn]
-pub(crate) fn ct_enc_width(c: u32) -> usize {
+#[doc(hidden)]
+pub fn ct_enc_width(c: u32) -> usize {
     // The C measures with `wcrtomb` from a freshly zeroed `mbstate_t`: this
     // is the *context-free* width, and 0 means "no representation in this
     // locale" (ERR-encoding-15, disposition `reproduce` — the 0 crosses the C
@@ -345,7 +346,8 @@ pub(crate) fn ct_enc_width(c: u32) -> usize {
 ///
 /// Returns the C's `ssize_t`: bytes written, 0 if `c` has no representation
 /// in this locale, -1 if `dst` is too short.
-pub(crate) fn ct_encode_char(dst: &mut [u8], c: u32) -> isize {
+#[doc(hidden)]
+pub fn ct_encode_char(dst: &mut [u8], c: u32) -> isize {
     // ERR-encoding-03 (`define — reject len == 0 outright`). `ct_enc_width`
     // returns 0 for an unencodable `c`, so the C's `len < width` test is
     // false for every `len` including 0 and `wctomb` is handed a pointer with

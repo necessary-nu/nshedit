@@ -304,7 +304,8 @@ pub(crate) fn re_putliteral(el: &mut EditLine, sequence: &[u32], visible: u32) {
 
 // [spec:libedit:def:refresh.re-putc-fn]
 // [spec:libedit:sem:refresh.re-putc-fn]
-pub(crate) fn re_putc(el: &mut EditLine, c: u32, shift: i32) {
+#[doc(hidden)]
+pub fn re_putc(el: &mut EditLine, c: u32, shift: i32) {
     // Step 1. `wcwidth` is evaluated once, before any padding, exactly as the
     // C's initialiser is.
     let mut w = locale::wcwidth(locale::charset(), c);

@@ -14,10 +14,10 @@
 //! itself reaches them today. The symbol table is the contract, not the
 //! header, so [`chartype`] and [`filecomplete`] export them here.
 //!
-//! Nothing here links a C library. This crate *is* the C library: it exports
+//! No optional C library is linked. This crate *is* the C library: it exports
 //! the symbols and builds as `libnshedit.so`, installed with `libedit.so.0`
-//! and `libreadline.so.8` symlinked onto it. See
-//! `plan/decisions/no-c-ffi.md`.
+//! and `libreadline.so.8` symlinked onto it. Its narrowly enumerated libc
+//! interoperability is documented in `plan/decisions/no-c-ffi.md`.
 //!
 //! Everything C-shaped lives here and nowhere else — the varargs dispatch,
 //! the shared conversion buffers whose returned pointers stay valid exactly
@@ -43,6 +43,8 @@
 // yet, and a handful of parameters an arm accepts to match the C's signature
 // and does not read.
 #![allow(dead_code, unused_variables)]
+
+// [spec:nshedit:req:abi.complete-surface+1]
 
 pub mod cdecl;
 pub mod chartype;
@@ -186,8 +188,8 @@ mod errno {
 /// buffer, its position bookkeeping and its descriptor live in memory whose
 /// layout is that library's private business and differs between glibc, musl
 /// and the BSDs, so no Rust — in this workspace or in any crate — can read
-/// it. `plan/decisions/no-c-ffi.md` names this the third and last site where
-/// a libc symbol may be declared, and nothing but this module does it.
+/// it. `plan/decisions/no-c-ffi.md` names this as the ABI's stdio boundary,
+/// and nothing but this module touches the opaque stream objects.
 ///
 /// # Why not the descriptor
 ///
@@ -212,15 +214,14 @@ mod errno {
 /// Flushing first would repair the first two and not the third, and would
 /// itself be a stdio call. So the stream is used as a stream.
 pub(crate) mod cstdio {
-    use core::ffi::{c_char, c_int, c_long, c_void};
+    use core::ffi::{VaList, c_char, c_int, c_long, c_void};
     use std::io::{self, Write};
 
     use nshedit::el::CFile;
 
-    // `fileno`, `ftell` and `fputs` are POSIX and spelled the same in every
-    // libc this port targets, so unlike `errno`'s accessor there is no
-    // per-platform arm. None of them is `safe`: each dereferences the stream,
-    // and a NULL or already-closed one is undefined behaviour in the C too.
+    // These functions are POSIX and spelled the same in every libc this port
+    // targets. None is `safe`: each dereferences caller-provided storage or a
+    // stream, and invalid pointers are undefined in the C too.
     unsafe extern "C" {
         /// C: `int fileno(FILE *stream)` — the descriptor behind a stream, or
         /// -1 with `errno` set if it has none.
@@ -231,6 +232,48 @@ pub(crate) mod cstdio {
         /// C: `int fputs(const char *s, FILE *stream)` — non-negative on
         /// success, `EOF` on failure.
         fn fputs(s: *const c_char, stream: *mut c_void) -> c_int;
+        /// C: `int vsnprintf(char *, size_t, const char *, va_list)` — the
+        /// formatter required by `rl_message`'s arbitrary C varargs tail.
+        fn vsnprintf(
+            dst: *mut c_char,
+            size: usize,
+            format: *const c_char,
+            args: VaList<'_>,
+        ) -> c_int;
+    }
+
+    // Linux exposes the standard streams as writable `FILE *` data symbols.
+    // They are read, never reassigned. Another supported system ABI must
+    // supply its documented data symbols or accessor functions here.
+    #[cfg(target_os = "linux")]
+    unsafe extern "C" {
+        #[link_name = "stdin"]
+        static mut STDIN: *mut c_void;
+        #[link_name = "stdout"]
+        static mut STDOUT: *mut c_void;
+        #[link_name = "stderr"]
+        static mut STDERR: *mut c_void;
+    }
+
+    /// The process's actual standard input stream.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn standard_input() -> CFile {
+        // SAFETY: reading the libc-owned pointer does not mutate the stream.
+        unsafe { STDIN }
+    }
+
+    /// The process's actual standard output stream.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn standard_output() -> CFile {
+        // SAFETY: as [`standard_input`].
+        unsafe { STDOUT }
+    }
+
+    /// The process's actual standard error stream.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn standard_error() -> CFile {
+        // SAFETY: as [`standard_input`].
+        unsafe { STDERR }
     }
 
     /// C: `fileno(fp)`, with the null dereference defined away.
@@ -264,6 +307,26 @@ pub(crate) mod cstdio {
         }
         // SAFETY: as `fileno_of`.
         unsafe { ftell(stream) == 0 }
+    }
+
+    /// Format one C varargs list into a bounded, NUL-terminated byte buffer.
+    ///
+    /// This is intentionally not a Rust formatting facade: C callers may use
+    /// every argument type and locale-sensitive conversion accepted by their
+    /// `printf`, and only the platform formatter can interpret that erased
+    /// list correctly.
+    ///
+    /// # Safety
+    ///
+    /// `format` and `args` must satisfy the C `printf` contract.
+    pub(crate) unsafe fn format(dst: &mut [u8], format: *const c_char, args: VaList<'_>) -> c_int {
+        if dst.is_empty() || format.is_null() {
+            return -1;
+        }
+        // SAFETY: `dst` is writable for `dst.len()` bytes and the caller owns
+        // the format/argument contract. `vsnprintf` always reserves the last
+        // byte for NUL when the size is non-zero.
+        unsafe { vsnprintf(dst.as_mut_ptr().cast(), dst.len(), format, args) }
     }
 
     /// The caller's stream as a byte sink, one `fputs` per write.
@@ -320,5 +383,52 @@ pub(crate) mod cstdio {
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
+    }
+}
+
+/// Borrowed process-environment storage needed only for C pointer identity.
+///
+/// The native core deliberately returns an owned `OsString`; the readline
+/// ABI additionally promises that its default `rl_terminal_name` aliases the
+/// environment's own storage. Linux `secure_getenv` is the only sound way to
+/// preserve both that lifetime and the loader's secure-execution check.
+mod cenv {
+    use core::ffi::{CStr, c_char};
+
+    #[cfg(target_os = "linux")]
+    unsafe extern "C" {
+        fn secure_getenv(name: *const c_char) -> *mut c_char;
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn get(name: &CStr) -> *mut c_char {
+        // SAFETY: `name` is NUL-terminated and lives across the call. The
+        // returned pointer is borrowed from the environment and is not freed.
+        unsafe { secure_getenv(name.as_ptr()) }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn get(_: &CStr) -> *mut c_char {
+        // No non-Linux system ABI is supported yet.
+        core::ptr::null_mut()
+    }
+}
+
+/// C-locale operations whose process-global semantics are part of the ABI.
+mod clocale {
+    use core::ffi::{c_char, c_int};
+
+    unsafe extern "C" {
+        fn strcoll(left: *const c_char, right: *const c_char) -> c_int;
+    }
+
+    /// Compare two C strings under the process's current `LC_COLLATE` locale.
+    ///
+    /// # Safety
+    ///
+    /// Both pointers must name live NUL-terminated strings.
+    pub(crate) unsafe fn compare(left: *const c_char, right: *const c_char) -> c_int {
+        // SAFETY: the caller carries `strcoll`'s pointer contract.
+        unsafe { strcoll(left, right) }
     }
 }
