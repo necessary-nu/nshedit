@@ -178,16 +178,17 @@ assertions (
     {id cross-concern-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-08T13:15:16.991315761Z}
     {id greenfield-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:17:31.852523476Z}
     {id greenfield-abi-oracle, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:46:10.110061941Z}
-    {id greenfield-abi-adapter, kind @doing, author "brendan@necessary.nu", at 2026-08-08T19:23:39.991902894Z}
 )
 
 impl_evidence (
     {id greenfield-abi-adapter, covered_rules (
+        abi.behavioural-conformance
         abi.opaque-owner
+        abi.surface-stability
     ), covered_claims (
+        {impl_name native-impl, rule abi.behavioural-conformance}
         {impl_name native-impl, rule abi.opaque-owner}
-    ), rule_versions_seen (
-        {id abi.opaque-owner, version 0}
+        {impl_name native-impl, rule abi.surface-stability}
     )}
     {id greenfield-abi-baseline, covered_rules (
         abi.complete-surface

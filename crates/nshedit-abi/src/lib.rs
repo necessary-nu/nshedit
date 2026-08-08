@@ -35,6 +35,7 @@
 // their linked `sem` rules separately freeze the reference implementation's
 // observable behaviour.
 // [spec:nshedit:req:abi.complete-surface+1]
+// [spec:nshedit:req:abi.behavioural-conformance]
 
 // [spec:nshedit:req:abi.opaque-owner]
 mod adapter;

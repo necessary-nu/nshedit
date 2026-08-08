@@ -202,6 +202,7 @@ fn abi_shape() {
 /// while both tokenizer families convert at the ABI boundary and use the
 /// same native owned parser. They are still probed in a forked child, which
 /// is what would let the rest of a run survive a regression.
+// [spec:nshedit:req:abi.behavioural-conformance/test]
 #[test]
 fn differential_traces() {
     let _stages = stage_lock();
