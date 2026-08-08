@@ -13,24 +13,16 @@ use crate::el::{CoordT, EditLine};
 use crate::literal::{literal_add, literal_clear};
 use crate::locale;
 use crate::map::ElMapCurrent;
-use crate::prompt::prompt_print;
+use crate::prompt::{PromptSide, prompt_print};
 use crate::terminal::{
     terminal__flush, terminal__putc, terminal_clear_EOL, terminal_deletechars,
     terminal_insertwrite, terminal_move_to_char, terminal_move_to_line, terminal_overwrite,
 };
 
-// The two `el_set`/`el_get` op codes this module hands to `prompt_print`.
-// They belong to `histedit.h`, which does not carry them yet; private here for
-// the same reason `prompt.rs` keeps its own copy of `EL_PROMPT` — adopting the
-// public constants later is then a mechanical substitution.
-/// C: `#define EL_PROMPT 0`.
-const EL_PROMPT: i32 = 0;
-/// C: `#define EL_RPROMPT 12`.
-const EL_RPROMPT: i32 = 12;
-
 // The `el_terminal.t_flags` bits this module tests, via the C's `EL_CAN_*` /
-// `EL_HAS_*` convenience macros. C: `src/terminal.h`. Private for the same
-// reason as the two op codes above: `crate::terminal` has no counterpart yet.
+// `EL_HAS_*` convenience macros. C: `src/terminal.h`. Private because
+// `crate::terminal` has no counterpart yet; adopting one later is then a
+// mechanical substitution.
 /// C: `#define TERM_CAN_INSERT 0x001`.
 const TERM_CAN_INSERT: i32 = 0x001;
 /// C: `#define TERM_CAN_DELETE 0x002`.
@@ -75,6 +67,25 @@ fn wcslen(row: &[u32]) -> usize {
     row.iter().position(|&c| c == 0).unwrap_or(row.len())
 }
 
+/// Write one cell of the virtual image, or nothing at all when the drawing
+/// cursor names a cell the image does not have.
+///
+/// [`re_putc`] and [`re_putliteral`] address `el_vdisplay[v][h]` from the same
+/// cursor and the C indexes it unconditionally, so a cursor outside the image
+/// is an out-of-bounds write there and a panic here. Every reachable state
+/// keeps it inside — `re_nextline` clamps the row to `t_size.v` and both
+/// writers wrap the column at `t_size.h` — so this defines what the C left
+/// undefined rather than guarding something that happens, which is the
+/// treatment [`cell`] already gives the reading side.
+fn vput(el: &mut EditLine, v: i32, h: i32, c: u32) {
+    let (Ok(v), Ok(h)) = (usize::try_from(v), usize::try_from(h)) else {
+        return;
+    };
+    if let Some(cell) = el.el_vdisplay.get_mut(v).and_then(|row| row.get_mut(h)) {
+        *cell = c;
+    }
+}
+
 // [spec:libedit:def:refresh.el-refresh-t]
 /// Where the refresh machinery believes the cursor is, and how tall the
 /// display was last time round.
@@ -91,20 +102,31 @@ pub struct ElRefreshT {
 // [spec:libedit:sem:refresh.re-printstr-fn]
 /// The C's `f` and `t` delimit a half-open range of one screen row; the
 /// range is the argument here, so the pair collapses to a single slice.
-/// Debug-only in the C (`DEBUG_REFRESH`), and dead unless a port wires it
-/// to tracing.
-fn re_printstr(el: &mut EditLine, str: &str, f: &[u32]) {
-    // The rule permits a port to omit this entirely: the function, the twelve
-    // calls to it in `re_update_line` and the `ELRE_DEBUG`/`ELRE_ASSERT`
-    // macros it depends on all live behind `DEBUG_REFRESH`, which no shipped
-    // build defines, so it has no observable behaviour across the C ABI. It is
-    // omitted rather than emulated, because the destination is
-    // `el->el_errfile` — a borrowed `FILE *` the port carries as an opaque
-    // pointer with no writer behind it — and because the C's `& 0177` mask
-    // makes the dump meaningless for anything but ASCII anyway. The call sites
-    // in `re_update_line` are omitted for the same reason (ERR-terminal-65,
-    // disposition `fix — not ported`).
-    let _ = (el, str, f);
+///
+/// Debug-only in the C: this function, the twelve calls to it in
+/// `re_update_line` and the `ELRE_DEBUG`/`ELRE_ASSERT` macros it depends on
+/// all live behind `DEBUG_REFRESH`, which no shipped build defines. The rule
+/// lets a port either implement it as tracing or omit it, because it has no
+/// observable behaviour across the C ABI either way.
+///
+/// Implemented, and left with no call sites. Restoring the twelve would spray
+/// a dump into `el_errfile` on every redraw of every frame, which is a shipped
+/// build doing what only a `DEBUG_REFRESH` one may; leaving the formatter
+/// written and tested means turning tracing on is adding a call rather than
+/// reconstructing the format from the rule.
+fn re_printstr(el: &EditLine, str: &str, f: &[u32]) {
+    // C: `fprintf(__F, "%s:\"", str)`, then `"%c"` per character, then
+    // `"\"\r\n"`. The `0177` mask folds every wide character into the ASCII
+    // range, so the dump is legible for ASCII content and meaningless for
+    // anything else: `MB_FILL_CHAR`, being `(wint_t)-1`, prints as `\177`, and
+    // a NUL inside the range is written out like any other cell rather than
+    // ending it.
+    let mut out = Vec::with_capacity(str.len() + f.len() + 5);
+    out.extend_from_slice(str.as_bytes());
+    out.extend_from_slice(b":\"");
+    out.extend(f.iter().map(|&c| (c & 0o177) as u8));
+    out.extend_from_slice(b"\"\r\n");
+    el.write_errfile(&out);
 }
 
 // [spec:libedit:def:refresh.re-nextline-fn]
@@ -209,38 +231,48 @@ fn re_addc(el: &mut EditLine, c: u32) {
 // [spec:libedit:def:refresh.re-putliteral-fn]
 // [spec:libedit:sem:refresh.re-putliteral-fn]
 /// C: `begin` and `end` are two pointers into the prompt string the
-/// application's callback returned. The string is not part of `el`, so it
-/// stays a borrowed slice; `end` indexes it.
+/// application's callback returned — `begin` at the first character inside the
+/// delimiters, `end` at the closing one, and `end[1]` the visible character
+/// the sequence decorates and whose width decides whether the literal is kept
+/// at all. Those two things are the arguments here.
 ///
-/// The pair cannot collapse to one half-open slice, because
-/// [`crate::literal::literal_add`] reads *past* `end` — `buf[end]` is the
-/// closing delimiter and `buf[end + 1]` is the visible character glued to the
-/// literal, whose width decides whether the literal is kept at all. So `buf`
-/// must extend at least to `end + 1`, and the caller keeps the delimiter and
-/// the glued character inside the slice it passes.
-pub(crate) fn re_putliteral(el: &mut EditLine, buf: &[u32], end: usize) {
+/// They are not a slice and an index into it, because that pair is a trap:
+/// [`crate::literal::literal_add`] encodes `buf[..end]` and `buf[end + 1]` and
+/// never `buf[end]`, so a caller that put the closing delimiter one place
+/// further along would compile, run, and intern the wrong bytes in silence.
+/// A sequence and a character cannot be got wrong that way and need no
+/// arithmetic at the call site.
+pub(crate) fn re_putliteral(el: &mut EditLine, sequence: &[u32], visible: u32) {
     let sizeh = el.el_terminal.t_size.h;
 
-    // Step 1. `literal_add` interns the bracketed sequence plus the encoded
-    // `buf[end + 1]` and hands back `EL_LITERAL | index`, setting `w` to the
-    // number of columns the glued visible character occupies.
+    // Step 1. `literal_add` still takes the C's `(buf, end)` pair, so the pair
+    // is rebuilt right here, where the sequence and the index into it cannot
+    // drift apart. The pushed 0 occupies the slot `end` names — the closing
+    // delimiter, which `literal_add` skips — and exists only to keep its
+    // indexing scheme; the encoded output is the sequence followed by
+    // `visible`, and `w` comes back as the number of columns `visible`
+    // occupies.
+    let mut buf = Vec::with_capacity(sequence.len() + 2);
+    buf.extend_from_slice(sequence);
+    buf.push(0);
+    buf.push(visible);
     let mut w: i32 = 0;
-    let c = literal_add(el, buf, end, &mut w);
+    let c = literal_add(el, &buf, sequence.len(), &mut w);
 
-    // Step 2: 0 is allocation failure (or a caller whose slice was too
-    // short), a negative width is a non-printable visible character. Either
-    // way the sequence is dropped without changing anything.
+    // Step 2: 0 is allocation failure, a negative width is a non-printable
+    // visible character. Either way the sequence is dropped without changing
+    // anything.
     if c == 0 || w < 0 {
         return;
     }
 
     // The C holds `cur` as a pointer to `el->el_refresh.r_cursor`, so every
     // read below sees the live value; `literal_add` does not touch it.
-    let v = el.el_refresh.r_cursor.v as usize;
+    let v = el.el_refresh.r_cursor.v;
     let h = el.el_refresh.r_cursor.h;
 
     // Step 3.
-    el.el_vdisplay[v][h as usize] = c;
+    vput(el, v, h, c);
 
     // Step 4: fill the cells the sequence's visible character covers, clamped
     // so the fill cannot leave the row. The C is `i = w; if (i > sizeh -
@@ -252,7 +284,7 @@ pub(crate) fn re_putliteral(el: &mut EditLine, buf: &[u32], end: usize) {
         i = sizeh - h;
     }
     for k in (1..i).rev() {
-        el.el_vdisplay[v][(h + k) as usize] = MB_FILL_CHAR;
+        vput(el, v, h + k, MB_FILL_CHAR);
     }
 
     // Step 5: the same "zero width still costs a column" rule as `re_putc`
@@ -265,7 +297,7 @@ pub(crate) fn re_putliteral(el: &mut EditLine, buf: &[u32], end: usize) {
     // the margin, and `r_cursor.h` may overshoot `sizeh` before `re_nextline`
     // resets it to 0. The overshoot is absorbed silently.
     if el.el_refresh.r_cursor.h >= sizeh {
-        el.el_vdisplay[v][sizeh as usize] = 0;
+        vput(el, v, sizeh, 0);
         re_nextline(el);
     }
 }
@@ -291,16 +323,16 @@ pub(crate) fn re_putc(el: &mut EditLine, c: u32, shift: i32) {
         re_putc(el, SPACE, 1);
     }
 
-    let v = el.el_refresh.r_cursor.v as usize;
+    let v = el.el_refresh.r_cursor.v;
     let h = el.el_refresh.r_cursor.h;
 
     // Step 3: the character, then `w - 1` fill cells — none when `w` is 0 or
     // 1. The C's comment notes the no-shift form "assumes !shift is only used
     // for single-column chars"; the one extra cell every row carries absorbs
     // the write when it is not.
-    el.el_vdisplay[v][h as usize] = c;
+    vput(el, v, h, c);
     for k in (1..w).rev() {
-        el.el_vdisplay[v][(h + k) as usize] = MB_FILL_CHAR;
+        vput(el, v, h + k, MB_FILL_CHAR);
     }
 
     // Step 4: `re_putc(el, '\0', 0)` is exactly "terminate the virtual row at
@@ -319,7 +351,7 @@ pub(crate) fn re_putc(el: &mut EditLine, c: u32, shift: i32) {
 
     // Step 6: the one extra cell every row is allocated with.
     if el.el_refresh.r_cursor.h >= sizeh {
-        el.el_vdisplay[v][sizeh as usize] = 0;
+        vput(el, v, sizeh, 0);
         re_nextline(el);
     }
 }
@@ -351,7 +383,7 @@ pub fn re_refresh(el: &mut EditLine) {
     // drawing pass never uses), and an rprompt wider than the terminal
     // scrolls the virtual display through `re_nextline` before any real
     // content is drawn.
-    prompt_print(el, EL_RPROMPT);
+    prompt_print(el, PromptSide::Right);
     el.el_refresh.r_cursor.h = 0;
     el.el_refresh.r_cursor.v = 0;
 
@@ -369,7 +401,7 @@ pub fn re_refresh(el: &mut EditLine) {
     let mut cur = CoordT { h: -1, v: 0 };
 
     // Step 6.
-    prompt_print(el, EL_PROMPT);
+    prompt_print(el, PromptSide::Left);
 
     // Step 7: walk the input buffer. The C's `#if notyet` block, which would
     // have started this walk partway in for lines longer than the screen, is
@@ -420,7 +452,7 @@ pub fn re_refresh(el: &mut EditLine) {
         // end column — and no longer the rprompt's width. `re_fastaddc` reads
         // it in that state, which is what makes its guard vacuous
         // (ERR-terminal-49).
-        prompt_print(el, EL_RPROMPT);
+        prompt_print(el, PromptSide::Right);
     } else {
         // The flag "not using the right prompt".
         el.el_rprompt.p_pos.h = 0;
@@ -1353,43 +1385,63 @@ pub fn re_clear_display(el: &mut EditLine) {
     // `el_vdisplay` is not touched.
 }
 
+/// One bare CR/LF pair, the only motion either branch of [`re_clear_lines`]
+/// has in common.
+///
+/// ERR-terminal-52, disposition `reproduce`: it goes straight out through
+/// `terminal__putc`, so `el_cursor` never learns the terminal moved and the
+/// `terminal_move_to_line` that follows computes its motion from a stale
+/// value. The sequence is only coherent because the sole caller runs
+/// `re_clear_display` immediately afterwards, forcing the recorded cursor to
+/// (0, 0), and then redraws everything. The byte sequence a terminal receives
+/// is the observable behaviour, so this is reproduced rather than "repaired".
+fn scroll_one_line(el: &mut EditLine) {
+    terminal__putc(el, u32::from(b'\r'));
+    terminal__putc(el, u32::from(b'\n'));
+}
+
+/// Really blank rows `0..=rows`, bottom-up, one clear-to-end-of-line each.
+///
+/// Row 0 is included, so a previous line that occupied a single row still
+/// costs a clear; the CR/LF that walks to the row above is what is skipped for
+/// that last iteration alone.
+fn clear_rows_bottom_up(el: &mut EditLine, rows: i32) {
+    for i in (0..=rows).rev() {
+        if i > 0 {
+            scroll_one_line(el);
+        }
+        terminal_move_to_line(el, i);
+        terminal_move_to_char(el, 0);
+        let h = el.el_terminal.t_size.h;
+        terminal_clear_EOL(el, h);
+    }
+}
+
+/// Push `rows` lines of old text up out of the way and leave the terminal on a
+/// fresh line below them.
+///
+/// Nothing is erased: without the clear-to-end-of-line capability the old text
+/// is still on the screen, merely scrolled above the region libedit is about
+/// to redraw. The trailing move-to-last-line plus pair is the C's "go to last
+/// line, go to BOL, go to a new line".
+fn scroll_rows_away(el: &mut EditLine, rows: i32) {
+    for _ in 1..=rows {
+        scroll_one_line(el);
+    }
+    terminal_move_to_line(el, rows);
+    scroll_one_line(el);
+}
+
 // [spec:libedit:def:refresh.re-clear-lines-fn]
 // [spec:libedit:sem:refresh.re-clear-lines-fn]
 pub(crate) fn re_clear_lines(el: &mut EditLine) {
-    // ERR-terminal-52, disposition `reproduce`: the bare `'\r'`/`'\n'` writes
-    // below bypass `el_cursor` entirely, so after each of them libedit's
-    // recorded cursor no longer describes the terminal and the
-    // `terminal_move_to_line` that follows computes its motion from a stale
-    // value. The sequence is only coherent because the sole caller runs
-    // `re_clear_display` immediately afterwards, forcing the recorded cursor
-    // to (0, 0), and then redraws everything. The byte sequence a terminal
-    // receives is the observable behaviour, so this is reproduced rather than
-    // "repaired".
+    // The flag decides whether the previous line is erased or only shoved out
+    // of sight; both walk the same `r_oldcv` rows and emit nothing else.
+    let rows = el.el_refresh.r_oldcv;
     if el.el_terminal.t_flags & TERM_CAN_CEOL != 0 {
-        for i in (0..=el.el_refresh.r_oldcv).rev() {
-            if i > 0 {
-                terminal__putc(el, u32::from(b'\r'));
-                terminal__putc(el, u32::from(b'\n'));
-            }
-            // For each line on the screen.
-            terminal_move_to_line(el, i);
-            terminal_move_to_char(el, 0);
-            let h = el.el_terminal.t_size.h;
-            terminal_clear_EOL(el, h);
-        }
+        clear_rows_bottom_up(el, rows);
     } else {
-        // `r_oldcv` newline pairs, scrolling the old text up out of the way.
-        // Nothing is erased on this path.
-        let mut i = el.el_refresh.r_oldcv;
-        while i > 0 {
-            terminal__putc(el, u32::from(b'\r'));
-            terminal__putc(el, u32::from(b'\n'));
-            i -= 1;
-        }
-        // Go to the last line, then to BOL, then to a new line.
-        terminal_move_to_line(el, el.el_refresh.r_oldcv);
-        terminal__putc(el, u32::from(b'\r'));
-        terminal__putc(el, u32::from(b'\n'));
+        scroll_rows_away(el, rows);
     }
 }
 

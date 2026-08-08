@@ -6,13 +6,29 @@ use crate::chartype::ct_decode_string;
 use crate::el::{CoordT, EditLine};
 use crate::refresh::{re_putc, re_putliteral};
 
-// The four `el_set`/`el_get` ops this module tests `op` against. They belong
-// to `histedit.h`, which has no Rust counterpart yet; these are private so
-// that adopting the public constants later is a mechanical substitution.
+// The `el_set`/`el_get` ops [`prompt_set`] and [`prompt_get`] test `op`
+// against. They belong to `histedit.h`, which has no Rust counterpart yet;
+// these are private so that adopting the public constants later is a
+// mechanical substitution.
 /// C: `#define EL_PROMPT 0`.
 const EL_PROMPT: i32 = 0;
 /// C: `#define EL_PROMPT_ESC 21`.
 const EL_PROMPT_ESC: i32 = 21;
+
+/// Which of the two prompts to draw.
+///
+/// C: the same `int op` the setters take. [`prompt_print`] is the one caller
+/// that gets no use out of it — it recognises `EL_PROMPT` alone as the
+/// left-hand prompt and treats every other value, `EL_PROMPT_ESC` included, as
+/// the right — so its argument names the choice rather than carrying three
+/// codes that all mean the same thing to it. The raw codes still reach
+/// [`prompt_set`] and [`prompt_get`], which do have to tell all four apart and
+/// disagree about how (ERR-core-api-14).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PromptSide {
+    Left,
+    Right,
+}
 
 /// C: `static wchar_t a[3] = L"? ";` inside [`prompt_default`].
 ///
@@ -90,12 +106,12 @@ unsafe extern "C" fn prompt_default_r(el: *mut EditLine) -> *mut u32 {
 
 // [spec:libedit:def:prompt.prompt-print-fn]
 // [spec:libedit:sem:prompt.prompt-print-fn]
-pub(crate) fn prompt_print(el: &mut EditLine, op: i32) {
-    // Step 1: select the record. Only `EL_PROMPT` names the left-hand
-    // prompt; the `_ESC` ops are not recognised here at all, unlike in
-    // `prompt_set`. `op` is kept as a bool because the record cannot stay
-    // borrowed across the callback below.
-    let right = op != EL_PROMPT;
+pub(crate) fn prompt_print(el: &mut EditLine, side: PromptSide) {
+    // Step 1: select the record. The C tests `op != EL_PROMPT`, so the `_ESC`
+    // ops are not recognised here at all, unlike in `prompt_set`; see
+    // [`PromptSide`]. The choice is kept as a local because the record cannot
+    // stay borrowed across the callback below.
+    let right = side == PromptSide::Right;
     let (p_func, p_wide, p_ignore) = {
         let elp = if right { &el.el_rprompt } else { &el.el_prompt };
         (elp.p_func, elp.p_wide, elp.p_ignore)
@@ -219,11 +235,10 @@ pub(crate) fn prompt_print(el: &mut EditLine, op: i32) {
                 break;
             }
             // `re_putliteral(el, litstart, p)` with `p` at the closing
-            // delimiter. The slice runs to `j + 1` inclusive rather than
-            // stopping at `j`, because `literal_add` reads the delimiter at
-            // `end` and the glued visible character at `end + 1`; the guard
-            // above has already established both are in bounds.
-            re_putliteral(el, &prompt[litstart..=j + 1], j - litstart);
+            // delimiter: the bracketed sequence, and the visible character
+            // glued to it that the C reads as `p[1]`. The guard above has
+            // already established that character exists.
+            re_putliteral(el, &prompt[litstart..j], prompt[j + 1]);
             // The C's `p++` in the call and the `p++` of the enclosing
             // `for`: `p` lands two past the closing delimiter, so the
             // character glued to the literal is consumed by it and is never

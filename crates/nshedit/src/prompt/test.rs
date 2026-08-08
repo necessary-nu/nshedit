@@ -11,8 +11,8 @@ use super::*;
 use crate::el::blank_editline;
 use crate::locale;
 
-/// C: `#define EL_RPROMPT 12`, the op `prompt_print` and `prompt_get` both
-/// treat as "not the left-hand prompt".
+/// C: `#define EL_RPROMPT 12`, the op `prompt_set` and `prompt_get` both treat
+/// as "not the left-hand prompt". `prompt_print` takes a [`PromptSide`].
 const EL_RPROMPT: i32 = 12;
 
 /// An editor with a screen to draw a prompt onto and no descriptors.
@@ -130,7 +130,7 @@ fn the_default_prompt_loses_its_trailing_space_to_the_narrow_branch() {
         "the unassigned field ERR-terminal-57"
     );
 
-    prompt_print(&mut el, EL_PROMPT);
+    prompt_print(&mut el, PromptSide::Left);
 
     if cfg!(target_endian = "little") {
         assert_eq!(drawn(&el, 0), "?");
@@ -148,7 +148,7 @@ fn the_default_prompt_loses_its_trailing_space_to_the_narrow_branch() {
     let mut el = editor();
     prompt_init(&mut el);
     el.el_prompt.p_wide = 1;
-    prompt_print(&mut el, EL_PROMPT);
+    prompt_print(&mut el, PromptSide::Left);
     assert_eq!(drawn(&el, 0), "? ");
     assert_eq!(el.el_prompt.p_pos.h, 2);
 }
@@ -290,12 +290,12 @@ fn what_comes_back_does_not_say_how_the_string_will_be_read() {
     // first zero byte.
     let mut el = editor();
     prompt_set(&mut el, Some(counting), 0, EL_PROMPT, 0);
-    prompt_print(&mut el, EL_PROMPT);
+    prompt_print(&mut el, PromptSide::Left);
     let narrow_columns = el.el_prompt.p_pos.h;
 
     let mut el = editor();
     prompt_set(&mut el, Some(counting), 0, EL_PROMPT, 1);
-    prompt_print(&mut el, EL_PROMPT);
+    prompt_print(&mut el, PromptSide::Left);
     assert_eq!(drawn(&el, 0), "C");
     assert_eq!(el.el_prompt.p_pos.h, 1);
 

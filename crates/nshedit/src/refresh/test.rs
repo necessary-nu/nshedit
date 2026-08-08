@@ -79,17 +79,6 @@ fn emitted(el: &mut EditLine, f: impl FnOnce(&mut EditLine)) -> Vec<u8> {
     bytes
 }
 
-/// The `(buf, end)` pair `re_putliteral` takes, laid out as `prompt_print`
-/// lays it out: the bracketed sequence, then the closing delimiter at `end`,
-/// then the visible character the sequence decorates at `end + 1`.
-fn literal(seq: &[u32], visible: u32) -> (Vec<u32>, usize) {
-    let mut buf = seq.to_vec();
-    let end = buf.len();
-    buf.push(u32::from(b'%'));
-    buf.push(visible);
-    (buf, end)
-}
-
 /// `re_insert` opens the gap right-to-left and the cells that fall off the
 /// end of the row are discarded rather than growing it — the row is a
 /// fixed-width screen line, not a string.
@@ -210,17 +199,20 @@ fn the_next_line_rotates_only_the_virtual_rows_at_the_bottom() {
 // re_printstr
 // ---------------------------------------------------------------------------
 
-/// The debug dump is omitted, not emulated. Its destination in the C is
-/// `el_errfile`, a borrowed `FILE *` the port carries as an opaque pointer
-/// with no writer behind it, and the whole function plus its twelve call sites
-/// in `re_update_line` live behind `DEBUG_REFRESH`, which no shipped build
-/// defines (ERR-terminal-65). So the contract is that it writes nothing and
-/// reads nothing — including for the `MB_FILL_CHAR` cells the C's `& 0177`
-/// mask would have printed as `\177`, and for a range that runs past the
-/// row's terminator.
+/// The dump goes to the error descriptor — never the output one, so it cannot
+/// be mistaken for screen content — as the label, a colon, the region in
+/// double quotes and a CR/LF. Every cell is masked with `0177`, which is what
+/// makes it legible for ASCII and meaningless for anything else:
+/// `MB_FILL_CHAR` is `(wint_t)-1` and prints as `\177`, and an embedded NUL is
+/// dumped like any other cell rather than ending the region.
+///
+/// Nothing in the port calls it — the twelve call sites in `re_update_line`
+/// are `DEBUG_REFRESH`-only and are not ported (ERR-terminal-65) — so it
+/// reaches a terminal only where someone wires it up, and it disturbs neither
+/// image nor cursor when they do.
 // [spec:libedit:sem:refresh.re-printstr-fn/test]
 #[test]
-fn the_debug_dump_emits_nothing_and_disturbs_nothing() {
+fn the_debug_dump_folds_the_region_into_ascii_between_quotes() {
     let mut el = screen();
     el.el_refresh.r_cursor = CoordT { h: 3, v: 1 };
     el.el_cursor = CoordT { h: 5, v: 2 };
@@ -228,16 +220,31 @@ fn the_debug_dump_emits_nothing_and_disturbs_nothing() {
     let before = (el.el_vdisplay.clone(), el.el_display.clone());
 
     let out = emitted(&mut el, |el| {
-        let d = el.el_vdisplay[1].clone();
-        re_printstr(el, "d", &d);
-        re_printstr(el, "MB_FILL_CHAR", &[MB_FILL_CHAR, 0, 0x1b, u32::from('~')]);
+        re_printstr(el, "new", &cells("live"));
+        re_printstr(el, "fill", &[MB_FILL_CHAR, 0, 0x1b, u32::from('~')]);
         re_printstr(el, "", &[]);
     });
 
-    assert_eq!(out, b"", "nothing reaches either descriptor");
+    assert_eq!(out, b"new:\"live\"\r\nfill:\"\x7f\0\x1b~\"\r\n:\"\"\r\n");
     assert_eq!((el.el_vdisplay.clone(), el.el_display.clone()), before);
     assert_eq!(el.el_refresh.r_cursor, CoordT { h: 3, v: 1 });
     assert_eq!(el.el_cursor, CoordT { h: 5, v: 2 });
+}
+
+/// With no error descriptor the dump goes nowhere at all — it does not fall
+/// back to the output one, where it would land in the middle of the screen
+/// image. An unset `el_errfd` is what an application that never asked for
+/// diagnostics leaves behind, and the failed write is discarded exactly as the
+/// C discards `fprintf`'s result.
+// [spec:libedit:sem:refresh.re-printstr-fn/test]
+#[test]
+fn the_debug_dump_never_falls_back_to_the_output_descriptor() {
+    let mut el = screen();
+    let out = emitted(&mut el, |el| {
+        el.el_errfd = -1;
+        re_printstr(el, "new", &cells("live"));
+    });
+    assert_eq!(out, b"");
 }
 
 // ---------------------------------------------------------------------------
@@ -246,14 +253,14 @@ fn the_debug_dump_emits_nothing_and_disturbs_nothing() {
 
 /// One magic cell stands for the whole bracketed sequence plus the visible
 /// character glued to it, so the image charges the sequence no columns while
-/// printing the cell replays every byte of it. The closing delimiter at `end`
-/// is skipped; `end + 1` is what gets encoded and what decides the width.
+/// printing the cell replays every byte of it. The closing delimiter is not
+/// part of either: the sequence and the visible character are what get
+/// encoded, and the visible character alone decides the width.
 // [spec:libedit:sem:refresh.re-putliteral-fn/test]
 #[test]
 fn a_literal_becomes_one_cell_that_replays_its_whole_byte_string() {
     let mut el = screen();
-    let (buf, end) = literal(&cells("\u{1b}[1m"), u32::from('X'));
-    re_putliteral(&mut el, &buf, end);
+    re_putliteral(&mut el, &cells("\u{1b}[1m"), u32::from('X'));
 
     let c = el.el_vdisplay[0][0];
     assert_eq!(c, EL_LITERAL, "the first index, with the marker bit");
@@ -278,8 +285,7 @@ fn a_zero_width_visible_character_still_costs_a_column() {
     // this does not depend on the test host's locale.
     assert_eq!(locale::wcwidth(locale::charset(), 0), 0);
 
-    let (buf, end) = literal(&cells("\u{1b}k"), 0);
-    re_putliteral(&mut el, &buf, end);
+    re_putliteral(&mut el, &cells("\u{1b}k"), 0);
 
     assert_eq!(el.el_vdisplay[0][0], EL_LITERAL);
     assert_eq!(el.el_refresh.r_cursor, CoordT { h: 1, v: 0 });
@@ -297,8 +303,7 @@ fn a_refused_literal_leaves_the_image_and_the_cursor_alone() {
     let before = el.el_vdisplay.clone();
 
     // A lone surrogate is unprintable in every charset, so `wcwidth` is -1.
-    let (buf, end) = literal(&cells("\u{1b}["), 0xD800);
-    re_putliteral(&mut el, &buf, end);
+    re_putliteral(&mut el, &cells("\u{1b}["), 0xD800);
     assert_eq!(el.el_vdisplay, before);
     assert_eq!(el.el_refresh.r_cursor, CoordT { h: 2, v: 1 });
     assert_eq!(el.el_literal.l_idx, 0, "nothing was interned either");
@@ -307,8 +312,7 @@ fn a_refused_literal_leaves_the_image_and_the_cursor_alone() {
     // into the marker bit, and past that bound `literal_add` returns 0 with
     // the visible character's real width still in `w`.
     el.el_literal.l_idx = usize::MAX;
-    let (buf, end) = literal(&cells("\u{1b}["), u32::from('X'));
-    re_putliteral(&mut el, &buf, end);
+    re_putliteral(&mut el, &cells("\u{1b}["), u32::from('X'));
     assert_eq!(el.el_vdisplay, before);
     assert_eq!(el.el_refresh.r_cursor, CoordT { h: 2, v: 1 });
 }
@@ -324,8 +328,7 @@ fn a_literal_in_the_last_column_terminates_the_row_and_wraps() {
     el.el_vdisplay[0] = row("abcdefgh");
     el.el_refresh.r_cursor = CoordT { h: DLEN - 1, v: 0 };
 
-    let (buf, end) = literal(&cells("\u{1b}["), u32::from('X'));
-    re_putliteral(&mut el, &buf, end);
+    re_putliteral(&mut el, &cells("\u{1b}["), u32::from('X'));
 
     assert_eq!(el.el_vdisplay[0][DLEN as usize - 1], EL_LITERAL);
     assert_eq!(
@@ -351,8 +354,7 @@ fn a_double_width_literal_is_truncated_at_the_margin_not_moved_off_it() {
     let wide = locale::wcwidth(locale::charset(), CJK) == 2;
 
     let mut el = screen();
-    let (buf, end) = literal(&cells("\u{1b}["), CJK);
-    re_putliteral(&mut el, &buf, end);
+    re_putliteral(&mut el, &cells("\u{1b}["), CJK);
     if wide {
         assert_eq!(el.el_vdisplay[0][0], EL_LITERAL);
         assert_eq!(el.el_vdisplay[0][1], MB_FILL_CHAR, "the second column");
@@ -368,8 +370,7 @@ fn a_double_width_literal_is_truncated_at_the_margin_not_moved_off_it() {
     let mut el = screen();
     el.el_vdisplay[0] = row("abcdefgh");
     el.el_refresh.r_cursor = CoordT { h: DLEN - 1, v: 0 };
-    let (buf, end) = literal(&cells("\u{1b}["), CJK);
-    re_putliteral(&mut el, &buf, end);
+    re_putliteral(&mut el, &cells("\u{1b}["), CJK);
     if wide {
         assert_eq!(el.el_vdisplay[0][DLEN as usize - 1], EL_LITERAL);
         assert_eq!(

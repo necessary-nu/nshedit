@@ -723,44 +723,61 @@ pub(crate) fn cv_delfini(el: &mut EditLine) {
     //    `action != NOP`. Note the C does not clear `c_vcmd.action` on this
     //    path, so there is nothing to reproduce there either.
 
-    // 4./5. `size = cursor - c_vcmd.pos`, a signed character count: positive
-    //       if the motion ran forward, negative if backward. A zero-width
-    //       motion affects the single character under the cursor.
-    let pos = el.el_chared.c_vcmd.pos;
-    let mut size = el.el_line.cursor as isize - pos as isize;
-    if size == 0 {
-        size = 1;
-    }
-
-    // 6. The cursor goes back to the anchor before any edit.
-    el.el_line.cursor = pos;
-
-    if action & YANK != 0 {
-        // 7. Copy the span into the kill buffer without deleting it.
-        if size > 0 {
-            cv_yank(el, el.el_line.cursor, size as i32);
-        } else {
-            // Start at the lower end of the span and pass a positive length.
-            cv_yank(
-                el,
-                (el.el_line.cursor as isize + size) as usize,
-                (-size) as i32,
-            );
-        }
-    } else if size > 0 {
-        // 8. `c_delafter`/`c_delbefore` also take the undo snapshot and fill
-        //    the kill buffer, so a delete leaves the removed text yankable.
-        c_delafter(el, size as i32);
-        re_refresh_cursor(el);
+    // 4./5. C: `size = cursor - c_vcmd.pos`, a signed character count —
+    //       positive if the motion ran forward, negative if backward — and
+    //       `size = 1` when it is zero, so a motion that did not move still
+    //       affects the character under the cursor.
+    //
+    //       Held here as the span it names: a low end and a positive length,
+    //       plus which end the anchor is. That is what the three arms below
+    //       actually need, and both ends come straight from positions already
+    //       inside the line, so the C's `cursor + size` is never formed. In
+    //       signed arithmetic it is one invariant away from wrapping — a
+    //       silent wrap where the C's pointer version is merely undefined —
+    //       and the invariant that saves it, `cursor >= 0`, is the one thing
+    //       `usize` already guarantees.
+    let anchor = el.el_chared.c_vcmd.pos;
+    let moved_to = el.el_line.cursor;
+    let start = anchor.min(moved_to);
+    let len = if anchor == moved_to {
+        1
     } else {
-        c_delbefore(el, (-size) as i32);
-        // The caller-side adjustment `c_delbefore` requires.
-        el.el_line.cursor = (el.el_line.cursor as isize + size) as usize;
-    }
+        anchor.abs_diff(moved_to)
+    };
 
-    // 9. `c_vcmd.pos` is left as it was. Only step 8's forward branch
-    //    refreshes the cursor; the other two rely on the caller's return code
-    //    to drive redisplay.
+    // 6. The cursor goes back to the anchor before any edit; each primitive
+    //    below works outward from where it already is, which is why only one
+    //    of them can be used for a given direction.
+    el.el_line.cursor = anchor;
+
+    // 7./8. Apply the operator to the span, and answer where the cursor
+    //       belongs afterwards. Every arm answers, so no arm can quietly not
+    //       move it — which is the shape the C's three-way asymmetry needs:
+    //       the forward delete leaves it where it already is, the backward
+    //       delete has to name the low end itself because `c_delbefore`
+    //       deliberately does not, and the yank names the anchor because it
+    //       moves nothing at all. That last one is why `yb` finishes to the
+    //       RIGHT of the text it copied, where `y` was pressed.
+    //
+    //       `c_delafter`/`c_delbefore` also take the undo snapshot and fill
+    //       the kill buffer, so a delete leaves the removed text yankable;
+    //       `cv_yank` alone does neither.
+    el.el_line.cursor = if action & YANK != 0 {
+        cv_yank(el, start, len as i32);
+        anchor
+    } else if anchor == start {
+        c_delafter(el, len as i32);
+        // The one arm that redraws. The other two rely on the caller's return
+        // code to drive redisplay, so a backward operator leaves the screen
+        // model behind until it does.
+        re_refresh_cursor(el);
+        start
+    } else {
+        c_delbefore(el, len as i32);
+        start
+    };
+
+    // 9. `c_vcmd.pos` is left as it was.
     el.el_chared.c_vcmd.action = NOP;
 }
 
@@ -1206,41 +1223,98 @@ pub fn el_cursor(el: &mut EditLine, n: i32) -> i32 {
     el.el_line.cursor as i32
 }
 
+/// C: `EL_BUFSIZ - 16` — the most characters [`c_gets`] accepts. The test is
+/// `>=` and runs BEFORE the store, so exactly this many fit and the next one
+/// is beeped away rather than truncating the read; the terminator then lands
+/// on `buf[C_GETS_MAX]`, which is why the caller's storage must hold one more.
+const C_GETS_MAX: usize = EL_BUFSIZ - 16;
+
+/// What one keystroke means to [`c_gets`].
+///
+/// Classifying is the whole of the C's `switch` and depends on nothing but the
+/// character and how much has already been accepted — no editor, no screen and
+/// no reader — which is what puts the length cap within reach of a test that
+/// does not have to push 1010 keystrokes through `el_wgetc` and `re_refresh`
+/// to get at it.
+#[derive(Debug, PartialEq, Eq)]
+enum Keystroke {
+    /// Backspace or DEL with something typed: uncount the last character. It
+    /// stays in `buf` above the count and the next store overwrites it.
+    Erase,
+    /// Backspace or DEL on empty input: abort the whole read.
+    Abort,
+    /// ESC, CR or LF. ERR-modes-67: `c_gets` treats all three alike, which is
+    /// what lets ESC submit a vi search match. The terminator itself is stored
+    /// at `buf[len]` without being counted.
+    Terminate,
+    /// An ordinary character: store it and redraw.
+    Store,
+    /// The cap is reached, so the character is beeped away and discarded.
+    TooLong,
+}
+
+fn c_gets_classify(ch: u32, len: usize) -> Keystroke {
+    match ch {
+        // Delete and backspace.
+        0x08 | 0o177 => {
+            if len == 0 {
+                Keystroke::Abort
+            } else {
+                Keystroke::Erase
+            }
+        }
+        // ESC, CR, LF.
+        0o33 | 0x0d | 0x0a => Keystroke::Terminate,
+        _ if len >= C_GETS_MAX => Keystroke::TooLong,
+        _ => Keystroke::Store,
+    }
+}
+
 // [spec:libedit:def:chared.c-gets-fn]
 // [spec:libedit:sem:chared.c-gets-fn]
 /// `buf` is caller storage, not part of `el` — both callers pass a local
 /// `wchar_t[EL_BUFSIZ]` — so it stays a borrowed slice rather than becoming
-/// an index. `prompt` is optional because the C tests it against NULL.
+/// an index. It must hold [`C_GETS_MAX`] + 1 characters; a shorter one is a
+/// refused read. `prompt` is optional because the C tests it against NULL.
 pub(crate) fn c_gets(el: &mut EditLine, buf: &mut [u32], prompt: Option<&[u32]>) -> i32 {
+    // The rule's contract on the caller's storage — room for `C_GETS_MAX + 1`
+    // characters — taken once, as a window of exactly that size. Nothing below
+    // needs a bounds test after this, because the largest `len` the loop can
+    // reach is the last index of the window. A shorter slice is undefined in
+    // the C and is a refused read here rather than the 1009 silently dropped
+    // writes it used to be; `cv_search` passes 1022 characters and
+    // `ed_command` 1024.
+    let Some(buf) = buf.get_mut(..=C_GETS_MAX) else {
+        return -1;
+    };
+
     // ERR-buffer-10: the C never checks its writes into the line buffer
-    // against `el_line.limit` — `cp` can reach `buffer + wcslen(prompt) +
-    // 1008` and one more character is stored there, so a prompt longer than
-    // 15 characters combined with maximal input runs past the initial
-    // 1024-slot line buffer. Defined as the errata asks: every store into the
-    // line is bounded by `limit`, and the cursor and `lastchar` stop there
-    // too, so the display simply stops advancing while typing continues into
-    // `buf`. The two in-tree callers use prompts of 2 and 3 characters, so
-    // nothing reachable today is clamped.
-    //
-    // The writes into `buf` are the caller's storage: the rule requires room
-    // for `EL_BUFSIZ - 16 + 1` characters, and `cv_search`/`ce_inc_search`
-    // both pass more than that. A short slice would be undefined in the C; a
-    // dropped write is the definition here.
+    // against `el_line.limit` — the draw position can reach
+    // `buffer + wcslen(prompt) + 1008` and one more character is stored there,
+    // so a prompt longer than 15 characters combined with maximal input runs
+    // past the initial 1024-slot line buffer. Defined as the errata asks:
+    // every store into the line is bounded by `limit`, and the cursor and
+    // `lastchar` stop there too, so the display simply stops advancing while
+    // typing continues into `buf`. The two in-tree callers use prompts of 2
+    // and 3 characters, so nothing reachable today is clamped.
 
     // 1./2. The prompt goes to the START of the line buffer, destroying
     //       whatever the user was editing; the line is cleared again on exit.
-    let mut cp = 0usize;
-    if let Some(p) = prompt {
-        let n = p.len().min(el.el_line.limit);
-        el.el_line.buffer[..n].copy_from_slice(&p[..n]);
-        cp = p.len();
-    }
-    // 3.
-    let mut len: isize = 0;
+    let prompt = prompt.unwrap_or(&[]);
+    let copied = prompt.len().min(el.el_line.limit);
+    el.el_line.buffer[..copied].copy_from_slice(&prompt[..copied]);
+
+    // 3. The C also carries `cp`, the draw position in the line. It is
+    //    `wcslen(prompt) + len` at every point of the loop — the two rise and
+    //    fall together and neither moves when the cap beeps — so it is derived
+    //    below instead of tracked, which leaves exactly one place where a line
+    //    index is formed and therefore exactly one place to apply `limit`.
+    let mut len = 0usize;
+    let mut aborted = false;
 
     loop {
         // 4. The space is the blank the cursor sits on while typing.
-        let at = cp.min(el.el_line.limit);
+        let at = (prompt.len() + len).min(el.el_line.limit);
         el.el_line.cursor = at;
         el.el_line.buffer[at] = u32::from(b' ');
         el.el_line.lastchar = at + 1;
@@ -1252,49 +1326,35 @@ pub(crate) fn c_gets(el: &mut EditLine, buf: &mut [u32], prompt: Option<&[u32]>)
             // ERR-modes-37: the `CC_EOF` this produces is discarded, and the
             // -1 below is indistinguishable from a cancelled read.
             ed_end_of_file(el, 0);
-            len = -1;
+            aborted = true;
             break;
         }
 
-        match ch {
-            // Delete and backspace.
-            0x08 | 0o177 => {
-                if len == 0 {
-                    // Backspacing on empty input aborts the whole read.
-                    len = -1;
-                    break;
-                }
-                // The erased character stays in `buf` above `len` — it is
-                // simply no longer counted — and in the line buffer it is
-                // overwritten by the cursor space on the next iteration.
-                len -= 1;
-                cp -= 1;
-            }
-            // ESC, CR, LF. ERR-modes-67: `c_gets` treats all three alike as
-            // terminators, which is what lets ESC submit a vi search match.
-            0o33 | 0x0d | 0x0a => {
-                // Stored at `buf[len]` WITHOUT incrementing `len`, so the
-                // return does not count it; callers overwrite it with
-                // `L'\0'`. `buf` is never NUL-terminated here.
-                if let Some(slot) = buf.get_mut(len as usize) {
-                    *slot = ch;
-                }
+        // 6.
+        match c_gets_classify(ch, len) {
+            Keystroke::Abort => {
+                aborted = true;
                 break;
             }
-            _ => {
-                if len >= (EL_BUFSIZ - 16) as isize {
-                    // The character is discarded.
-                    terminal_beep(el);
-                } else {
-                    if let Some(slot) = buf.get_mut(len as usize) {
-                        *slot = ch;
-                    }
-                    len += 1;
-                    if cp < el.el_line.limit {
-                        el.el_line.buffer[cp] = ch;
-                    }
-                    cp += 1;
+            Keystroke::Erase => len -= 1,
+            Keystroke::Terminate => {
+                // Stored WITHOUT incrementing `len`, so the return does not
+                // count it; callers overwrite it with `L'\0'`. `buf` is never
+                // NUL-terminated here.
+                buf[len] = ch;
+                break;
+            }
+            Keystroke::TooLong => terminal_beep(el),
+            Keystroke::Store => {
+                buf[len] = ch;
+                // The same position the cursor space went to, before the count
+                // advances past it. Clamped away entirely once the draw
+                // position has run up against `limit`, which is ERR-buffer-10
+                // above.
+                if at < el.el_line.limit {
+                    el.el_line.buffer[at] = ch;
                 }
+                len += 1;
             }
         }
     }
@@ -1307,7 +1367,7 @@ pub(crate) fn c_gets(el: &mut EditLine, buf: &mut [u32], prompt: Option<&[u32]>)
     // The number of characters written to `buf`, not counting the terminator
     // left at `buf[len]`; or -1 on EOF, read error, or backspace on empty
     // input.
-    len as i32
+    if aborted { -1 } else { len as i32 }
 }
 
 // [spec:libedit:def:chared.c-hpos-fn]

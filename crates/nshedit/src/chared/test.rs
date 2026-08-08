@@ -517,7 +517,7 @@ fn emitted(el: &mut EditLine, f: impl FnOnce(&mut EditLine)) -> Vec<u8> {
 #[test]
 fn a_short_read_draws_through_the_line_buffer_and_leaves_it_behind() {
     let mut el = editor("previous line", 3);
-    let mut buf = [0u32; 32];
+    let mut buf = [0u32; EL_BUFSIZ];
     feed(&mut el, "abc\r");
 
     let prompt: Vec<u32> = "? ".chars().map(u32::from).collect();
@@ -553,7 +553,7 @@ fn a_short_read_draws_through_the_line_buffer_and_leaves_it_behind() {
 fn escape_carriage_return_and_newline_all_end_the_read() {
     for term in ['\r', '\n', '\u{1b}'] {
         let mut el = editor("", 0);
-        let mut buf = [0u32; 32];
+        let mut buf = [0u32; EL_BUFSIZ];
         feed(&mut el, &format!("hi{term}"));
         assert_eq!(c_gets(&mut el, &mut buf, None), 2, "{term:?}");
         assert_eq!(chars(&buf[..2]), "hi");
@@ -570,14 +570,14 @@ fn escape_carriage_return_and_newline_all_end_the_read() {
 #[test]
 fn backspace_uncounts_a_character_and_aborts_the_read_on_an_empty_one() {
     let mut el = editor("", 0);
-    let mut buf = [0u32; 32];
+    let mut buf = [0u32; EL_BUFSIZ];
     feed(&mut el, "ab\u{8}c\r");
     assert_eq!(c_gets(&mut el, &mut buf, None), 2);
     assert_eq!(chars(&buf[..2]), "ac");
 
     // DEL is the same key here as ^H.
     let mut el = editor("", 0);
-    let mut buf = [0u32; 32];
+    let mut buf = [0u32; EL_BUFSIZ];
     feed(&mut el, "ab\u{7f}\u{7f}\u{7f}");
     assert_eq!(c_gets(&mut el, &mut buf, None), -1);
     assert_eq!(
@@ -594,7 +594,7 @@ fn backspace_uncounts_a_character_and_aborts_the_read_on_an_empty_one() {
 #[test]
 fn exhausted_input_ends_the_read_the_same_way_a_cancel_does() {
     let mut el = editor("previous line", 3);
-    let mut buf = [0u32; 32];
+    let mut buf = [0u32; EL_BUFSIZ];
     feed(&mut el, "ab");
 
     assert_eq!(c_gets(&mut el, &mut buf, None), -1);
@@ -604,10 +604,31 @@ fn exhausted_input_ends_the_read_the_same_way_a_cancel_does() {
     assert_eq!(el.el_line.cursor, 0);
 }
 
-/// The length cap is `EL_BUFSIZ - 16`, tested with `>=` BEFORE the store, so
-/// exactly 1008 characters fit and the 1009th is beeped away rather than
-/// truncating the read. The terminator then lands on `buf[1008]`, which is why
-/// the rule requires `EL_BUFSIZ - 16 + 1` characters of caller storage.
+/// The cap is the one decision in the dispatch that turns on how much has
+/// already been accepted rather than on the keystroke, and it is `>=` — so the
+/// 1008th character is stored and the 1009th is not. Nothing but the character
+/// and the count decides any of the five outcomes, which is why the boundary
+/// is reachable without a thousand keystrokes.
+// [spec:libedit:sem:chared.c-gets-fn/test]
+#[test]
+fn the_length_cap_is_tested_before_the_store_not_after() {
+    let cap = EL_BUFSIZ - 16;
+    assert_eq!(c_gets_classify(u32::from('x'), cap - 1), Keystroke::Store);
+    assert_eq!(c_gets_classify(u32::from('x'), cap), Keystroke::TooLong);
+
+    // The cap gates ordinary characters alone: a full read can still be
+    // backspaced and still be submitted.
+    assert_eq!(c_gets_classify(0o177, cap), Keystroke::Erase);
+    assert_eq!(c_gets_classify(u32::from('\r'), cap), Keystroke::Terminate);
+    // And an empty one aborts on the same key that erases.
+    assert_eq!(c_gets_classify(0x08, 0), Keystroke::Abort);
+    assert_eq!(c_gets_classify(0x08, 1), Keystroke::Erase);
+}
+
+/// The same cap driven end to end: 1008 characters fit, the 1009th and 1010th
+/// are beeped away rather than truncating the read, and the terminator then
+/// lands on `buf[1008]` — which is why the rule requires `EL_BUFSIZ - 16 + 1`
+/// characters of caller storage.
 ///
 /// ERR-buffer-10 is the other half of this bound and is not reached here: the
 /// C checks `len` but never `el_line.limit`, so a prompt longer than 15
