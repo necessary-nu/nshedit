@@ -23,8 +23,15 @@
 //!   `docs/spec/port/src/literal.md`.
 //! - **An owned heap buffer → `Vec<T>` / `String`.** The C's `malloc`ed
 //!   `wchar_t *`, `char *` and `T **` arrays become owning containers. The
-//!   C's separate size/capacity fields are kept anyway, because the
-//!   translations refer to them by name.
+//!   C's separate size/capacity fields were kept through the translation,
+//!   because the bodies refer to them by name. That reason expired with the
+//!   translation, so a field that is *exactly* the container's own length now
+//!   goes: it is an invariant nothing can enforce, and every reader ends up
+//!   hedging with `.min(buf.len())` against a state no writer can produce.
+//!   `ElHistoryT::sz` was the one such field and it is gone. Fields that
+//!   merely *relate* to the length stay — `el_line.limit` is
+//!   `buffer.len() - EL_LEAVE` and `c_redo.lim` deliberately lags a
+//!   reallocation (ERR-buffer-20), so neither is derivable.
 //! - **A pointer *into* an owned buffer → an index (`usize`).** This covers
 //!   every place the C rebases after `realloc`, which
 //!   `sem:chared.ch-enlargebufs-fn` records as undefined

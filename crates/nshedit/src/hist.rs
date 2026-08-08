@@ -186,9 +186,12 @@ impl HistSource {
 pub struct ElHistoryT {
     /// C: `wchar_t *buf` — the history buffer, owned. Holds the live line
     /// while the user walks the history.
+    ///
+    /// The C's companion `size_t sz` is gone: it was the allocated `wchar_t`
+    /// count, which a `Vec` already answers, and keeping both made
+    /// `sz == buf.len()` an invariant nothing enforced. Every reader had to
+    /// hedge with `.min(buf.len())` against a state no writer could produce.
     pub buf: Vec<u32>,
-    /// C: `size_t sz` — allocated `wchar_t` count of `buf`.
-    pub sz: usize,
     /// C: `wchar_t *last` — offset into `buf`, one past the saved line.
     ///
     /// `sem:common.ed-search-next-history-fn` notes that the
@@ -214,8 +217,9 @@ pub(crate) fn hist_init(el: &mut EditLine) -> i32 {
 
     // `el_calloc(EL_BUFSIZ, sizeof(wchar_t))`. The C's NULL on failure is an
     // empty stash here; `try_reserve` is what keeps the failure a failure
-    // rather than an abort, and it leaves `sz` and `last` untouched — 0 and 0
-    // in a freshly zeroed `EditLine` — exactly as the C's early return does.
+    // rather than an abort, and it leaves the stash empty and `last` at 0 —
+    // exactly what the C's early return leaves behind in a freshly zeroed
+    // `EditLine`.
     el.el_history.buf = Vec::new();
     if el.el_history.buf.try_reserve_exact(EL_BUFSIZ).is_err() {
         // ERR-history-11: the sole caller discards this, and must keep
@@ -225,7 +229,6 @@ pub(crate) fn hist_init(el: &mut EditLine) -> i32 {
     }
     el.el_history.buf.resize(EL_BUFSIZ, 0);
 
-    el.el_history.sz = EL_BUFSIZ;
     // C: `last = buf` — a saved line of length 0. The C's pointer is an
     // offset here, so "empty" is 0.
     el.el_history.last = 0;
@@ -243,8 +246,9 @@ pub(crate) fn hist_end(el: &mut EditLine) {
     // into the memory just released. The rule directs the port to clear both;
     // it is unobservable across the C ABI (only `el_end` calls this, and it
     // drops the `EditLine` immediately) and it removes the trap where a
-    // `hist_get` at `eventno == 0` would read from a freed stash.
-    el.el_history.sz = 0;
+    // `hist_get` at `eventno == 0` would read from a freed stash. Clearing
+    // `buf` above is what answers the `sz` half now that the length is the
+    // stash's own.
     el.el_history.last = 0;
 
     // Deliberately not touched, as in the C: `fun`, `ref`, `eventno` and
@@ -318,15 +322,13 @@ pub(crate) fn hist_get(el: &mut EditLine) -> ElActionT {
     // Branch A — the line the user was actually typing.
     if el.el_history.eventno == 0 {
         // C: `wcsncpy(el_line.buffer, el_history.buf, el_history.sz)` — the
-        // saved line up to its first NUL, then NUL padding out to `sz`.
-        // `ch_enlargebufs` and `hist_enlargebuf` keep `sz` no larger than the
-        // line buffer; the `min` stands in for the C's unchecked write.
+        // saved line up to its first NUL, then NUL padding out to the stash's
+        // length. `ch_enlargebufs` and `hist_enlargebuf` keep the stash no
+        // larger than the line buffer; the `min` stands in for the C's
+        // unchecked write.
         let stash = &el.el_history.buf;
-        let n = el.el_history.sz.min(el.el_line.buffer.len());
-        let copy = stash[..n.min(stash.len())]
-            .iter()
-            .position(|&c| c == 0)
-            .unwrap_or(n.min(stash.len()));
+        let n = stash.len().min(el.el_line.buffer.len());
+        let copy = stash[..n].iter().position(|&c| c == 0).unwrap_or(n);
         el.el_line.buffer[..copy].copy_from_slice(&el.el_history.buf[..copy]);
         el.el_line.buffer[copy..n].fill(0);
 
@@ -594,35 +596,26 @@ pub(crate) fn hist_command(el: &mut EditLine, argc: i32, argv: *const *const u32
 pub(crate) fn hist_enlargebuf(el: &mut EditLine, newsz: usize) -> i32 {
     // The return convention is inverted relative to most of libedit: 1 is
     // success, 0 is failure.
-    let oldsz = el.el_history.sz;
+    let oldsz = el.el_history.buf.len();
     if newsz <= oldsz {
         // The stash is never shrunk; an equal or smaller request is a
         // successful no-op.
         return 1;
     }
 
-    // C: `el_realloc(buf, newsz * sizeof(wchar_t))`. On failure every field
-    // is left unchanged and the old buffer is still allocated and still
-    // valid, which is what lets `ch_enlargebufs` turn this into its own 0 and
-    // carry on.
-    if el
-        .el_history
-        .buf
-        .try_reserve(newsz.saturating_sub(el.el_history.buf.len()))
-        .is_err()
-    {
+    // C: `el_realloc(buf, newsz * sizeof(wchar_t))`. On failure the stash is
+    // left unchanged and still valid, which is what lets `ch_enlargebufs`
+    // turn this into its own 0 and carry on.
+    if el.el_history.buf.try_reserve(newsz - oldsz).is_err() {
         return 0;
     }
-    el.el_history.buf.resize(newsz, 0);
-    // C: `memset(&newbuf[oldsz], '\0', (newsz - oldsz) * sizeof(wchar_t))`.
-    // The first `oldsz` elements are left alone, so a saved line survives the
-    // growth. This is a no-op after the `resize` unless `hist_init`'s
-    // allocation failed and left a stash shorter than `sz` claims.
-    el.el_history.buf[oldsz..newsz].fill(0);
-
+    // C: `memset(&newbuf[oldsz], '\0', (newsz - oldsz) * sizeof(wchar_t))`,
+    // which is what `resize`'s fill value already is. The first `oldsz`
+    // elements are left alone, so a saved line survives the growth.
+    //
     // C: `last = newbuf + (last - oldbuf)`. `last` is already an offset here,
     // so the rebase across the reallocation is nothing at all.
-    el.el_history.sz = newsz;
+    el.el_history.buf.resize(newsz, 0);
 
     1
 }

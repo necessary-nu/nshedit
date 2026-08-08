@@ -345,8 +345,7 @@ fn enlarging_the_stash_preserves_the_saved_line() {
     el.el_history.last = saved.len();
 
     assert_eq!(hist_enlargebuf(&mut el, 4 * EL_BUFSIZ), 1, "1 is success");
-    assert_eq!(el.el_history.sz, 4 * EL_BUFSIZ);
-    assert_eq!(el.el_history.buf.len(), el.el_history.sz);
+    assert_eq!(el.el_history.buf.len(), 4 * EL_BUFSIZ);
     assert_eq!(&el.el_history.buf[..saved.len()], &saved[..]);
     assert!(
         el.el_history.buf[saved.len()..].iter().all(|&c| c == 0),
@@ -369,7 +368,6 @@ fn a_request_no_larger_than_the_stash_succeeds_without_growing() {
 
     for newsz in [0, 1, EL_BUFSIZ - 1, EL_BUFSIZ] {
         assert_eq!(hist_enlargebuf(&mut el, newsz), 1, "newsz {newsz}");
-        assert_eq!(el.el_history.sz, EL_BUFSIZ);
         assert_eq!(el.el_history.buf.len(), EL_BUFSIZ);
     }
     assert_eq!(el.el_history.buf[0], u32::from(b'x'));
@@ -382,7 +380,7 @@ fn a_request_no_larger_than_the_stash_succeeds_without_growing() {
 /// `ch_enlargebufs` is built on that guarantee: it turns the 0 into its own 0
 /// and the editor carries on, having already grown the line buffer. The stash
 /// is then smaller than the line, which `hist_get` tolerates because it copies
-/// `sz` characters into a buffer at least that large.
+/// the stash's own length into a buffer at least that large.
 // [spec:libedit:sem:hist.hist-enlargebuf-fn/test]
 #[test]
 fn a_refused_allocation_leaves_the_stash_exactly_as_it_was() {
@@ -393,7 +391,6 @@ fn a_refused_allocation_leaves_the_stash_exactly_as_it_was() {
     el.el_history.last = saved.len();
 
     assert_eq!(hist_enlargebuf(&mut el, usize::MAX), 0, "0 is failure");
-    assert_eq!(el.el_history.sz, EL_BUFSIZ);
     assert_eq!(el.el_history.buf.len(), EL_BUFSIZ);
     assert_eq!(&el.el_history.buf[..saved.len()], &saved[..]);
     assert_eq!(el.el_history.last, saved.len());
@@ -403,9 +400,9 @@ fn a_refused_allocation_leaves_the_stash_exactly_as_it_was() {
     assert_eq!(&el.el_history.buf[..saved.len()], &saved[..]);
 }
 
-/// A `hist_init` whose allocation failed leaves an empty stash and `sz` at 0,
-/// and the sole caller discards that error deliberately: the first line-buffer
-/// growth allocates from nothing and silently repairs the state.
+/// A `hist_init` whose allocation failed leaves an empty stash, and the sole
+/// caller discards that error deliberately: the first line-buffer growth
+/// allocates from nothing and silently repairs the state.
 ///
 /// ERR-history-11 is that this state reaches a working editor unannounced, so
 /// it is staged here rather than being borrowed from a half-built one.
@@ -414,30 +411,28 @@ fn a_refused_allocation_leaves_the_stash_exactly_as_it_was() {
 fn the_first_growth_repairs_a_stash_that_was_never_allocated() {
     let mut el = editor();
     el.el_history.buf = Vec::new();
-    el.el_history.sz = 0;
     el.el_history.last = 0;
-    assert!(el.el_history.buf.is_empty());
 
     assert_eq!(hist_enlargebuf(&mut el, EL_BUFSIZ), 1);
-    assert_eq!(el.el_history.sz, EL_BUFSIZ);
     assert_eq!(el.el_history.buf, vec![0u32; EL_BUFSIZ]);
     assert_eq!(el.el_history.last, 0);
 }
 
 /// The stash and the line buffer grow together. That lockstep is what makes
-/// `hist_get`'s restore safe: it copies `sz` characters into the line buffer
-/// with no bound of its own, so `sz` must never outrun the line's allocation.
-/// `ch_enlargebufs` is the one caller and this is the whole of its last step.
+/// `hist_get`'s restore safe: it copies the stash's length into the line
+/// buffer with no bound of its own, so the stash must never outrun the line's
+/// allocation. `ch_enlargebufs` is the one caller and this is the whole of its
+/// last step.
 // [spec:libedit:sem:hist.hist-enlargebuf-fn/test]
 #[test]
 fn the_stash_and_the_line_buffer_grow_in_lockstep() {
     let mut el = editor();
     hist_init(&mut el);
-    assert_eq!(el.el_history.sz, EL_BUFSIZ);
+    assert_eq!(el.el_history.buf.len(), EL_BUFSIZ);
 
     assert_eq!(ch_enlargebufs(&mut el, 1), 1);
-    assert!(el.el_history.sz > EL_BUFSIZ, "the stash grew too");
-    assert_eq!(el.el_history.sz, el.el_line.buffer.len());
+    assert!(el.el_history.buf.len() > EL_BUFSIZ, "the stash grew too");
+    assert_eq!(el.el_history.buf.len(), el.el_line.buffer.len());
 }
 
 /// A narrow C history: the shape `NARROW_HISTORY` exists to describe, where

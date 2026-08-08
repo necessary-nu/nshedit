@@ -307,8 +307,17 @@ pub struct HistoryGen<C> {
 /// embeds a `TYPE(HistEvent)` whose `str` is `const Char *` and the string is
 /// nevertheless the entry's to free. [`HentryGen`] owns its text outright, so
 /// nothing here needs the cast and nothing constructs one of these; the type
-/// stays because the C typedef does, and because a caller reading the C's
-/// header will look for it.
+/// stays because the C typedef does and `def:history.hist-event-private` is
+/// claimed on it.
+///
+/// It is **not** part of the ABI, whatever its name suggests. The C declares
+/// it as an untagged `typedef struct { ... } HistEventPrivate;` at file scope
+/// in `history.c:138` — no header carries it, and it has no struct tag a
+/// caller could name even if one did. `crates/nshedit-abi/include/histedit.h`
+/// is correspondingly silent about it, which is what upstream's `histedit.h`
+/// is too. `#[repr(C)]` here says only that the twin claim is structural:
+/// [`HistEventGen`] is `#[repr(C)]`, so the two agree on layout the way the
+/// C's cast assumes.
 #[repr(C)]
 pub struct HistEventPrivateGen<C> {
     /// C: `int num`.

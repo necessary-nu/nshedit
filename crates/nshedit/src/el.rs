@@ -905,7 +905,6 @@ pub(crate) fn blank_editline() -> EditLine {
         },
         el_history: ElHistoryT {
             buf: Vec::new(),
-            sz: 0,
             last: 0,
             eventno: 0,
             src: HistSource::None,

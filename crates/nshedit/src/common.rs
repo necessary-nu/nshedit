@@ -115,8 +115,8 @@ pub(crate) fn kill_save(el: &mut EditLine, from: usize, to: usize) {
 /// `ed_search_prev_history` take on their way off event 0.
 ///
 /// `wcsncpy` semantics, padding included: copy the source up to its own NUL,
-/// then NUL-fill the rest of `sz`. The callers write `*lastchar = '\0'` first,
-/// so the source string is the line up to `lastchar`.
+/// then NUL-fill the rest of the stash. The callers write `*lastchar = '\0'`
+/// first, so the source string is the line up to `lastchar`.
 ///
 /// ERR-history-10, defined here: the C's `wcsncpy` leaves the destination
 /// unterminated when the source fills it, and `ed_search_next_history` then
@@ -127,7 +127,7 @@ pub(crate) fn kill_save(el: &mut EditLine, from: usize, to: usize) {
 /// truncated, which would leave the recorded length describing storage the
 /// stash does not have.
 fn hist_save_line(el: &mut EditLine) {
-    let n = el.el_history.sz.min(el.el_history.buf.len());
+    let n = el.el_history.buf.len();
     let mut i = 0;
     while i < n {
         let c = el.el_line.buffer.get(i).copied().unwrap_or(0);

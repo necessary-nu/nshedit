@@ -238,7 +238,11 @@ fn enlarging_the_buffers_doubles_them_and_leaves_the_redo_limit_behind() {
     ] {
         assert_eq!(buf.len(), 2 * EL_BUFSIZ);
     }
-    assert_eq!(el.el_history.sz, 2 * EL_BUFSIZ, "the stash grows in step");
+    assert_eq!(
+        el.el_history.buf.len(),
+        2 * EL_BUFSIZ,
+        "the stash grows in step"
+    );
     assert_eq!(el.el_chared.c_redo.lim, EL_BUFSIZ, "ERR-buffer-20");
     assert_eq!(el.el_line.buffer[0], u32::from(b'h'), "the line survives");
 
