@@ -89,13 +89,13 @@ pub(crate) const MB_FILL_CHAR: u32 = u32::MAX;
 /// The C reads to the first `L'\0'`; a Rust slice also has an end. Whichever
 /// comes first wins. The C would read past the end of a slice that carries no
 /// terminator, which is the one thing the slice form cannot express.
-fn upto_nul_wide(s: &[u32]) -> &[u32] {
-    &s[..s.iter().position(|&c| c == 0).unwrap_or(s.len())]
-}
-
-/// Byte twin of [`upto_nul_wide`].
-fn upto_nul_byte(s: &[u8]) -> &[u8] {
-    &s[..s.iter().position(|&c| c == 0).unwrap_or(s.len())]
+///
+/// Generic because both halves of a [`CtBufferT`] need it and the C's `strlen`
+/// and `wcslen` differ only in element type.
+fn upto_nul<T: Copy + Default + PartialEq>(s: &[T]) -> &[T] {
+    s.iter()
+        .position(|&c| c == T::default())
+        .map_or(s, |end| &s[..end])
 }
 
 // [spec:libedit:def:chartype.ct-conv-cbuff-resize-fn]
@@ -170,14 +170,15 @@ fn ct_conv_wbuff_resize(conv: &mut CtBufferT, wsize: usize) -> i32 {
 /// `None` is the C's NULL return.
 pub fn ct_encode_string<'a>(s: Option<&[u32]>, conv: &'a mut CtBufferT) -> Option<&'a [u8]> {
     // Step 1.
-    let s = upto_nul_wide(s?);
+    let s = upto_nul(s?);
 
     // Step 2. The C's `dst` is a pointer into `cbuff`; here it is the offset
     // the C recomputes as `dst - conv->cbuff` at the top of every pass.
     let mut used = 0usize;
-    let mut i = 0usize;
+    let mut rest = s.iter();
 
-    // Step 3.
+    // Step 3. The headroom check runs once more than the body does, which is
+    // why this is not a `for`: the final pass is what reserves the terminator.
     loop {
         // Headroom: the C's hard-coded 5, unrelated to `MB_CUR_MAX`. On a
         // virgin `conv` this fires immediately (`0 - 0 < 5`) and allocates the
@@ -186,13 +187,11 @@ pub fn ct_encode_string<'a>(s: Option<&[u32]>, conv: &'a mut CtBufferT) -> Optio
         if conv.csize - used < 5 && ct_conv_cbuff_resize(conv, conv.csize + CT_BUFSIZ) == -1 {
             return None;
         }
-        if i == s.len() {
-            break;
-        }
+        let Some(&c) = rest.next() else { break };
 
         // The literal 5 is the C's, not the real remaining space; the
         // headroom rule above is what makes it safe.
-        let n = ct_encode_char(&mut conv.cbuff[used..used + 5], s[i]);
+        let n = ct_encode_char(&mut conv.cbuff[used..used + 5], c);
         if n == -1 {
             // ERR-encoding-12 (needs decision). The C calls `abort()` here —
             // a library killing the process because one character needed more
@@ -211,7 +210,6 @@ pub fn ct_encode_string<'a>(s: Option<&[u32]>, conv: &'a mut CtBufferT) -> Optio
         // not advance, the character is silently dropped, and the output is
         // shorter than the input with no way for the caller to tell
         // (ERR-encoding-15, disposition `reproduce`).
-        i += 1;
         used += n as usize;
     }
 
@@ -228,7 +226,7 @@ pub fn ct_decode_string<'a>(s: Option<&[u8]>, conv: &'a mut CtBufferT) -> Option
     let cs = locale::charset();
 
     // Step 1.
-    let s = upto_nul_byte(s?);
+    let s = upto_nul(s?);
 
     // Steps 2 and 3: `mbstowcs(NULL, s, 0)`, the sizing query. An invalid or
     // incomplete sequence *anywhere* rejects the whole string — no partial
@@ -262,6 +260,14 @@ pub fn ct_decode_string<'a>(s: Option<&[u8]>, conv: &'a mut CtBufferT) -> Option
 /// strings are packed end to end — the C returns interior pointers into that
 /// buffer, in an array the caller owns and must free. `None` elements mark
 /// the slots the C left NULL.
+///
+/// **Nothing calls this.** The C's return is one owned array whose elements
+/// borrow from `conv`, two lifetimes in one value, and offsets are the closest
+/// Rust gets: they are safe but they are not pointers, so an ABI shim has to
+/// rebuild the array anyway. Each of the C's three `eln.c` call sites
+/// therefore reimplements the loop per-string over `ct_decode_string`, copying
+/// each result out before decoding the next, and this function survives only
+/// under the crate-wide `allow(dead_code)`.
 pub(crate) fn ct_decode_argv(
     argv: &[Option<&[u8]>],
     conv: &mut CtBufferT,
@@ -277,7 +283,7 @@ pub(crate) fn ct_decode_argv(
     // negative count` is discharged by the signature.
     let mut bufspace = 1usize;
     for a in argv {
-        bufspace += a.map_or(0, |s| upto_nul_byte(s).len() + 1);
+        bufspace += a.map_or(0, |s| upto_nul(s).len() + 1);
     }
     if conv.wsize < bufspace && ct_conv_wbuff_resize(conv, bufspace + CT_BUFSIZ) == -1 {
         return None;
@@ -305,7 +311,7 @@ pub(crate) fn ct_decode_argv(
         // `bufspace` is the C's limit argument, not the buffer end; the two
         // stay consistent because `p + bufspace` is invariant and no greater
         // than `wsize`.
-        let bytes = upto_nul_byte(bytes);
+        let bytes = upto_nul(bytes);
         // -1 from `mbstowcs` fails the whole call: the pointer array is
         // dropped and there is no partial result. `conv.wbuff` keeps whatever
         // earlier elements decoded into it, which is garbage no caller can
@@ -379,7 +385,7 @@ pub(crate) fn ct_visual_string<'a>(
     conv: &'a mut CtBufferT,
 ) -> Option<&'a [u32]> {
     // Step 1.
-    let s = upto_nul_wide(s?);
+    let s = upto_nul(s?);
 
     // Step 2. Grow-only, so a `conv` already larger than 1024 keeps its size
     // for the space calculations below.
@@ -389,34 +395,30 @@ pub(crate) fn ct_visual_string<'a>(
 
     // Step 3.
     let mut dst = 0usize;
-    let mut i = 0usize;
-    while i < s.len() {
+    let mut rest = s;
+    while let Some((&c, tail)) = rest.split_first() {
         // The genuine remaining capacity, unlike the fixed 5 that
         // `ct_encode_string` passes on the byte side.
-        let used = ct_visual_char(&mut conv.wbuff[dst..conv.wsize], s[i]);
-        if used > 0 {
-            i += 1;
-            dst += used as usize;
+        let used = ct_visual_char(&mut conv.wbuff[dst..conv.wsize], c);
+        if used < 0 {
+            // Not enough room for this character's expansion. Grow and retry
+            // the *same* source character — `rest` does not advance. Progress
+            // is guaranteed because one expansion never needs more than
+            // `VISUAL_WIDTH_MAX` cells and each growth adds 1024. The C
+            // re-derives `dst` from the possibly-moved block here; an offset
+            // needs no re-deriving.
+            if ct_conv_wbuff_resize(conv, conv.wsize + CT_BUFSIZ) == -1 {
+                return None;
+            }
             continue;
         }
-        if used == 0 {
-            // Unreachable: `ct_chr_class` is total over the four arms that
-            // return non-zero, so the C's dead "any other class" arm
-            // (ERR-encoding-28) never fires. The C would spin here forever;
-            // skipping the character keeps the loop total, as
-            // `sem:chartype.ct-visual-string-fn` asks.
-            i += 1;
-            continue;
-        }
-        // -1: not enough room for this character's expansion. Grow and retry
-        // the *same* source character — `i` does not advance. Progress is
-        // guaranteed because one expansion never needs more than
-        // `VISUAL_WIDTH_MAX` cells and each growth adds 1024. The C
-        // re-derives `dst` from the possibly-moved block here; an offset
-        // needs no re-deriving.
-        if ct_conv_wbuff_resize(conv, conv.wsize + CT_BUFSIZ) == -1 {
-            return None;
-        }
+        // A 0 is unreachable: `ct_chr_class` is total over the four arms that
+        // return non-zero, so the C's dead "any other class" arm
+        // (ERR-encoding-28) never fires. The C would spin on it forever;
+        // advancing past a character that wrote nothing keeps the loop total,
+        // as `sem:chartype.ct-visual-string-fn` asks.
+        dst += used as usize;
+        rest = tail;
     }
 
     // Step 4, the C's `/* sigh */`: the loop can leave `dst` exactly at the
@@ -502,36 +504,27 @@ pub(crate) fn ct_visual_char(dst: &mut [u32], c: u32) -> isize {
             // `SSIZE_MAX` compare as negative and spuriously return -1. The
             // width in this arm is only ever 7 or 8, so the comparison is
             // done in `usize` and no negative width can be formed.
+            //
+            // ERR-encoding-13 (needs decision), reproduced per
+            // `plan/decisions/conformance-policy.md`: defined behaviour,
+            // defects included. The wide form is five hex digits, so every bit
+            // above 0x0FFFFF is lost and U+10FFFF renders as `\U+0FFFF` —
+            // plane 16 displayed as plane 0. Widening the field would change
+            // `ct_visual_width` and every column calculation downstream, so it
+            // is not a local fix.
             let width = if c > 0xffff { 8 } else { 7 };
             if dst.len() < width {
                 return -1; // insufficient space
             }
+            const PREFIX: [u32; 3] = [b'\\' as u32, b'U' as u32, b'+' as u32];
             const HEX: &[u8; 16] = b"0123456789ABCDEF";
-            let digit = |shift: u32| u32::from(HEX[((c >> shift) & 0xf) as usize]);
-            dst[0] = u32::from(b'\\');
-            dst[1] = u32::from(b'U');
-            dst[2] = u32::from(b'+');
-            if c > 0xffff {
-                // ERR-encoding-13 (needs decision), reproduced per
-                // `plan/decisions/conformance-policy.md`: defined behaviour,
-                // defects included. Only five hex digits are ever emitted, so
-                // every bit above 0x0FFFFF is lost and U+10FFFF renders as
-                // `\U+0FFFF` — plane 16 displayed as plane 0. Widening the
-                // field would change `ct_visual_width` and every column
-                // calculation downstream, so it is not a local fix.
-                dst[3] = digit(16);
-                dst[4] = digit(12);
-                dst[5] = digit(8);
-                dst[6] = digit(4);
-                dst[7] = digit(0);
-                8
-            } else {
-                dst[3] = digit(12);
-                dst[4] = digit(8);
-                dst[5] = digit(4);
-                dst[6] = digit(0);
-                7
+            dst[..PREFIX.len()].copy_from_slice(&PREFIX);
+            let digits = width - PREFIX.len();
+            for (i, slot) in dst[PREFIX.len()..width].iter_mut().enumerate() {
+                let nibble = (c >> (4 * (digits - 1 - i))) & 0xf;
+                *slot = u32::from(HEX[nibble as usize]);
             }
+            width as isize
             // The C's `/*FALLTHROUGH*/` after this `return` is dead and
             // misleading (ERR-encoding-28).
         }
@@ -588,8 +581,10 @@ mod tests {
     }
 
     // Every assertion below is either charset-independent (ASCII text and the
-    // C0 controls classify the same in both) or passes the charset in
-    // explicitly, so the process environment cannot change the outcome.
+    // C0 controls classify the same in both) or pins the charset for its own
+    // thread, so the process environment cannot change the outcome — and one
+    // run covers both readings rather than whichever `LC_CTYPE` happened to
+    // name.
 
     #[test]
     fn resize_is_grow_only_and_keeps_the_len_invariant() {
@@ -861,6 +856,59 @@ mod tests {
         assert_eq!(ct_encode_char(&mut dst, 0xD800), 0);
         assert_eq!(ct_enc_width(0xD800), 0);
         assert_eq!(ct_enc_width(0), 1);
+    }
+
+    /// U+4E00 is three bytes wide, two columns wide and printable in UTF-8; in
+    /// the C locale it is none of those, and every function in this file
+    /// changes its answer accordingly. A run under one `LC_CTYPE` would see
+    /// half of this.
+    // [spec:libedit:sem:chartype.ct-chr-class-fn/test]
+    // [spec:libedit:sem:chartype.ct-enc-width-fn/test]
+    // [spec:libedit:sem:chartype.ct-visual-width-fn/test]
+    #[test]
+    fn the_charset_decides_the_class_the_width_and_the_bytes() {
+        const CJK: u32 = 0x4E00;
+        let mut conv = empty();
+
+        {
+            let _cs = locale::pin_charset(locale::Charset::Utf8);
+            assert_eq!(ct_chr_class(CJK), CHTYPE_PRINT);
+            assert_eq!(ct_visual_width(CJK), 2);
+            assert_eq!(ct_enc_width(CJK), 3);
+            assert_eq!(
+                ct_encode_string(Some(&[CJK]), &mut conv).unwrap(),
+                "\u{4e00}".as_bytes()
+            );
+            assert_eq!(
+                ct_decode_string(Some("\u{4e00}".as_bytes()), &mut conv).unwrap(),
+                &[CJK]
+            );
+        }
+
+        let _cs = locale::pin_charset(locale::Charset::Ascii);
+        // Unprintable, so it renders as its escape rather than as itself, and
+        // `ct_visual_width` agrees with `ct_visual_char` here where it does
+        // not for tab and newline.
+        assert_eq!(ct_chr_class(CJK), CHTYPE_NONPRINT);
+        assert_eq!(ct_visual_width(CJK), 7);
+        let mut dst = [0u32; VISUAL_WIDTH_MAX];
+        assert_eq!(ct_visual_char(&mut dst, CJK), 7);
+        let text: String = dst[..7]
+            .iter()
+            .map(|&c| char::from_u32(c).unwrap())
+            .collect();
+        assert_eq!(text, "\\U+4E00");
+
+        // ERR-encoding-15: no representation, so `ct_encode_string` drops it
+        // and hands back a string shorter than its input with no way to tell.
+        assert_eq!(ct_enc_width(CJK), 0);
+        assert_eq!(
+            ct_encode_string(Some(&[u32::from(b'a'), CJK, u32::from(b'b')]), &mut conv).unwrap(),
+            b"ab"
+        );
+        // And the bytes that encoded it are not a character at all here, so
+        // the whole string is rejected rather than partly decoded.
+        assert!(ct_decode_string(Some("a\u{4e00}b".as_bytes()), &mut conv).is_none());
     }
 
     // The locale layer's own tests — the charset parser, the codec, the

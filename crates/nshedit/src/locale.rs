@@ -112,6 +112,32 @@ pub(crate) fn charset() -> Charset {
     })
 }
 
+/// Pins the snapshot for this thread until the guard drops, so a test can
+/// drive both charsets in one process.
+///
+/// `LC_CTYPE` is process-global and the cache is not, so writing the cache is
+/// the only override that leaves the sibling test threads measuring what they
+/// asked for. The restore is not decoration: under `--test-threads=1` every
+/// test shares one thread, and a pin that outlived its test would silently
+/// change the charset every later test reads.
+#[cfg(test)]
+#[must_use = "the pin lasts only as long as the guard"]
+pub(crate) fn pin_charset(cs: Charset) -> CharsetPin {
+    CharsetPin(CHARSET.with(|c| c.replace(Some(cs))))
+}
+
+/// Restores whatever [`pin_charset`] displaced — including `None`, the
+/// not-yet-read state.
+#[cfg(test)]
+pub(crate) struct CharsetPin(Option<Charset>);
+
+#[cfg(test)]
+impl Drop for CharsetPin {
+    fn drop(&mut self) {
+        CHARSET.with(|c| c.set(self.0));
+    }
+}
+
 fn from_env() -> Charset {
     for key in ["LC_ALL", "LC_CTYPE", "LANG"] {
         match std::env::var_os(key) {

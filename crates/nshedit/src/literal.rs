@@ -46,12 +46,21 @@ pub struct ElLiteralT {
     /// encoding of one literal sequence plus its trailing visible character.
     /// The NUL the C appended is not stored; the length is the length.
     pub l_buf: Vec<Vec<u8>>,
-    /// C: `size_t l_idx` — max in use. Kept alongside `l_buf` because the
-    /// `sem` rules index by it and because `literal_clear`'s guard tests
-    /// `l_len`, not this.
+    /// C: `size_t l_idx` — max in use, which is `l_buf.len()` for as long as
+    /// this module is the only writer. Kept because the `sem` rules index by
+    /// it and because a test can drive it out of step with `l_buf` to model
+    /// the stale sentinel of ERR-terminal-09, which is a state the C reaches
+    /// through a dangling pointer and this port cannot otherwise reach at all.
     pub l_idx: usize,
-    /// C: `size_t l_len` — max allocated. Grows by a fixed +4 slots per
-    /// reallocation, not by doubling.
+    /// C: `size_t l_len` — max allocated, and the *requested* capacity rather
+    /// than the granted one, which is where it stops duplicating
+    /// `l_buf.capacity()`.
+    ///
+    /// Growth is a fixed +4 slots per reallocation, not doubling, and this
+    /// field is the only place that cadence is visible: drop it and
+    /// `literal_add` becomes a bare `push` with the `Vec`'s geometric growth,
+    /// which is a behaviour `sem:literal.literal-add-fn` states. It is also
+    /// what `literal_clear`'s early return tests.
     pub l_len: usize,
 }
 
@@ -189,13 +198,20 @@ pub(crate) fn literal_add(
     // actually produced. In a single-byte or UTF-8 locale the measured length
     // was exact anyway, so the stored bytes are identical to the C's.
     //
+    // The visible character is appended by the same loop that walks the
+    // sequence, because the C encodes it with the same call.
+    //
     // No NUL is appended — the C's `b[n] = '\0'` exists because the string is
     // handed to `fputs`; here the length is the length.
     let mut b = Vec::new();
-    for &c in &buf[..end] {
-        encode_onto(&mut b, c);
+    for c in buf[..end].iter().copied().chain([visible]) {
+        // The C's step-4 `el_malloc` failure, which returns 0 with `*wp`
+        // already holding a non-negative width — the signal `re_putliteral`
+        // reads as "abandon this literal, not the prompt".
+        if !encode_onto(&mut b, c) {
+            return 0;
+        }
     }
-    encode_onto(&mut b, visible);
 
     let l = &mut el.el_literal;
 
@@ -211,27 +227,29 @@ pub(crate) fn literal_add(
 
     // Step 6. Growth is a fixed +4 elements per reallocation (4, 8, 12,
     // 16, …), linear rather than doubling, so N literals cost about N/4
-    // reallocations. `l_len` is kept because the rules name it and because
-    // `literal_clear`'s guard tests it; `reserve_exact` mirrors the C's
-    // realloc so the allocation pattern matches. The C's uninitialised new
-    // slots have no counterpart — spare capacity in a `Vec` holds nothing.
+    // reallocations; `try_reserve_exact` is what keeps that cadence, where a
+    // bare `push` would double. The C's uninitialised new slots have no
+    // counterpart — spare capacity in a `Vec` holds nothing.
     //
-    // The C's two allocation-failure returns (step 4's `el_malloc` and this
-    // step's `el_realloc`) cannot be reproduced: Rust's global allocator
-    // aborts rather than reporting failure, so `literal_add` never returns 0
-    // for OOM. ERR-terminal-19 — that failure path calling libc `free`
-    // instead of `el_free` — is moot for the same reason, and was already
-    // dispositioned `fix` as unobservable.
+    // The C restores `l_len` when the realloc fails, so the commit happens
+    // after the reservation and not before. ERR-terminal-19 — that failure
+    // path calling libc `free` on `b` instead of `el_free` — has no
+    // counterpart: `b` is dropped by its own allocator.
     if l.l_idx == l.l_len {
+        let extra = (l.l_len + 4).saturating_sub(l.l_buf.len());
+        if l.l_buf.try_reserve_exact(extra).is_err() {
+            return 0;
+        }
         l.l_len += 4;
-        let extra = l.l_len.saturating_sub(l.l_buf.len());
-        l.l_buf.reserve_exact(extra);
     }
 
     // Step 7. `l_buf[l_idx++] = b`, then return the index just filled with
     // the marker bit set. Sentinels carry an index and never a pointer, so
     // growing the table does not invalidate one already handed out; only
     // `literal_clear` does.
+    //
+    // The push cannot allocate: `l_idx` is now below `l_len`, and the block
+    // above reserved through `l_len` without ever shrinking it.
     l.l_buf.push(b);
     l.l_idx += 1;
     EL_LITERAL | (l.l_idx - 1) as u32
@@ -283,6 +301,15 @@ pub(crate) fn literal_get(el: &mut crate::el::EditLine, idx: u32) -> &[u8] {
     // nothing" fallback — the cell prints no bytes and the frame is otherwise
     // undisturbed. Observable behaviour for a stable prompt is untouched,
     // which is the part [dec:libedit:conformance-policy] freezes.
+    //
+    // This guard is not discriminating and cannot be: the C's two hazards —
+    // an index between `l_idx` and `l_len`, reading an uninitialised `char *`,
+    // and an index past the allocation entirely — have one answer here,
+    // because a `Vec`'s spare capacity holds nothing and the lookup below
+    // already misses. Deleting it would pass every test. It stays because the
+    // rule names the in-use prefix as the bound, and because it is what keeps
+    // `l_idx` authoritative when a caller has driven it out of step with
+    // `l_buf`.
     if idx >= l.l_idx {
         return &[];
     }
@@ -299,18 +326,16 @@ pub(crate) fn literal_get(el: &mut crate::el::EditLine, idx: u32) -> &[u8] {
     // unrepresentable in the locale then `ct_encode_char` produced nothing
     // for all of them (ERR-encoding-15), and the sentinel prints nothing
     // while the visible character is still charged its columns.
-    match l.l_buf.get(idx) {
-        Some(b) => b.as_slice(),
-        None => &[],
-    }
+    l.l_buf.get(idx).map_or(&[], Vec::as_slice)
 }
 
-/// Appends the locale's multibyte encoding of one character to `out`.
+/// Appends the locale's multibyte encoding of one character to `out`, and
+/// answers false if that could not be allocated.
 ///
 /// The C measures with `ct_enc_width` and then writes with `ct_encode_char`;
 /// this only writes, which is ERR-terminal-10's defined resolution. See the
 /// call site in [`literal_add`].
-fn encode_onto(out: &mut Vec<u8>, c: u32) {
+fn encode_onto(out: &mut Vec<u8>, c: u32) -> bool {
     // A fixed `MB_LEN_MAX` scratch. The C's `ct_encode_string` hard-codes
     // five bytes and `abort()`s past them (ERR-encoding-12); `literal_add`
     // instead passes its own measured remainder, which is the overflow
@@ -327,10 +352,20 @@ fn encode_onto(out: &mut Vec<u8>, c: u32) {
     // buffer; the C would *subtract* it from its running offset and drive
     // `b + n` before the start of the allocation, the second half of
     // ERR-terminal-10. Defined here as contributing nothing.
-    if n > 0 {
-        let n = (n as usize).min(scratch.len());
-        out.extend_from_slice(&scratch[..n]);
+    if n <= 0 {
+        return true;
     }
+
+    // `try_reserve` and not a bare `extend_from_slice`: the C's `el_malloc`
+    // for this string can fail and `literal_add` has a return value for it, so
+    // growing under the global allocator — which aborts the process instead of
+    // reporting — would throw that signal away.
+    let n = (n as usize).min(scratch.len());
+    if out.try_reserve(n).is_err() {
+        return false;
+    }
+    out.extend_from_slice(&scratch[..n]);
+    true
 }
 
 // `wcwidth`, `MB_LEN_MAX` and the two interval tables that used to live here
@@ -635,35 +670,72 @@ mod test {
     }
 
     /// `*wp` is `wcwidth` of the visible character and nothing else, so it
-    /// spans the whole range that function has: 0 for a combining mark, 2 for
-    /// a double-width character, and -1 — a refusal — for anything the locale
-    /// calls unprintable.
-    ///
-    /// The C locale calls every non-ASCII character unprintable, so there a
-    /// coloured prompt whose visible character is not ASCII gets no literal at
-    /// all and the escape is dropped with it. Both readings are pinned rather
-    /// than one, because the charset comes from the environment.
+    /// spans the whole range that function has: 0 for a combining mark and 2
+    /// for a double-width character.
     // [spec:libedit:sem:literal.literal-add-fn/test]
     #[test]
     fn the_reported_width_is_the_visible_characters_alone() {
+        let _cs = locale::pin_charset(locale::Charset::Utf8);
         let mut el = blank_editline();
         let seq = [0x1b, b'[' as u32, b'm' as u32];
         // U+0301 COMBINING ACUTE ACCENT, U+4E00 CJK UNIFIED IDEOGRAPH-4E00.
         let (combining, wc) = add(&mut el, &seq, 0x0301);
         let (wide, ww) = add(&mut el, &seq, 0x4E00);
 
-        if locale::charset() == locale::Charset::Utf8 {
-            assert_eq!(wc, 0, "a combining mark occupies no column");
-            assert_eq!(ww, 2, "a CJK ideograph occupies two");
-            assert_ne!(combining, 0);
-            assert_ne!(wide, 0);
-            assert_eq!(literal_get(&mut el, combining), "\x1b[m\u{0301}".as_bytes());
-            assert_eq!(literal_get(&mut el, wide), "\x1b[m\u{4e00}".as_bytes());
-        } else {
-            assert_eq!(wc, -1);
-            assert_eq!(ww, -1);
-            assert_eq!((combining, wide), (0, 0), "both literals are dropped");
-            assert_eq!(el.el_literal.l_idx, 0, "and nothing was stored");
+        assert_eq!(wc, 0, "a combining mark occupies no column");
+        assert_eq!(ww, 2, "a CJK ideograph occupies two");
+        assert_eq!(literal_get(&mut el, combining), "\x1b[m\u{0301}".as_bytes());
+        assert_eq!(literal_get(&mut el, wide), "\x1b[m\u{4e00}".as_bytes());
+    }
+
+    /// The C locale calls every non-ASCII character unprintable, so a coloured
+    /// prompt whose visible character is not ASCII gets no literal there at
+    /// all and the escape is dropped with it. The escape survives when the
+    /// visible character is ASCII, which is what keeps an ordinary coloured
+    /// prompt working in the C locale.
+    ///
+    /// Pinned rather than read from the environment, so one run covers the
+    /// branch that the ambient `LC_CTYPE` would otherwise hide.
+    // [spec:libedit:sem:literal.literal-add-fn/test]
+    #[test]
+    fn a_non_ascii_visible_character_gets_no_literal_in_the_c_locale() {
+        let _cs = locale::pin_charset(locale::Charset::Ascii);
+        let mut el = blank_editline();
+        let seq = [0x1b, b'[' as u32, b'm' as u32];
+        for visible in [0x0301, 0x4E00, 0xE9] {
+            let (r, w) = add(&mut el, &seq, visible);
+            assert_eq!(w, -1, "U+{visible:04X} has no width in ASCII");
+            assert_eq!(r, 0, "so the literal is dropped");
         }
+        assert_eq!(el.el_literal.l_idx, 0, "and nothing was stored");
+
+        // The escape itself is unaffected: an ASCII visible character still
+        // interns, and the sequence bytes still come back.
+        let (r, w) = add(&mut el, &seq, b'X' as u32);
+        assert_eq!((r, w), (EL_LITERAL, 1));
+        assert_eq!(literal_get(&mut el, r), b"\x1b[mX");
+    }
+
+    /// The stored bytes are the locale's multibyte encoding, so the same
+    /// literal is three bytes in UTF-8 and refused outright in the C locale.
+    // [spec:libedit:sem:literal.literal-add-fn/test]
+    // [spec:libedit:sem:literal.literal-get-fn/test]
+    #[test]
+    fn the_stored_encoding_follows_the_charset() {
+        let mut el = blank_editline();
+        {
+            let _cs = locale::pin_charset(locale::Charset::Utf8);
+            // U+00E9 is one byte of source and two of UTF-8.
+            let (r, w) = add(&mut el, &[0xE9], b'X' as u32);
+            assert_eq!(w, 1);
+            assert_eq!(literal_get(&mut el, r), "\u{e9}X".as_bytes());
+        }
+
+        let _cs = locale::pin_charset(locale::Charset::Ascii);
+        // ERR-encoding-15: unencodable here, so it contributes no bytes and
+        // the sentinel carries the visible character alone.
+        let (r, w) = add(&mut el, &[0xE9], b'X' as u32);
+        assert_eq!(w, 1);
+        assert_eq!(literal_get(&mut el, r), b"X");
     }
 }

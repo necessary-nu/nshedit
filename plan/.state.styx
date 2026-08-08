@@ -144,4 +144,5 @@ assertions (
     {id history-save-truncates, kind @complete, author "brendan@necessary.nu", at 2026-08-08T01:58:02.920782469Z}
     {id core-api-idiomatize, kind @doing, author "brendan@necessary.nu", at 2026-08-08T09:01:56.204420688Z}
     {id terminal-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T10:20:00.918132437Z}
+    {id encoding-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T10:23:15.032694678Z}
 )
