@@ -67,6 +67,17 @@ fn format_gate_packages(root: &Path) -> Vec<String> {
     names
 }
 
+fn rust_sources_below(directory: &Path, sources: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(directory).expect("read first-party source directory") {
+        let path = entry.expect("read first-party source entry").path();
+        if path.is_dir() {
+            rust_sources_below(&path, sources);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            sources.push(path);
+        }
+    }
+}
+
 #[test]
 fn the_format_gate_covers_every_workspace_member() {
     let root = repo_root();
@@ -113,5 +124,69 @@ fn the_format_gate_does_not_use_all() {
             "`cargo fmt --all` reaches path dependencies outside this \
              workspace — see the header of this file: {line}"
         );
+    }
+}
+
+// [spec:nshedit:req:workspace.no-legacy-allows/test]
+#[test]
+fn first_party_rust_rejects_allow_attributes() {
+    let root = repo_root();
+    let mut sources = Vec::new();
+    rust_sources_below(&root.join("crates"), &mut sources);
+    sources.sort();
+
+    // Assemble the spellings so this test does not report its own search
+    // strings. Whitespace and line comments are discarded so a split or
+    // formatted attribute cannot evade the check.
+    let item_allow = ["#", "[", "allow", "("].concat();
+    let inner_allow = ["allow", "("].concat();
+    let crate_allow = ["#", "!", "[", "allow", "("].concat();
+    let cfg_attr = ["#", "[", "cfg_attr", "("].concat();
+    let expect = ["#", "[", "expect", "("].concat();
+
+    for path in sources {
+        let source = fs::read_to_string(&path).expect("read first-party Rust source");
+        let code: String = source
+            .lines()
+            .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
+            .flat_map(str::chars)
+            .filter(|character| !character.is_whitespace())
+            .collect();
+
+        assert!(
+            !code.contains(&item_allow) && !code.contains(&crate_allow),
+            "{} contains a lint allow attribute; remove the exception or use the narrowest fulfilled expect with a reason",
+            path.strip_prefix(&root).unwrap_or(&path).display()
+        );
+
+        let mut conditional_attributes = code.as_str();
+        while let Some(start) = conditional_attributes.find(&cfg_attr) {
+            conditional_attributes = &conditional_attributes[start + cfg_attr.len()..];
+            let end = conditional_attributes
+                .find(")]")
+                .expect("a Rust cfg_attr attribute has no closing delimiter");
+            let attribute = &conditional_attributes[..end];
+            assert!(
+                !attribute.contains(&inner_allow),
+                "{} conditionally enables a lint allow; conditional code must remain warning-clean too",
+                path.strip_prefix(&root).unwrap_or(&path).display()
+            );
+            conditional_attributes = &conditional_attributes[end + 2..];
+        }
+
+        let mut remainder = code.as_str();
+        while let Some(start) = remainder.find(&expect) {
+            remainder = &remainder[start + expect.len()..];
+            let end = remainder
+                .find(")]")
+                .expect("a Rust expect attribute has no closing delimiter");
+            let attribute = &remainder[..end];
+            assert!(
+                attribute.contains("reason="),
+                "{} contains an expect attribute without a reason",
+                path.strip_prefix(&root).unwrap_or(&path).display()
+            );
+            remainder = &remainder[end + 2..];
+        }
     }
 }

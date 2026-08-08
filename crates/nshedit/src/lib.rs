@@ -91,10 +91,7 @@
 //!
 //! Anything that departs from the C's own shape says so at the field.
 
-// Types have no constructors yet, so almost every one of them is unused.
-// Remove this once the function translations land and start building them.
-#![allow(dead_code)]
-
+// [spec:nshedit:req:workspace.no-legacy-allows]
 // Public headers.
 pub mod editline;
 pub mod histedit;

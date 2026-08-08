@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-08T16:17:34.400031955Z
+last_sync_at 2026-08-08T16:25:17.14488479Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -181,7 +181,6 @@ assertions (
     {id cross-concern-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-08T13:15:16.991315761Z}
     {id greenfield-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:17:31.852523476Z}
     {id greenfield-abi-oracle, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:46:10.110061941Z}
-    {id greenfield-lint-baseline, kind @doing, author "brendan@necessary.nu", at 2026-08-08T15:25:29.083552511Z}
 )
 
 impl_evidence (
@@ -192,5 +191,9 @@ impl_evidence (
     ), rule_versions_seen (
         {id abi.complete-surface, version 1}
     )}
-    {id greenfield-lint-baseline}
+    {id greenfield-lint-baseline, covered_rules (
+        workspace.no-legacy-allows
+    ), covered_claims (
+        {impl_name native-impl, rule workspace.no-legacy-allows}
+    )}
 )
