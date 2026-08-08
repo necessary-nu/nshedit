@@ -1,13 +1,15 @@
 //! Line editing, history and tokenization — a Rust re-implementation of
 //! libedit, and the library nsh links.
 //!
-//! Modules mirror the C source file for file, so that each `sem` rule in
-//! `docs/spec/port/src/` has one obvious home and the two implementations can
-//! be diffed against each other. Idiomatic shape comes later, once the ported
-//! behaviour is under test.
+//! [`domain`] and [`editor`] are the Rust-native API being built around
+//! private typed state. The remaining public modules are the transitional
+//! compatibility engine: they still mirror the C source file for file so
+//! that each `sem` rule in `docs/spec/port/src/` has one obvious home until
+//! its replacement concern takes over and the compatibility adapter stops
+//! reaching it.
 //!
-//! Text is carried as `u32`, not `char`. The screen image stores sentinel
-//! values that are not Unicode scalar values — see
+//! In that transitional engine, text is carried as `u32`, not `char`, and
+//! the screen image stores sentinel values that are not Unicode scalars — see
 //! `docs/spec/port/src/literal.md` — and the C admits `wchar_t` values that
 //! `char` forbids.
 //!
@@ -95,6 +97,11 @@
 // [spec:nshedit:req:core.typed-domain+1]
 /// Rust-native editor values shared by the safe editor shell and its hosts.
 pub mod domain;
+
+// [spec:nshedit:req:core.raii-lifecycle]
+// [spec:nshedit:req:core.rust-io+1]
+/// Safe native editor sessions and their borrowed I/O capabilities.
+pub mod editor;
 
 // Public headers.
 pub mod editline;

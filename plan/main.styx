@@ -2299,6 +2299,21 @@ children (
                     native-impl ([spec:nshedit:req:core.raii-lifecycle] [spec:nshedit:req:core.rust-io])
                 }
                 deps (greenfield-domain-model)
+                log (
+                    {
+                        at 2026-08-08T16:50:18.468626458Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T16:59:50.547590373Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Corrected core.rust-io to v1 because the old crate-wide wording contradicted the dependency graph: the transliterated backend cannot lose its raw descriptor and C-stream compatibility state before greenfield-abi-adapter, greenfield-public-firewall, and greenfield-retire-port. The rule now governs the native editor and every replacement concern immediately; core.no-compat-internals still owns final deletion. The shell owns one TerminalControl restoration obligation in Option<T>, takes it before every restore attempt, restores once after a failed activation, reports explicit-finish errors, and ignores Drop errors. SessionIo remains a separate borrowed Read/Write/BorrowedFd capability set so the following effect runtime can end the editor borrow before host-controlled work."
+                    }
+                )
             }
 
             {

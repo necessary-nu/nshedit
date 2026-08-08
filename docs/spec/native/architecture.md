@@ -55,10 +55,11 @@ states where those semantics may live and what the native Rust API must be.
 > failure, while Drop MUST perform best-effort restoration without panicking;
 > partially constructed sessions and repeated internal cleanup MUST be safe.
 
-> [spec:nshedit:req:core.rust-io]
-> Core input, output, flushing, terminal control, and descriptor access MUST
-> cross safe Rust interfaces. `FILE *`, C stream ownership, raw descriptor
-> ownership transfer, and foreign I/O callbacks MUST remain outside the core.
+> [spec:nshedit:req:core.rust-io+1]
+> Native editor input, output, flushing, terminal control, and descriptor
+> access, including every replacement concern, MUST cross safe Rust
+> interfaces. `FILE *`, C stream ownership, raw descriptor ownership transfer,
+> and foreign I/O callbacks MUST NOT be part of the native editor model.
 
 > [spec:nshedit:req:core.effect-hooks]
 > Any host-controlled prompt, read, history, alias, resize, completion, or

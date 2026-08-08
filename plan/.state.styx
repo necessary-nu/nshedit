@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-08T16:41:52.112945092Z
+last_sync_at 2026-08-08T17:01:28.31681564Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -15,7 +15,7 @@ rule_versions (
     {id core.public-surface, version 0}
     {id core.raii-lifecycle, version 0}
     {id core.read-driver, version 0}
-    {id core.rust-io, version 0}
+    {id core.rust-io, version 1}
     {id core.terminal-render, version 0}
     {id core.text-screen-model, version 0}
     {id core.token-completion, version 0}
@@ -191,6 +191,16 @@ impl_evidence (
     ), rule_versions_seen (
         {id abi.complete-surface, version 1}
     )}
+    {id greenfield-domain-model, covered_rules (
+        core.text-screen-model
+        core.typed-domain
+    ), covered_claims (
+        {impl_name native-impl, rule core.text-screen-model}
+        {impl_name native-impl, rule core.typed-domain}
+    ), rule_versions_seen (
+        {id core.text-screen-model, version 0}
+        {id core.typed-domain, version 1}
+    )}
     {id greenfield-lint-baseline, covered_rules (
         workspace.no-legacy-allows
     ), covered_claims (
@@ -198,11 +208,11 @@ impl_evidence (
     ), rule_versions_seen (
         {id workspace.no-legacy-allows, version 0}
     )}
-    {id greenfield-domain-model, covered_rules (
-        core.text-screen-model
-        core.typed-domain
+    {id greenfield-editor-shell, covered_rules (
+        core.raii-lifecycle
+        core.rust-io
     ), covered_claims (
-        {impl_name native-impl, rule core.text-screen-model}
-        {impl_name native-impl, rule core.typed-domain}
+        {impl_name native-impl, rule core.raii-lifecycle}
+        {impl_name native-impl, rule core.rust-io}
     )}
 )
