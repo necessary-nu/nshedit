@@ -76,7 +76,19 @@ pub struct HistoryNavigateEffect {
 impl sealed::Sealed for HistoryNavigateEffect {}
 
 impl Effect for HistoryNavigateEffect {
-    type Response = EffectResult<Option<Text>>;
+    type Response = EffectResult<HistoryResponse>;
+}
+
+// [spec:nshedit:req:core.history+1]
+/// The host's typed result of navigating native history.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum HistoryResponse {
+    /// Replace the edited line with this owned history entry.
+    Entry(Text),
+    /// Navigation moved past the newest entry to the saved live line.
+    Live,
+    /// No entry exists in the requested direction.
+    Boundary,
 }
 
 /// Ask the host history to retain an accepted line.
@@ -399,7 +411,19 @@ mod tests {
             HistoryNavigateEffect {
                 direction: Direction::Previous,
             },
-            Ok(Some(Text::from("old"))),
+            Ok(HistoryResponse::Entry(Text::from("old"))),
+        );
+        accepts(
+            HistoryNavigateEffect {
+                direction: Direction::Next,
+            },
+            Ok(HistoryResponse::Live),
+        );
+        accepts(
+            HistoryNavigateEffect {
+                direction: Direction::Previous,
+            },
+            Ok(HistoryResponse::Boundary),
         );
         accepts(
             HistoryRecordEffect {

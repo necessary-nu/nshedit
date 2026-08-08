@@ -38,7 +38,7 @@ elements (
         exposes ("crates/nshedit-abi/src/**")
         depends_on ([arch:libedit:core] [arch:libedit:platform])
         composed_of ()
-        decisions ([dec:libedit:no-c-ffi] [dec:libedit:conformance-policy] [dec:libedit:idiomatic-core] [dec:libedit:platform-layer] [dec:libedit:opaque-abi-adapter] [dec:libedit:effect-driven-hooks] [dec:libedit:editor-session-ownership] [dec:libedit:text-and-screen-model] [dec:libedit:native-line-state] [dec:libedit:lint-policy])
+        decisions ([dec:libedit:no-c-ffi] [dec:libedit:conformance-policy] [dec:libedit:idiomatic-core] [dec:libedit:platform-layer] [dec:libedit:opaque-abi-adapter] [dec:libedit:effect-driven-hooks] [dec:libedit:editor-session-ownership] [dec:libedit:text-and-screen-model] [dec:libedit:native-line-state] [dec:libedit:native-history] [dec:libedit:lint-policy])
         log (
             {at "2026-08-04T16:27:13Z", kind @established, by "[dec:libedit:no-c-ffi]"}
             {at "2026-08-04T17:47:40Z", kind @modified, by "[dec:libedit:idiomatic-core]"}
@@ -50,6 +50,7 @@ elements (
             {at "2026-08-08T16:54:40Z", kind @modified, by "[dec:libedit:editor-session-ownership]"}
             {at "2026-08-08T14:07:24Z", kind @modified, by "[dec:libedit:text-and-screen-model]"}
             {at "2026-08-08T17:30:43Z", kind @modified, by "[dec:libedit:native-line-state]"}
+            {at "2026-08-08T17:46:55Z", kind @modified, by "[dec:libedit:native-history]"}
             {at "2026-08-08T14:07:24Z", kind @modified, by "[dec:libedit:lint-policy]"}
         )
     }
@@ -77,7 +78,7 @@ elements (
         exposes ("crates/nshedit/src/**")
         depends_on ([arch:libedit:terminal-caps] [arch:libedit:platform])
         composed_of ()
-        decisions ([dec:libedit:idiomatic-core] [dec:libedit:platform-layer] [dec:libedit:opaque-abi-adapter] [dec:libedit:effect-driven-hooks] [dec:libedit:editor-session-ownership] [dec:libedit:text-and-screen-model] [dec:libedit:native-line-state] [dec:libedit:lint-policy])
+        decisions ([dec:libedit:idiomatic-core] [dec:libedit:platform-layer] [dec:libedit:opaque-abi-adapter] [dec:libedit:effect-driven-hooks] [dec:libedit:editor-session-ownership] [dec:libedit:text-and-screen-model] [dec:libedit:native-line-state] [dec:libedit:native-history] [dec:libedit:lint-policy])
         log (
             {at "2026-08-04T17:47:40Z", kind @established, by "[dec:libedit:idiomatic-core]"}
             {at "2026-08-05T08:34:05Z", kind @modified, by "[dec:libedit:platform-layer]"}
@@ -87,6 +88,7 @@ elements (
             {at "2026-08-08T16:54:40Z", kind @modified, by "[dec:libedit:editor-session-ownership]"}
             {at "2026-08-08T14:07:24Z", kind @modified, by "[dec:libedit:text-and-screen-model]"}
             {at "2026-08-08T17:30:43Z", kind @modified, by "[dec:libedit:native-line-state]"}
+            {at "2026-08-08T17:46:55Z", kind @modified, by "[dec:libedit:native-history]"}
             {at "2026-08-08T14:07:24Z", kind @modified, by "[dec:libedit:lint-policy]"}
         )
     }

@@ -1515,7 +1515,7 @@ fn history_load<C: HistChar>(h: &mut HistoryGen<C>, fname: &str) -> i32 {
     let mut count: i32 = 0;
 
     for record in records {
-        // NativeHistory can represent arbitrary bytes, while H_ENTER takes a
+        // The native history container can represent arbitrary bytes, while H_ENTER takes a
         // C string. Refuse an embedded NUL rather than silently loading only
         // its prefix and presenting it as the original command.
         if record.text.contains(&0) {
@@ -2463,9 +2463,13 @@ pub fn history(h: *mut History, ev: &mut HistEvent, fun: i32, arg: HistoryArg<'_
     history_gen::<c_char>(h, ev, fun, arg)
 }
 
+// [spec:nshedit:req:core.history+1]
 mod native;
 mod owned;
 #[cfg(test)]
 mod test;
-pub use native::NativeHistory;
+pub use native::{
+    DuplicatePolicy, HistoryCursor, HistoryEntry, HistoryId, HistoryStore, Navigation, PushError,
+    PushResult,
+};
 pub use owned::OwnedHistoryW;

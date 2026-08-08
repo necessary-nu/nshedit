@@ -2392,13 +2392,28 @@ children (
 
             {
                 id greenfield-history
-                title "Replace C-shaped history dispatch with a safe Rust history subsystem"
+                title "Build owned native history with typed independent traversal"
                 priority 0
                 kind @refactor
                 implements {
-                    native-impl ([spec:nshedit:req:core.history])
+                    native-impl ([spec:nshedit:req:core.history+1])
                 }
                 deps (greenfield-line-commands)
+                log (
+                    {
+                        at 2026-08-08T17:38:44.571683269Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T17:49:16.296632093Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Corrected core.history to v1 because v0 required C varargs, callback handles, event records, and conversion storage to have already moved into nshedit-abi even though greenfield-abi-adapter depends on the later read driver and this history layer. V1 governs the native replacement now and permits C-shaped machinery only in the existing compatibility path until core.no-compat-internals removes it. The native store is HistoryStore<M>: owned Text plus typed metadata and non-wrapping HistoryId, Option<NonZeroUsize> capacity, ownership-returning duplicate/eviction/error outcomes, and independent HistoryCursor values. History navigation now distinguishes Entry, Live, and Boundary both in the store and effect response. Recorded in [dec:libedit:native-history]."
+                    }
+                )
             }
 
             {

@@ -81,10 +81,15 @@ states where those semantics may live and what the native Rust API must be.
 > retaining the behaviours required by the corresponding detailed libedit
 > rules at the ABI adapter.
 
-> [spec:nshedit:req:core.history]
-> Native history storage and traversal MUST use owned records and safe Rust
-> interfaces. C varargs dispatch, raw callback handles, event records, and
-> narrow/wide conversion storage MUST be implemented only by the ABI adapter.
+> [spec:nshedit:req:core.history+1]
+> Native history storage and traversal MUST use owned `Text` records, typed
+> identifiers, explicit traversal cursors, and safe Rust interfaces. The
+> native store MUST contain no C varargs dispatch, raw callback handles, event
+> records, or narrow/wide conversion storage and MUST be the only history
+> implementation reachable from the native `Editor`. Until the ABI adapter
+> replaces the transliterated compatibility path, C-shaped history machinery
+> MAY remain only in those existing compatibility modules;
+> `core.no-compat-internals` governs its final removal.
 
 > [spec:nshedit:req:core.token-completion]
 > Native tokenization and completion MUST return owned or explicitly borrowed

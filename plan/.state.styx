@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-08T17:35:43.656671494Z
+last_sync_at 2026-08-08T17:52:30.481754319Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -8,7 +8,6 @@ rule_versions (
     {id abi.opaque-owner, version 0}
     {id abi.surface-stability, version 0}
     {id core.effect-hooks, version 0}
-    {id core.history, version 0}
     {id core.line-commands, version 0}
     {id core.native-consumer, version 0}
     {id core.no-compat-internals, version 0}
@@ -218,6 +217,13 @@ impl_evidence (
     ), rule_versions_seen (
         {id core.effect-hooks, version 0}
     )}
+    {id greenfield-line-commands, covered_rules (
+        core.line-commands
+    ), covered_claims (
+        {impl_name native-impl, rule core.line-commands}
+    ), rule_versions_seen (
+        {id core.line-commands, version 0}
+    )}
     {id greenfield-lint-baseline, covered_rules (
         workspace.no-legacy-allows
     ), covered_claims (
@@ -225,9 +231,9 @@ impl_evidence (
     ), rule_versions_seen (
         {id workspace.no-legacy-allows, version 0}
     )}
-    {id greenfield-line-commands, covered_rules (
-        core.line-commands
+    {id greenfield-history, covered_rules (
+        core.history
     ), covered_claims (
-        {impl_name native-impl, rule core.line-commands}
+        {impl_name native-impl, rule core.history}
     )}
 )

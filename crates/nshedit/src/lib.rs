@@ -179,6 +179,7 @@ pub mod sig;
 // History storage and search.
 pub mod hist;
 pub mod histfile;
+// [spec:nshedit:req:core.history+1]
 pub mod history;
 pub mod search;
 
