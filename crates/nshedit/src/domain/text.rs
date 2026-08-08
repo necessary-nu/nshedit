@@ -49,7 +49,7 @@ impl TextUnit {
 }
 
 /// An owned logical input string.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct Text(Vec<TextUnit>);
 
 impl Text {
@@ -130,6 +130,20 @@ impl Text {
             self.0.drain(span.start.get()..span.end.get()).collect(),
         ))
     }
+
+    // [spec:nshedit:req:core.line-commands]
+    /// Replace a checked span and return its previous contents.
+    pub fn replace(&mut self, span: TextSpan, replacement: &Self) -> Result<Self, Error> {
+        self.span(span.start.get()..span.end.get())?;
+        Ok(Self(
+            self.0
+                .splice(
+                    span.start.get()..span.end.get(),
+                    replacement.0.iter().copied(),
+                )
+                .collect(),
+        ))
+    }
 }
 
 impl From<&str> for Text {
@@ -147,6 +161,12 @@ impl From<String> for Text {
 impl FromIterator<TextUnit> for Text {
     fn from_iter<T: IntoIterator<Item = TextUnit>>(iter: T) -> Self {
         Self(iter.into_iter().collect())
+    }
+}
+
+impl Extend<TextUnit> for Text {
+    fn extend<T: IntoIterator<Item = TextUnit>>(&mut self, iter: T) {
+        self.0.extend(iter);
     }
 }
 

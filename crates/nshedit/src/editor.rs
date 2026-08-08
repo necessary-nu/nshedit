@@ -8,10 +8,16 @@ use std::fmt;
 use std::io::{self, Read, Write};
 use std::os::fd::BorrowedFd;
 
-use crate::domain::{EditorConfig, Text, TextIndex};
+use crate::domain::{
+    Action, Binding, CommandName, Direction, EditorConfig, Error, InputMode, KeyLookup,
+    KeySequence, KeymapMode, Outcome, Text, TextIndex,
+};
 
 // [spec:nshedit:req:core.effect-hooks]
 pub mod effect;
+
+// [spec:nshedit:req:core.line-commands]
+mod line;
 
 /// Safe terminal lifecycle operations owned by one editor session.
 ///
@@ -102,17 +108,24 @@ impl std::error::Error for StartError {
     }
 }
 
-#[derive(Debug)]
-struct EditorState {
-    line: Text,
-    cursor: TextIndex,
+/// Result of dispatching one semantic action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandStep {
+    /// The core applied the action without host work.
+    Applied(Outcome),
+    /// The driver must request completion for the current line and cursor.
+    NeedsCompletion,
+    /// The driver must request a neighbouring history entry.
+    NeedsHistory(Direction),
+    /// The driver must run a registered host command.
+    NeedsUserCommand(CommandName),
 }
 
 // [spec:nshedit:req:core.raii-lifecycle]
 /// A Rust-native editor with private state and an exactly-once cleanup owner.
 pub struct Editor<T: TerminalControl> {
     config: EditorConfig,
-    state: EditorState,
+    state: line::State,
     terminal: Option<T>,
     effects: effect::Runtime,
 }
@@ -133,10 +146,7 @@ impl<T: TerminalControl> Editor<T> {
 
         Ok(Self {
             config,
-            state: EditorState {
-                line: Text::default(),
-                cursor: TextIndex::START,
-            },
+            state: line::State::new(config),
             terminal: Some(terminal),
             effects: effect::Runtime::default(),
         })
@@ -158,6 +168,74 @@ impl<T: TerminalControl> Editor<T> {
     #[must_use]
     pub const fn cursor(&self) -> TextIndex {
         self.state.cursor
+    }
+
+    /// The insertion or replacement policy for following text.
+    #[must_use]
+    pub const fn input_mode(&self) -> InputMode {
+        self.state.input_mode()
+    }
+
+    /// The keymap currently used by input dispatch.
+    #[must_use]
+    pub const fn keymap_mode(&self) -> KeymapMode {
+        self.state.keymap_mode()
+    }
+
+    /// The checked saved mark, when one has been set.
+    #[must_use]
+    pub const fn mark(&self) -> Option<TextIndex> {
+        self.state.mark()
+    }
+
+    /// The text most recently copied or killed.
+    #[must_use]
+    pub fn kill_buffer(&self) -> Option<&Text> {
+        self.state.kill_buffer()
+    }
+
+    /// The exact logical-text pattern remembered for repeat search.
+    #[must_use]
+    pub fn search_pattern(&self) -> Option<&Text> {
+        self.state.search_pattern()
+    }
+
+    /// Whether an earlier command-level text mutation can be restored.
+    #[must_use]
+    pub fn can_undo(&self) -> bool {
+        self.state.can_undo()
+    }
+
+    /// Whether a previously undone text mutation can be reapplied.
+    #[must_use]
+    pub fn can_redo(&self) -> bool {
+        self.state.can_redo()
+    }
+
+    /// Apply one typed semantic action to the private editor state.
+    pub fn execute(&mut self, action: Action) -> Result<CommandStep, Error> {
+        self.state.execute(action)
+    }
+
+    /// Install or replace a typed binding in one keymap.
+    pub fn bind(
+        &mut self,
+        mode: KeymapMode,
+        sequence: KeySequence,
+        binding: Binding,
+    ) -> Option<Binding> {
+        self.state.bind(mode, sequence, binding)
+    }
+
+    /// Remove a typed binding from one keymap.
+    pub fn unbind(&mut self, mode: KeymapMode, sequence: &KeySequence) -> Option<Binding> {
+        self.state.unbind(mode, sequence)
+    }
+
+    /// Match a non-empty logical sequence against the active keymap.
+    #[must_use]
+    pub fn key_binding(&self, sequence: &KeySequence) -> KeyLookup<'_> {
+        self.state.lookup(sequence)
     }
 
     /// Restore the terminal, reporting any failure to the caller.

@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-08T17:11:57.1958124Z
+last_sync_at 2026-08-08T17:35:43.656671494Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -224,5 +224,10 @@ impl_evidence (
         {impl_name native-impl, rule workspace.no-legacy-allows}
     ), rule_versions_seen (
         {id workspace.no-legacy-allows, version 0}
+    )}
+    {id greenfield-line-commands, covered_rules (
+        core.line-commands
+    ), covered_claims (
+        {impl_name native-impl, rule core.line-commands}
     )}
 )

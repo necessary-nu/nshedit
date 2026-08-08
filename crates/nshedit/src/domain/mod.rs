@@ -5,9 +5,18 @@
 //! flag words, errno values, or sentinel encodings. The safe editor shell is
 //! built from this vocabulary; the ABI adapter translates at its boundary.
 
+// [spec:nshedit:req:core.line-commands]
+
+mod command;
+mod keymap;
 mod screen;
 mod text;
 
+pub use command::{
+    Action, CommandName, Direction, EditTarget, KeymapMode, Motion, Outcome, Refresh,
+    TextTransform, WordKind, YankPlacement,
+};
+pub use keymap::{Binding, KeyLookup, KeySequence};
 pub use screen::{LiteralId, LiteralTable, Screen, ScreenCell, ScreenPosition, ScreenSize};
 pub use text::{NonScalarWide, Text, TextIndex, TextSpan, TextUnit};
 
@@ -105,110 +114,15 @@ impl EditorConfig {
     }
 }
 
-/// A direction in logical text or history.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Direction {
-    Previous,
-    Next,
-}
-
-/// Which word-classification rule a motion uses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WordKind {
-    /// Words and punctuation form separate runs.
-    Word,
-    /// Every non-whitespace run is one word.
-    BigWord,
-}
-
-/// A cursor motion expressed without integer command identifiers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Motion {
-    Character(Direction),
-    Word {
-        direction: Direction,
-        kind: WordKind,
-    },
-    Line(Direction),
-    StartOfLine,
-    EndOfLine,
-}
-
-/// The semantic target of a deletion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DeleteTarget {
-    Character(Direction),
-    Word {
-        direction: Direction,
-        kind: WordKind,
-    },
-    Line,
-    Motion(Motion),
-}
-
-/// A validated host-defined command name.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CommandName(Box<str>);
-
-impl CommandName {
-    /// Validate and own a command name.
-    pub fn new(name: impl Into<Box<str>>) -> Result<Self, Error> {
-        let name = name.into();
-        if name.is_empty() {
-            Err(Error::EmptyCommandName)
-        } else {
-            Ok(Self(name))
-        }
-    }
-
-    /// Borrow the spelling supplied by the host.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// One semantic editing request.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Action {
-    Insert(Text),
-    Move(Motion),
-    Delete(DeleteTarget),
-    AcceptLine,
-    EndOfInput,
-    Complete,
-    History(Direction),
-    Undo,
-    Redo,
-    Refresh,
-    User(CommandName),
-}
-
-/// The kind of redraw requested after an action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Refresh {
-    Full,
-    Redisplay,
-    Beep,
-}
-
-/// A successful step of the editor state machine.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Outcome {
-    Continue,
-    Accepted(Text),
-    EndOfInput,
-    CursorMoved(TextIndex),
-    Refresh(Refresh),
-}
-
-/// The result of applying one [`Action`].
-pub type ActionResult = Result<Outcome, Error>;
-
 /// A domain failure with all relevant values preserved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     EmptyCommandName,
+    EmptyKeySequence,
+    EmptySearchPattern,
+    SearchPatternNotSet,
+    MarkNotSet,
+    TextLengthOverflow,
     ScalarWideValue(u32),
     TextIndexOutOfBounds {
         index: usize,
@@ -239,6 +153,13 @@ impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Self::EmptyCommandName => formatter.write_str("a command name cannot be empty"),
+            Self::EmptyKeySequence => formatter.write_str("a key sequence cannot be empty"),
+            Self::EmptySearchPattern => formatter.write_str("a search pattern cannot be empty"),
+            Self::SearchPatternNotSet => formatter.write_str("no search pattern has been set"),
+            Self::MarkNotSet => formatter.write_str("no line mark has been set"),
+            Self::TextLengthOverflow => {
+                formatter.write_str("the resulting logical text length cannot be represented")
+            }
             Self::ScalarWideValue(value) => {
                 write!(formatter, "U+{value:04X} is a Unicode scalar value")
             }

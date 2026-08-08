@@ -2373,6 +2373,21 @@ children (
                     native-impl ([spec:nshedit:req:core.line-commands])
                 }
                 deps (greenfield-effect-runtime)
+                log (
+                    {
+                        at 2026-08-08T17:12:22.433257885Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T17:33:45.604715339Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "The native line layer is one private checked State over Text/TextIndex, semantic Action/EditTarget values, command-atomic undo/redo snapshots, an owned kill register and exact search pattern, and deterministic keymaps keyed by non-empty logical KeySequence. Key lookup distinguishes exact, exact-plus-prefix, prefix-only, and unbound. Pure commands return Outcome; history, completion, and user commands yield typed CommandStep requests for the later driver/effect boundary. Conventional native Emacs/Vi defaults are semantic bindings, while counts, macro replay, vi operator parsing, numeric reference-command IDs, and compatibility-only defects remain work for the read driver and ABI adapter. This is recorded in [dec:libedit:native-line-state]."
+                    }
+                )
             }
 
             {
