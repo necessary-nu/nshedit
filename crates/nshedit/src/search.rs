@@ -1179,6 +1179,9 @@ pub(crate) fn cv_csearch(
 }
 
 #[cfg(test)]
+mod test;
+
+#[cfg(test)]
 mod match_test {
     use super::el_match_wcs;
 

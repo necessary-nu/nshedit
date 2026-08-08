@@ -140,4 +140,5 @@ assertions (
     {id platform-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:53:50.518121992Z}
     {id history-rust-seam, kind @complete, author "brendan@necessary.nu", at 2026-08-07T00:21:06.800956637Z}
     {id history-listing-escape, kind @complete, author "brendan@necessary.nu", at 2026-08-08T01:38:10.626578749Z}
+    {id history-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-08T01:41:36.218868298Z}
 )
