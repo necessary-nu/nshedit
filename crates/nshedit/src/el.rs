@@ -42,6 +42,16 @@ pub(crate) const UNBUFFERED: i32 = 0x008;
 /// reason the history bridge routes through its conversion path. Note the
 /// wide setter only clears it in a single-byte locale, which
 /// `sem:el.el-wset-fn` records as a defect.
+///
+/// Hidden, and the only one of these bits that is `pub` at all. It is public
+/// so `nshedit-abi`'s narrow `el_set(EL_HIST)` can raise it, and there is
+/// nothing a Rust caller can do with it but harm: raising it asserts that the
+/// installed store is a C `history()` reading `char *`, which is false of
+/// every store [`EditLine::set_history`] can attach, and `hist_command` tests
+/// the bit *before* it asks the store anything — so `history size` and
+/// `history unique` in an `.editrc` would answer -1 for a store that would
+/// otherwise have handled them.
+#[doc(hidden)]
 pub const NARROW_HISTORY: i32 = 0x040;
 pub(crate) const NO_RESET: i32 = 0x080;
 /// Selects the EINTR-recovery path in the read loop; `el_get` reports this
@@ -92,9 +102,16 @@ const TCSAFLUSH: i32 = 2;
 /// closes or frees them (`sem:histedit.el-end-fn`), and
 /// `EL_GETFP`/`EL_SETFP` round-trip them through the C ABI unchanged, so
 /// there is nothing here to own and no Rust handle that would survive the
-/// trip. Actual I/O should go through the matching `el_infd`/`el_outfd`/
-/// `el_errfd` descriptor, which is carried alongside precisely because the C
-/// already keeps both.
+/// trip.
+///
+/// Nothing in this crate ever reads or writes through one. Every byte the C
+/// would have put in a stream goes to the matching `el_infd`/`el_outfd`/
+/// `el_errfd` descriptor instead, through [`crate::stdio`] — which is why the
+/// `EditLine` carries both, and what makes three null streams a complete
+/// answer for a Rust caller building an editor with [`el_init_fd`]. The
+/// corollary is the trap: storing a real stream in `el_outfile` and leaving
+/// `el_outfd` at its zero does not redirect output, it sends it to whatever
+/// descriptor 0 happens to be.
 pub type CFile = *mut c_void;
 
 // [spec:libedit:def:el.func-t-const-char]
@@ -240,7 +257,13 @@ pub struct EditLine {
     pub el_scratch: CtBufferT,
     /// Buffer for legacy wrappers.
     pub el_lgcyconv: CtBufferT,
-    /// Legacy `LineInfo` buffer.
+    /// Legacy `LineInfo` buffer — the one narrow line view the narrow
+    /// `el_line` hands out, which is what makes two live views of a single
+    /// editor impossible.
+    ///
+    /// Filled in by `nshedit-abi` and by nothing here. An editor driven from
+    /// Rust leaves it at the three NULLs `blank_editline` wrote; the live
+    /// line state is [`EditLine::el_line`].
     pub el_lgcylinfo: LineInfo,
     // [spec:libedit:def:el.editline.el-getenv-fn]
     /// C: `char *(*el_getenv)(const char *)` — the environment-lookup hook.
@@ -421,17 +444,14 @@ fn auxv_at_secure() -> Option<bool> {
 
     let raw = std::fs::read("/proc/self/auxv").ok()?;
     let w = size_of::<usize>();
-    let mut i = 0;
-    while i + 2 * w <= raw.len() {
-        let key = native_word(&raw[i..i + w]);
-        let val = native_word(&raw[i + w..i + 2 * w]);
+    for pair in raw.chunks_exact(2 * w) {
+        let key = native_word(&pair[..w]);
         if key == AT_NULL {
             return None;
         }
         if key == AT_SECURE {
-            return Some(val != 0);
+            return Some(native_word(&pair[w..]) != 0);
         }
-        i += 2 * w;
     }
     None
 }
@@ -1103,6 +1123,71 @@ pub fn el_reset(el: &mut EditLine) {
     ch_reset(el);
 }
 
+/// Steps 1 to 5 of [`el_source`]: which file `.editrc` means this time.
+///
+/// `None` is the -1 that both resolution failures produce — no `HOME` to
+/// build a path from, and a name that is empty once truncated at its first
+/// NUL. They are one answer here because they are one answer to the caller,
+/// who cannot tell either of them from a file that would not open
+/// (ERR-core-api-21).
+///
+/// The C carries a separate `path` pointer alongside `fname` purely so it can
+/// `el_free` the constructed one on the way out; the owned `Vec` here is
+/// both, and drops itself on every exit. ERR-core-api-22 is the disagreement
+/// about whether the step-5 early return leaks that buffer —
+/// `sem:el.el-source-fn` is right that it cannot, because that return is only
+/// reachable while `path` is still NULL (a constructed path always ends in
+/// `.editrc` and so is never empty). Either way there is nothing to leak.
+///
+/// ERR-core-api-33/35: the C initialises `fp = NULL` and then guards its only
+/// `fopen` with a redundant `if (fp == NULL)`. That is the vestige of a
+/// removed `./.editrc` attempt, and it is why `histedit.h` still claims
+/// `el_source` reads "$PWD/.editrc or $HOME/.editrc". It does not: there is
+/// no `$PWD` lookup and no attempt at `./.editrc`. Dead code, not ported.
+fn editrc_path(el: &EditLine, fname: Option<&Path>) -> Option<Vec<u8>> {
+    let mut name = match fname {
+        // Step 1. Used exactly as given: no `~` expansion, no search path, no
+        // directory prefix.
+        Some(f) => f.as_os_str().as_bytes().to_vec(),
+        None => match el_getenv(el, "EDITRC") {
+            // Step 2, again verbatim. The default hook is `secure_getenv`, so
+            // a set-uid/set-gid process gets `None` here and never honours
+            // `EDITRC`.
+            Some(editrc) => editrc.into_vec(),
+            None => {
+                // Step 3.
+                let mut path = el_getenv(el, "HOME")?.into_vec();
+                // Step 4. C: a `strlen(HOME) + sizeof("/.editrc")` buffer and
+                // `snprintf(path, plen, "%s%s", ptr, elpath + (*ptr == '\0'))`
+                // — exactly enough room, so nothing truncates. Skipping the
+                // leading `/` when `HOME` is empty produces the *relative*
+                // path `.editrc`, which `fopen` resolves against the current
+                // working directory; that is the only way `el_source` ever
+                // looks at the current directory. The C's allocation-failure
+                // -1 has no counterpart (Rust aborts instead).
+                let suffix: &[u8] = if path.is_empty() {
+                    b".editrc"
+                } else {
+                    b"/.editrc"
+                };
+                path.extend_from_slice(suffix);
+                path
+            }
+        },
+    };
+
+    // A C file name ends at its first NUL, so anything past one is invisible
+    // to `fopen`; truncating here is what makes the step-5 test below the C's
+    // `fname[0] == '\0'` rather than merely "empty".
+    if let Some(nul) = name.iter().position(|&b| b == 0) {
+        name.truncate(nul);
+    }
+
+    // Step 5. Only ever rejects a caller-supplied "" or an `EDITRC` set to
+    // "": a constructed path is never empty.
+    (!name.is_empty()).then_some(name)
+}
+
 // [spec:libedit:def:el.el-source-fn]
 // [spec:libedit:sem:el.el-source-fn]
 /// C: `int el_source(EditLine *el, const char *fname)`.
@@ -1120,73 +1205,15 @@ pub fn el_reset(el: &mut EditLine) {
 /// aborts the rest of the file), or any of the early exits. There is no way
 /// for the caller to tell "could not open" from "a line failed".
 pub fn el_source(el: &mut EditLine, fname: Option<&Path>) -> i32 {
-    // Steps 1 to 4: resolve the file name.
-    //
-    // The C carries a separate `path` pointer alongside `fname` purely so it
-    // can `el_free` the constructed one on the way out; the owned `Vec` below
-    // is both, and drops itself on every exit. ERR-core-api-22 is the
-    // disagreement about whether the step-5 early return leaks that buffer —
-    // `sem:el.el-source-fn` is right that it cannot, because that return is
-    // only reachable while `path` is still NULL (a constructed path always
-    // ends in `.editrc` and so is never empty). Either way there is nothing
-    // to leak here.
-    //
-    // ERR-core-api-33/35: the C initialises `fp = NULL` and then guards its
-    // only `fopen` with a redundant `if (fp == NULL)`. That is the vestige of
-    // a removed `./.editrc` attempt, and it is why `histedit.h` still claims
-    // this function reads "$PWD/.editrc or $HOME/.editrc". It does not: there
-    // is no `$PWD` lookup and no attempt at `./.editrc`. Dead code, not
-    // ported.
-    let name = match fname {
-        // Step 1. Used exactly as given: no `~` expansion, no search path, no
-        // directory prefix.
-        Some(f) => f.as_os_str().as_bytes().to_vec(),
-        None => match el_getenv(el, "EDITRC") {
-            // Step 2, again verbatim. The default hook is `secure_getenv`, so
-            // a set-uid/set-gid process gets `None` here and never honours
-            // `EDITRC`.
-            Some(editrc) => editrc.into_vec(),
-            None => {
-                // Step 3.
-                let Some(home) = el_getenv(el, "HOME") else {
-                    return -1;
-                };
-                // Step 4. C: a `strlen(HOME) + sizeof("/.editrc")` buffer and
-                // `snprintf(path, plen, "%s%s", ptr, elpath + (*ptr == '\0'))`
-                // — exactly enough room, so nothing truncates. Skipping the
-                // leading `/` when `HOME` is empty produces the *relative*
-                // path `.editrc`, which `fopen` resolves against the current
-                // working directory; that is the only way this function ever
-                // looks at the current directory. The C's allocation-failure
-                // -1 has no counterpart (Rust aborts instead).
-                let mut path = home.into_vec();
-                let suffix: &[u8] = if path.is_empty() {
-                    b".editrc"
-                } else {
-                    b"/.editrc"
-                };
-                path.extend_from_slice(suffix);
-                path
-            }
-        },
-    };
-
-    // A C file name ends at its first NUL, so anything past one is invisible
-    // to `fopen`; trimming here is what makes the step-5 test below the C's
-    // `fname[0] == '\0'` rather than merely "empty".
-    let end = name.iter().position(|&b| b == 0).unwrap_or(name.len());
-    let name = &name[..end];
-
-    // Step 5. Only ever rejects a caller-supplied "" or an `EDITRC` set to
-    // "": a constructed path is never empty.
-    if name.is_empty() {
+    // Steps 1 to 5.
+    let Some(name) = editrc_path(el, fname) else {
         return -1;
-    }
+    };
 
     // Step 6. `errno` is left as the C's `fopen` set it but is not reported,
     // and there is no way for the caller to tell this apart from a line that
     // failed to parse — both are -1 (ERR-core-api-21).
-    let Ok(file) = File::open(OsStr::from_bytes(name)) else {
+    let Ok(file) = File::open(OsStr::from_bytes(&name)) else {
         return -1;
     };
     let mut reader = BufReader::new(file);
@@ -1241,6 +1268,10 @@ pub fn el_source(el: &mut EditLine, fname: Option<&Path>) -> i32 {
         // d. Advance past leading `iswspace`, stopping at the terminating
         //    NUL — which is the end of the slice here, since
         //    `ct_decode_string` returns the content without its terminator.
+        //
+        //    Queried per line rather than once for the file, because the C's
+        //    `iswspace` reads `LC_CTYPE` on every call and `crate::locale`
+        //    keeps a snapshot that `locale::refresh` can replace.
         let cs = locale::charset();
         let mut dptr = 0;
         while dptr < decoded.len() && locale::iswspace(cs, decoded[dptr]) {

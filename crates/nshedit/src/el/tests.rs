@@ -86,3 +86,70 @@ fn the_bell_falls_back_to_one_literal_byte_and_touches_nothing_else() {
     assert_eq!(el.el_cursor, CoordT { h: 7, v: 2 });
     assert_eq!((el.el_line.cursor, el.el_line.lastchar), (3, 5));
 }
+
+thread_local! {
+    /// What [`env_hook`] answers for `HOME`.
+    ///
+    /// Parked here rather than returned from a local so that the pointer the
+    /// hook hands back stays valid past the call, which is the contract
+    /// `def:el.editline.el-getenv-fn` puts on an application hook.
+    static HOME: RefCell<CString> = RefCell::new(CString::default());
+}
+
+/// An `el_getenv` hook: `HOME` is whatever [`HOME`] holds and every other
+/// name is unset.
+///
+/// `EDITRC` is among those, so the resolution falls through to step 3 the way
+/// it does for a process that has none — and it goes through the hook rather
+/// than the real environment, which is what keeps the test from depending on
+/// whoever ran it.
+unsafe extern "C" fn env_hook(name: *const c_char) -> *mut c_char {
+    // SAFETY: `el_getenv` calls the hook with one NUL-terminated name.
+    if unsafe { CStr::from_ptr(name) }.to_bytes() != b"HOME" {
+        return ptr::null_mut();
+    }
+    HOME.with_borrow(|h| h.as_ptr().cast_mut())
+}
+
+// [spec:libedit:sem:el.el-source-fn/test]
+/// Which file `.editrc` means, at the two edges the C's pointer arithmetic
+/// hides.
+///
+/// An empty `HOME` is the one that surprises. The C's
+/// `elpath + (*ptr == '\0')` skips the leading `/`, so the path it builds is
+/// the *relative* `.editrc` — and that is the only way `el_source` ever looks
+/// at the current directory, despite `histedit.h` advertising a `$PWD`
+/// lookup that does not exist.
+///
+/// The other is that a name is a C string and so ends at its first NUL. A
+/// caller passing `"\0/etc/passwd"` has passed the empty name, which step 5
+/// rejects; the bytes after it never reach `fopen`.
+#[test]
+fn the_editrc_name_ends_at_the_first_nul_and_goes_relative_for_an_empty_home() {
+    let mut el = blank_editline();
+    el.el_getenv = Some(env_hook);
+
+    // Step 3 with `HOME=""`, i.e. step 4's skipped separator.
+    assert_eq!(editrc_path(&el, None).as_deref(), Some(&b".editrc"[..]));
+
+    // Step 4 with a real `HOME`: joined with exactly one separator.
+    HOME.replace(CString::new("/home/u").unwrap());
+    assert_eq!(
+        editrc_path(&el, None).as_deref(),
+        Some(&b"/home/u/.editrc"[..])
+    );
+
+    // Step 1. A caller-supplied name is used verbatim — no `~` expansion, no
+    // search path, no directory prefix — and `HOME` is not consulted at all.
+    assert_eq!(
+        editrc_path(&el, Some(Path::new("rc"))).as_deref(),
+        Some(&b"rc"[..])
+    );
+
+    // Step 5. The empty name is all it rejects, and the truncation above is
+    // what turns the first of these into one. A constructed path never gets
+    // here: one always ends in `.editrc`.
+    let leading_nul = Path::new(OsStr::from_bytes(b"\0/etc/passwd"));
+    assert_eq!(editrc_path(&el, Some(leading_nul)), None);
+    assert_eq!(editrc_path(&el, Some(Path::new(""))), None);
+}
