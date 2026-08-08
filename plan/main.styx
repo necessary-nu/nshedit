@@ -2350,7 +2350,7 @@ children (
                 implements {
                     native-impl ([spec:nshedit:req:abi.opaque-owner] [spec:nshedit:req:abi.surface-stability] [spec:nshedit:req:abi.behavioural-conformance])
                 }
-                deps (greenfield-effect-runtime)
+                deps (greenfield-read-driver)
             }
 
             {
@@ -2372,7 +2372,7 @@ children (
                 implements {
                     native-impl ([spec:nshedit:req:core.line-commands])
                 }
-                deps (greenfield-public-firewall)
+                deps (greenfield-effect-runtime)
             }
 
             {
@@ -2383,7 +2383,7 @@ children (
                 implements {
                     native-impl ([spec:nshedit:req:core.history])
                 }
-                deps (greenfield-public-firewall)
+                deps (greenfield-line-commands)
             }
 
             {
@@ -2394,7 +2394,7 @@ children (
                 implements {
                     native-impl ([spec:nshedit:req:core.token-completion])
                 }
-                deps (greenfield-public-firewall)
+                deps (greenfield-line-commands)
             }
 
             {
@@ -2427,7 +2427,7 @@ children (
                 implements {
                     native-impl ([spec:nshedit:req:core.no-compat-internals])
                 }
-                deps (greenfield-read-driver)
+                deps (greenfield-public-firewall)
             }
 
             {
@@ -2466,6 +2466,13 @@ children (
                 author "brendan@necessary.nu"
                 kind @decision
                 text "The dependency DAG is authoritative for ordering. Every programme leaf has the same neutral priority; greenfield-contract is the first dependency root, and nshterm-hashed-db gates only greenfield-acceptance."
+            }
+
+            {
+                at 2026-08-08T17:11:44.422440601Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "Corrected the replacement DAG after the first three native layers made the old order concrete. The ABI adapter cannot satisfy opaque ownership, behavioural conformance, and surface stability before the native line commands, history, completion, terminal renderer, and read driver exist; doing so would require either a second live engine or continued ABI access to C-shaped core internals, both rejected by idiomatic-core and opaque-abi-adapter. The dependency chain is now effect runtime → line commands → history/token-completion/terminal-render → read driver → ABI adapter → public firewall → retire port. The native consumer may proceed from the read driver in parallel; lint-zero still follows retirement and acceptance still joins both branches plus hashed-terminfo evidence."
             }
         )
     }
