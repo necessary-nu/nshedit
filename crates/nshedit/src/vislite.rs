@@ -61,7 +61,40 @@
 
 use crate::locale::{self, Charset, MB_LEN_MAX, Mb};
 
-/// C: `strvis(dst, src, VIS_NL)`.
+/// Which of `vis(3)`'s whitespace flags are set.
+///
+/// The whole flag word is not modelled because only two combinations are
+/// reachable from this crate, and a flag nobody passes is a branch nobody
+/// tests. `VIS_NOSLASH` is never set and `VIS_CSTYLE` never is either, which
+/// is what fixes the escape forms below.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Escape {
+    /// `VIS_NL` — the `history` listing. A newline would otherwise split one
+    /// entry across two printed lines; a space or tab in an entry is content
+    /// and stays literal.
+    Nl,
+    /// `VIS_WHITE`, i.e. `VIS_SP | VIS_TAB | VIS_NL` — the legacy history file,
+    /// where one line is exactly one entry and any literal whitespace would
+    /// make the parse ambiguous.
+    White,
+}
+
+impl Escape {
+    /// The list `makeextralist` builds, in its order: the whitespace flags
+    /// first, then the backslash that `VIS_NOSLASH` being unset appends.
+    ///
+    /// A NUL is not in it and does not need to be — see [`is_extra`].
+    fn extra(self) -> &'static [u32] {
+        const NL: [u32; 2] = [b'\n' as u32, b'\\' as u32];
+        const WHITE: [u32; 4] = [b' ' as u32, b'\t' as u32, b'\n' as u32, b'\\' as u32];
+        match self {
+            Escape::Nl => &NL,
+            Escape::White => &WHITE,
+        }
+    }
+}
+
+/// C: `strvis(dst, src, flags)`.
 ///
 /// Byte string in, byte string out, no terminator on either side, and no
 /// destination to size — which is what removes `ERR-history-07`'s `len * 4 + 1`
@@ -69,40 +102,34 @@ use crate::locale::{self, Charset, MB_LEN_MAX, Mb};
 ///
 /// The locale is the crate's cached `LC_CTYPE` snapshot, as every other
 /// character-classifying call in the crate takes it.
-pub(crate) fn encode_nl(src: &[u8]) -> Vec<u8> {
-    encode_nl_in(locale::charset(), src)
+pub(crate) fn encode(esc: Escape, src: &[u8]) -> Vec<u8> {
+    encode_in(locale::charset(), esc, src)
 }
 
-/// [`encode_nl`] against an explicitly named charset.
+/// [`encode`] against an explicitly named charset.
 ///
 /// Separate so a test can drive both charsets in one process without touching
 /// the environment: `LC_CTYPE` is process-global and the charset snapshot is
 /// per-thread, so a test that set one would be changing what its siblings
 /// measure.
-pub(crate) fn encode_nl_in(cs: Charset, src: &[u8]) -> Vec<u8> {
+pub(crate) fn encode_in(cs: Charset, esc: Escape, src: &[u8]) -> Vec<u8> {
     let (wide, latched) = widen(cs, src);
 
     let mut encoded: Vec<u32> = Vec::with_capacity(wide.len() * 4);
     for &c in &wide {
-        encode_char(&mut encoded, cs, c);
+        encode_char(&mut encoded, cs, esc, c);
     }
 
     narrow(cs, &encoded, latched)
 }
-
-/// The extra list `makeextralist(VIS_NL, "")` builds, in its order: `VIS_NL`
-/// appends the newline and `VIS_NOSLASH` being unset appends the backslash.
-///
-/// A NUL is not in it and does not need to be — see [`is_extra`].
-const EXTRA: [u32; 2] = [b'\n' as u32, b'\\' as u32];
 
 /// C: `wcschr(extra, c) != NULL`.
 ///
 /// The NUL arm is not an addition: `wcschr` searching for `L'\0'` matches the
 /// terminator of the list itself, so the C answers true for it whatever the
 /// flags were.
-fn is_extra(c: u32) -> bool {
-    c == 0 || EXTRA.contains(&c)
+fn is_extra(esc: Escape, c: u32) -> bool {
+    c == 0 || esc.extra().contains(&c)
 }
 
 /// C: `iswwhite`. Unconditional, and deliberately so — `VIS_SP`, `VIS_TAB` and
@@ -144,9 +171,9 @@ fn widen(cs: Charset, src: &[u8]) -> (Vec<u32>, bool) {
     (out, latched)
 }
 
-/// C: `do_svis` under `VIS_NL`.
-fn encode_char(out: &mut Vec<u32>, cs: Charset, c: u32) {
-    let extra = is_extra(c);
+/// C: `do_svis`.
+fn encode_char(out: &mut Vec<u32>, cs: Charset, esc: Escape, c: u32) {
+    let extra = is_extra(esc, c);
     if !extra && (locale::iswgraph(cs, c) || is_white(c)) {
         out.push(c);
         return;

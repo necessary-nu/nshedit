@@ -6,9 +6,10 @@
 //! contract is visible: `history_def_enter` calls the raw bodies, so the
 //! wrappers named by the rules have no in-tree caller of their own.
 //!
-//! The file-format tests are `cfg`d on the `bsd` feature, as `histfile`'s own
-//! are: without it `vis_encode` and `vis_decode_into` are stubs and the
-//! `_HiStOrY_V2_` format is one this build neither writes nor reads.
+//! Writing `_HiStOrY_V2_` needs no feature: the escape it wants is
+//! `strvis(..., VIS_WHITE)` and [`crate::vislite`] supplies it. Reading one
+//! still does — `vis_decode_into` is a stub without `bsd` — so the round-trip
+//! test is `cfg`d and the save-only ones are not.
 
 use core::marker::PhantomData;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -368,7 +369,6 @@ fn the_two_string_searches_walk_the_directions_their_names_deny() {
 /// original order, and `VIS_WHITE` is what guarantees no encoded entry can
 /// contain a literal LF — which is what makes one line one entry.
 // [spec:libedit:sem:history.history-save-fp-fn/test]
-#[cfg(feature = "bsd")]
 #[test]
 fn the_saved_file_is_a_cookie_and_one_escaped_line_per_entry() {
     let mut h = OwnedHistoryW::with_size(8);
@@ -396,7 +396,6 @@ fn the_saved_file_is_a_cookie_and_one_escaped_line_per_entry() {
 /// the file outright — a silent data-loss path that a tidier port would have
 /// closed, so it is pinned here instead.
 // [spec:libedit:sem:history.history-save-fp-fn/test]
-#[cfg(feature = "bsd")]
 #[test]
 fn a_stream_that_cannot_report_its_position_gets_no_header() {
     let mut h = OwnedHistoryW::with_size(8);
@@ -418,7 +417,6 @@ fn a_stream_that_cannot_report_its_position_gets_no_header() {
 /// and the write loop then emits that entry plus every newer one:
 /// `min(nelem + 1, size)` entries, not `nelem`. `nelem == 0` writes one.
 // [spec:libedit:sem:history.history-save-fp-fn/test]
-#[cfg(feature = "bsd")]
 #[test]
 fn the_bounded_save_writes_one_more_entry_than_asked_for() {
     use crate::histedit::H_NSAVE_FP;
@@ -529,26 +527,38 @@ fn a_truncated_cookie_is_accepted_and_a_wrong_one_is_not() {
     assert_eq!(ev.num, 10);
 }
 
-/// Without the `bsd` feature there is no vis, so `_HiStOrY_V2_` is a format
-/// this build cannot write: the header goes out and the first entry stops the
-/// save dead. Pinned rather than left implicit, because the failure is quiet
-/// at the call site — the result is -1 and a file holding nothing but a
-/// header, which `history_load` will then accept and read as empty.
-// [spec:libedit:sem:history.history-save-fp-fn/test]
-#[cfg(not(feature = "bsd"))]
+/// `H_SAVE` writes the entries, on the build that ships.
+///
+/// The regression this exists for: `history_save` opens the file `O_TRUNC`,
+/// and the escape it then needs used to be `bsd::vis` behind a feature that is
+/// off by default. So the header went out, the first entry failed, and what
+/// survived on disk was a thirteen-byte cookie — the user's history destroyed
+/// and the call reporting only -1. `history_load` compounded it by accepting
+/// that file as a legal empty history rather than a damaged one, so nothing
+/// anywhere said the data was gone.
+///
+/// Deliberately not `cfg`d and deliberately not a round trip: reading still
+/// needs `unvis`, and the point is that *writing* no longer needs anything.
+// [spec:libedit:sem:history.history-save-fn/test]
 #[test]
-fn a_build_without_vis_cannot_write_the_legacy_format() {
+fn saving_writes_the_entries_without_the_bsd_feature() {
+    use crate::histedit::H_SAVE;
+
+    let path = scratch_path("save-default");
+    let p = path.to_str().unwrap();
     let mut h = OwnedHistoryW::with_size(8);
-    h.enter(&wide("only"));
-    let mut out: Vec<u8> = Vec::new();
-    let (rv, ev) = h.exec(
-        H_SAVE_FP,
-        HistoryArg::Fp(SaveStream {
-            at_start: true,
-            out: &mut out,
-        }),
+    h.enter(&wide("echo one"));
+    h.enter(&wide("echo two"));
+
+    assert_eq!(h.exec(H_SAVE, HistoryArg::Path(p)).0, 2, "both entries");
+
+    let on_disk = std::fs::read(&path).expect("the file was created");
+    assert_eq!(
+        on_disk,
+        // `\040` is a backslash and three octal digits, not a NUL: a space is
+        // in VIS_WHITE's extra list, so it takes `do_mbyte`'s octal branch.
+        "_HiStOrY_V2_\necho\\040one\necho\\040two\n".as_bytes(),
+        "cookie, then one VIS_WHITE-escaped line per entry, oldest first"
     );
-    assert_eq!(rv, -1);
-    assert_eq!(text(ev.str), "can't write history");
-    assert_eq!(out, b"_HiStOrY_V2_\n", "the header, and no entry at all");
+    let _ = std::fs::remove_file(&path);
 }

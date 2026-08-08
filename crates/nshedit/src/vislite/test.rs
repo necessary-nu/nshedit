@@ -115,14 +115,23 @@ fn around(bytes: &[u8], at: usize) -> String {
     )
 }
 
-/// The C-locale arm against `bsd::vis`, byte for byte over the whole corpus.
+/// The C-locale arm against `bsd::vis`, byte for byte over the whole corpus,
+/// in both flag sets.
 ///
 /// This is the check the encoder exists to pass: it was written by reading
-/// `src/vis.c`, and reading is a guess until something measures it.
+/// `src/vis.c`, and reading is a guess until something measures it. `WHITE`
+/// matters as much as `NL` — it is what `history_save` writes with, and a
+/// wrong escape there is a history file that reloads as different text.
 #[test]
 #[cfg(feature = "bsd")]
 fn the_c_locale_arm_matches_bsd_vis_byte_for_byte() {
-    let oracle = bsd::vis::Encoder::new(bsd::vis::Flags::NL);
+    check_against_bsd(Escape::Nl, bsd::vis::Flags::NL);
+    check_against_bsd(Escape::White, bsd::vis::Flags::WHITE);
+}
+
+#[cfg(feature = "bsd")]
+fn check_against_bsd(esc: Escape, flags: bsd::vis::Flags) {
+    let oracle = bsd::vis::Encoder::new(flags);
 
     // The comparison is only meaningful while the C library is in the C
     // locale, which is where a Rust process starts and stays. If something
@@ -137,7 +146,7 @@ fn the_c_locale_arm_matches_bsd_vis_byte_for_byte() {
 
     let mut wrong = Vec::new();
     for src in corpus() {
-        let ours = encode_nl_in(Charset::Ascii, &src);
+        let ours = encode_in(Charset::Ascii, esc, &src);
         let theirs = oracle.encode(&src);
         if ours != theirs {
             let at = ours
@@ -212,12 +221,12 @@ const UTF8_GOLDEN: &[(&[u8], &[u8])] = &[
 fn the_utf8_arm_matches_a_measured_strvis() {
     for &(src, want) in UTF8_GOLDEN {
         assert_eq!(
-            encode_nl_in(Charset::Utf8, src),
+            encode_in(Charset::Utf8, Escape::Nl, src),
             want,
             "in={} want={} got={}",
             show(src),
             show(want),
-            show(&encode_nl_in(Charset::Utf8, src))
+            show(&encode_in(Charset::Utf8, Escape::Nl, src))
         );
     }
 }
@@ -233,14 +242,14 @@ fn the_utf8_arm_matches_a_measured_strvis() {
 fn every_byte_alone_in_a_utf8_locale() {
     for b in 0..=0x9fu8 {
         assert_eq!(
-            encode_nl_in(Charset::Utf8, &[b]),
-            encode_nl_in(Charset::Ascii, &[b]),
+            encode_in(Charset::Utf8, Escape::Nl, &[b]),
+            encode_in(Charset::Ascii, Escape::Nl, &[b]),
             "byte {b:#04x} should encode alike in both charsets"
         );
     }
     for b in 0xa0..=0xffu8 {
         assert_eq!(
-            encode_nl_in(Charset::Utf8, &[b]),
+            encode_in(Charset::Utf8, Escape::Nl, &[b]),
             vec![b],
             "byte {b:#04x} is graphic to glibc in a UTF-8 locale"
         );
@@ -257,12 +266,12 @@ fn every_byte_alone_in_a_utf8_locale() {
 #[test]
 fn the_three_octal_escapes_are_octal_and_not_lettered() {
     for cs in [Charset::Ascii, Charset::Utf8] {
-        assert_eq!(encode_nl_in(cs, b"\n"), b"\\012");
-        assert_eq!(encode_nl_in(cs, b"\\"), b"\\134");
-        assert_eq!(encode_nl_in(cs, b"\0"), b"\\000");
+        assert_eq!(encode_in(cs, Escape::Nl, b"\n"), b"\\012");
+        assert_eq!(encode_in(cs, Escape::Nl, b"\\"), b"\\134");
+        assert_eq!(encode_in(cs, Escape::Nl, b"\0"), b"\\000");
         // And what `VIS_NL` deliberately leaves alone: this is a listing for a
         // person to read, not the on-disk format, so a space stays a space.
-        assert_eq!(encode_nl_in(cs, b"a b\tc"), b"a b\tc");
+        assert_eq!(encode_in(cs, Escape::Nl, b"a b\tc"), b"a b\tc");
     }
 }
 
@@ -272,7 +281,7 @@ fn the_three_octal_escapes_are_octal_and_not_lettered() {
 fn nothing_encodes_to_a_newline() {
     for cs in [Charset::Ascii, Charset::Utf8] {
         for src in corpus() {
-            let out = encode_nl_in(cs, &src);
+            let out = encode_in(cs, Escape::Nl, &src);
             assert!(
                 !out.contains(&b'\n'),
                 "a newline survived: in={} out={}",

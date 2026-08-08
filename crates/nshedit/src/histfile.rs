@@ -409,33 +409,18 @@ fn cobs_decode(frame: &[u8]) -> Option<Vec<u8>> {
 // The `bsd` seam
 // ---------------------------------------------------------------------------
 //
-// The legacy `_HiStOrY_V2_` format in both directions, and nothing else: the
-// feature is four `cfg`s in one place rather than scattered through the
-// history paths. `None` means "this build has no vis", which the callers turn
-// into the C's own failure return — never into unescaped output, which would
-// be a wrong answer rather than a missing one.
+// Reading the legacy `_HiStOrY_V2_` format, and nothing else. What is left
+// here is the one direction `crate::vislite` does not cover: `unvis` has to
+// accept every escape form `vis` can emit, including the `VIS_CSTYLE` and
+// `VIS_HTTPSTYLE` ones nothing in this crate produces, so it is a decoder for
+// the whole language rather than a subset of it.
 //
-// Display escaping does not come through here. `hist_command`'s listing needs
-// `strvis(…, VIS_NL)` and nothing more, and making a human-readable listing
-// unavailable on a default build was the wrong trade; `crate::vislite` is that
-// subset, with no feature behind it.
-
-/// `strvis(dst, src, flags)`, allocating.
-///
-/// Allocating rather than `Encoder::encode_into`: what the callers need is
-/// "however long it turns out to be", and sizing a destination is the thing
-/// ERR-history-07 records the C getting wrong — its `len * 4 + 1` is an
-/// assumption a locale can break into a heap smash. Returning the bytes
-/// removes the size to get wrong rather than bounding it better.
-#[cfg(feature = "bsd")]
-pub(crate) fn vis_encode(src: &[u8], flags: bsd::vis::Flags) -> Option<Vec<u8>> {
-    Some(bsd::vis::Encoder::new(flags).encode(src))
-}
-
-#[cfg(not(feature = "bsd"))]
-pub(crate) fn vis_encode(_src: &[u8], _flags: VisFlags) -> Option<Vec<u8>> {
-    None
-}
+// Writing does not come through here any more. Both writers want an encoder —
+// the listing `strvis(…, VIS_NL)`, the save `strvis(…, VIS_WHITE)` — and
+// `vislite` supplies both with no feature behind them. That is not a
+// convenience: `vis_encode` answering `None` on a default build made
+// `history_save` truncate the user's file and then fail, and made the
+// `history` builtin do nothing at all.
 
 /// `strnunvis(dst, dlen, src)`. `dst` is zeroed first and the decoded length
 /// found by scanning, because a bad escape leaves the successfully decoded
@@ -452,20 +437,6 @@ pub(crate) fn vis_decode_into(dst: &mut [u8], src: &[u8]) -> usize {
 pub(crate) fn vis_decode_into(_dst: &mut [u8], _src: &[u8]) -> usize {
     0
 }
-
-/// Stands in for `bsd::vis::Flags` when the feature is off, so the call sites
-/// need no `cfg` of their own.
-#[cfg(not(feature = "bsd"))]
-#[derive(Copy, Clone)]
-pub(crate) struct VisFlags(pub u32);
-
-#[cfg(not(feature = "bsd"))]
-impl VisFlags {
-    pub(crate) const WHITE: Self = Self(0x0004 | 0x0008 | 0x0010);
-}
-
-#[cfg(feature = "bsd")]
-pub(crate) use bsd::vis::Flags as VisFlags;
 
 #[cfg(test)]
 mod test {

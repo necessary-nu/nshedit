@@ -1935,11 +1935,7 @@ fn history_save_out<C: HistChar>(
         // assumption a locale can break into a heap smash. `encode` returns
         // what it produced, so there is no size to get wrong. Neither the
         // buffer nor the growth step was ever observable.
-        let Some(mut ptr) = crate::histfile::vis_encode(bytes, crate::histfile::VisFlags::WHITE)
-        else {
-            i = -1;
-            break;
-        };
+        let mut ptr = crate::vislite::encode(crate::vislite::Escape::White, bytes);
         let n = ptr.len();
 
         // C: `fprintf(fp, "%s\n", ptr)` — one line per entry. ERR-history-21:
