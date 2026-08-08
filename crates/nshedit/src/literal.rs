@@ -360,6 +360,7 @@ mod test {
 
     /// Every success carries bit 31 and an index below it, which is what lets
     /// the screen image hold sentinels and real characters in one `u32`.
+    // [spec:libedit:sem:literal.literal-add-fn/test]
     #[test]
     fn a_sentinel_is_the_marker_bit_or_an_index() {
         let mut el = blank_editline();
@@ -385,6 +386,8 @@ mod test {
 
     /// The bytes come back exactly, sequence then visible character, and the
     /// C's trailing NUL is not stored — the length is the length.
+    // [spec:libedit:sem:literal.literal-add-fn/test]
+    // [spec:libedit:sem:literal.literal-get-fn/test]
     #[test]
     fn the_stored_bytes_are_the_sequence_then_the_visible_character() {
         let mut el = blank_editline();
@@ -398,6 +401,7 @@ mod test {
 
     /// `literal_get` is defined where the C asserts, because the assert
     /// vanishes under `NDEBUG` — which distro packagers commonly define.
+    // [spec:libedit:sem:literal.literal-get-fn/test]
     #[test]
     fn a_reference_with_no_marker_bit_yields_nothing() {
         let mut el = blank_editline();
@@ -411,6 +415,7 @@ mod test {
     /// ordinary operation rather than only by caller error: ERR-terminal-09
     /// has `el_display` still holding the previous frame's sentinels after
     /// `literal_clear`.
+    // [spec:libedit:sem:literal.literal-get-fn/test]
     #[test]
     fn a_stale_sentinel_yields_nothing_rather_than_old_bytes() {
         let mut el = blank_editline();
@@ -428,6 +433,7 @@ mod test {
 
     /// `end + 1` must be in bounds: the visible character is read from
     /// `buf[end]`, and there is no character to measure without it.
+    // [spec:libedit:sem:literal.literal-add-fn/test]
     #[test]
     fn a_missing_visible_character_fails_with_width_minus_one() {
         let mut el = blank_editline();
@@ -444,6 +450,7 @@ mod test {
 
     /// A visible character with no width is not a literal: `wcwidth` says -1
     /// and nothing is stored.
+    // [spec:libedit:sem:literal.literal-add-fn/test]
     #[test]
     fn a_visible_character_with_no_width_is_refused() {
         let mut el = blank_editline();
@@ -456,6 +463,7 @@ mod test {
 
     /// The table grows by a fixed four slots, not by doubling. Observable
     /// only through `l_len`, which the `sem` rules index by.
+    // [spec:libedit:sem:literal.literal-add-fn/test]
     #[test]
     fn the_table_grows_by_four() {
         let mut el = blank_editline();
@@ -493,6 +501,12 @@ mod test {
     /// parked at index `0x7FFF_FFFF` would be swallowed as multibyte padding
     /// and never printed, so `literal_add` refuses that index rather than
     /// issuing a sentinel the caller cannot distinguish.
+    ///
+    /// The refusal is the C's allocation-failure shape and not its
+    /// non-printable shape: `*wp` still carries the visible character's real
+    /// width, so `re_putliteral` reads a 0 with `w >= 0` and abandons the
+    /// literal rather than the whole prompt.
+    // [spec:libedit:sem:literal.literal-add-fn/test]
     #[test]
     fn the_unusable_top_index_is_never_issued() {
         assert_eq!(EL_LITERAL | LITERAL_INDEX_MAX, MB_FILL_CHAR - 1);
@@ -501,7 +515,155 @@ mod test {
         let mut el = blank_editline();
         // Past the bound the add fails rather than wrapping into the marker.
         el.el_literal.l_idx = LITERAL_INDEX_MAX as usize + 1;
-        let (r, _) = add(&mut el, &[0x1b], b'X' as u32);
+        let (r, w) = add(&mut el, &[0x1b], b'X' as u32);
         assert_eq!(r, 0);
+        assert_eq!(w, 1, "the width is reported even on the refusal");
+    }
+
+    /// `buf == end` — an empty sequence — is legal and not special-cased: it
+    /// still allocates, still takes a table slot and still yields a sentinel.
+    /// The stored string is just the visible character, which is why a
+    /// sentinel always advances the real cursor even when it carries no
+    /// escape at all.
+    // [spec:libedit:sem:literal.literal-add-fn/test]
+    #[test]
+    fn an_empty_sequence_still_consumes_a_slot() {
+        let mut el = blank_editline();
+        let (r, w) = add(&mut el, &[], b'Z' as u32);
+        assert_eq!(r, EL_LITERAL, "index 0, the first slot");
+        assert_eq!(w, 1);
+        assert_eq!(literal_get(&mut el, r), b"Z");
+        assert_eq!((el.el_literal.l_idx, el.el_literal.l_len), (1, 4));
+    }
+
+    /// The character at `end` is the closing delimiter and is never read: the
+    /// sequence is `buf[..end]` and the visible character is `buf[end + 1]`,
+    /// so the delimiter falls in the gap between them.
+    // [spec:libedit:sem:literal.literal-add-fn/test]
+    #[test]
+    fn the_closing_delimiter_is_skipped_rather_than_stored() {
+        let mut el = blank_editline();
+        // `\x01` sits where `prompt_print` puts the closing delimiter.
+        let buf = [0x1b, b'[' as u32, 0x01, b'X' as u32];
+        let mut w = 0;
+        let r = literal_add(&mut el, &buf, 2, &mut w);
+        assert_eq!(literal_get(&mut el, r), b"\x1b[X");
+        assert_eq!(w, 1);
+    }
+
+    /// A character the locale cannot encode contributes no bytes, so a
+    /// sequence made only of such characters stores an empty string — and the
+    /// sentinel is still issued, still occupies a slot, and still charges the
+    /// visible character its columns. ERR-encoding-15, reproduced: the byte
+    /// count silently under-counts and no caller can tell.
+    ///
+    /// A lone surrogate is unencodable in both charsets, so this reads the
+    /// same whatever `LC_CTYPE` says.
+    ///
+    /// The stored length is whatever the encoder produced, which is
+    /// ERR-terminal-10's resolution: the C measures with one encoder and
+    /// writes with another, and here there is only the one pass, so a
+    /// character that contributes no bytes contributes no length either.
+    // [spec:libedit:sem:literal.literal-add-fn/test]
+    // [spec:libedit:sem:literal.literal-get-fn/test]
+    #[test]
+    fn a_sequence_the_locale_cannot_encode_stores_nothing_at_all() {
+        let mut el = blank_editline();
+        let (r, w) = add(&mut el, &[0xD800, 0xDFFF], b'X' as u32);
+        assert_eq!(r, EL_LITERAL);
+        assert_eq!(w, 1, "the visible character is still charged its column");
+        assert_eq!(literal_get(&mut el, r), b"X");
+
+        // And with an unencodable visible character too, the stored string is
+        // empty — indistinguishable from the fallback `literal_get` returns
+        // for a reference it refuses.
+        let mut el = blank_editline();
+        el.el_literal.l_buf.push(Vec::new());
+        el.el_literal.l_idx = 1;
+        el.el_literal.l_len = 4;
+        assert_eq!(literal_get(&mut el, EL_LITERAL), b"");
+    }
+
+    /// `literal_clear` deallocates rather than resetting a cursor, so the next
+    /// `literal_add` starts over from index 0 and a fresh four-slot table.
+    /// That is what makes a stale sentinel from the previous frame resolve to
+    /// a *different* entry when the prompt renders differently — the hazard
+    /// ERR-terminal-09 names.
+    // [spec:libedit:sem:literal.literal-add-fn/test]
+    #[test]
+    fn indices_restart_from_zero_after_a_clear() {
+        let mut el = blank_editline();
+        let (first, _) = add(&mut el, &[0x1b, b'a' as u32], b'X' as u32);
+        let (second, _) = add(&mut el, &[0x1b, b'b' as u32], b'Y' as u32);
+        assert_eq!(literal_get(&mut el, first), b"\x1baX");
+        assert_eq!(literal_get(&mut el, second), b"\x1bbY");
+
+        literal_clear(&mut el);
+        let (again, _) = add(&mut el, &[0x1b, b'c' as u32], b'Z' as u32);
+        assert_eq!(again, first, "the same sentinel, a different entry");
+        assert_eq!(literal_get(&mut el, again), b"\x1bcZ");
+        assert_eq!((el.el_literal.l_idx, el.el_literal.l_len), (1, 4));
+    }
+
+    /// The bound is the in-use prefix, not the allocation. One add leaves
+    /// three allocated slots that were never written — the C's indeterminate
+    /// pointers — and a reference into them yields nothing rather than the
+    /// C's read of an uninitialised `char *`.
+    ///
+    /// `MB_FILL_CHAR` lands here too. `terminal__putc` must exclude it before
+    /// testing the marker bit, but if it ever stops doing so the index it
+    /// decodes to is far past any real entry, so the failure is silence
+    /// rather than an out-of-bounds read.
+    // [spec:libedit:sem:literal.literal-get-fn/test]
+    #[test]
+    fn a_reference_inside_the_allocation_but_past_the_entries_yields_nothing() {
+        let mut el = blank_editline();
+        let (r, _) = add(&mut el, &[0x1b], b'X' as u32);
+        assert_eq!((el.el_literal.l_idx, el.el_literal.l_len), (1, 4));
+        assert_eq!(literal_get(&mut el, r), b"\x1bX");
+
+        for idx in 1..4u32 {
+            assert_eq!(literal_get(&mut el, EL_LITERAL | idx), b"", "index {idx}");
+        }
+        assert_eq!(literal_get(&mut el, MB_FILL_CHAR), b"");
+
+        // `l_idx` ahead of the entries it counts is not a state the module can
+        // reach on its own, and the C would read past the end of `l_buf` for
+        // it. Defined here as the same empty slice.
+        el.el_literal.l_idx = 4;
+        assert_eq!(literal_get(&mut el, EL_LITERAL | 3), b"");
+    }
+
+    /// `*wp` is `wcwidth` of the visible character and nothing else, so it
+    /// spans the whole range that function has: 0 for a combining mark, 2 for
+    /// a double-width character, and -1 — a refusal — for anything the locale
+    /// calls unprintable.
+    ///
+    /// The C locale calls every non-ASCII character unprintable, so there a
+    /// coloured prompt whose visible character is not ASCII gets no literal at
+    /// all and the escape is dropped with it. Both readings are pinned rather
+    /// than one, because the charset comes from the environment.
+    // [spec:libedit:sem:literal.literal-add-fn/test]
+    #[test]
+    fn the_reported_width_is_the_visible_characters_alone() {
+        let mut el = blank_editline();
+        let seq = [0x1b, b'[' as u32, b'm' as u32];
+        // U+0301 COMBINING ACUTE ACCENT, U+4E00 CJK UNIFIED IDEOGRAPH-4E00.
+        let (combining, wc) = add(&mut el, &seq, 0x0301);
+        let (wide, ww) = add(&mut el, &seq, 0x4E00);
+
+        if locale::charset() == locale::Charset::Utf8 {
+            assert_eq!(wc, 0, "a combining mark occupies no column");
+            assert_eq!(ww, 2, "a CJK ideograph occupies two");
+            assert_ne!(combining, 0);
+            assert_ne!(wide, 0);
+            assert_eq!(literal_get(&mut el, combining), "\x1b[m\u{0301}".as_bytes());
+            assert_eq!(literal_get(&mut el, wide), "\x1b[m\u{4e00}".as_bytes());
+        } else {
+            assert_eq!(wc, -1);
+            assert_eq!(ww, -1);
+            assert_eq!((combining, wide), (0, 0), "both literals are dropped");
+            assert_eq!(el.el_literal.l_idx, 0, "and nothing was stored");
+        }
     }
 }

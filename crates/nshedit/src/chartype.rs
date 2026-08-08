@@ -727,6 +727,9 @@ mod tests {
         assert_eq!(&conv.wbuff[..5], &s[..]);
     }
 
+    /// Each element gets its own slot and its own terminator, and a NULL
+    /// element takes a slot without consuming any of the buffer.
+    // [spec:libedit:sem:chartype.ct-decode-argv-fn/test]
     #[test]
     fn decode_argv_packs_end_to_end_and_keeps_null_slots() {
         let mut conv = empty();
@@ -735,6 +738,115 @@ mod tests {
         assert_eq!(out, vec![Some(0), None, Some(4)]);
         assert_eq!(&conv.wbuff[..8], &[111, 110, 101, 0, 116, 119, 111, 0]);
         assert_eq!(ct_decode_argv(&[], &mut conv).unwrap(), Vec::new());
+    }
+
+    /// The C's `argc` is a slice length, which is half of what discharges
+    /// ERR-encoding-05: there is no count below zero for `argc + 1` to wrap.
+    /// The other half is at the ABI boundary, where an `int` still arrives —
+    /// `el_parse` rejects `argc < 0` before it reaches any of this, and is
+    /// tested where it lives.
+    ///
+    /// The bottom of the range is the empty slice, the C's `argc == 0`, and it
+    /// still sizes the wide half — `bufspace` starts at 1, so a virgin buffer
+    /// comes back at 1 + `CT_BUFSIZ`.
+    ///
+    /// NULL elements contribute nothing to that sum, so three of them size the
+    /// buffer exactly as no elements at all do, while one four-byte string
+    /// adds its own `strlen + 1`.
+    // [spec:libedit:sem:chartype.ct-decode-argv-fn/test]
+    #[test]
+    fn decode_argv_sizes_the_wide_half_from_the_byte_total() {
+        let mut conv = empty();
+        assert_eq!(ct_decode_argv(&[], &mut conv).unwrap(), Vec::new());
+        assert_eq!(conv.wsize, 1 + CT_BUFSIZ);
+        assert_eq!(conv.wbuff.len(), conv.wsize, "the len invariant holds");
+
+        let mut conv = empty();
+        assert_eq!(
+            ct_decode_argv(&[None, None, None], &mut conv).unwrap(),
+            vec![None, None, None]
+        );
+        assert_eq!(conv.wsize, 1 + CT_BUFSIZ, "NULL elements are not sized");
+
+        let mut conv = empty();
+        ct_decode_argv(&[Some(&b"abcd"[..])], &mut conv).unwrap();
+        assert_eq!(conv.wsize, 1 + 5 + CT_BUFSIZ);
+    }
+
+    /// A byte total used as a wide-character count is an over-estimate in a
+    /// multibyte locale and exact in a single-byte one, so the packing is
+    /// dense either way: the second element starts one past the first
+    /// element's terminator, never one past its byte length.
+    ///
+    /// `0xFF` is not a lead byte in either charset, so this pins the same
+    /// rejection whatever the environment says. One bad element fails the
+    /// whole call — there is no partial result — and the buffer keeps the
+    /// characters the earlier elements decoded into it, which no caller can
+    /// reach because the pointer array they were reachable through is gone.
+    // [spec:libedit:sem:chartype.ct-decode-argv-fn/test]
+    #[test]
+    fn decode_argv_rejects_the_whole_call_for_one_bad_element() {
+        let mut conv = empty();
+        assert!(
+            ct_decode_argv(
+                &[Some(&b"one"[..]), Some(&b"\xff"[..]), Some(&b"three"[..])],
+                &mut conv
+            )
+            .is_none()
+        );
+        assert_eq!(
+            &conv.wbuff[..4],
+            &[111, 110, 101, 0],
+            "the earlier element is still in the buffer, unreachable"
+        );
+
+        // A bad first element fails before anything is written.
+        let mut conv = empty();
+        assert!(ct_decode_argv(&[Some(&b"\x80"[..])], &mut conv).is_none());
+    }
+
+    /// An embedded NUL ends the element, because the C measures with `strlen`
+    /// and decodes with `mbstowcs`, and both stop there. The budget the
+    /// sizing pass reserved is the same one the decode consumes, so the
+    /// following element lands immediately after the truncated one's
+    /// terminator rather than after the bytes that were dropped.
+    // [spec:libedit:sem:chartype.ct-decode-argv-fn/test]
+    #[test]
+    fn decode_argv_stops_each_element_at_its_first_nul() {
+        let mut conv = empty();
+        let out = ct_decode_argv(&[Some(&b"ab\0cd"[..]), Some(&b"z"[..])], &mut conv).unwrap();
+        assert_eq!(out, vec![Some(0), Some(3)]);
+        assert_eq!(&conv.wbuff[..5], &[97, 98, 0, 122, 0]);
+    }
+
+    /// The offsets are the C's interior pointers into `conv.wbuff`, and they
+    /// die together at the next decode on the same buffer: the second call
+    /// writes from index 0 again, so an offset held across it names whatever
+    /// the second call happened to put there. The buffer is grow-only, so the
+    /// stale offset stays in bounds — which is exactly why the C's dangling
+    /// version reads plausible garbage instead of faulting.
+    // [spec:libedit:sem:chartype.ct-decode-argv-fn/test]
+    #[test]
+    fn decode_argv_invalidates_every_offset_from_the_previous_call() {
+        let mut conv = empty();
+        let first = ct_decode_argv(&[Some(&b"alpha"[..]), Some(&b"beta"[..])], &mut conv).unwrap();
+        assert_eq!(first, vec![Some(0), Some(6)]);
+        let grown = conv.wsize;
+
+        ct_decode_argv(&[Some(&b"overwritten"[..])], &mut conv).unwrap();
+        assert_eq!(
+            conv.wsize, grown,
+            "grow-only: a smaller call does not shrink"
+        );
+        assert_eq!(
+            &conv.wbuff[..12],
+            &"overwritten\0".chars().map(u32::from).collect::<Vec<_>>()[..]
+        );
+        assert_eq!(
+            conv.wbuff[6],
+            u32::from(b'i'),
+            "offset 6 named `beta` and now names the middle of another string"
+        );
     }
 
     #[test]

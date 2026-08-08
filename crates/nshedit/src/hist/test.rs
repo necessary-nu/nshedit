@@ -345,3 +345,330 @@ fn the_builtin_still_refuses_when_no_history_is_attached() {
     let argv: [*const u32; 1] = [ptr::null()];
     assert_eq!(hist_command(&mut el, 1, argv.as_ptr()), -1);
 }
+
+/// Growing the stash keeps the saved line and zeroes only what it added.
+///
+/// The C rebases `last` across the reallocation because it is a pointer; here
+/// it is already an offset, so the rebase is nothing at all and the recorded
+/// length has to come through untouched.
+// [spec:libedit:sem:hist.hist-enlargebuf-fn/test]
+#[test]
+fn enlarging_the_stash_preserves_the_saved_line() {
+    let mut el = editor();
+    assert_eq!(hist_init(&mut el), 0);
+    let saved = wide("echo saved");
+    el.el_history.buf[..saved.len()].copy_from_slice(&saved);
+    el.el_history.last = saved.len();
+
+    assert_eq!(hist_enlargebuf(&mut el, 4 * EL_BUFSIZ), 1, "1 is success");
+    assert_eq!(el.el_history.sz, 4 * EL_BUFSIZ);
+    assert_eq!(el.el_history.buf.len(), el.el_history.sz);
+    assert_eq!(&el.el_history.buf[..saved.len()], &saved[..]);
+    assert!(
+        el.el_history.buf[saved.len()..].iter().all(|&c| c == 0),
+        "everything past the saved line is NUL"
+    );
+    assert_eq!(el.el_history.last, saved.len(), "the length is preserved");
+}
+
+/// The stash is never shrunk, and because the convention is inverted the
+/// refusal to shrink is reported as success — 1, not 0. Nothing is
+/// reallocated and nothing is zeroed, so a saved line survives a run of
+/// pointless requests.
+// [spec:libedit:sem:hist.hist-enlargebuf-fn/test]
+#[test]
+fn a_request_no_larger_than_the_stash_succeeds_without_growing() {
+    let mut el = editor();
+    hist_init(&mut el);
+    el.el_history.buf[0] = u32::from(b'x');
+    el.el_history.last = 1;
+
+    for newsz in [0, 1, EL_BUFSIZ - 1, EL_BUFSIZ] {
+        assert_eq!(hist_enlargebuf(&mut el, newsz), 1, "newsz {newsz}");
+        assert_eq!(el.el_history.sz, EL_BUFSIZ);
+        assert_eq!(el.el_history.buf.len(), EL_BUFSIZ);
+    }
+    assert_eq!(el.el_history.buf[0], u32::from(b'x'));
+    assert_eq!(el.el_history.last, 1);
+}
+
+/// An impossible allocation returns 0 — failure — and leaves every field as
+/// it was, with the old stash still holding the saved line.
+///
+/// `ch_enlargebufs` is built on that guarantee: it turns the 0 into its own 0
+/// and the editor carries on, having already grown the line buffer. The stash
+/// is then smaller than the line, which `hist_get` tolerates because it copies
+/// `sz` characters into a buffer at least that large.
+// [spec:libedit:sem:hist.hist-enlargebuf-fn/test]
+#[test]
+fn a_refused_allocation_leaves_the_stash_exactly_as_it_was() {
+    let mut el = editor();
+    hist_init(&mut el);
+    let saved = wide("still here");
+    el.el_history.buf[..saved.len()].copy_from_slice(&saved);
+    el.el_history.last = saved.len();
+
+    assert_eq!(hist_enlargebuf(&mut el, usize::MAX), 0, "0 is failure");
+    assert_eq!(el.el_history.sz, EL_BUFSIZ);
+    assert_eq!(el.el_history.buf.len(), EL_BUFSIZ);
+    assert_eq!(&el.el_history.buf[..saved.len()], &saved[..]);
+    assert_eq!(el.el_history.last, saved.len());
+
+    // Still usable, which is what "the old buffer is still valid" means.
+    assert_eq!(hist_enlargebuf(&mut el, 2 * EL_BUFSIZ), 1);
+    assert_eq!(&el.el_history.buf[..saved.len()], &saved[..]);
+}
+
+/// A `hist_init` whose allocation failed leaves an empty stash and `sz` at 0,
+/// and the sole caller discards that error deliberately: the first line-buffer
+/// growth allocates from nothing and silently repairs the state.
+///
+/// `editor()` is that state — it runs `ch_init` and `search_init` and never
+/// `hist_init` — so this is also what an editor assembled without the stash
+/// recovers to.
+// [spec:libedit:sem:hist.hist-enlargebuf-fn/test]
+#[test]
+fn the_first_growth_repairs_a_stash_that_was_never_allocated() {
+    let mut el = editor();
+    assert_eq!((el.el_history.sz, el.el_history.last), (0, 0));
+    assert!(el.el_history.buf.is_empty());
+
+    assert_eq!(hist_enlargebuf(&mut el, EL_BUFSIZ), 1);
+    assert_eq!(el.el_history.sz, EL_BUFSIZ);
+    assert_eq!(el.el_history.buf, vec![0u32; EL_BUFSIZ]);
+    assert_eq!(el.el_history.last, 0);
+}
+
+/// The stash and the line buffer grow together. That lockstep is what makes
+/// `hist_get`'s restore safe: it copies `sz` characters into the line buffer
+/// with no bound of its own, so `sz` must never outrun the line's allocation.
+/// `ch_enlargebufs` is the one caller and this is the whole of its last step.
+// [spec:libedit:sem:hist.hist-enlargebuf-fn/test]
+#[test]
+fn the_stash_and_the_line_buffer_grow_in_lockstep() {
+    let mut el = editor();
+    hist_init(&mut el);
+    assert_eq!(el.el_history.sz, EL_BUFSIZ);
+
+    assert_eq!(ch_enlargebufs(&mut el, 1), 1);
+    assert!(el.el_history.sz > EL_BUFSIZ, "the stash grew too");
+    assert_eq!(el.el_history.sz, el.el_line.buffer.len());
+}
+
+/// A narrow C history: the shape `NARROW_HISTORY` exists to describe, where
+/// the dispatcher fills a `HistEvent` carrying a `char *` through a pointer
+/// the caller declared `HistEventW *`.
+///
+/// The four traversal opcodes answer differently so that one hook reaches
+/// every path out of `hist_convert`. Variadic because `hist_fun_t` is; the
+/// trailing argument is never read, since reading one needs `VaListImpl`,
+/// and every call libedit itself makes passes NULL for it.
+unsafe extern "C" fn narrow_hook(
+    _ref: *mut c_void,
+    ev: *mut HistEventW,
+    op: c_int,
+    _: ...
+) -> c_int {
+    let ev = ev.cast::<HistEvent>();
+    // SAFETY: the pointer is the local `hist_convert_str` declared as the
+    // narrow event it really is, and it outlives this call. Both string
+    // literals are `'static`.
+    unsafe {
+        match op {
+            H_FIRST => {
+                (*ev).num = 7;
+                (*ev).str = c"echo hi".as_ptr();
+                0
+            }
+            // `0xFF` is not a lead byte in either charset, so the decode
+            // fails whatever the environment says.
+            H_LAST => {
+                (*ev).num = 8;
+                (*ev).str = c"\xff".as_ptr();
+                0
+            }
+            H_NEXT => {
+                (*ev).num = 9;
+                (*ev).str = ptr::null();
+                0
+            }
+            _ => -1,
+        }
+    }
+}
+
+/// `wide`, NUL-terminated, for a store whose event string really is wide.
+static WIDE_ENTRY: [u32; 5] = [b'w' as u32, b'i' as u32, b'd' as u32, b'e' as u32, 0];
+
+/// The other half of the `NARROW_HISTORY` split: a store the editor reads
+/// straight out of the shared event cookie, with no conversion at all.
+unsafe extern "C" fn wide_hook(_ref: *mut c_void, ev: *mut HistEventW, op: c_int, _: ...) -> c_int {
+    if op != H_FIRST {
+        return -1;
+    }
+    // SAFETY: `hist_fun` passes `&mut el.el_history.ev`, which outlives the
+    // call, and the entry is `'static`.
+    unsafe {
+        (*ev).num = 7;
+        (*ev).str = WIDE_ENTRY.as_ptr();
+    }
+    0
+}
+
+/// Installs `fun` as the C ABI dispatcher with a NULL cookie.
+///
+/// NULL on purpose: `hist_convert` calls through `fun` without consulting the
+/// cookie, while every recall path guards on the cookie alone. The C is
+/// inconsistent about that pair and the port reproduces it, so a dispatcher
+/// the guards read as detached still answers here.
+fn attach_c(el: &mut EditLine, fun: HistFunT) {
+    el.el_history.src = HistSource::CAbi {
+        fun,
+        cookie: ptr::null_mut(),
+    };
+}
+
+/// A narrow store's bytes reach the editor decoded, through `el_scratch`.
+///
+/// ERR-history-03: the C declares the event wide and lets the narrow store
+/// write a `HistEvent` through it, then reinterprets `ev.str`. The port
+/// declares it narrow, which is what it is, and `narrow_hook` writes it as
+/// the narrow one — so the pointer cast at the call is the C ABI's shape and
+/// not a reinterpretation of the value.
+///
+/// `hist_convert` hands back the raw pointer the C does — the base of
+/// `el_scratch.wbuff`, with the terminator `ct_decode_string` wrote sitting
+/// one past the end of the text.
+// [spec:libedit:sem:hist.hist-convert-fn/test]
+#[test]
+fn a_narrow_entry_is_decoded_through_the_scratch_buffer() {
+    let mut el = editor();
+    attach_c(&mut el, narrow_hook);
+
+    let decoded = hist_convert_str(&mut el, H_FIRST, ptr::null_mut());
+    assert_eq!(decoded, Some(&wide("echo hi")[..]));
+
+    let p = hist_convert(&mut el, H_FIRST, ptr::null_mut());
+    assert!(!p.is_null());
+    assert_eq!(p.cast_const(), el.el_scratch.wbuff.as_ptr());
+    assert_eq!(el.el_scratch.wbuff[7], 0, "NUL-terminated for the C caller");
+}
+
+/// Every way the narrow path can fail is the same NULL, and a caller cannot
+/// tell them apart: the dispatcher reporting -1, an entry with no string at
+/// all, and bytes the locale cannot decode. All three surface to `hist_get`
+/// and the search commands as "no such entry".
+// [spec:libedit:sem:hist.hist-convert-fn/test]
+#[test]
+fn every_narrow_failure_is_the_same_null() {
+    let mut el = editor();
+    attach_c(&mut el, narrow_hook);
+
+    assert!(
+        hist_convert(&mut el, H_PREV, ptr::null_mut()).is_null(),
+        "the dispatcher's -1"
+    );
+    assert!(
+        hist_convert(&mut el, H_NEXT, ptr::null_mut()).is_null(),
+        "a NULL event string: `ct_decode_string(NULL, …)` is NULL"
+    );
+    assert!(
+        hist_convert(&mut el, H_LAST, ptr::null_mut()).is_null(),
+        "an invalid multibyte sequence rejects the whole entry"
+    );
+}
+
+/// ERR-history-18, reproduced. The narrow path fills a local event, so
+/// `el_history.ev` keeps the all-zero value the `EditLine` started with no
+/// matter how many entries are fetched. The wide path writes the cookie
+/// instead, and that is the contrast: `vi_to_history_line` reads `ev.num` to
+/// turn a count into an event number, so vi `G` with a count works for a wide
+/// application and is inoperative for a narrow one.
+// [spec:libedit:sem:hist.hist-convert-fn/test]
+#[test]
+fn the_narrow_path_never_writes_the_shared_event_cookie() {
+    let mut el = editor();
+    el.el_flags |= crate::el::NARROW_HISTORY;
+    attach_c(&mut el, narrow_hook);
+
+    assert_eq!(hist_first(&mut el), Some(wide("echo hi")));
+    assert_eq!(el.el_history.ev.num, 0, "the hook filled a local");
+    assert!(el.el_history.ev.str.is_null());
+    // Twice, in case the first fetch were the only one that missed it.
+    assert_eq!(hist_first(&mut el), Some(wide("echo hi")));
+    assert_eq!(el.el_history.ev.num, 0);
+
+    let mut el = editor();
+    attach_c(&mut el, wide_hook);
+    assert_eq!(hist_first(&mut el), Some(wide("wide")));
+    assert_eq!(el.el_history.ev.num, 7, "the wide path publishes it");
+}
+
+/// `hist_convert` reaches the C ABI's dispatcher and nothing else. With no
+/// history it is NULL, and with a Rust history it is NULL as well — the Rust
+/// seam is taken in `hist_fun` before the width split, so a Rust store is
+/// decoded without ever coming through here, `NARROW_HISTORY` or not.
+///
+/// The C's precondition is ERR-history-04: it calls through `fun` with no
+/// NULL check, relying on the call sites having tested `ref`. `hist_set`
+/// rejects the pair that makes those two disagree, so the only thing left for
+/// this function to meet is the state below, where there is no dispatcher at
+/// all.
+// [spec:libedit:sem:hist.hist-convert-fn/test]
+#[test]
+fn only_a_c_dispatcher_is_reachable_from_here() {
+    let mut el = editor();
+    assert!(
+        hist_convert(&mut el, H_FIRST, ptr::null_mut()).is_null(),
+        "no history at all"
+    );
+
+    let mut el = editor();
+    attach(&mut el, &["echo hi"]);
+    assert!(hist_convert(&mut el, H_FIRST, ptr::null_mut()).is_null());
+    assert_eq!(
+        hist_first(&mut el),
+        Some(wide("echo hi")),
+        "and the same store still reaches the editor"
+    );
+
+    // The flag is the only thing that could route a fetch through
+    // `hist_convert`, and it does not apply to a Rust store.
+    el.el_flags |= crate::el::NARROW_HISTORY;
+    assert_eq!(hist_first(&mut el), Some(wide("echo hi")));
+}
+
+/// The decoded string *is* `el_scratch.wbuff`, so two conversions hand back
+/// one pointer and the first result is gone the moment anything else decodes
+/// into that buffer.
+///
+/// This is why `hist_convert_str` exists beside `hist_convert`: inside this
+/// file the borrow is kept and the compiler enforces what the C left to the
+/// caller to remember.
+// [spec:libedit:sem:hist.hist-convert-fn/test]
+#[test]
+fn the_decoded_string_is_the_scratch_buffer_and_dies_with_the_next_decode() {
+    let mut el = editor();
+    attach_c(&mut el, narrow_hook);
+
+    let first = hist_convert(&mut el, H_FIRST, ptr::null_mut());
+    let second = hist_convert(&mut el, H_FIRST, ptr::null_mut());
+    assert_eq!(first, second, "one buffer, not two");
+
+    let replaced = ct_decode_string(Some(b"zzzzzzz"), &mut el.el_scratch)
+        .expect("ASCII decodes in either charset")
+        .to_vec();
+    assert_eq!(replaced, wide("zzzzzzz"));
+    assert_eq!(
+        first.cast_const(),
+        el.el_scratch.wbuff.as_ptr(),
+        "grow-only, and both strings fit, so nothing was reallocated"
+    );
+    // SAFETY: `first` is the base of `el_scratch.wbuff`, just confirmed
+    // unmoved and longer than one element.
+    assert_eq!(
+        unsafe { *first },
+        u32::from(b'z'),
+        "the entry the first call returned is no longer there"
+    );
+}
