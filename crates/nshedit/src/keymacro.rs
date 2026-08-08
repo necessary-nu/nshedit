@@ -769,26 +769,11 @@ fn node_lookup(
             // step 2 and enumerates the whole subtree — the prefix case.
             node_lookup(el, Some(&str[1..]), Some(next), cnt + used)
         } else if str.len() == 1 {
-            // Step 3c: a leaf and the key is complete.
-            let px = cnt + used;
-
-            // ERR-input-05 (define — bounds-check before writing). The C
-            // writes both `wchar_t` with no check at all, and `ct_visual_char`
-            // only guarantees `cnt + used <= KEY_BUFSIZ`, so a key whose
-            // rendering exactly fills the buffer writes one or two elements
-            // past its end. "Did not fit" is the answer step 3a already has.
-            if px + 1 >= el.el_keymacro.buf.len() {
+            // Step 3c: a leaf and the key is complete. "Did not fit" is the
+            // answer step 3a already has.
+            if !kprint_leaf(el, cnt + used, &ptr.val, ptr.r#type) {
                 return -1;
             }
-            el.el_keymacro.buf[px] = u32::from(b'"');
-            el.el_keymacro.buf[px + 1] = 0;
-
-            // The C hands `keymacro_kprint` the shared buffer itself. Copying
-            // the assembled text out is the same string — `kprint` reads to
-            // the terminator and never writes — and it is what lets `el` be
-            // passed mutably.
-            let key: Vec<u32> = el.el_keymacro.buf[..=px].to_vec();
-            keymacro_kprint(el, &key, Some(&ptr.val), ptr.r#type);
             0
         } else {
             // The caller's key is longer than any binding on this path.
@@ -854,14 +839,9 @@ fn node_enum(el: &mut EditLine, ptr: Option<&KeymacroNodeT>, cnt: usize) -> i32 
         // `next == NULL` and NOT `type != XK_NOD`, so an interior node that
         // also carries a complete binding — a key shadowed by a longer one —
         // is never printed, exactly as it is never returned by `node_trav`.
-        let px = cnt + used;
-        if px + 1 >= el.el_keymacro.buf.len() {
-            return -1; // ERR-input-05, as above
+        if !kprint_leaf(el, cnt + used, &ptr.val, ptr.r#type) {
+            return -1;
         }
-        el.el_keymacro.buf[px] = u32::from(b'"');
-        el.el_keymacro.buf[px + 1] = 0;
-        let key: Vec<u32> = el.el_keymacro.buf[..=px].to_vec();
-        keymacro_kprint(el, &key, Some(&ptr.val), ptr.r#type);
     } else {
         node_enum(el, ptr.next.as_deref(), cnt + used);
     }
@@ -1043,6 +1023,31 @@ pub(crate) fn keymacro__decode_str(str: &[u32], buf: &mut [u8], len: usize, sep:
     // the bytes the loop actually wrote plus the separator and NUL bytes
     // whether or not those were written. Every in-tree caller discards it.
     b
+}
+
+/// The tail [`node_lookup`] and [`node_enum`] share: close the assembled key
+/// text at `px` with the C's second quote, terminate it, and print what the
+/// leaf binds. `false` is "it did not fit", which both callers report as -1.
+///
+/// ERR-input-05 (define — bounds-check before writing) lives here rather than
+/// in both. The C writes both `wchar_t` with no check at all, and neither
+/// caller's arithmetic leaves room for them: `ct_visual_char` only guarantees
+/// `cnt + used <= KEY_BUFSIZ`, and `node_enum`'s entry guard reserves six
+/// `wchar_t` where a non-BMP non-printable takes eight. Two copies of the
+/// check are two chances for one of them to drift off the write it guards.
+///
+/// The C hands `keymacro_kprint` the shared buffer itself. Copying the
+/// assembled text out is the same string — `kprint` reads to the terminator
+/// and never writes — and it is what lets `el` be passed mutably.
+fn kprint_leaf(el: &mut EditLine, px: usize, val: &KeymacroValueT, ntype: i32) -> bool {
+    if px + 1 >= el.el_keymacro.buf.len() {
+        return false;
+    }
+    el.el_keymacro.buf[px] = u32::from(b'"');
+    el.el_keymacro.buf[px + 1] = 0;
+    let key: Vec<u32> = el.el_keymacro.buf[..=px].to_vec();
+    keymacro_kprint(el, &key, Some(val), ntype);
+    true
 }
 
 // ---------------------------------------------------------------------------

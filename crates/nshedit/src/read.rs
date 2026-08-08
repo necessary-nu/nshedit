@@ -27,13 +27,13 @@ use std::os::fd::FromRawFd;
 use crate::chared::{NOP, ch_enlargebufs, ch_reset};
 use crate::chartype::{ct_enc_width, ct_encode_string};
 use crate::el::{EDIT_DISABLED, EditLine, ElActionT, FIXIO, HANDLE_SIGNALS, NO_TTY, UNBUFFERED};
-use crate::errno;
+use crate::errno::{self, EBADF, EILSEQ, EINTR, EIO, EWOULDBLOCK};
 use crate::fcns::{ED_INSERT, ED_SEQUENCE_LEAD_IN, VI_DELETE_PREV_CHAR};
 use crate::histedit::{
     CC_ARGHACK, CC_CURSOR, CC_EOF, CC_FATAL, CC_NEWLINE, CC_NORM, CC_REDISPLAY, CC_REFRESH,
     CC_REFRESH_BEEP, ElRfuncT,
 };
-use crate::keymacro::{KeymacroValueT, keymacro_get};
+use crate::keymacro::{KeymacroValueT, XK_CMD, XK_NOD, XK_STR, keymacro_get};
 use crate::locale;
 use crate::map::{ElMapCurrent, MAP_VI, N_KEYS};
 use crate::refresh::{re_clear_display, re_clear_lines, re_refresh, re_refresh_cursor};
@@ -43,38 +43,6 @@ use crate::tty::{tty_cookedmode, tty_rawmode};
 
 /// C: `#define EL_MAXMACRO 10` — the macro nesting limit.
 pub const EL_MAXMACRO: usize = 10;
-
-// `errno` values this module tests and stores. `crate::errno` carries only the
-// three the `vis`/`unvis` layer needed, and nothing here may extend it, so the
-// four the read path needs are named locally; they are Linux's, matching that
-// module's numbering and `plan/decisions/posix-only-scope.md`. **These belong
-// in `crate::errno` and should be hoisted the moment that module is touched.**
-
-/// C: `EINTR`.
-const EINTR: i32 = 4;
-/// C: `EILSEQ` — what step 4d reports for an over-long multibyte sequence.
-const EILSEQ: i32 = 84;
-/// C: `EWOULDBLOCK`. On Linux `EAGAIN` has the same value, which is why
-/// [`read__fixio`] needs only one label for the would-block condition.
-const EWOULDBLOCK: i32 = 11;
-/// C: `EBADF` — what `read(2)` reports for the descriptor a half-built
-/// `EditLine` carries.
-const EBADF: i32 = 9;
-/// C: `EIO`. Only a fallback: every `io::Error` a raw `read(2)` produces on
-/// Unix carries its `errno`, so [`read_byte`] never actually reports this.
-const EIO: i32 = 5;
-
-// `keymacro.h`'s node types. `crate::keymacro` models the union as an enum and
-// so declares no constants, but [`keymacro_get`] still *returns* the C's `int`
-// type code, so the three values have to be spelled somewhere. **They belong
-// in `crate::keymacro`.**
-
-/// C: `#define XK_CMD 0`.
-const XK_CMD: i32 = 0;
-/// C: `#define XK_STR 1`.
-const XK_STR: i32 = 1;
-/// C: `#define XK_NOD 2`.
-const XK_NOD: i32 = 2;
 
 /// C: `CONTROL('d')` — what the `UNBUFFERED` `CC_EOF` arm appends.
 const CONTROL_D: u32 = 0x04;
@@ -1241,7 +1209,7 @@ mod tests {
     use std::os::fd::AsRawFd;
 
     use super::*;
-    use crate::el::blank_editline;
+    use crate::testkit::headless_editor;
 
     thread_local! {
         /// What [`feed`] hands back, one call at a time. Thread local because
@@ -1284,19 +1252,17 @@ mod tests {
         s.chars().map(u32::from).collect()
     }
 
-    /// An editor with the read subsystem up, a line buffer with the slack
-    /// `ch_init` leaves above `lastchar`, and no streams: the three
-    /// descriptors a `calloc`ed `EditLine` carries are 0, the process's
-    /// standard input, and -1 is this crate's "no stream".
+    /// The shared headless editor. Its line buffer is `ch_init`'s, with the
+    /// slack above `lastchar` that the insert paths shift into — this module
+    /// used to reproduce that by hand, which is a second opinion about a
+    /// buffer whose shape `noedit_wgets` depends on. The screen size is
+    /// arbitrary: nothing below draws.
+    ///
+    /// `el_infd` at -1 is load-bearing rather than tidiness. It is what makes
+    /// the tty unreadable, so [`el_wgetc`] reports end of file the moment the
+    /// macro queue runs dry instead of blocking on the test runner's stdin.
     fn el() -> EditLine {
-        let mut el = blank_editline();
-        el.el_infd = -1;
-        el.el_outfd = -1;
-        el.el_errfd = -1;
-        el.el_line.buffer = vec![0u32; 256];
-        el.el_line.limit = 255;
-        assert_eq!(read_init(&mut el), 0);
-        el
+        headless_editor(80, 24)
     }
 
     fn macros(el: &mut EditLine) -> &mut Macros {

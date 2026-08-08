@@ -269,16 +269,16 @@ pub fn el_wparse(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
         }
     };
 
-    for cmd in &CMDS {
-        if name_eq(cmd.name, ptr) {
-            // The handler gets the original, unmodified `argc` and `argv`:
-            // `argv[0]` still carries the `prog:` prefix, because the
-            // qualifier was stripped only into a temporary for the match.
-            let i = (cmd.func)(el, argc, argv);
-            return -i;
-        }
-    }
-    -1
+    // Exact `wcscmp` against each of the seven, so the table's order does not
+    // matter and neither does a duplicate name: there are none.
+    let Some(cmd) = CMDS.iter().find(|c| name_eq(c.name, ptr)) else {
+        return -1;
+    };
+    // The handler gets the original, unmodified `argc` and `argv`: `argv[0]`
+    // still carries the `prog:` prefix, because the qualifier was stripped
+    // only into a temporary for the match.
+    let i = (cmd.func)(el, argc, argv);
+    -i
 }
 
 // [spec:libedit:def:parse.parse-escape-fn]

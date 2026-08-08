@@ -7,9 +7,13 @@ use crate::el::{EL_BUFSIZ, EditLine, ElActionT};
 // below name 86 of the 96 commands one by one; `crate::fcns` is generated
 // output and publishes nothing else.
 use crate::fcns::*;
+// `XK_CMD`/`XK_STR` come from here rather than being respelled: `keymacro`
+// models the *value* as an enum but still takes the C's `int` tag at every
+// call, so the tag is `keymacro.h`'s and belongs with the module that owns
+// that header.
 use crate::keymacro::{
-    keymacro__decode_str, keymacro_add, keymacro_clear, keymacro_delete, keymacro_map_cmd,
-    keymacro_map_str, keymacro_print, keymacro_reset,
+    XK_CMD, XK_STR, keymacro__decode_str, keymacro_add, keymacro_clear, keymacro_delete,
+    keymacro_map_cmd, keymacro_map_str, keymacro_print, keymacro_reset,
 };
 use crate::locale;
 use crate::parse::{parse__string, parse_cmd};
@@ -31,13 +35,6 @@ pub const N_KEYS: usize = 256;
 // Constants the C reaches through headers that have no Rust home yet, as
 // `hist.rs` puts it: private here, and idiomatization should fold each into
 // the module that ends up owning its header.
-
-/// C: `#define XK_CMD 0` (`keymacro.h`) — the value argument is a command
-/// number. `crate::keymacro` models the *value* as an enum but still takes the
-/// tag as an `i32`, so the tag is still needed at every call.
-const XK_CMD: i32 = 0;
-/// C: `#define XK_STR 1` (`keymacro.h`) — the value argument is a macro string.
-const XK_STR: i32 = 1;
 
 /// C: `#define STRQQ "\"\""` (`chared.h`) — the separator that makes
 /// `keymacro__decode_str` wrap its rendering in double quotes.
@@ -127,6 +124,16 @@ pub enum ElMapCurrent {
 
 // [spec:libedit:def:map.el-map-t]
 /// The key maps and the editor function tables.
+///
+/// **The shipped state is vi insert mode**, which no field default says and
+/// which a reader who stops at this struct will guess wrong: `type` is an
+/// `i32` whose zero is `MAP_EMACS` and `current` is an enum whose first
+/// variant is `Key`, so a zeroed `ElMapT` reads as emacs. It never survives
+/// as one — [`map_init`] finishes by calling [`map_init_vi`], because `el.h`
+/// defines `VIDEFAULT` unconditionally — so by the time any other module sees
+/// this struct, `type` is [`MAP_VI`] and `current` is [`ElMapCurrent::Key`],
+/// which together mean vi *insert* mode. Vi *command* mode is the same `type`
+/// with `current` moved to `Alt`, which is `vi_command_mode`'s doing.
 pub struct ElMapT {
     /// C: `el_action_t *alt` — the current alternate key map, owned,
     /// `N_KEYS` entries.
@@ -135,6 +142,8 @@ pub struct ElMapT {
     /// entries.
     pub key: Vec<ElActionT>,
     /// The keymap we are using — an alias of `key` or `alt`, so a selector.
+    /// `Key` after any of the three initialisers; see the note on the struct
+    /// for why that is not "emacs".
     pub current: ElMapCurrent,
     /// C: `const el_action_t *emacs` — the default emacs key map, a
     /// compiled-in table. `map_end` sets it to NULL, hence the `Option`.
@@ -144,7 +153,8 @@ pub struct ElMapT {
     /// The vi insert mode key map, likewise compiled in.
     pub vii: Option<&'static [ElActionT; N_KEYS]>,
     /// C: `int type` — `MAP_EMACS` (0) or `MAP_VI` (1). Left an integer;
-    /// the C treats it as one.
+    /// the C treats it as one. `MAP_VI` after [`map_init`], the zero
+    /// notwithstanding.
     pub r#type: i32,
     /// The help for the editor functions, owned, `nfunc` entries.
     pub help: Vec<ElBindingsT>,
@@ -990,6 +1000,12 @@ static EDITOR_VI: [u32; 2] = wide(b"vi");
 // [spec:libedit:sem:map.map-init-fn]
 /// Initialize and allocate the maps. 0 on success, -1 if any allocation
 /// failed, after tearing the rest back down.
+///
+/// On success this **leaves the editor in vi insert mode**: the last step is
+/// [`map_init_vi`], so `type` is [`MAP_VI`] and `current` is
+/// [`ElMapCurrent::Key`] when this returns. Everything above that step is
+/// mode-independent, so nothing between here and there tells a reader which
+/// mode is coming.
 pub(crate) fn map_init(el: &mut EditLine) -> i32 {
     // Step 1 is the `MAP_DEBUG` size assertion, which is the array type here.
 
@@ -1047,9 +1063,10 @@ pub(crate) fn map_init(el: &mut EditLine) -> i32 {
     el.el_map.nfunc = EL_NUM_FCNS;
     el.el_map.wordchars = None;
 
-    // Step 8. `el.h` defines VIDEFAULT unconditionally, so the shipped
-    // default editing mode is vi insert mode, matching `editline(7)`; this
-    // call is also what first sets `type` and `current`.
+    // Step 8, and the only step that decides a mode. `el.h` defines VIDEFAULT
+    // unconditionally, so the shipped default is vi insert mode, matching
+    // `editline(7)`; this call is also what first sets `type` and `current`,
+    // which is why neither field's zero value means anything.
     map_init_vi(el);
     0
 }
@@ -1114,27 +1131,22 @@ fn map_init_nls(el: &mut EditLine) {
 /// Bind the meta keys to the matching `ESC`-prefixed sequences.
 fn map_init_meta(el: &mut EditLine) {
     // Step 1: which map to work on, and which character is the meta prefix.
-    // The C expresses "not found" as the loop counter reaching 0400, so an
-    // EM_META_NEXT at index 255 counts as found.
-    let mut map = ElMapCurrent::Key;
-    let mut i = 0usize;
-    while i <= 0o377 && el.el_map.key[i] != EM_META_NEXT {
-        i += 1;
-    }
-    if i > 0o377 {
-        i = 0;
-        while i <= 0o377 && el.el_map.alt[i] != EM_META_NEXT {
-            i += 1;
-        }
-        if i > 0o377 {
-            i = 0o33;
-            if el.el_map.r#type == MAP_VI {
-                map = ElMapCurrent::Alt;
-            }
-        } else {
-            map = ElMapCurrent::Alt;
-        }
-    }
+    // The C searches `key` and then `alt` for EM_META_NEXT and expresses "not
+    // found" as the loop counter reaching 0400 — a first match wins, and one
+    // at index 255 counts as found, so the search is `position` exactly. When
+    // neither map has one the prefix is ESC by fiat, and the map is the one
+    // the mode reads commands from: `alt` in vi, `key` in emacs.
+    let meta_next = |m: &[ElActionT]| m.iter().position(|&a| a == EM_META_NEXT);
+    let (map, i) = match (
+        meta_next(&el.el_map.key),
+        meta_next(&el.el_map.alt),
+        el.el_map.r#type,
+    ) {
+        (Some(i), _, _) => (ElMapCurrent::Key, i),
+        (None, Some(i), _) => (ElMapCurrent::Alt, i),
+        (None, None, MAP_VI) => (ElMapCurrent::Alt, 0o33),
+        (None, None, _) => (ElMapCurrent::Key, 0o33),
+    };
 
     // Step 2. `buf[2]` is the C's terminator, which the slice length carries;
     // `buf[1]` is written only inside the loop, and the C leaves it
@@ -1351,13 +1363,7 @@ fn map_print_key(el: &mut EditLine, map: ElMapCurrent, r#in: &[u32]) {
     // ERR-modes-31: the keymap index is `(unsigned char) *in`, so a first
     // character above U+00FF wraps modulo 256 onto an unrelated slot.
     let action = map_slice(el, map)[(c0 & 0xff) as usize];
-    let name = el
-        .el_map
-        .help
-        .iter()
-        .take(el.el_map.nfunc)
-        .find(|bp| bp.func == i32::from(action))
-        .map(|bp| bp.name.to_vec());
+    let name = help_name(el, action);
 
     // ERR-modes-29: no matching help entry prints nothing at all here, where
     // `map_print_some_keys` aborts.
@@ -1392,15 +1398,7 @@ fn map_print_some_keys(el: &mut EditLine, map: ElMapCurrent, first: u32, last: u
         return;
     }
 
-    let name = el
-        .el_map
-        .help
-        .iter()
-        .take(el.el_map.nfunc)
-        .find(|bp| bp.func == i32::from(action))
-        .map(|bp| bp.name.to_vec());
-
-    let Some(name) = name else {
+    let Some(name) = help_name(el, action) else {
         // ERR-modes-28, disposition needs decision. The C falls through to
         // `EL_ABORT`, i.e. `abort()`, and the rule directs the port not to
         // abort literally but to treat this as an internal invariant
@@ -1750,6 +1748,26 @@ pub fn map_addfunc(el: &mut EditLine, name: &[u32], help: &[u32], func: ElFuncT)
 // arithmetic, `stdio` and `wchar.h`.
 // ---------------------------------------------------------------------------
 
+/// C: `for (bp = el->el_map.help; bp->func != cmd; bp++)` — the help table
+/// scanned for the row that claims `action`, copied out because the caller
+/// then wants `el` mutably to print with.
+///
+/// The scan is bounded by `nfunc` and by the table's own length, which is
+/// what keeps it in bounds when `map_addfunc`'s failure path leaves the two
+/// disagreeing; the C walks off the end instead (ERR-modes-11). `None` is "no
+/// row claims this command", which `map_bind` can produce by truncating a
+/// command number above 255 into a keymap slot (ERR-modes-28) — the two
+/// callers below disagree about what to do with it, which is why this answers
+/// rather than deciding.
+fn help_name(el: &EditLine, action: ElActionT) -> Option<Vec<u32>> {
+    el.el_map
+        .help
+        .iter()
+        .take(el.el_map.nfunc)
+        .find(|bp| bp.func == i32::from(action))
+        .map(|bp| bp.name.to_vec())
+}
+
 /// The C's `el_action_t *map` argument, resolved against the `EditLine`.
 fn map_slice(el: &EditLine, map: ElMapCurrent) -> &[ElActionT] {
     match map {
@@ -1874,17 +1892,13 @@ mod tests {
         );
     }
 
-    /// An editor whose maps are allocated and filled the way `el_init` leaves
-    /// them, with the three descriptors closed off. A `calloc`ed `EditLine`
-    /// carries 0 in all three, which is the process's standard input, and
-    /// several of the functions below print on their error paths.
+    /// The shared headless editor, whose maps are allocated and filled the
+    /// way `el_init` leaves them and whose three descriptors are closed off —
+    /// a `calloc`ed `EditLine` carries 0 in all three, which is the process's
+    /// standard input, and several of the functions below print on their
+    /// error paths. The screen size is arbitrary: nothing here draws.
     fn mapped_editline() -> EditLine {
-        let mut el = crate::el::blank_editline();
-        el.el_infd = -1;
-        el.el_outfd = -1;
-        el.el_errfd = -1;
-        assert_eq!(map_init(&mut el), 0);
-        el
+        crate::testkit::headless_editor(80, 24)
     }
 
     fn w(s: &str) -> Vec<u32> {
@@ -1906,6 +1920,16 @@ mod tests {
         let mut name: &[u32] = &[];
         assert_eq!(map_get_editor(&mut el, &mut name), 0);
         assert_eq!(name, EDITOR_VI, "map_init ends in map_init_vi");
+
+        // The same fact read off the state rather than off the name, because
+        // both of these fields have a zero value that means something else
+        // and neither is ever left holding it. `i` is the tell: in the insert
+        // map it self-inserts, and it is the command map that binds it to
+        // `vi-insert`.
+        assert_eq!(el.el_map.r#type, MAP_VI);
+        assert_eq!(el.el_map.current, ElMapCurrent::Key);
+        assert_eq!(el.el_map.key[usize::from(b'i')], ED_INSERT, "insert mode");
+        assert_eq!(el.el_map.alt[usize::from(b'i')], VI_INSERT, "command mode");
 
         assert_eq!(map_set_editor(&mut el, &w("emacs")), 0);
         assert_eq!(map_get_editor(&mut el, &mut name), 0);

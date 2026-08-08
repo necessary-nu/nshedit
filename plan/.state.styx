@@ -146,4 +146,5 @@ assertions (
     {id terminal-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T10:20:00.918132437Z}
     {id encoding-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T10:23:15.032694678Z}
     {id buffer-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T10:27:35.59105328Z}
+    {id input-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:03:58.507609972Z}
 )

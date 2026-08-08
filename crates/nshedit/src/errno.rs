@@ -9,6 +9,12 @@
 //! recorded here. The numbers are Linux's, which is the whole of
 //! `plan/decisions/posix-only-scope.md`'s target.
 //!
+//! The read path's set lives here too — `EINTR`, `EILSEQ`, `EWOULDBLOCK`,
+//! `EBADF` and `EIO`, which `sem:read.read-char-fn` and
+//! `sem:read.read-fixio-fn` test and store. `read.rs` carried a private copy
+//! of them, and a second table of Linux errno numbers is how the two come to
+//! disagree about one.
+//!
 //! **Shape.** The ABI crate copies this into the platform's `errno` on the way
 //! out of the C entry point whose rule promises it, which is where the same
 //! decision permits reaching libc; the mechanism is `nshedit-abi`'s `errno`
@@ -41,8 +47,24 @@
 
 use std::cell::Cell;
 
+/// C: `EBADF` — what `read(2)` reports for the descriptor a half-built
+/// `EditLine` carries.
+pub const EBADF: i32 = 9;
+
+/// C: `EILSEQ` — what `sem:read.read-char-fn` step 4d reports for an
+/// over-long multibyte sequence.
+pub const EILSEQ: i32 = 84;
+
+/// C: `EINTR`.
+pub const EINTR: i32 = 4;
+
 /// C: `EINVAL`.
 pub const EINVAL: i32 = 22;
+
+/// C: `EIO`. Only a fallback: every `io::Error` a raw `read(2)` produces on
+/// Unix carries its own `errno`, so `read_byte` never actually stores this
+/// one.
+pub const EIO: i32 = 5;
 
 /// C: `ENOMEM`.
 pub const ENOMEM: i32 = 12;
@@ -52,6 +74,10 @@ pub const ENOSPC: i32 = 28;
 
 /// C: `ERANGE`.
 pub const ERANGE: i32 = 34;
+
+/// C: `EWOULDBLOCK`. On Linux `EAGAIN` has the same value, which is why
+/// `read__fixio` needs only one label for the would-block condition.
+pub const EWOULDBLOCK: i32 = 11;
 
 thread_local! {
     static ERRNO: Cell<i32> = const { Cell::new(0) };
