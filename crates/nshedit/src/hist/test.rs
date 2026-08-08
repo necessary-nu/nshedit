@@ -273,3 +273,75 @@ fn a_byte_oriented_history_is_decoded_rather_than_refused() {
     assert_eq!(ed_prev_history(&mut el, 0), CC_REFRESH);
     assert_eq!(text(&el), "echo hi");
 }
+
+/// Runs `hist_command` in its list form and gives back what it printed.
+///
+/// A pipe rather than the test runner's own stdout: `write_outfile` writes to
+/// `el_outfd`, and the whole point of the assertions below is the bytes that
+/// come out of it.
+fn list(el: &mut EditLine) -> (i32, Vec<u8>) {
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+
+    let (mut reader, writer) = std::io::pipe().expect("a pipe");
+    el.el_outfd = writer.as_raw_fd();
+    // `argc == 1`, which is the C's own `history` with no subcommand.
+    let argv: [*const u32; 1] = [ptr::null()];
+    let rc = hist_command(el, 1, argv.as_ptr());
+    el.el_outfd = -1;
+    drop(writer);
+
+    let mut out = Vec::new();
+    reader
+        .read_to_end(&mut out)
+        .expect("the pipe closed cleanly");
+    (rc, out)
+}
+
+/// The `history` builtin prints the history, oldest first, numbered from 1.
+///
+/// It printed nothing at all before the listing had an escape of its own: the
+/// escape came from the `bsd` feature, which is off by default, so the seam
+/// answered `None` and `hist_command` returned the C's -1 without writing a
+/// byte. This runs on whatever features the build has, which is the point.
+#[test]
+fn the_history_builtin_lists_every_entry() {
+    let mut el = editor();
+    // The store numbers from the newest, and the listing walks the other way.
+    attach(&mut el, &["echo newest", "echo oldest"]);
+
+    let (rc, out) = list(&mut el);
+    assert_eq!(rc, 0);
+    assert_eq!(out, b"1\techo oldest\n2\techo newest\n");
+}
+
+/// An entry containing a newline stays one printed line, which is the only
+/// thing `VIS_NL` is there for. The escape is octal — `\012`, not `\n` — and a
+/// backslash goes with it as `\134`, because both are in the extra list that
+/// `VIS_NL` and an unset `VIS_NOSLASH` build.
+///
+/// Spaces and tabs are deliberately untouched: this is a listing for a person,
+/// not `history.c`'s on-disk format.
+#[test]
+fn a_multi_line_entry_is_escaped_into_one_printed_line() {
+    let mut el = editor();
+    attach(&mut el, &["printf 'a\nb'\tx \\ y"]);
+
+    let (rc, out) = list(&mut el);
+    assert_eq!(rc, 0);
+    assert_eq!(out, b"1\tprintf 'a\\012b'\tx \\134 y\n");
+    assert_eq!(
+        out.iter().filter(|&&b| b == b'\n').count(),
+        1,
+        "one entry, one line"
+    );
+}
+
+/// No history attached is the C's -1, and that stays a -1 — the failure the
+/// listing used to give for a reason that had nothing to do with the history.
+#[test]
+fn the_builtin_still_refuses_when_no_history_is_attached() {
+    let mut el = editor();
+    let argv: [*const u32; 1] = [ptr::null()];
+    assert_eq!(hist_command(&mut el, 1, argv.as_ptr()), -1);
+}

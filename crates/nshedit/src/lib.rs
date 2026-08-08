@@ -103,6 +103,10 @@ pub(crate) mod locale;
 // Encoding and escaping.
 pub mod chartype;
 pub mod literal;
+/// `strvis(dst, src, VIS_NL)` alone, so that escaping a `history` listing for
+/// display does not depend on the optional `bsd` feature. The rest of `vis(3)`
+/// — every other flag word, and the whole decoder — still comes from `bsd`.
+pub(crate) mod vislite;
 /// `vis(3)`/`unvis(3)`, re-exported from the `bsd` crate.
 ///
 /// Our own 1,860-line translation used to live here, in `vis.rs` and

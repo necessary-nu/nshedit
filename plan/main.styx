@@ -500,6 +500,22 @@ children (
                 priority 1
                 kind @feat
                 deps (history-record-blob)
+                sealed true
+                log (
+                    {
+                        at 2026-08-08T01:37:59.921013837Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "THE BUILTIN WAS DEAD, not merely unescaped. Measured before writing anything: on a default build, hist_command with two entries attached returns -1 and writes zero bytes; with --features bsd the same probe returns 0 and prints both lines. vis_encode is None without the feature and the listing turns that into the C's -1, so `history` and `history list` did nothing at all on the build that ships.\n\nFIVE THINGS A FROM-SCRATCH PORT OF strvis(..., VIS_NL) GETS WRONG, all now pinned.\n\nA newline is \\012, not \\n. makeextralist puts '\\n' in the EXTRA list rather than changing the pass-through test, do_svis therefore refuses to pass it, and do_mbyte's iswextra branch is the octal one. \\n would need VIS_CSTYLE, which this call site does not pass. A backslash is \\134 for the same reason.\n\nA NUL is ALWAYS extra, whatever the flags, because wcschr(extra, L'\\0') finds the list's own terminator. So NUL is \\000 and not the \\^@ its control shape suggests. The C makes this rule entirely by accident and it is the single most likely bug in a reimplementation.\n\nThe test is (c & 0177) == ' ', not c == ' '. Byte 0xA0 shares its low seven bits with a space, so in the C locale it comes out \\240 — one octal escape in the middle of a run of \\M- escapes.\n\nis_extra is per CHARACTER, not per byte: every byte of a multi-byte extra character is octal-escaped.\n\nThe mbrtowc failure latch is global to the call and shared by both loops. `caf\\xff\\xc3\\xa9` in a UTF-8 locale stays `caf\\xff\\xc3\\xa9` — the well-formed é after the bad byte is never offered to the converter again and the whole output goes byte-at-a-time.\n\nVIS_NL OUTPUT IS NOT PRINTABLE ASCII. In UTF-8 every byte 0xA0-0xFF passes through raw. Anything downstream that assumes the listing is ASCII is wrong.\n\nWHY THE CHARSET IS A PARAMETER rather than read from the process. bsd::vis answers to libc's LC_CTYPE, which is C in a Rust test binary because nothing calls setlocale; nshedit::locale answers to the environment, which is UTF-8 here. Without an explicit charset the differential would have compared two different locales and agreed for the wrong reason. Calling setlocale was not available: it is a process-wide side effect on parallel tests and no-c-ffi.md bars the core from naming the symbol.\n\nTHE DIFFERENTIAL IS WEAKER EVIDENCE THAN 793/793 SUGGESTS, and the agent said so rather than letting it stand: bsd/src/vis/encode.rs was read alongside src/vis.c before a line was written, so it partly confirms a transcription rather than catching an independent guess. Three mutations were planted to test the harness instead — dropping the NUL-is-extra rule (caught by 9 corpus inputs), narrowing (c & 0177) == ' ' to c == ' ' (6), and removing the widening latch (1) — each caught. A 275-row expectation table generated from the in-tree src/vis.c in both locales also passed, and was deleted rather than committed.\n\nlibbsd is a sound stand-in for src/vis.c here, checked rather than assumed: the in-tree C compiled standalone and diffed against libbsd over the whole vis corpus plus all 256 single bytes, in both C and C.UTF-8, is byte-identical 314 lines each way.\n\nNOT DONE, and it is the reason nobody noticed. differential.sh never drives the listing: el_api.c parses a `history` line but with no history attached, so the loop body never runs. Wiring that up would have caught a dead builtin years earlier than a unit test did, and it is a separate change."
+                    }
+
+                    {
+                        at 2026-08-08T01:38:10.626578749Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
 
             {

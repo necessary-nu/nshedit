@@ -32,6 +32,7 @@
  * libbsd-dev's <bsd/vis.h> is not present on every host. Both libraries
  * export exactly this signature. */
 int strvis(char *, const char *, int);
+int strvisx(char *, const char *, size_t, int);
 int strunvis(char *, const char *);
 
 #define VIS_SP    0x0004
@@ -96,6 +97,35 @@ int main(void)
 		printf(" roundtrip=%d\n",
 		    m >= 0 && (size_t)m == strlen(corpus[i]) &&
 		    memcmp(dec, corpus[i], (size_t)m) == 0);
+	}
+
+	/* VIS_NL on its own, which is a different question from VIS_WHITE
+	 * above. It is what hist_command's `history` listing passes, and the
+	 * port implements it without vis(3) at all — crates/nshedit/src/
+	 * vislite.rs, whose differential measures it against libbsd. That
+	 * differential is only evidence about the C in this tree if the two
+	 * agree here, so this is what makes the shorter measurement count.
+	 *
+	 * strvisx and not strvis, so the sweep can include a NUL: a NUL is in
+	 * the extra list whatever the flags say, because the C's membership
+	 * test is wcschr and searching for L'\0' finds the list's own
+	 * terminator. */
+	int seq = N * 2 + 1;
+	for (int i = 0; i < N; i++) {
+		int n = strvisx(enc, corpus[i], strlen(corpus[i]), VIS_NL);
+		printf("%04d %-26s in=", seq++, "strvisx VIS_NL");
+		besc(corpus[i]);
+		printf(" rc=%d out=", n);
+		besc(enc);
+		putchar('\n');
+	}
+	for (int b = 0; b <= 255; b++) {
+		char one = (char)b;
+		int n = strvisx(enc, &one, 1, VIS_NL);
+		printf("%04d %-26s in=%02X rc=%d out=", seq++, "strvisx VIS_NL byte",
+		    (unsigned)b, n);
+		besc(enc);
+		putchar('\n');
 	}
 	return 0;
 }

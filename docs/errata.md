@@ -1262,7 +1262,7 @@ file format.
 - rule: `[spec:libedit:sem:hist.hist-command-fn]` (the escaping) · C: `src/hist.c` `hist_command`
 - class: UB · reach: cold, locale-dependent.
 - disposition: define — bound the encode.
-- status: defined — `crates/nshedit/src/hist.rs` `hist_command` sizes at `len * 16 + 1` and calls the bounded `strnvis` with a checked negative return.
+- status: defined — `crates/nshedit/src/hist.rs` `hist_command` calls `crates/nshedit/src/vislite.rs` `encode_nl`, which returns the bytes it produced. There is no destination to size, so the assumption has nowhere left to live rather than being widened into a bigger guess.
 
 **ERR-history-08** — `history_save_fp` does not check `ct_encode_string`'s return before `strlen(str)`; NULL arises from an allocation failure or from a NULL `ev.str` supplied by a caller function set.
 - rule: `[spec:libedit:sem:history.history-save-fp-fn]` (step 4) · C: `src/history.c` `history_save_fp`

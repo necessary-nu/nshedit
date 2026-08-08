@@ -409,11 +409,16 @@ fn cobs_decode(frame: &[u8]) -> Option<Vec<u8>> {
 // The `bsd` seam
 // ---------------------------------------------------------------------------
 //
-// Every use of vis(3) in this crate goes through these two, so the feature is
-// four `cfg`s in one place rather than scattered through the history paths.
-// `None` means "this build has no vis", which the callers turn into the C's
-// own failure return — never into unescaped output, which would be a wrong
-// answer rather than a missing one.
+// The legacy `_HiStOrY_V2_` format in both directions, and nothing else: the
+// feature is four `cfg`s in one place rather than scattered through the
+// history paths. `None` means "this build has no vis", which the callers turn
+// into the C's own failure return — never into unescaped output, which would
+// be a wrong answer rather than a missing one.
+//
+// Display escaping does not come through here. `hist_command`'s listing needs
+// `strvis(…, VIS_NL)` and nothing more, and making a human-readable listing
+// unavailable on a default build was the wrong trade; `crate::vislite` is that
+// subset, with no feature behind it.
 
 /// `strvis(dst, src, flags)`, allocating.
 ///
@@ -456,7 +461,6 @@ pub(crate) struct VisFlags(pub u32);
 
 #[cfg(not(feature = "bsd"))]
 impl VisFlags {
-    pub(crate) const NL: Self = Self(0x0010);
     pub(crate) const WHITE: Self = Self(0x0004 | 0x0008 | 0x0010);
 }
 

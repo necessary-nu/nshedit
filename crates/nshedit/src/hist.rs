@@ -451,11 +451,14 @@ pub(crate) fn hist_command(el: &mut EditLine, argc: i32, argv: *const *const u32
             // The C sizes a destination at `len * 4 + 1` and calls the
             // unbounded `strvis` into it — ERR-history-07, an assumption that
             // one input byte never escapes past four, which a locale can
-            // break into a heap smash. Nothing here sizes anything: `encode`
-            // returns what it produced, so there is no destination to size.
-            let Some(buf) = crate::histfile::vis_encode(&src, crate::histfile::VisFlags::NL) else {
-                return -1;
-            };
+            // break into a heap smash. Nothing here sizes anything:
+            // `encode_nl` returns what it produced, so there is no destination
+            // to size.
+            //
+            // `crate::vislite` and not the `bsd` seam: `bsd` is off by default,
+            // and routing a human-readable listing through it made the builtin
+            // return -1 and print nothing on every build that ships.
+            let buf = crate::vislite::encode_nl(&src);
 
             // C: `fprintf(el->el_outfile, "%d\t%s\n", hno++, buf)`. The number
             // is a fresh 1-based counter over this walk, not `ev.num`, and

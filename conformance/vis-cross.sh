@@ -13,6 +13,15 @@
 #
 #   ./conformance/vis-cross.sh
 #
+# The corpus runs VIS_WHITE and VIS_NL, and VIS_NL is here for a second
+# reason. The port does not reach vis(3) for it at all:
+# crates/nshedit/src/vislite.rs implements that one flag word directly, so
+# escaping a `history` listing does not depend on the optional `bsd` feature,
+# and its differential measures it against libbsd. That measurement is only
+# evidence about the C in *this* tree while the two agree, which is what the
+# VIS_NL pass checks — over the corpus and over each of the 256 byte values
+# on its own.
+#
 # A difference here is not a port bug. It is a statement about what "drop-in"
 # means for existing data, and it belongs in a decision rather than a code
 # change.
