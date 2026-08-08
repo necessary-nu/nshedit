@@ -103,8 +103,6 @@ const XK_NOD: i32 = 2;
 
 // String-capability table indices. C: the `#define T_xx` run interleaved with
 // `tstr[]`.
-/// C: `T_al` — terminfo `insert_line`.
-pub(crate) const T_AL: usize = 0;
 /// C: `T_bl` — terminfo `bell`.
 pub(crate) const T_BL: usize = 1;
 /// C: `T_cd` — terminfo `clr_eos`.
@@ -117,16 +115,12 @@ pub(crate) const T_CH: usize = 4;
 pub(crate) const T_CL: usize = 5;
 /// C: `T_dc` — terminfo `delete_character`.
 pub(crate) const T_DC1: usize = 6;
-/// C: `T_dl` — terminfo `delete_line`.
-pub(crate) const T_DL: usize = 7;
 /// C: `T_dm` — terminfo `enter_delete_mode`.
 pub(crate) const T_DM: usize = 8;
 /// C: `T_ed` — terminfo `exit_delete_mode`.
 pub(crate) const T_ED: usize = 9;
 /// C: `T_ei` — terminfo `exit_insert_mode`.
 pub(crate) const T_EI: usize = 10;
-/// C: `T_fs` — terminfo `from_status_line`.
-pub(crate) const T_FS: usize = 11;
 /// C: `T_ho` — terminfo `cursor_home`.
 pub(crate) const T_HO: usize = 12;
 /// C: `T_ic` — terminfo `insert_character`.
@@ -143,30 +137,16 @@ pub(crate) const T_KL: usize = 17;
 pub(crate) const T_KR: usize = 18;
 /// C: `T_ku` — terminfo `key_up`.
 pub(crate) const T_KU: usize = 19;
-/// C: `T_md` — terminfo `enter_bold_mode`.
-pub(crate) const T_MD: usize = 20;
 /// C: `T_me` — terminfo `exit_attribute_mode`.
 pub(crate) const T_ME: usize = 21;
-/// C: `T_nd` — terminfo `cursor_right`.
-pub(crate) const T_ND: usize = 22;
 /// C: `T_se` — terminfo `exit_standout_mode`.
 pub(crate) const T_SE: usize = 23;
-/// C: `T_so` — terminfo `enter_standout_mode`.
-pub(crate) const T_SO: usize = 24;
-/// C: `T_ts` — terminfo `to_status_line`.
-pub(crate) const T_TS: usize = 25;
 /// C: `T_up` — terminfo `cursor_up`.
 pub(crate) const T_UP1: usize = 26;
-/// C: `T_us` — terminfo `enter_underline_mode`.
-pub(crate) const T_US: usize = 27;
 /// C: `T_ue` — terminfo `exit_underline_mode`.
 pub(crate) const T_UE: usize = 28;
-/// C: `T_vb` — terminfo `flash_screen`.
-pub(crate) const T_VB: usize = 29;
 /// C: `T_DC` — terminfo `parm_dch`.
 pub(crate) const T_DC: usize = 30;
-/// C: `T_DO` — terminfo `parm_down_cursor`.
-pub(crate) const T_DO: usize = 31;
 /// C: `T_IC` — terminfo `parm_ich`.
 pub(crate) const T_IC: usize = 32;
 /// C: `T_LE` — terminfo `parm_left_cursor`.
@@ -1137,7 +1117,6 @@ fn terminal_alloc_buffer(el: &mut EditLine) -> Option<Vec<Vec<u32>>> {
 /// the row array and NULLs the caller's field. `el_display` and
 /// `el_vdisplay` are owning `Vec`s, so "NULL" is the empty `Vec`, and the
 /// `Vec` itself has to be the parameter: a slice cannot be emptied.
-#[allow(clippy::ptr_arg)]
 fn terminal_free_buffer(bp: &mut Vec<Vec<u32>>) {
     // The C's steps 2-4 — clear the caller's field first, then release — are
     // one move here, and freeing stays idempotent because an already-empty
@@ -1190,7 +1169,7 @@ pub(crate) fn terminal_move_to_line(el: &mut EditLine, where_: i32) {
         // terminals misbehave when the destination is below the bottom of the
         // screen.
         for _ in 0..del {
-            terminal__putc(el, u32::from(b'\n'));
+            terminal_putc(el, u32::from(b'\n'));
         }
         // The tty turns each `\n` into CR LF, so the cursor also returns to
         // column 0.
@@ -1221,7 +1200,7 @@ pub(crate) fn terminal_move_to_char(el: &mut EditLine, where_: i32) {
             return;
         }
         if where_ == 0 {
-            terminal__putc(el, u32::from(b'\r'));
+            terminal_putc(el, u32::from(b'\r'));
             el.el_cursor.h = 0;
             return;
         }
@@ -1258,7 +1237,7 @@ pub(crate) fn terminal_move_to_char(el: &mut EditLine, where_: i32) {
                         // One tab per stop crossed; both ends are already
                         // rounded down to a multiple of 8.
                         for _ in (cur_stop..tgt_stop).step_by(8) {
-                            terminal__putc(el, u32::from(b'\t'));
+                            terminal_putc(el, u32::from(b'\t'));
                         }
                         el.el_cursor.h = tgt_stop;
                     }
@@ -1294,12 +1273,12 @@ pub(crate) fn terminal_move_to_char(el: &mut EditLine, where_: i32) {
                 where_ as u32
             };
             if back > cost {
-                terminal__putc(el, u32::from(b'\r'));
+                terminal_putc(el, u32::from(b'\r'));
                 el.el_cursor.h = 0;
                 continue;
             }
             for _ in 0..-del {
-                terminal__putc(el, 0x08);
+                terminal_putc(el, 0x08);
             }
         }
         break;
@@ -1325,11 +1304,11 @@ pub(crate) fn terminal_overwrite(el: &mut EditLine, cp: &[u32], n: usize) {
         return;
     }
 
-    // `terminal__putc` emits nothing for MB_FILL_CHAR; incrementing on the
+    // `terminal_putc` emits nothing for MB_FILL_CHAR; incrementing on the
     // fill cells too is how the column count stays honest across
     // double-width characters.
     for i in 0..n {
-        terminal__putc(el, cp.get(i).copied().unwrap_or(0));
+        terminal_putc(el, cp.get(i).copied().unwrap_or(0));
         el.el_cursor.h += 1;
     }
 
@@ -1368,7 +1347,7 @@ pub(crate) fn terminal_overwrite(el: &mut EditLine, cp: &[u32], n: usize) {
                         }
                     }
                 } else {
-                    terminal__putc(el, u32::from(b' '));
+                    terminal_putc(el, u32::from(b' '));
                     el.el_cursor.h = 1;
                 }
             }
@@ -1444,7 +1423,7 @@ pub(crate) fn terminal_insertwrite(el: &mut EditLine, cp: &[u32], num: i32) {
         // front and no wrap handling is applied at all.
         el.el_cursor.h += num;
         for i in 0..num {
-            terminal__putc(el, cp.get(i as usize).copied().unwrap_or(0));
+            terminal_putc(el, cp.get(i as usize).copied().unwrap_or(0));
         }
         if good_str(el, T_IP) {
             // Once for the whole run, unlike strategy C.
@@ -1461,7 +1440,7 @@ pub(crate) fn terminal_insertwrite(el: &mut EditLine, cp: &[u32], num: i32) {
         if good_str(el, T_IC1) {
             tputs_str(el, T_IC1, 1);
         }
-        terminal__putc(el, cp.get(i as usize).copied().unwrap_or(0));
+        terminal_putc(el, cp.get(i as usize).copied().unwrap_or(0));
         el.el_cursor.h += 1;
         if good_str(el, T_IP) {
             tputs_str(el, T_IP, 1);
@@ -1471,16 +1450,15 @@ pub(crate) fn terminal_insertwrite(el: &mut EditLine, cp: &[u32], num: i32) {
 
 // [spec:libedit:def:terminal.terminal-clear-eol-fn]
 // [spec:libedit:sem:terminal.terminal-clear-eol-fn]
-/// The C's name, `EOL` and all, so it stays non-snake-case.
-#[allow(non_snake_case)]
-pub(crate) fn terminal_clear_EOL(el: &mut EditLine, num: i32) {
+/// Clear from the cursor through `num` cells at the end of the row.
+pub(crate) fn terminal_clear_eol(el: &mut EditLine, num: i32) {
     if el.el_terminal.t_flags & TERM_CAN_CEOL != 0 && good_str(el, T_CE) {
         // The capability does not move the cursor, so `el_cursor.h` is left
         // alone — deliberately unlike the fallback.
         tputs_str(el, T_CE, 1);
     } else {
         for _ in 0..num {
-            terminal__putc(el, u32::from(b' '));
+            terminal_putc(el, u32::from(b' '));
         }
         // ERR-terminal-27, disposition `reproduce`: no wrap handling, and a
         // negative `num` moves the recorded column backwards.
@@ -1501,8 +1479,8 @@ pub(crate) fn terminal_clear_screen(el: &mut EditLine) {
     } else {
         // With no clearing capability at all, the best that can be done is to
         // scroll one line.
-        terminal__putc(el, u32::from(b'\r'));
-        terminal__putc(el, u32::from(b'\n'));
+        terminal_putc(el, u32::from(b'\r'));
+        terminal_putc(el, u32::from(b'\n'));
     }
     // None of the three updates `el_cursor`; the caller resynchronises,
     // normally through `re_clear_display`.
@@ -1514,7 +1492,7 @@ pub(crate) fn terminal_beep(el: &mut EditLine) {
     if good_str(el, T_BL) {
         tputs_str(el, T_BL, 1);
     } else {
-        terminal__putc(el, 0x07);
+        terminal_putc(el, 0x07);
     }
 }
 
@@ -2069,9 +2047,8 @@ fn terminal_tputs_bytes(el: &mut EditLine, cap: &[u8], affcnt: i32) {
 
 // [spec:libedit:def:terminal.terminal-putc-fn]
 // [spec:libedit:sem:terminal.terminal-putc-fn]
-/// The C's doubled underscore is not snake case to rustc; the name stays.
-#[allow(non_snake_case)]
-pub(crate) fn terminal__putc(el: &mut EditLine, c: u32) -> i32 {
+/// Emit one editor character to the configured output stream.
+pub(crate) fn terminal_putc(el: &mut EditLine, c: u32) -> i32 {
     // Step 1: the column-padding sentinel writes nothing, which is what lets
     // the callers count columns while the byte stream stays correct. It must
     // be tested before the literal bit, because `MB_FILL_CHAR` has bit 31
@@ -2101,8 +2078,7 @@ pub(crate) fn terminal__putc(el: &mut EditLine, c: u32) -> i32 {
 
 // [spec:libedit:def:terminal.terminal-flush-fn]
 // [spec:libedit:sem:terminal.terminal-flush-fn]
-#[allow(non_snake_case)]
-pub fn terminal__flush(el: &mut EditLine) {
+pub fn terminal_flush(el: &mut EditLine) {
     // C: `(void) fflush(el->el_outfile)`, its result discarded, so a write
     // error at this point is not reported to anyone.
     //
@@ -2126,7 +2102,7 @@ pub(crate) fn terminal_writec(el: &mut EditLine, c: u32) {
     let vcnt = usize::try_from(vcnt).unwrap_or(0);
     visbuf[vcnt] = 0;
     terminal_overwrite(el, &visbuf, vcnt);
-    terminal__flush(el);
+    terminal_flush(el);
 }
 
 // [spec:libedit:def:terminal.terminal-telltc-fn]

@@ -13,8 +13,8 @@
 //!   raw mode is left to [`el_wgetc`]'s lazy `tty_rawmode`. Porting it would
 //!   *add* an exit path a C caller cannot currently observe, so it is not
 //!   ported and [`el_wgets`] has no `*nread == 0`-with-NULL return.
-//! - `read__fixio`'s `FIONBIO` sub-block, for the same header reason. The
-//!   surviving `fcntl` half is live; see [`read__fixio`].
+//! - `read_fixio`'s `FIONBIO` sub-block, for the same header reason. The
+//!   surviving `fcntl` half is live; see [`read_fixio`].
 
 use core::ffi::c_int;
 use core::ptr;
@@ -38,7 +38,7 @@ use crate::locale;
 use crate::map::{ElMapCurrent, MAP_VI, N_KEYS};
 use crate::refresh::{re_clear_display, re_clear_lines, re_refresh, re_refresh_cursor};
 use crate::sig::{sig_clr, sig_handler, sig_set, signo};
-use crate::terminal::{terminal__flush, terminal_beep};
+use crate::terminal::{terminal_beep, terminal_flush};
 use crate::tty::{tty_cookedmode, tty_rawmode};
 
 /// C: `#define EL_MAXMACRO 10` — the macro nesting limit.
@@ -167,7 +167,7 @@ pub fn el_read_getfn(el_read: &mut ElReadT) -> Option<ElRfuncT> {
     }
 }
 
-// The POSIX descriptor-flag calls [`read__fixio`]'s would-block arm is
+// The POSIX descriptor-flag calls [`read_fixio`]'s would-block arm is
 // written against.
 //
 // `plan/decisions/platform-layer.md` put `fcntl` in `nshedit-plat`, through
@@ -186,8 +186,7 @@ use nshedit_plat as plat;
 // [spec:libedit:def:read.read-fixio-fn]
 // [spec:libedit:sem:read.read-fixio-fn]
 /// Try to recover from a failed read; `e` is the `errno` it failed with.
-#[allow(non_snake_case)]
-fn read__fixio(fd: i32, e: i32) -> i32 {
+fn read_fixio(fd: i32, e: i32) -> i32 {
     match e {
         // The C's `case -1:` label is never a real `errno` value; it exists
         // only so the compiler cannot prove the block unreachable when every
@@ -265,7 +264,7 @@ pub fn el_wpush(el: &mut EditLine, str: Option<&[u32]>) {
     // was dropped. An empty string is *not* a failure — it takes a slot and
     // `el_wgetc` pops it unread.
     terminal_beep(el);
-    terminal__flush(el);
+    terminal_flush(el);
 }
 
 // [spec:libedit:def:read.read-getcmd-fn]
@@ -467,7 +466,7 @@ unsafe extern "C" fn read_char(el: *mut EditLine, cp: *mut u32) -> c_int {
     // Read the initialiser carefully — the sense is inverted from what the
     // name suggests. `FIXIO` (set by `el_set(EL_SAFEREAD, 1)`) makes `tried`
     // start false, which is what ENABLES the recovery path. With `FIXIO`
-    // clear — the DEFAULT — it starts true and `read__fixio` is never
+    // clear — the DEFAULT — it starts true and `read_fixio` is never
     // consulted, so every `read` failure, `EINTR` included, fails the call at
     // once.
     let mut tried = (el.el_flags & FIXIO) == 0;
@@ -523,7 +522,7 @@ unsafe extern "C" fn read_char(el: *mut EditLine, cp: *mut u32) -> c_int {
             // C leaves `sig_no` set until the next `again` clears it, which
             // it can afford because the only arm that falls through to (c)
             // with it still set is the one it never returns from. Here that
-            // arm does return — through a `read__fixio` retry — and a second
+            // arm does return — through a `read_fixio` retry — and a second
             // failure would otherwise chain the same signal twice, restoring
             // and re-raising it again.
             let pending = el
@@ -541,7 +540,7 @@ unsafe extern "C" fn read_char(el: *mut EditLine, cp: *mut u32) -> c_int {
                     // body is written out.
                     re_clear_display(el);
                     re_refresh(el);
-                    terminal__flush(el);
+                    terminal_flush(el);
                     // FALLTHROUGH, as the C marks it.
                     sig_set(el);
                     continue 'again;
@@ -566,7 +565,7 @@ unsafe extern "C" fn read_char(el: *mut EditLine, cp: *mut u32) -> c_int {
             // whose bytes are interrupted twice fails on the second. Note the
             // loop back is to the read, NOT to `again`, so `sig_no` is not
             // re-zeroed.
-            if !tried && read__fixio(el.el_infd, e) == 0 {
+            if !tried && read_fixio(el.el_infd, e) == 0 {
                 errno::set_errno(save_errno);
                 tried = true;
             } else {
@@ -711,7 +710,7 @@ pub fn el_wgetc(el: &mut EditLine, cp: &mut u32) -> i32 {
     // character will come from a macro and no I/O is about to block. This is
     // what guarantees the prompt and any redisplay are on the wire before the
     // process waits for a key.
-    terminal__flush(el);
+    terminal_flush(el);
 
     // Step 2. The queue is always read from `macro[0]`, the OLDEST entry.
     if let Some(rd) = el.el_read.as_deref_mut() {
@@ -761,7 +760,7 @@ pub fn el_wgetc(el: &mut EditLine, cp: &mut u32) -> i32 {
     let num_read = read_char_cb(el, cp);
 
     // Step 5. Remember the original reason for a read failure, so `el_wgets`
-    // can restore it after cleanup (`terminal__flush`, `tty_cookedmode`,
+    // can restore it after cleanup (`terminal_flush`, `tty_cookedmode`,
     // `sig_clr`) that may clobber `errno`. Never cleared here; `el_wgets`
     // zeroes it on entry and nothing else writes it.
     if num_read < 0
@@ -809,7 +808,7 @@ pub fn read_prepare(el: &mut EditLine) {
     // Step 8. In buffered mode the flush is left to `el_wgetc`, which flushes
     // before every blocking read.
     if (el.el_flags & UNBUFFERED) != 0 {
-        terminal__flush(el);
+        terminal_flush(el);
     }
     // The macro queue and `read_errno` are NOT touched, so pushed macros
     // survive a `read_prepare` and are consumed by the line it prepares.
@@ -847,7 +846,7 @@ fn noedit_wgets<'a>(el: &'a mut EditLine, nread: &mut i32) -> Option<&'a [u32]> 
         // Step 1. The read callback DIRECTLY, not through `el_wgetc`.
         // Consequences: the macro queue is never consulted, so `el_wpush` has
         // no effect on this path at all; `tty_rawmode` is never called;
-        // `terminal__flush` is never called per character; and `read_errno`
+        // `terminal_flush` is never called per character; and `read_errno`
         // is never written.
         //
         // The C hands the callback `lp->lastchar`, so the decoded character
@@ -932,7 +931,7 @@ pub fn el_wgets<'a>(el: &'a mut EditLine, nread: Option<&mut i32>) -> Option<&'a
     // Step 3. The reset is unconditional, `UNBUFFERED` or not, so each call
     // starts a fresh line even in unbuffered mode. NOTHING else in this
     // function runs — no `read_prepare`, therefore no `sig_set` and no
-    // prompt; no `read_finish`; no final `terminal__flush`; and no conversion
+    // prompt; no `read_finish`; no final `terminal_flush`; and no conversion
     // of `*nread` to -1. A `NO_TTY` caller never sees -1.
     if (el.el_flags & NO_TTY) != 0 {
         el.el_line.lastchar = 0;
@@ -962,7 +961,7 @@ pub fn el_wgets<'a>(el: &'a mut EditLine, nread: Option<&mut i32>) -> Option<&'a
         if (el.el_flags & UNBUFFERED) == 0 {
             el.el_line.lastchar = 0;
         }
-        terminal__flush(el);
+        terminal_flush(el);
         return noedit_wgets(el, nread);
     }
 
@@ -1092,7 +1091,7 @@ pub fn el_wgets<'a>(el: &'a mut EditLine, nread: Option<&mut i32>) -> Option<&'a
             // including anything a client function invents.
             _ => {
                 terminal_beep(el);
-                terminal__flush(el);
+                terminal_flush(el);
             }
         }
         // Step 9: for every case except `CC_ARGHACK`.
@@ -1106,7 +1105,7 @@ pub fn el_wgets<'a>(el: &'a mut EditLine, nread: Option<&mut i32>) -> Option<&'a
     }
 
     // Step 11: flush whatever the last command wrote.
-    terminal__flush(el);
+    terminal_flush(el);
     // Step 12.
     if (el.el_flags & UNBUFFERED) == 0 {
         read_finish(el);
@@ -1132,7 +1131,7 @@ pub fn el_wgets<'a>(el: &'a mut EditLine, nread: Option<&mut i32>) -> Option<&'a
             *nread = -1;
             // The only place `errno` is written on any surviving exit path.
             // On a clean end of file the callback returned 0, so `read_errno`
-            // stayed 0 and `errno` holds whatever `terminal__flush`,
+            // stayed 0 and `errno` holds whatever `terminal_flush`,
             // `tty_cookedmode` or `sig_clr` incidentally left — UNSPECIFIED.
             let saved = el.el_read.as_deref().map_or(0, |rd| rd.read_errno);
             if saved != 0 {
@@ -1328,7 +1327,7 @@ mod tests {
         assert!(plat::fcntl_setfl(fd, orig | plat::O_NDELAY), "F_SETFL");
         assert_ne!(plat::fcntl_getfl(fd).expect("F_GETFL") & plat::O_NDELAY, 0);
 
-        assert_eq!(read__fixio(fd, EWOULDBLOCK), 0);
+        assert_eq!(read_fixio(fd, EWOULDBLOCK), 0);
         assert_eq!(
             plat::fcntl_getfl(fd).expect("F_GETFL") & plat::O_NDELAY,
             0,
@@ -1339,12 +1338,12 @@ mod tests {
         // value; it exists so the compiler cannot prove the block unreachable
         // when every other label is preprocessed away.
         assert!(plat::fcntl_setfl(fd, orig | plat::O_NDELAY), "F_SETFL");
-        assert_eq!(read__fixio(fd, -1), 0);
+        assert_eq!(read_fixio(fd, -1), 0);
         assert_eq!(plat::fcntl_getfl(fd).expect("F_GETFL") & plat::O_NDELAY, 0);
 
         // `EINTR` touches nothing, so a descriptor left non-blocking stays so.
         assert!(plat::fcntl_setfl(fd, orig | plat::O_NDELAY), "F_SETFL");
-        assert_eq!(read__fixio(fd, EINTR), 0);
+        assert_eq!(read_fixio(fd, EINTR), 0);
         assert_ne!(
             plat::fcntl_getfl(fd).expect("F_GETFL") & plat::O_NDELAY,
             0,
@@ -1355,9 +1354,9 @@ mod tests {
         // Anything else is unrecoverable, and so is a would-block on a
         // descriptor `fcntl` cannot answer for — which is the only way the
         // C's both-sub-blocks-absent -1 is still reachable.
-        assert_eq!(read__fixio(fd, EBADF), -1);
-        assert_eq!(read__fixio(fd, EIO), -1);
-        assert_eq!(read__fixio(-1, EWOULDBLOCK), -1);
+        assert_eq!(read_fixio(fd, EBADF), -1);
+        assert_eq!(read_fixio(fd, EIO), -1);
+        assert_eq!(read_fixio(-1, EWOULDBLOCK), -1);
     }
 
     /// Despite the "level" vocabulary the queue is **FIFO**: a push writes at

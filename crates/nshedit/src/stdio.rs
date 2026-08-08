@@ -22,7 +22,7 @@ use crate::el::EditLine;
 /// failure. A negative descriptor stands for the C's NULL stream and fails
 /// the same way, which is what lets a caller leave one unset.
 ///
-/// Unbuffered, where the C's `FILE *` is not — see `terminal::terminal__flush`
+/// Unbuffered, where the C's `FILE *` is not — see `terminal::terminal_flush`
 /// for what that trades away.
 pub(crate) fn write_fd(fd: i32, bytes: &[u8]) -> i32 {
     if fd < 0 {
@@ -42,7 +42,7 @@ impl EditLine {
     /// C: `fputs(s, el->el_outfile)` / `fprintf(el->el_outfile, …)` for an
     /// already-formatted byte string.
     ///
-    /// Carries [`write_fd`]'s result onward, because `terminal__putc` is a
+    /// Carries [`write_fd`]'s result onward, because `terminal_putc` is a
     /// translation of a `fputs` whose value the C returns to its caller.
     /// Everywhere else discards it, as the C discards `fprintf`'s.
     pub(crate) fn write_outfile(&self, bytes: &[u8]) -> i32 {

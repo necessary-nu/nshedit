@@ -118,7 +118,7 @@ pub(crate) fn keymacro_end(el: &mut EditLine) {
     // this port's NULL, and dropping the old one is the free.
     el.el_keymacro.buf = Vec::new();
 
-    // Step 2. ERR-input-18 (fix): the C frees the tree with `node__free`,
+    // Step 2. ERR-input-18 (fix): the C frees the tree with `node_free`,
     // which never looks at `type` and so leaks every `XK_STR` payload bound
     // during the `EditLine`'s life. The payloads are `Vec`s owned by the
     // nodes here, so they go with them; the leak is not reproduced, which the
@@ -128,7 +128,7 @@ pub(crate) fn keymacro_end(el: &mut EditLine) {
     // memory, so a second `keymacro_end` double-frees the whole trie. `.take()`
     // is the clearing the rule asks for — a second call now frees nothing.
     let map = el.el_keymacro.map.take();
-    node__free(map);
+    node_free(map);
 }
 
 // [spec:libedit:def:keymacro.keymacro-map-cmd-fn]
@@ -174,15 +174,15 @@ pub(crate) fn keymacro_map_str(el: &mut EditLine, str: &[u32]) -> KeymacroValueT
 /// Drop the whole trie, leaving no bound sequences.
 pub(crate) fn keymacro_reset(el: &mut EditLine) {
     // Steps 1 and 2 at once: the C frees through the field and then clears
-    // it, which is one `take` here. Unlike `keymacro_end`'s `node__free`,
-    // `node__put` releases the `XK_STR` payloads, so a reset does not leak in
+    // it, which is one `take` here. Unlike `keymacro_end`'s `node_free`,
+    // `node_put` releases the `XK_STR` payloads, so a reset does not leak in
     // the C either.
     //
     // The action tables are deliberately untouched: any `ED_SEQUENCE_LEAD_IN`
     // entry in `el_map.key`/`alt` now points at nothing, and both callers
     // overwrite the tables immediately afterwards.
     let map = el.el_keymacro.map.take();
-    node__put(el, map);
+    node_put(map);
 }
 
 // [spec:libedit:def:keymacro.keymacro-get-fn]
@@ -224,21 +224,21 @@ pub(crate) fn keymacro_add(el: &mut EditLine, key: &[u32], val: &KeymacroValueT,
     }
 
     // Step 3. ERR-input-04 (define — propagate the failure): the C does not
-    // check `node__get`, so an out-of-memory here becomes a NULL dereference
-    // inside `node__try`. Defined as "the trie stays empty and nothing is
-    // bound", which is also what `node__try` reports through the -1 that
+    // check `node_get`, so an out-of-memory here becomes a NULL dereference
+    // inside `node_try`. Defined as "the trie stays empty and nothing is
+    // bound", which is also what `node_try` reports through the -1 that
     // `keymacro_add` has always dropped.
     if el.el_keymacro.map.is_none() {
-        el.el_keymacro.map = node__get(key[0]);
+        el.el_keymacro.map = node_get(key[0]);
     }
 
-    // Step 4: the trie comes out of the `EditLine` because `node__try` needs
+    // Step 4: the trie comes out of the `EditLine` because `node_try` needs
     // both it and `el` — see `keymacro_get` for the same move. The return
     // value is discarded, so out-of-memory on the `wcsdup` of an `XK_STR`
     // value is silently swallowed exactly as in the C (ERR-input-31).
     let mut map = el.el_keymacro.map.take();
     if let Some(root) = map.as_deref_mut() {
-        node__try(el, root, key, val, ntype);
+        node_try(root, key, val, ntype);
     }
     el.el_keymacro.map = map;
 }
@@ -314,7 +314,7 @@ pub(crate) fn keymacro_delete(el: &mut EditLine, key: &[u32]) -> i32 {
     // that up, and when they do not, `keymacro_get` meets a trie that no
     // longer has the sequence in it (ERR-input-03).
     let mut map = el.el_keymacro.map.take();
-    node__delete(el, &mut map, key);
+    node_delete(&mut map, key);
     el.el_keymacro.map = map;
 
     // Step 4.
@@ -426,14 +426,7 @@ fn node_trav(
 // [spec:libedit:def:keymacro.node-try-fn]
 // [spec:libedit:sem:keymacro.node-try-fn]
 /// Find the node matching `str` or allocate one, then store `val` there.
-#[allow(non_snake_case)]
-fn node__try(
-    el: &mut EditLine,
-    ptr: &mut KeymacroNodeT,
-    str: &[u32],
-    val: &KeymacroValueT,
-    ntype: i32,
-) -> i32 {
+fn node_try(ptr: &mut KeymacroNodeT, str: &[u32], val: &KeymacroValueT, ntype: i32) -> i32 {
     // The C reads `*str` unguarded. It is never the terminator: `keymacro_add`
     // rejects the empty key and step 3 only recurses with characters left.
     let Some(&c) = str.first() else {
@@ -450,7 +443,7 @@ fn node__try(
         if node.sibling.is_none() {
             // Step 1b: new siblings go on the END of the chain, so chains are
             // in insertion order — which is the order `node_enum` prints them.
-            node.sibling = node__get(c);
+            node.sibling = node_get(c);
             if node.sibling.is_none() {
                 // ERR-input-04 (define — propagate the failure). The C stores
                 // the NULL and dereferences it on the next line.
@@ -472,7 +465,7 @@ fn node__try(
         // header warns about it.
         if node.next.is_some() {
             let next = node.next.take();
-            node__put(el, next);
+            node_put(next);
         }
 
         // Step 2b: release the old payload, switching on the CURRENT type.
@@ -535,7 +528,7 @@ fn node__try(
     } else {
         // Step 3: more characters to place.
         if node.next.is_none() {
-            node.next = node__get(str[0]);
+            node.next = node_get(str[0]);
             if node.next.is_none() {
                 // ERR-input-04 again.
                 return -1;
@@ -546,10 +539,10 @@ fn node__try(
         // already held a complete binding keeps it and merely gains a child.
         // The shorter binding stays allocated but becomes unreachable, because
         // `node_trav` tests `next` before it looks at `type` — and if the
-        // longer key is deleted later, `node__delete`'s prune frees the
+        // longer key is deleted later, `node_delete`'s prune frees the
         // shadowed binding rather than restoring it.
         let next = node.next.as_deref_mut().unwrap();
-        node__try(el, next, str, val, ntype);
+        node_try(next, str, val, ntype);
     }
 
     // Step 4.
@@ -560,9 +553,8 @@ fn node__try(
 // [spec:libedit:sem:keymacro.node-delete-fn]
 /// Delete the node matching `str`. `inptr` is the C's `keymacro_node_t **`:
 /// the link slot itself, so the node can be unlinked and dropped.
-#[allow(non_snake_case)]
-fn node__delete(el: &mut EditLine, inptr: &mut Option<Box<KeymacroNodeT>>, str: &[u32]) -> i32 {
-    // As in `node__try`, the C reads `*str` unguarded and never reaches here
+fn node_delete(inptr: &mut Option<Box<KeymacroNodeT>>, str: &[u32]) -> i32 {
+    // As in `node_try`, the C reads `*str` unguarded and never reaches here
     // with an exhausted key.
     let Some(&c) = str.first() else {
         return 0;
@@ -589,7 +581,7 @@ fn node__delete(el: &mut EditLine, inptr: &mut Option<Box<KeymacroNodeT>>, str: 
     if str.is_empty() {
         // Steps 3a to 3d. Taking the node out of its slot and putting its
         // sibling back is the C's unlink; the C's separate `ptr->sibling =
-        // NULL` — load-bearing, because `node__put` follows sibling links and
+        // NULL` — load-bearing, because `node_put` follows sibling links and
         // would otherwise take the rest of the relinked chain with it — is the
         // `take` that moved the sibling out.
         //
@@ -597,13 +589,13 @@ fn node__delete(el: &mut EditLine, inptr: &mut Option<Box<KeymacroNodeT>>, str: 
         // since they all hang off this node's `next`.
         let mut victim = slot.take().unwrap();
         *slot = victim.sibling.take();
-        node__put(el, Some(victim));
+        node_put(Some(victim));
         return 1;
     }
 
     // Step 4: descend, and prune on the way back out.
     let node = slot.as_deref_mut().unwrap();
-    if node.next.is_some() && node__delete(el, &mut node.next, str) == 1 {
+    if node.next.is_some() && node_delete(&mut node.next, str) == 1 {
         // The child level had other siblings and the recursion re-pointed the
         // slot at one of them, so this node is still needed. Returning 0 is
         // what stops the prune propagating further up.
@@ -612,13 +604,13 @@ fn node__delete(el: &mut EditLine, inptr: &mut Option<Box<KeymacroNodeT>>, str: 
         }
         // ERR-input-32 (reproduce): the prune never looks at `type`. A node
         // that carried a complete binding of its own *and* had children — the
-        // shadowing `node__try` step 3 creates — is freed here along with its
+        // shadowing `node_try` step 3 creates — is freed here along with its
         // binding. Binding `"ab"`, then `"abc"`, then deleting `"abc"` leaves
         // neither bound, and the prune runs back to the root so the `"a"` node
         // goes too.
         let mut victim = slot.take().unwrap();
         *slot = victim.sibling.take();
-        node__put(el, Some(victim));
+        node_put(Some(victim));
         return 1;
     }
 
@@ -631,12 +623,9 @@ fn node__delete(el: &mut EditLine, inptr: &mut Option<Box<KeymacroNodeT>>, str: 
 /// Free a whole subtree. Takes the node by value: the C's `el_free` chain is
 /// a drop here.
 ///
-/// `el` is carried for the C's sake: its only use there is the `el_errfile`
-/// the `EL_ABORT` in step 4 prints to, and that print exists only in a
-/// `DEBUG` build. The parameter stays because the rule and the signature name
-/// it.
-#[allow(non_snake_case, clippy::only_used_in_recursion)]
-fn node__put(el: &mut EditLine, ptr: Option<Box<KeymacroNodeT>>) {
+/// The C also passes `el`, but only a disabled `DEBUG` diagnostic reads it;
+/// the Rust helper therefore carries only the tree it owns.
+fn node_put(ptr: Option<Box<KeymacroNodeT>>) {
     // Step 1. Despite the name and the C's comment there is no free list and
     // no reuse: this is a drop, not a pool return.
     let Some(mut ptr) = ptr else {
@@ -646,29 +635,29 @@ fn node__put(el: &mut EditLine, ptr: Option<Box<KeymacroNodeT>>) {
     // Step 2: children first. The C's dead `ptr->next = NULL` after the
     // recursive call is the `take` that fed it.
     let next = ptr.next.take();
-    node__put(el, next);
+    node_put(next);
 
     // Step 3: then the rest of the sibling chain. The C does not NULL
-    // `sibling`, which callers depend on in both directions — `node__try`
-    // drops a whole child level with one call, and `node__delete` therefore
+    // `sibling`, which callers depend on in both directions — `node_try`
+    // drops a whole child level with one call, and `node_delete` therefore
     // has to unlink its victim before calling. Taking it here keeps the same
     // reachability while making the drop below non-recursive.
     let sibling = ptr.sibling.take();
-    node__put(el, sibling);
+    node_put(sibling);
 
     // Step 4: this node's payload, by `type`. `XK_CMD` and `XK_NOD` have
     // nothing to free and an `XK_STR` payload is owned by the node, so it goes
     // with it in step 5. The abort is the C's `EL_ABORT((el->el_errfile, "Bad
     // XK_ type %d\n", ptr->type))` — `abort(3)` in a non-DEBUG build — and is
-    // the only use of the `el` parameter. It is unreachable: `node__try` is
-    // the only writer of `type` and aborts on a bad one first (ERR-input-30).
+    // unreachable: `node_try` is the only writer of `type` and aborts on a
+    // bad one first (ERR-input-30).
     match ptr.r#type {
         XK_CMD | XK_NOD | XK_STR => {}
         _ => process::abort(),
     }
 
     // Step 5. This is the only path that releases `XK_STR` payloads in the C;
-    // `node__free` does not (ERR-input-18).
+    // `node_free` does not (ERR-input-18).
     drop(ptr);
 }
 
@@ -676,8 +665,7 @@ fn node__put(el: &mut EditLine, ptr: Option<Box<KeymacroNodeT>>) {
 // [spec:libedit:sem:keymacro.node-get-fn]
 /// Allocate one unlinked `XK_NOD` node for `ch`. `Option` keeps the C's
 /// allocation-failure return, which none of its callers check.
-#[allow(non_snake_case)]
-fn node__get(ch: u32) -> Option<Box<KeymacroNodeT>> {
+fn node_get(ch: u32) -> Option<Box<KeymacroNodeT>> {
     // Steps 1 to 6. `Box::new` has no fallible form on stable, so the C's
     // NULL return is unreachable from here — Rust's allocator aborts first.
     // The `Option` stays because it is the contract the rule states and
@@ -685,7 +673,7 @@ fn node__get(ch: u32) -> Option<Box<KeymacroNodeT>> {
     // C's real defect lives.
     //
     // `type` is `XK_NOD`: the node exists only because it lies on the path of
-    // some longer key, and `node__try` overwrites it if and when the node
+    // some longer key, and `node_try` overwrites it if and when the node
     // becomes the last character of a bound sequence. The C's `val.str = NULL`
     // is the empty `Str` — the same state `node_trav` reports as "no match".
     Some(Box::new(KeymacroNodeT {
@@ -701,8 +689,7 @@ fn node__get(ch: u32) -> Option<Box<KeymacroNodeT>> {
 // [spec:libedit:sem:keymacro.node-free-fn]
 /// Free a node and its `next`/`sibling` chains, without touching the macro
 /// strings — the leak `sem:keymacro.node-free-fn` records.
-#[allow(non_snake_case)]
-fn node__free(k: Option<Box<KeymacroNodeT>>) {
+fn node_free(k: Option<Box<KeymacroNodeT>>) {
     // Step 1.
     let Some(mut k) = k else {
         return;
@@ -710,13 +697,13 @@ fn node__free(k: Option<Box<KeymacroNodeT>>) {
 
     // Steps 2 and 3: siblings first, then children — the C's order. It only
     // matters in that both links must be followed before the node itself goes.
-    node__free(k.sibling.take());
-    node__free(k.next.take());
+    node_free(k.sibling.take());
+    node_free(k.next.take());
 
     // Step 4. ERR-input-18 (fix): the C reads no `type` here and so frees no
     // `val.str`, leaking every macro string at teardown. The payload is owned
     // by the node in this port, so it cannot be left behind; the leak is not
-    // reproduced. What survives is the other difference from `node__put` —
+    // reproduced. What survives is the other difference from `node_put` —
     // this one never aborts on an unrecognised `type`, because it never looks.
     drop(k);
 }
@@ -886,13 +873,13 @@ pub(crate) fn keymacro_kprint(
             //
             // A `Cmd` value with `ntype == XK_STR` would be the C rendering a
             // command byte as a string pointer; defined here as the empty
-            // expansion, which `keymacro__decode_str` renders `^@`.
+            // expansion, which `keymacro_decode_str` renders `^@`.
             let str: &[u32] = match val {
                 KeymacroValueT::Str(s) => s,
                 KeymacroValueT::Cmd(_) => &[],
             };
             let mut unparsbuf = [0u8; EL_BUFSIZ];
-            keymacro__decode_str(str, &mut unparsbuf, EL_BUFSIZ, b"\"\"");
+            keymacro_decode_str(str, &mut unparsbuf, EL_BUFSIZ, b"\"\"");
             let what = upto_nul(&unparsbuf).to_vec();
             let key = encode_key(el, key);
             kprint_line(el, &key, &what);
@@ -933,7 +920,7 @@ pub(crate) fn keymacro_kprint(
             }
         }
         _ => {
-            // ERR-input-30 (reproduce), as in `node__try`: `EL_ABORT` is
+            // ERR-input-30 (reproduce), as in `node_try`: `EL_ABORT` is
             // `abort(3)`. `XK_NOD` reaches here too — `terminal_print_arrow`
             // is the C's live path to it.
             process::abort();
@@ -946,8 +933,7 @@ pub(crate) fn keymacro_kprint(
 /// Make a printable, `sep`-wrapped narrow version of `str` in `buf`,
 /// returning the length it wanted — which may exceed `len`. `len` is kept
 /// alongside the slice because the rule indexes by it.
-#[allow(non_snake_case)]
-pub(crate) fn keymacro__decode_str(str: &[u32], buf: &mut [u8], len: usize, sep: &[u8]) -> usize {
+pub(crate) fn keymacro_decode_str(str: &[u32], buf: &mut [u8], len: usize, sep: &[u8]) -> usize {
     // ERR-input-09 (define — reject `len == 0` explicitly). The C's `eb ==
     // buf == b` then lets step 1 push `b` past `eb`, `(size_t)(eb - b)` wrap
     // to `SIZE_MAX`, and the forced termination write `buf[-1]`.
@@ -1215,7 +1201,7 @@ mod tests {
     }
 
     /// Unlinking before freeing is load-bearing and silent when it is wrong:
-    /// `node__put` follows sibling links, so a victim released while still
+    /// `node_put` follows sibling links, so a victim released while still
     /// pointing at the rest of its level takes that level with it. Deleting
     /// the middle of a three-way chain is the shape that catches it — a
     /// differential would need three keys sharing a prefix and a lookup of
@@ -1247,7 +1233,7 @@ mod tests {
 
     /// ERR-input-32, the destructive half of the shadowing rule. Binding
     /// `"ab"` and then `"abc"` leaves the shorter binding allocated but
-    /// unreachable, because `node__try` step 3 does not touch `type` — and
+    /// unreachable, because `node_try` step 3 does not touch `type` — and
     /// deleting the longer key then prunes the node that carried the shorter
     /// one rather than restoring it. Both are gone, and nothing says so.
     #[test]
@@ -1270,7 +1256,7 @@ mod tests {
 
     /// The other direction of the shadowing rule: binding a key that is a
     /// proper prefix of existing longer keys frees the whole child level and
-    /// every payload under it (`node__try` step 2a). The file header warns
+    /// every payload under it (`node_try` step 2a). The file header warns
     /// about it; nothing at run time does.
     #[test]
     fn binding_a_prefix_destroys_every_longer_key_under_it() {

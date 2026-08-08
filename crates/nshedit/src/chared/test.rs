@@ -10,8 +10,8 @@ fn editor(s: &str, at: usize) -> EditLine {
     el
 }
 
-/// `cv__isword` is THREE-valued and the two nonzero values are not
-/// interchangeable: `cv_next_word`, `cv_prev_word` and `cv__endword`
+/// `cv_is_word` is THREE-valued and the two nonzero values are not
+/// interchangeable: `cv_next_word`, `cv_prev_word` and `cv_end_word`
 /// compare it for EQUALITY to find runs of one class, which is how vi's
 /// `w`, `b` and `e` stop at the boundary between a word and adjacent
 /// punctuation. A predicate that merely returned "truthy" would pass every
@@ -20,24 +20,24 @@ fn editor(s: &str, at: usize) -> EditLine {
 #[test]
 fn the_vi_word_test_separates_words_from_punctuation() {
     let mut el = blank_editline();
-    assert_eq!(cv__isword(&mut el, u32::from(b'a')), 1);
-    assert_eq!(cv__isword(&mut el, u32::from(b'7')), 1);
+    assert_eq!(cv_is_word(&mut el, u32::from(b'a')), 1);
+    assert_eq!(cv_is_word(&mut el, u32::from(b'7')), 1);
     assert_eq!(
-        cv__isword(&mut el, u32::from(b'.')),
+        cv_is_word(&mut el, u32::from(b'.')),
         2,
         "punctuation is its own class"
     );
-    assert_eq!(cv__isword(&mut el, u32::from(b'-')), 2);
-    assert_eq!(cv__isword(&mut el, u32::from(b' ')), 0);
-    assert_eq!(cv__isword(&mut el, u32::from(b'\t')), 0);
+    assert_eq!(cv_is_word(&mut el, u32::from(b'-')), 2);
+    assert_eq!(cv_is_word(&mut el, u32::from(b' ')), 0);
+    assert_eq!(cv_is_word(&mut el, u32::from(b'\t')), 0);
     assert_ne!(
-        cv__isword(&mut el, u32::from(b'a')),
-        cv__isword(&mut el, u32::from(b'.')),
+        cv_is_word(&mut el, u32::from(b'a')),
+        cv_is_word(&mut el, u32::from(b'.')),
         "the equality the walkers rely on must distinguish these"
     );
 }
 
-/// `cv__isWord` is the coarse sibling — exactly 0 or 1 — which is what
+/// `cv_is_big_word` is the coarse sibling — exactly 0 or 1 — which is what
 /// makes vi's `W`, `B` and `E` treat punctuation as part of the
 /// surrounding word where the lowercase forms split it out.
 // [spec:libedit:sem:chared.cv-is-word-fn/test]
@@ -45,27 +45,27 @@ fn the_vi_word_test_separates_words_from_punctuation() {
 fn the_vi_big_word_test_puts_everything_non_space_in_one_class() {
     let mut el = blank_editline();
     for &c in b"a7.-/" {
-        assert_eq!(cv__isWord(&mut el, u32::from(c)), 1, "{}", c as char);
+        assert_eq!(cv_is_big_word(&mut el, u32::from(c)), 1, "{}", c as char);
     }
     for &c in b" \t\n" {
-        assert_eq!(cv__isWord(&mut el, u32::from(c)), 0, "{}", c as char);
+        assert_eq!(cv_is_big_word(&mut el, u32::from(c)), 0, "{}", c as char);
     }
 }
 
-/// `ce__isword` is the emacs test and is a `||`, so it is exactly 0 or 1
-/// and never the raw `iswalnum` value — which the C's `c__next_word` and
-/// `c__prev_word` use as a boolean and nothing compares for equality.
+/// `ce_is_word` is the emacs test and is a `||`, so it is exactly 0 or 1
+/// and never the raw `iswalnum` value — which the C's `c_next_word` and
+/// `c_prev_word` use as a boolean and nothing compares for equality.
 // [spec:libedit:sem:chared.ce-isword-fn/test]
 #[test]
 fn the_emacs_word_test_is_boolean() {
     let mut el = blank_editline();
-    assert_eq!(ce__isword(&mut el, u32::from(b'a')), 1);
+    assert_eq!(ce_is_word(&mut el, u32::from(b'a')), 1);
     assert_eq!(
-        ce__isword(&mut el, u32::from(b'.')),
+        ce_is_word(&mut el, u32::from(b'.')),
         0,
         "punctuation is not a word"
     );
-    assert_eq!(ce__isword(&mut el, u32::from(b' ')), 0);
+    assert_eq!(ce_is_word(&mut el, u32::from(b' ')), 0);
 }
 
 /// `c_hpos` is the column within the current line, so it counts back to
@@ -152,17 +152,17 @@ fn the_vi_word_walkers_stop_at_class_boundaries() {
     let end = el.el_line.lastchar;
 
     // `w` from 0: over "foo", stopping at the punctuation.
-    let a = cv_next_word(&mut el, 0, end, 1, cv__isword);
+    let a = cv_next_word(&mut el, 0, end, 1, cv_is_word);
     assert_eq!(a, 3, "stops at the dot, not past it");
     // Again: over "." to "bar".
-    let b = cv_next_word(&mut el, a, end, 1, cv__isword);
+    let b = cv_next_word(&mut el, a, end, 1, cv_is_word);
     assert_eq!(b, 4);
     // `W` from 0 treats it all as one word and lands on "baz".
-    let big = cv_next_word(&mut el, 0, end, 1, cv__isWord);
+    let big = cv_next_word(&mut el, 0, end, 1, cv_is_big_word);
     assert_eq!(big, 8, "big-word skips the punctuation entirely");
 
     // `b` back from the end.
-    let p = cv_prev_word(&mut el, end, 0, 1, cv__isword);
+    let p = cv_prev_word(&mut el, end, 0, 1, cv_is_word);
     assert_eq!(p, 8, "back to the start of baz");
 }
 
@@ -179,30 +179,30 @@ fn the_end_of_word_walker_lands_on_the_last_character_of_the_run() {
     let end = el.el_line.lastchar;
 
     assert_eq!(
-        cv__endword(&mut el, 0, end, 1, cv__isword),
+        cv_end_word(&mut el, 0, end, 1, cv_is_word),
         2,
         "the last o of foo"
     );
     assert_eq!(
-        cv__endword(&mut el, 2, end, 1, cv__isword),
+        cv_end_word(&mut el, 2, end, 1, cv_is_word),
         3,
         "the dot is a word of its own, so it both starts and ends one"
     );
     // Leading whitespace is skipped before the run is classified.
     assert_eq!(
-        cv__endword(&mut el, 6, end, 1, cv__isword),
+        cv_end_word(&mut el, 6, end, 1, cv_is_word),
         10,
         "the z of baz"
     );
     assert_eq!(
-        cv__endword(&mut el, 0, end, 1, cv__isWord),
+        cv_end_word(&mut el, 0, end, 1, cv_is_big_word),
         6,
         "big-word runs through the dot to the r of bar"
     );
 
     // The leading `p++` and the trailing `p--` cancel, so a count that
     // never enters the loop gives the caller's own position back.
-    assert_eq!(cv__endword(&mut el, 5, end, 0, cv__isword), 5);
+    assert_eq!(cv_end_word(&mut el, 5, end, 0, cv_is_word), 5);
 }
 
 /// `ch_enlargebufs` doubles until the NEW space alone covers `addlen`, and

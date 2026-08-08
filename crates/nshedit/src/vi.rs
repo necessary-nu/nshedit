@@ -13,8 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::chared::{
     CHAR_BACK, CHAR_FWD, DELETE, INSERT, MODE_INSERT, MODE_REPLACE, MODE_REPLACE_1, NOP, YANK,
-    c_delafter, c_delbefore, c_delbefore1, c_insert, cv__endword, cv__isWord, cv__isword,
-    cv_delfini, cv_next_word, cv_prev_word, cv_undo, cv_yank,
+    c_delafter, c_delbefore, c_delbefore1, c_insert, cv_delfini, cv_end_word, cv_is_big_word,
+    cv_is_word, cv_next_word, cv_prev_word, cv_undo, cv_yank,
 };
 use crate::chartype::ct_decode_string;
 use crate::common::{ed_argument_digit, ed_kill_line, ed_newline, ed_next_char};
@@ -262,7 +262,13 @@ pub(crate) fn vi_prev_big_word(el: &mut EditLine, c: u32) -> ElActionT {
         return CC_ERROR;
     }
 
-    el.el_line.cursor = cv_prev_word(el, el.el_line.cursor, 0, el.el_state.argument, cv__isWord);
+    el.el_line.cursor = cv_prev_word(
+        el,
+        el.el_line.cursor,
+        0,
+        el.el_state.argument,
+        cv_is_big_word,
+    );
 
     // No `el_map.type == MAP_VI` guard here, unlike `vi_next_big_word`. The
     // landing position is left of `c_vcmd.pos`, so `cv_delfini` takes its
@@ -280,9 +286,9 @@ pub(crate) fn vi_prev_word(el: &mut EditLine, c: u32) -> ElActionT {
         return CC_ERROR;
     }
 
-    // `cv__isword` — three classes, and a word is a maximal run of one class,
+    // `cv_is_word` — three classes, and a word is a maximal run of one class,
     // so a punctuation run is its own word here where `B` swallows it.
-    el.el_line.cursor = cv_prev_word(el, el.el_line.cursor, 0, el.el_state.argument, cv__isword);
+    el.el_line.cursor = cv_prev_word(el, el.el_line.cursor, 0, el.el_state.argument, cv_is_word);
 
     end_motion(el)
 }
@@ -306,7 +312,7 @@ pub(crate) fn vi_next_big_word(el: &mut EditLine, c: u32) -> ElActionT {
         el.el_line.cursor,
         el.el_line.lastchar,
         el.el_state.argument,
-        cv__isWord,
+        cv_is_big_word,
     );
 
     // No `cursor++`: `dW`/`cW`/`yW` is exclusive of the character at the
@@ -334,7 +340,7 @@ pub(crate) fn vi_next_word(el: &mut EditLine, c: u32) -> ElActionT {
         el.el_line.cursor,
         el.el_line.lastchar,
         el.el_state.argument,
-        cv__isword,
+        cv_is_word,
     );
 
     end_vi_motion(el)
@@ -546,12 +552,12 @@ pub(crate) fn vi_end_big_word(el: &mut EditLine, c: u32) -> ElActionT {
         return CC_ERROR;
     }
 
-    el.el_line.cursor = cv__endword(
+    el.el_line.cursor = cv_end_word(
         el,
         el.el_line.cursor,
         el.el_line.lastchar,
         el.el_state.argument,
-        cv__isWord,
+        cv_is_big_word,
     );
 
     // The `+1` makes `dE`/`cE`/`yE` inclusive of the character landed on,
@@ -572,14 +578,14 @@ pub(crate) fn vi_end_word(el: &mut EditLine, c: u32) -> ElActionT {
         return CC_ERROR;
     }
 
-    // The three-class `cv__isword`, so `foo.bar` is three words here and one
+    // The three-class `cv_is_word`, so `foo.bar` is three words here and one
     // for `E`.
-    el.el_line.cursor = cv__endword(
+    el.el_line.cursor = cv_end_word(
         el,
         el.el_line.cursor,
         el.el_line.lastchar,
         el.el_state.argument,
-        cv__isword,
+        cv_is_word,
     );
 
     if el.el_chared.c_vcmd.action != NOP {
@@ -1319,7 +1325,7 @@ pub(crate) fn vi_history_word(el: &mut EditLine, c: u32) -> ElActionT {
         return CC_ERROR;
     };
 
-    // 2. Word scan splitting on `iswspace` only — no `cv__isword` classes
+    // 2. Word scan splitting on `iswspace` only — no `cv_is_word` classes
     //    here, so punctuation is part of the word. With no count the loop runs
     //    to the end and `[wsp, wep)` is the *last* word; with a count `n` it
     //    runs at most `n` times and yields the n-th word from the left. The

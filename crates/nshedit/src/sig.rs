@@ -3,7 +3,7 @@
 use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::el::EditLine;
-use crate::terminal::terminal__flush;
+use crate::terminal::terminal_flush;
 use crate::tty::{tty_cookedmode, tty_rawmode};
 
 /// C: `#define ALLSIGSNO 7` — `SIGINT`, `SIGTSTP`, `SIGQUIT`, `SIGHUP`,
@@ -128,7 +128,7 @@ use nshedit_plat::signal as plat;
 pub(crate) fn sig_handler(el: &mut EditLine, signo: i32) {
     // ERR-terminal-14, disposition `define`: the C runs every step below in
     // async-signal context, where `el_resize` reaches `calloc`/`free` and
-    // `ioctl`, `terminal__flush` is `fflush` on a `FILE *`, `tty_rawmode` can
+    // `ioctl`, `terminal_flush` is `fflush` on a `FILE *`, `tty_rawmode` can
     // reach `keymacro_delete` -> `free`, and the empty `sa_mask` lets a
     // second trapped signal nest and re-enter all of it. None of that is
     // reproduced. This function is NOT the installed handler: it is the
@@ -195,7 +195,7 @@ pub(crate) fn sig_handler(el: &mut EditLine, signo: i32) {
             // is dead — `ed_redisplay` always returns `CC_REDISPLAY` (8) and
             // `CC_REFRESH` is 4 (ERR-terminal-65) — so it is not ported. The
             // real redraw after a resume is the read loop's `EL_REFRESH`.
-            terminal__flush(el);
+            terminal_flush(el);
         }
         signo::SIGWINCH => {
             // Re-read the window size and, if it changed, resize and clear

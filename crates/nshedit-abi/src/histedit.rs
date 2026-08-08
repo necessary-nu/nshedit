@@ -1247,7 +1247,7 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // A no-op in the port: nothing is buffered on this side, because
             // the core writes through `el_outfd` rather than the caller's
             // `FILE *`. Called anyway, so the sequence stays the C's.
-            nshedit::terminal::terminal__flush(el);
+            nshedit::terminal::terminal_flush(el);
             0
         }
 

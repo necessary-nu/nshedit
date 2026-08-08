@@ -432,7 +432,7 @@ fn without_the_clear_capability_the_old_text_is_only_scrolled_away() {
 }
 
 /// The flag is the gate, not the capability. With `TERM_CAN_CEOL` set but no
-/// `ce` string installed, `terminal_clear_EOL` falls back to writing
+/// `ce` string installed, `terminal_clear_eol` falls back to writing
 /// `t_size.h` spaces and — unlike the capability — advances the recorded
 /// column by that many, which is what makes the *next* row's
 /// `terminal_move_to_char(0)` emit a carriage return the capability path never

@@ -1,8 +1,8 @@
 //! Ported from `src/common.c`; rules live in `docs/spec/port/src/common.md`.
 
 use crate::chared::{
-    MODE_INSERT, MODE_REPLACE_1, NOP, c__prev_word, c_delafter, c_delbefore, c_gets, c_hpos,
-    c_insert, ce__isword, ch_enlargebufs, ch_reset,
+    MODE_INSERT, MODE_REPLACE_1, NOP, c_delafter, c_delbefore, c_gets, c_hpos, c_insert,
+    c_prev_word, ce_is_word, ch_enlargebufs, ch_reset,
 };
 use crate::el::{EL_BUFSIZ, EditLine, ElActionT};
 use crate::fcns::EM_UNIVERSAL_ARGUMENT;
@@ -17,7 +17,7 @@ use crate::parse::parse_line;
 use crate::read::el_wgetc;
 use crate::refresh::{re_clear_display, re_fastaddc, re_goto_bottom, re_refresh};
 use crate::search::{c_hmatch, c_setpat};
-use crate::terminal::{terminal__putc, terminal_beep, terminal_clear_screen};
+use crate::terminal::{terminal_beep, terminal_clear_screen, terminal_putc};
 use crate::tty::{tty_noquotemode, tty_quotemode};
 use crate::vi::{end_motion, end_vi_motion, vi_command_mode};
 
@@ -292,9 +292,9 @@ pub(crate) fn ed_delete_prev_word(el: &mut EditLine, c: u32) -> ElActionT {
         return CC_ERROR;
     }
 
-    // ERR-modes-53: `ce__isword` is the *emacs* word test, used here even when
+    // ERR-modes-53: `ce_is_word` is the *emacs* word test, used here even when
     // the vi command map is active, so `^W` in vi has emacs word semantics.
-    let cp = c__prev_word(el, el.el_line.cursor, 0, el.el_state.argument, ce__isword);
+    let cp = c_prev_word(el, el.el_line.cursor, 0, el.el_state.argument, ce_is_word);
 
     // ERR-modes-47, reproduced: this copy is observably redundant. The
     // `c_delbefore` below yanks the same range into the same buffer, because
@@ -309,7 +309,7 @@ pub(crate) fn ed_delete_prev_word(el: &mut EditLine, c: u32) -> ElActionT {
     c_delbefore(el, n);
     el.el_line.cursor = cp;
     // The C's `if (cursor < buffer) cursor = buffer` bounds check is dead —
-    // `c__prev_word` already clamps to `buffer` (ERR-modes-71) — and an
+    // `c_prev_word` already clamps to `buffer` (ERR-modes-71) — and an
     // unsigned offset cannot express it at all.
     CC_REFRESH
 }
@@ -510,7 +510,7 @@ pub(crate) fn ed_prev_word(el: &mut EditLine, c: u32) -> ElActionT {
 
     // ERR-modes-53: the emacs word test again, so vi `b` does not split on
     // punctuation the way real vi does.
-    el.el_line.cursor = c__prev_word(el, el.el_line.cursor, 0, el.el_state.argument, ce__isword);
+    el.el_line.cursor = c_prev_word(el, el.el_line.cursor, 0, el.el_state.argument, ce_is_word);
 
     end_vi_motion(el)
 }
@@ -1104,7 +1104,7 @@ pub(crate) fn ed_command(el: &mut EditLine, c: u32) -> ElActionT {
     let tmplen = c_gets(el, &mut tmpbuf, Some(&prompt));
 
     // 2. So the executed command does not sit on the prompt line.
-    let _ = terminal__putc(el, u32::from(b'\n'));
+    let _ = terminal_putc(el, u32::from(b'\n'));
 
     // 3. The C's `tmpbuf[tmplen] = 0` sits in a comma expression on the
     //    right-hand side of `||`, so it runs only when `tmplen >= 0`; an empty

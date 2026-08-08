@@ -79,15 +79,15 @@ fn on_err(el: &mut EditLine, f: impl FnOnce(&mut EditLine)) -> Vec<u8> {
 /// interesting pairs are the ones that do not.
 #[test]
 fn the_control_character_index_is_not_the_termios_subscript() {
-    assert_eq!(tty__getcharindex(C_INTR as i32), plat::VINTR as i32);
-    assert_eq!(tty__getcharindex(C_QUIT as i32), plat::VQUIT as i32);
+    assert_eq!(tty_char_index(C_INTR as i32), plat::VINTR as i32);
+    assert_eq!(tty_char_index(C_QUIT as i32), plat::VQUIT as i32);
     // Where the two numberings part company.
-    assert_eq!(tty__getcharindex(C_SUSP as i32), plat::VSUSP as i32);
-    assert_ne!(tty__getcharindex(C_SUSP as i32), C_SUSP as i32);
-    assert_eq!(tty__getcharindex(C_MIN as i32), plat::VMIN as i32);
-    assert_eq!(tty__getcharindex(C_TIME as i32), plat::VTIME as i32);
-    assert_eq!(tty__getcharindex(C_EOF as i32), plat::VEOF as i32);
-    assert_eq!(tty__getcharindex(C_START as i32), plat::VSTART as i32);
+    assert_eq!(tty_char_index(C_SUSP as i32), plat::VSUSP as i32);
+    assert_ne!(tty_char_index(C_SUSP as i32), C_SUSP as i32);
+    assert_eq!(tty_char_index(C_MIN as i32), plat::VMIN as i32);
+    assert_eq!(tty_char_index(C_TIME as i32), plat::VTIME as i32);
+    assert_eq!(tty_char_index(C_EOF as i32), plat::VEOF as i32);
+    assert_eq!(tty_char_index(C_START as i32), plat::VSTART as i32);
 }
 
 // [spec:libedit:sem:tty.tty-getcharindex-fn/test]
@@ -97,15 +97,15 @@ fn the_control_character_index_is_not_the_termios_subscript() {
 /// `c_cc[-1]` once the guarding assert is compiled out (ERR-terminal-05).
 #[test]
 fn an_index_with_no_subscript_answers_minus_one_including_brk() {
-    assert_eq!(tty__getcharindex(C_BRK as i32), -1);
+    assert_eq!(tty_char_index(C_BRK as i32), -1);
     // Absent on this platform, so also -1 here.
     for c in [C_SWTCH, C_DSWTCH, C_ERASE2, C_DSUSP, C_STATUS, C_PAGE] {
-        assert_eq!(tty__getcharindex(c as i32), -1, "C_* index {c}");
+        assert_eq!(tty_char_index(c as i32), -1, "C_* index {c}");
     }
     // `C_NCC` is a count, not an index.
-    assert_eq!(tty__getcharindex(C_NCC as i32), -1);
-    assert_eq!(tty__getcharindex(-1), -1);
-    assert_eq!(tty__getcharindex(i32::MAX), -1);
+    assert_eq!(tty_char_index(C_NCC as i32), -1);
+    assert_eq!(tty_char_index(-1), -1);
+    assert_eq!(tty_char_index(i32::MAX), -1);
 }
 
 // [spec:libedit:sem:tty.tty-quotemode-fn/test]
@@ -338,7 +338,7 @@ fn setty_assigns_a_control_character_to_the_termios_but_not_the_table() {
     );
     assert_eq!(el.el_tty.t_ed.c_cc[plat::VERASE], plat::VDISABLE);
 
-    // A malformed escape is `parse__escape`'s -1 stored unchecked, which
+    // A malformed escape is `parse_escape`'s -1 stored unchecked, which
     // is why `setty erase=X` yields 0xFF where `erase=^H` works.
     assert_eq!(
         tty_stty(&mut el, 0, &[&wide("setty"), &wide("-d"), &wide("erase=X")]),

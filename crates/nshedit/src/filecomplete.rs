@@ -1057,7 +1057,10 @@ fn what_to_do(el: &EditLine) -> char {
 ///
 /// Every NULL-checked parameter is an `Option`; the return is the C's
 /// `CC_*` code, so it stays an `i32`.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the compatibility completion operation has twelve independently optional inputs"
+)]
 pub fn fn_complete2(
     el: &mut EditLine,
     complete_func: Option<&mut CompleteFunc>,
@@ -1305,7 +1308,10 @@ pub fn fn_complete2(
 // [spec:libedit:sem:filecomplete.fn-complete-fn]
 /// C: `int fn_complete(EditLine *el, ...)` — [`fn_complete2`] with `flags`
 /// derived from whether an `attempted_completion_function` was supplied.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "this compatibility wrapper forwards the completion operation without hiding any input"
+)]
 pub fn fn_complete(
     el: &mut EditLine,
     complete_func: Option<&mut CompleteFunc>,

@@ -628,6 +628,7 @@ pub(crate) fn hist_enlargebuf(el: &mut EditLine, newsz: usize) -> i32 {
 /// `ElHistoryT::r#ref` spells the C's `ref`. The return is a raw pointer
 /// because it is `ct_decode_string`'s view into `el->el_scratch`, valid only
 /// until the next conversion.
+#[cfg(test)]
 pub(crate) fn hist_convert(el: &mut EditLine, r#fn: i32, arg: *mut c_void) -> *mut u32 {
     // `ct_decode_string` NUL-terminates `el_scratch.wbuff`, so the slice's
     // base pointer is the C wide string the C hands back.

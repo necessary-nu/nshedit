@@ -9,14 +9,14 @@ use crate::locale::{self, MB_LEN_MAX};
 /// A successful [`literal_add`] returns this bit ORed with the table index,
 /// so every success is `>= 0x8000_0000` and a return of `0` is an unambiguous
 /// failure. `pub(crate)` because the sentinel is not this module's private
-/// business: `terminal__putc` has to test the bit, and `refresh`'s screen
+/// business: `terminal_putc` has to test the bit, and `refresh`'s screen
 /// image has to be able to carry a value that is not a Unicode scalar.
 pub(crate) const EL_LITERAL: u32 = 0x8000_0000;
 
 /// Highest table index a sentinel may carry: `0x7FFF_FFFE`.
 ///
 /// Derived from `chartype`'s [`MB_FILL_CHAR`], which is `(wint_t)-1` and so
-/// has bit 31 set: `terminal__putc` **must** keep testing
+/// has bit 31 set: `terminal_putc` **must** keep testing
 /// `c == MB_FILL_CHAR` *before* `c & EL_LITERAL` — see
 /// `sem:literal.literal-add-fn`, "Distinguishing a sentinel from a real
 /// character". That ordering is load-bearing, and [`literal_add`] holds up its
@@ -24,7 +24,7 @@ pub(crate) const EL_LITERAL: u32 = 0x8000_0000;
 ///
 /// The rule states the representable range as `0..=0x7FFF_FFFF`, but the top
 /// value is not *usable*: `EL_LITERAL | 0x7FFF_FFFF` is `0xFFFF_FFFF`, which
-/// is `MB_FILL_CHAR`, and `terminal__putc` tests that first. A literal parked
+/// is `MB_FILL_CHAR`, and `terminal_putc` tests that first. A literal parked
 /// at that index would be consumed as multibyte padding and never printed.
 /// The C bound-checks nothing at all — past the range the index aliases the
 /// marker bit and the `size_t` → `wint_t` narrowing truncates on LP64 — and
@@ -136,7 +136,7 @@ pub(crate) fn literal_clear(el: &mut crate::el::EditLine) {
     // counter and no tombstone, and `re_refresh` calls this at the top of
     // every full redraw while `el_display` still holds the *previous*
     // frame's sentinels — which `terminal_move_to_char` then re-emits
-    // through `terminal_overwrite` → `terminal__putc` → `literal_get`. That
+    // through `terminal_overwrite` → `terminal_putc` → `literal_get`. That
     // is ERR-terminal-09; `literal_get` is where the port defines what
     // happens.
 }
@@ -265,7 +265,7 @@ pub(crate) fn literal_get(el: &mut crate::el::EditLine, idx: u32) -> &[u8] {
 
     // Step 1. The C is `assert(idx & EL_LITERAL)`, a bitwise test, so
     // `literal_add`'s error return of 0 trips it. The sole caller,
-    // `terminal__putc`, has already established the bit and has already
+    // `terminal_putc`, has already established the bit and has already
     // excluded `MB_FILL_CHAR` — that exclusion must stay ahead of the
     // `EL_LITERAL` test at the call site, because `MB_FILL_CHAR` is
     // `0xFFFF_FFFF` and has bit 31 set too. Any other value with bit 31 set
@@ -531,7 +531,7 @@ mod test {
 
     /// The index can never reach `MB_FILL_CHAR`.
     ///
-    /// `terminal__putc` tests `c == MB_FILL_CHAR` BEFORE `c & EL_LITERAL`,
+    /// `terminal_putc` tests `c == MB_FILL_CHAR` BEFORE `c & EL_LITERAL`,
     /// and `MB_FILL_CHAR` is `0xFFFF_FFFF` — which has bit 31 set. A literal
     /// parked at index `0x7FFF_FFFF` would be swallowed as multibyte padding
     /// and never printed, so `literal_add` refuses that index rather than
@@ -645,7 +645,7 @@ mod test {
     /// pointers — and a reference into them yields nothing rather than the
     /// C's read of an uninitialised `char *`.
     ///
-    /// `MB_FILL_CHAR` lands here too. `terminal__putc` must exclude it before
+    /// `MB_FILL_CHAR` lands here too. `terminal_putc` must exclude it before
     /// testing the marker bit, but if it ever stops doing so the index it
     /// decodes to is far past any real entry, so the failure is silence
     /// rather than an out-of-bounds read.

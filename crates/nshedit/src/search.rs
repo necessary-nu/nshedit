@@ -1,10 +1,11 @@
 //! Ported from `src/search.c`; rules live in `docs/spec/port/src/search.md`.
 
 use core::cell::Cell;
+#[cfg(test)]
 use core::ffi::c_char;
 
 use crate::chared::{CHAR_FWD, NOP};
-use crate::chared::{c__next_word, c_gets, ce__isword, cv_delfini};
+use crate::chared::{c_gets, c_next_word, ce_is_word, cv_delfini};
 use crate::common::{ed_end_of_file, ed_newline, ed_search_next_history, ed_search_prev_history};
 use crate::el::EL_BUFSIZ;
 use crate::el::{EditLine, ElActionT};
@@ -239,6 +240,7 @@ pub(crate) fn search_end(el: &mut EditLine) {
 /// scope — so this is never reached and has no caller. It is private, and
 /// spelled out only so the rule has a home; the POSIX branch swallows a bad
 /// pattern in `el_match` instead.
+#[cfg(test)]
 fn regerror(msg: *const c_char) {
     // The C body is empty and the parameter is marked `/*ARGSUSED*/`.
     let _ = msg;
@@ -650,13 +652,13 @@ pub(crate) fn ce_inc_search(el: &mut EditLine, dir: i32) -> ElActionT {
                         // saturation gives. The clamp to `lastchar` bounds
                         // the C's unchecked displacement; note `lastchar` is
                         // the *inflated* one that includes the prompt step 3
-                        // just appended, which is also what `c__next_word`
+                        // just appended, which is also what `c_next_word`
                         // is handed, and the `'\n'` test below is what stops
                         // the copy from running into that prompt.
                         let adv = el.el_search.patlen.saturating_sub(LEN + 1);
                         el.el_line.cursor = (el.el_line.cursor + adv).min(el.el_line.lastchar);
                         let end =
-                            c__next_word(el, el.el_line.cursor, el.el_line.lastchar, 1, ce__isword);
+                            c_next_word(el, el.el_line.cursor, el.el_line.lastchar, 1, ce_is_word);
                         while el.el_line.cursor < end
                             && el.el_line.buffer[el.el_line.cursor] != '\n' as u32
                         {

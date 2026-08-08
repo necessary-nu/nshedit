@@ -104,6 +104,7 @@ fn show(bytes: &[u8]) -> String {
 
 /// Twenty bytes either side of `at`, so that a disagreement inside the
 /// all-256-bytes input reports the disagreement rather than the input.
+#[cfg(feature = "bsd")]
 fn around(bytes: &[u8], at: usize) -> String {
     let lo = at.saturating_sub(20);
     let hi = (at + 20).min(bytes.len());

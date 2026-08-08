@@ -261,13 +261,10 @@ pub fn ct_decode_string<'a>(s: Option<&[u8]>, conv: &'a mut CtBufferT) -> Option
 /// buffer, in an array the caller owns and must free. `None` elements mark
 /// the slots the C left NULL.
 ///
-/// **Nothing calls this.** The C's return is one owned array whose elements
-/// borrow from `conv`, two lifetimes in one value, and offsets are the closest
-/// Rust gets: they are safe but they are not pointers, so an ABI shim has to
-/// rebuild the array anyway. Each of the C's three `eln.c` call sites
-/// therefore reimplements the loop per-string over `ct_decode_string`, copying
-/// each result out before decoding the next, and this function survives only
-/// under the crate-wide `allow(dead_code)`.
+/// Retained only for the translation tests. The C return combines an owned
+/// pointer array with elements borrowed from `conv`; the ABI adapter therefore
+/// rebuilds that representation directly instead of exposing it to the core.
+#[cfg(test)]
 pub(crate) fn ct_decode_argv(
     argv: &[Option<&[u8]>],
     conv: &mut CtBufferT,

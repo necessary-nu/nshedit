@@ -1,8 +1,8 @@
 //! Ported from `src/emacs.c`; rules live in `docs/spec/port/src/emacs.md`.
 
 use crate::chared::{
-    MODE_INSERT, MODE_REPLACE, c__next_word, c__prev_word, c_delafter, c_delafter1, c_delbefore,
-    c_delbefore1, c_insert, ce__isword,
+    MODE_INSERT, MODE_REPLACE, c_delafter, c_delafter1, c_delbefore, c_delbefore1, c_insert,
+    c_next_word, c_prev_word, ce_is_word,
 };
 use crate::common::{ARGUMENT_CAP, kill_save};
 use crate::el::{EditLine, ElActionT};
@@ -64,12 +64,12 @@ pub(crate) fn em_delete_next_word(el: &mut EditLine, c: u32) -> ElActionT {
         return CC_ERROR;
     }
 
-    let cp = c__next_word(
+    let cp = c_next_word(
         el,
         el.el_line.cursor,
         el.el_line.lastchar,
         el.el_state.argument,
-        ce__isword,
+        ce_is_word,
     );
 
     // Save the text. Overwrites whatever the kill buffer held; see
@@ -242,12 +242,12 @@ pub(crate) fn em_next_word(el: &mut EditLine, c: u32) -> ElActionT {
         return CC_ERROR;
     }
 
-    el.el_line.cursor = c__next_word(
+    el.el_line.cursor = c_next_word(
         el,
         el.el_line.cursor,
         el.el_line.lastchar,
         el.el_state.argument,
-        ce__isword,
+        ce_is_word,
     );
 
     // The test is on the keymap *type*, not on which map is currently
@@ -263,12 +263,12 @@ pub(crate) fn em_upper_case(el: &mut EditLine, c: u32) -> ElActionT {
     let _ = c; // C: `wint_t c __attribute__((__unused__))`.
 
     let cs = locale::charset();
-    let ep = c__next_word(
+    let ep = c_next_word(
         el,
         el.el_line.cursor,
         el.el_line.lastchar,
         el.el_state.argument,
-        ce__isword,
+        ce_is_word,
     );
 
     let mut cp = el.el_line.cursor;
@@ -281,7 +281,7 @@ pub(crate) fn em_upper_case(el: &mut EditLine, c: u32) -> ElActionT {
     }
 
     // The C's following `if (cursor > lastchar) cursor = lastchar` is dead
-    // code (ERR-modes-71) — `c__next_word` has already clamped `ep` — and is
+    // code (ERR-modes-71) — `c_next_word` has already clamped `ep` — and is
     // not ported. No error return: an empty span still refreshes.
     el.el_line.cursor = ep;
     CC_REFRESH
@@ -294,12 +294,12 @@ pub(crate) fn em_capitol_case(el: &mut EditLine, c: u32) -> ElActionT {
     let _ = c; // C: `wint_t c __attribute__((__unused__))`.
 
     let cs = locale::charset();
-    let ep = c__next_word(
+    let ep = c_next_word(
         el,
         el.el_line.cursor,
         el.el_line.lastchar,
         el.el_state.argument,
-        ce__isword,
+        ce_is_word,
     );
 
     // First pass: skip to the first alphabetic character, upcase it if it is
@@ -338,12 +338,12 @@ pub(crate) fn em_lower_case(el: &mut EditLine, c: u32) -> ElActionT {
     let _ = c; // C: `wint_t c __attribute__((__unused__))`.
 
     let cs = locale::charset();
-    let ep = c__next_word(
+    let ep = c_next_word(
         el,
         el.el_line.cursor,
         el.el_line.lastchar,
         el.el_state.argument,
-        ce__isword,
+        ce_is_word,
     );
 
     let mut cp = el.el_line.cursor;
@@ -461,7 +461,7 @@ pub(crate) fn em_copy_prev_word(el: &mut EditLine, c: u32) -> ElActionT {
 
     // Does a bounds check. Text before the cursor is not moved by the insert
     // below, so `cp` stays valid across it.
-    let mut cp = c__prev_word(el, el.el_line.cursor, 0, el.el_state.argument, ce__isword);
+    let mut cp = c_prev_word(el, el.el_line.cursor, 0, el.el_state.argument, ce_is_word);
 
     c_insert(el, (el.el_line.cursor - cp) as i32);
     let oldc = el.el_line.cursor;

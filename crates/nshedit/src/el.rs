@@ -57,9 +57,6 @@ pub(crate) const NO_RESET: i32 = 0x080;
 /// Selects the EINTR-recovery path in the read loop; `el_get` reports this
 /// bit raw rather than as a boolean, which `sem:histedit.el-get-fn` records.
 pub(crate) const FIXIO: i32 = 0x100;
-/// Guards `el_line`'s re-entrant call into the application's resize hook.
-pub(crate) const FROM_ELLINE: i32 = 0x200;
-
 use crate::chared::{CKillT, CRedoT, CUndoT, CVcmdT, ElCharedT, ch_end, ch_init, ch_reset};
 use crate::chartype::{CtBufferT, ct_decode_string, ct_encode_string};
 use std::cell::RefCell;
@@ -633,7 +630,10 @@ pub fn el_init(prog: &str, fin: CFile, fout: CFile, ferr: CFile) -> Option<Box<E
 /// the body's job and idiomatization's, not the signature's.
 // Eight parameters because the C has eight; collapsing them into a builder or
 // a stream triple is idiomatization's call, not the translation's.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the translated constructor keeps three borrowed streams, three descriptors, and initial flags distinct"
+)]
 pub(crate) fn el_init_internal(
     prog: &str,
     fin: CFile,

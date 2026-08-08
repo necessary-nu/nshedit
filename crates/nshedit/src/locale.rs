@@ -89,15 +89,6 @@ thread_local! {
     static CHARSET: Cell<Option<Charset>> = const { Cell::new(None) };
 }
 
-/// Re-reads the environment.
-///
-/// Called once per public entry point in `vis`, so the charset is a snapshot
-/// for the duration of one call exactly as the C's `LC_CTYPE` is, without an
-/// environment lookup per character.
-pub(crate) fn refresh() {
-    CHARSET.with(|c| c.set(Some(from_env())));
-}
-
 /// The active charset: the cached snapshot, or a fresh read if this thread has
 /// not looked yet. Pass the result down explicitly rather than re-querying per
 /// character, so that a locale query is visible as one.

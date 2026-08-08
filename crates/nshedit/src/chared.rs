@@ -1,9 +1,5 @@
 //! Ported from `src/chared.c`; rules live in `docs/spec/port/src/chared.md`.
 
-// The C's function names are kept verbatim, and several of them — the `c__`,
-// `cv__` and `isWord` families — are not snake case.
-#![allow(non_snake_case)]
-
 use core::ffi::{c_char, c_void};
 use core::ptr;
 
@@ -474,20 +470,20 @@ pub(crate) fn c_delbefore1(el: &mut EditLine) {
 
 // [spec:libedit:def:chared.ce-isword-fn]
 // [spec:libedit:sem:chared.ce-isword-fn]
-pub(crate) fn ce__isword(el: &mut EditLine, p: u32) -> i32 {
+pub(crate) fn ce_is_word(el: &mut EditLine, p: u32) -> i32 {
     // C: `return iswalnum(p) || wcschr(el->el_map.wordchars, p) != NULL;` —
     // a `||`, so the result is exactly 0 or 1 and never the raw `iswalnum`
-    // value. That matters to `c__next_word`/`c__prev_word`, which use it as a
+    // value. That matters to `c_next_word`/`c_prev_word`, which use it as a
     // boolean, and to nothing else: the emacs test is never compared for
-    // equality the way `cv__isword` is.
+    // equality the way `cv_is_word` is.
     i32::from(locale::iswalnum(locale::charset(), p) || wordchars_has(el, p))
 }
 
 // [spec:libedit:def:chared.cv-isword-fn]
 // [spec:libedit:sem:chared.cv-isword-fn]
-pub(crate) fn cv__isword(el: &mut EditLine, p: u32) -> i32 {
+pub(crate) fn cv_is_word(el: &mut EditLine, p: u32) -> i32 {
     // Three-valued, and the two nonzero values are not interchangeable:
-    // `cv_next_word`, `cv_prev_word` and `cv__endword` compare this result
+    // `cv_next_word`, `cv_prev_word` and `cv_end_word` compare this result
     // for EQUALITY to find runs of a single class, which is how vi's `w`, `b`
     // and `e` stop at the boundary between a word and adjacent punctuation.
     let cs = locale::charset();
@@ -504,16 +500,16 @@ pub(crate) fn cv__isword(el: &mut EditLine, p: u32) -> i32 {
 
 // [spec:libedit:def:chared.cv-is-word-fn]
 // [spec:libedit:sem:chared.cv-is-word-fn]
-/// The capital `W` is the C's: this is the vi big-word test, `cv__isword`'s
+/// The capital `W` is the C's: this is the vi big-word test, `cv_is_word`'s
 /// coarser sibling.
-pub(crate) fn cv__isWord(el: &mut EditLine, p: u32) -> i32 {
-    // C: `cv__isWord(EditLine *el __attribute__((__unused__)), wint_t p)` —
+pub(crate) fn cv_is_big_word(el: &mut EditLine, p: u32) -> i32 {
+    // C: `cv_is_big_word(EditLine *el __attribute__((__unused__)), wint_t p)` —
     // the editor is genuinely unread. The parameter stays because this is one
     // of the interchangeable `wtest` predicates.
     let _ = el;
     // `!iswspace(p)`: exactly 1 or 0, so every non-space character falls into
     // a single class. That is what makes vi's `W`, `B` and `E` treat
-    // punctuation as part of the surrounding word where `cv__isword` splits
+    // punctuation as part of the surrounding word where `cv_is_word` splits
     // it out.
     i32::from(!locale::iswspace(locale::charset(), p))
 }
@@ -521,7 +517,7 @@ pub(crate) fn cv__isWord(el: &mut EditLine, p: u32) -> i32 {
 // [spec:libedit:def:chared.c-prev-word-fn]
 // [spec:libedit:sem:chared.c-prev-word-fn]
 /// `p` and `low` are offsets into `el_line.buffer`, and so is the result.
-pub(crate) fn c__prev_word(
+pub(crate) fn c_prev_word(
     el: &mut EditLine,
     p: usize,
     low: usize,
@@ -545,9 +541,9 @@ pub(crate) fn c__prev_word(
     // one.
     for _ in 0..n.max(0) {
         // Skip the gap, then skip the word. `wtest` is used as a BOOLEAN
-        // here, so with `cv__isword` punctuation counts as word material —
+        // here, so with `cv_is_word` punctuation counts as word material —
         // which is ERR-modes-53, since `^W` and `M-b` reach this with
-        // `ce__isword` even in vi.
+        // `ce_is_word` even in vi.
         while p >= low && wtest_at(el, p as usize, wtest) == 0 {
             p -= 1;
         }
@@ -558,7 +554,7 @@ pub(crate) fn c__prev_word(
 
     // C: `p++` — now on the first character of the word rather than one
     // before it — and then the clamp, which is live here (unlike
-    // `c__next_word`'s).
+    // `c_next_word`'s).
     p += 1;
     if p < low { low as usize } else { p as usize }
 }
@@ -566,7 +562,7 @@ pub(crate) fn c__prev_word(
 // [spec:libedit:def:chared.c-next-word-fn]
 // [spec:libedit:sem:chared.c-next-word-fn]
 /// `p` and `high` are offsets into `el_line.buffer`, and so is the result.
-pub(crate) fn c__next_word(
+pub(crate) fn c_next_word(
     el: &mut EditLine,
     p: usize,
     high: usize,
@@ -574,7 +570,7 @@ pub(crate) fn c__next_word(
     wtest: fn(&mut EditLine, u32) -> i32,
 ) -> usize {
     let mut p = p;
-    // ERR-buffer-22, as in `c__prev_word`: a non-positive count is defined as
+    // ERR-buffer-22, as in `c_prev_word`: a non-positive count is defined as
     // no movement, where the C's `while (n--)` would spin on a negative one.
     for _ in 0..n.max(0) {
         // Skip the gap, then skip the word. Nothing at or beyond `high` is
@@ -784,7 +780,7 @@ pub(crate) fn cv_delfini(el: &mut EditLine) {
 // [spec:libedit:def:chared.cv-endword-fn]
 // [spec:libedit:sem:chared.cv-endword-fn]
 /// `p` and `high` are offsets into `el_line.buffer`, and so is the result.
-pub(crate) fn cv__endword(
+pub(crate) fn cv_end_word(
     el: &mut EditLine,
     p: usize,
     high: usize,
@@ -805,7 +801,7 @@ pub(crate) fn cv__endword(
         }
         // b./c. Classify the character now under `p`, then consume its run.
         //       `wtest`'s result is compared for EQUALITY, so with
-        //       `cv__isword` a run of punctuation is a word in its own right.
+        //       `cv_is_word` a run of punctuation is a word in its own right.
         //
         //       ERR-buffer-07, as in `cv_next_word`: the C's classification
         //       is unguarded and reads the reserved slot at `lastchar` once

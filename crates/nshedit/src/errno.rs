@@ -76,7 +76,7 @@ pub const ENOSPC: i32 = 28;
 pub const ERANGE: i32 = 34;
 
 /// C: `EWOULDBLOCK`. On Linux `EAGAIN` has the same value, which is why
-/// `read__fixio` needs only one label for the would-block condition.
+/// `read_fixio` needs only one label for the would-block condition.
 pub const EWOULDBLOCK: i32 = 11;
 
 thread_local! {

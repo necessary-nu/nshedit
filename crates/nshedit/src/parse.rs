@@ -317,8 +317,7 @@ pub fn el_wparse(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
 ///   a `\U+` escape at the very end of a string -1 as well, which is the same
 ///   answer the C already gives for `\U+` and `\U+0` and a deterministic one
 ///   for the four- and five-digit cases it gets wrong.
-#[allow(non_snake_case)]
-pub(crate) fn parse__escape(ptr: &mut &[u32]) -> i32 {
+pub(crate) fn parse_escape(ptr: &mut &[u32]) -> i32 {
     let p: &[u32] = ptr;
 
     // The two-character rule: ERR-input-36, and ERR-input-11 defined.
@@ -405,7 +404,7 @@ pub(crate) fn parse__escape(ptr: &mut &[u32]) -> i32 {
             }
             // D. Anything else after the backslash is itself: `\\` is 0x5C,
             // `\q` is `'q'`, and `\M` is `'M'`, which is what defeats
-            // `parse__string`'s meta form.
+            // `parse_string`'s meta form.
             _ => e,
         }
     } else if at(p, 0) == u32::from(b'^') {
@@ -448,8 +447,7 @@ pub(crate) fn parse__escape(ptr: &mut &[u32]) -> i32 {
 /// `\U+` escape at end of string left the cursor beyond the terminator, and
 /// keeps going through adjacent memory until it happens on a zero. That falls
 /// out with `ERR-input-10`: such an escape is -1 here, so the loop stops.
-#[allow(non_snake_case)]
-pub(crate) fn parse__string<'a>(out: &'a mut [u32], r#in: &[u32]) -> Option<&'a [u32]> {
+pub(crate) fn parse_string<'a>(out: &'a mut [u32], r#in: &[u32]) -> Option<&'a [u32]> {
     let mut inp: &[u32] = r#in;
     let mut n = 0usize;
 
@@ -461,7 +459,7 @@ pub(crate) fn parse__string<'a>(out: &'a mut [u32], r#in: &[u32]) -> Option<&'a 
             return Some(&out[..n]);
         }
         if ch == u32::from(b'\\') || ch == u32::from(b'^') {
-            let v = parse__escape(&mut inp);
+            let v = parse_escape(&mut inp);
             if v == -1 {
                 return None;
             }
@@ -519,22 +517,22 @@ mod tests {
         s.chars().map(u32::from).collect()
     }
 
-    /// [`parse__escape`] over `s`: the value it returned and how many
+    /// [`parse_escape`] over `s`: the value it returned and how many
     /// characters it consumed. The consumed count is half the contract — the
-    /// cursor is how `parse__string` finds the next escape — and it is where
+    /// cursor is how `parse_string` finds the next escape — and it is where
     /// both of this function's frozen defects show.
     fn esc(s: &str) -> (i32, usize) {
         let v = w(s);
         let mut p: &[u32] = &v;
-        let rv = parse__escape(&mut p);
+        let rv = parse_escape(&mut p);
         (rv, v.len() - p.len())
     }
 
-    /// [`parse__string`] over `s`, with the output buffer the C requires.
+    /// [`parse_string`] over `s`, with the output buffer the C requires.
     fn dec(s: &str) -> Option<Vec<u32>> {
         let r#in = w(s);
         let mut out = vec![0u32; r#in.len() + 1];
-        parse__string(&mut out, &r#in).map(<[u32]>::to_vec)
+        parse_string(&mut out, &r#in).map(<[u32]>::to_vec)
     }
 
     /// The dispatch table is the entire editrc vocabulary, and a name paired
@@ -613,7 +611,7 @@ mod tests {
     /// The named escapes are lower case only, so `\E` is not ESC — it falls
     /// through to "anything else after a backslash is itself" and yields
     /// `'E'`. The same fall-through is what makes `\M` a literal `M`, which
-    /// is the documented way to defeat [`parse__string`]'s meta form.
+    /// is the documented way to defeat [`parse_string`]'s meta form.
     #[test]
     fn the_named_escapes_are_lower_case_only() {
         assert_eq!(esc("\\a").0, 0x07);
@@ -708,7 +706,7 @@ mod tests {
     fn an_embedded_nul_is_kept_and_only_the_length_reveals_it() {
         let r#in = w("^@a");
         let mut out = vec![0xdead_beefu32; r#in.len() + 1];
-        let got = parse__string(&mut out, &r#in).expect("well formed");
+        let got = parse_string(&mut out, &r#in).expect("well formed");
         assert_eq!(got, [0, u32::from(b'a')]);
         assert_eq!(out[2], 0, "the C's terminator, past the returned slice");
         assert_eq!(dec("\\0x"), Some(vec![0, u32::from(b'x')]));

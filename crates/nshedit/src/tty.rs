@@ -10,7 +10,7 @@ use crate::fcns::{
 use crate::keymacro::keymacro_clear;
 use crate::locale::MB_LEN_MAX;
 use crate::map::{ElMapCurrent, MAP_VI, N_KEYS};
-use crate::parse::parse__escape;
+use crate::parse::parse_escape;
 use crate::terminal::TERM_CAN_TAB;
 
 /// C: `#define NN_IO 3` — the number of I/O modes (`ED_IO`, `EX_IO`,
@@ -100,8 +100,8 @@ pub const C_PGOFF: usize = 20;
 pub const C_KILL2: usize = 21;
 /// C: `#define C_BRK 22`.
 ///
-/// Inert in both directions: neither `tty__getchar` nor `tty__setchar` has a
-/// `VBRK` assignment on any platform, and `tty__getcharindex` has no case for
+/// Inert in both directions: neither `tty_get_chars` nor `tty_set_chars` has a
+/// `VBRK` assignment on any platform, and `tty_char_index` has no case for
 /// it (ERR-terminal-05).
 pub const C_BRK: usize = 22;
 /// C: `#define C_MIN 23`.
@@ -273,10 +273,10 @@ fn cfgetospeed(t: &Termios) -> u32 {
 /// and it has no `c_ispeed`/`c_ospeed` members — so the port can carry only
 /// one speed. glibc encodes "input speed 0" in a private `c_iflag` bit and the
 /// BSDs keep a separate `c_ispeed` field; neither is expressible here. The
-/// consequence is confined and stated: `tty__getspeed`'s `spd == 0` branch,
+/// consequence is confined and stated: `tty_get_speed`'s `spd == 0` branch,
 /// which exists to spell POSIX's "an input speed of `B0` means the input speed
 /// equals the output speed", can never be taken, because this always answers
-/// the output speed already. The value `tty__getspeed` returns is the same
+/// the output speed already. The value `tty_get_speed` returns is the same
 /// either way.
 fn cfgetispeed(t: &Termios) -> u32 {
     cfgetospeed(t)
@@ -636,21 +636,18 @@ fn cc_set(td: &mut Termios, v: usize, b: u8) {
     }
 }
 
-/// C: `#define tty__gettabs(td) ((((td)->c_oflag & TAB3) == TAB3) ? 0 : 1)`.
-#[allow(non_snake_case)]
-fn tty__gettabs(td: &Termios) -> i32 {
+/// C: `#define tty_get_tabs(td) ((((td)->c_oflag & TAB3) == TAB3) ? 0 : 1)`.
+fn tty_get_tabs(td: &Termios) -> i32 {
     i32::from(td.c_oflag & plat::TAB3 != plat::TAB3)
 }
 
-/// C: `#define tty__geteightbit(td) (((td)->c_cflag & CSIZE) == CS8)`.
-#[allow(non_snake_case)]
-fn tty__geteightbit(td: &Termios) -> i32 {
+/// C: `#define tty_get_eight_bit(td) (((td)->c_cflag & CSIZE) == CS8)`.
+fn tty_get_eight_bit(td: &Termios) -> i32 {
     i32::from(td.c_cflag & plat::CSIZE == plat::CS8)
 }
 
-/// C: `#define tty__cooked_mode(td) ((td)->c_lflag & ICANON)`.
-#[allow(non_snake_case)]
-fn tty__cooked_mode(td: &Termios) -> bool {
+/// C: `#define tty_is_cooked_mode(td) ((td)->c_lflag & ICANON)`.
+fn tty_is_cooked_mode(td: &Termios) -> bool {
     td.c_lflag & plat::ICANON != 0
 }
 
@@ -707,14 +704,14 @@ fn with_tios<R>(
     r
 }
 
-/// C: `tty__setchar(&el->el_tty.<dst>, el->el_tty.t_c[row])`.
+/// C: `tty_set_chars(&el->el_tty.<dst>, el->el_tty.t_c[row])`.
 ///
 /// Both operands are fields of `el_tty`, so the row has to be copied out
 /// before the termios is borrowed. It is a `[u8; C_NCC]` and therefore `Copy`,
 /// which is what makes that a copy rather than a dance.
 fn setchar_from_row(el: &mut EditLine, dst: Tios, row: usize) {
     let chars = el.el_tty.t_c[row];
-    tty__setchar(tios_slot(el, dst), &chars);
+    tty_set_chars(tios_slot(el, dst), &chars);
 }
 
 /// The C's whole-struct `*dst = *src` on a `struct termios`.
@@ -879,9 +876,9 @@ fn tty_setup(el: &mut EditLine) -> i32 {
     }
 
     // Step 7. Derived from `t_ex`, which at this point still equals `t_or`.
-    el.el_tty.t_speed = tty__getspeed(&el.el_tty.t_ex);
-    el.el_tty.t_tabs = tty__gettabs(&el.el_tty.t_ex);
-    el.el_tty.t_eight = tty__geteightbit(&el.el_tty.t_ex);
+    el.el_tty.t_speed = tty_get_speed(&el.el_tty.t_ex);
+    el.el_tty.t_tabs = tty_get_tabs(&el.el_tty.t_ex);
+    el.el_tty.t_eight = tty_get_eight_bit(&el.el_tty.t_ex);
 
     // Step 8.
     with_tios(el, Tios::Ex, |el, t| tty_setup_flags(el, t, EX_IO as i32));
@@ -889,8 +886,8 @@ fn tty_setup(el: &mut EditLine) -> i32 {
     // Step 9. Reset the terminal's control characters to sane values.
     if rst {
         // 9a. Only trust the terminal's characters if it was left canonical.
-        if tty__cooked_mode(&el.el_tty.t_ts) {
-            tty__getchar(&el.el_tty.t_ts, &mut el.el_tty.t_c[TS_IO]);
+        if tty_is_cooked_mode(&el.el_tty.t_ts) {
+            tty_get_chars(&el.el_tty.t_ts, &mut el.el_tty.t_c[TS_IO]);
 
             let vdis = el.el_tty.t_vdisable;
             // `0 .. C_NCC-2`, excluding `C_MIN` and `C_TIME`, so edit mode
@@ -1003,13 +1000,10 @@ pub fn tty_end(el: &mut EditLine, how: i32) {
 
 // [spec:libedit:def:tty.tty-getspeed-fn]
 // [spec:libedit:sem:tty.tty-getspeed-fn]
-/// C: `static speed_t tty__getspeed(struct termios *td)` — the pointer is
+/// C: `static speed_t tty_get_speed(struct termios *td)` — the pointer is
 /// non-const but only read.
 ///
-/// The C's doubled underscore is not snake case to rustc; the name stays,
-/// here and in the four below.
-#[allow(non_snake_case)]
-fn tty__getspeed(td: &Termios) -> SpeedT {
+fn tty_get_speed(td: &Termios) -> SpeedT {
     // The zero test is POSIX's convention that an input speed of `B0` means
     // "the input speed equals the output speed"; a genuine `B0` *output*
     // speed (hang up the line) is therefore reported as speed 0. The port
@@ -1030,8 +1024,7 @@ fn tty__getspeed(td: &Termios) -> SpeedT {
 /// which the C has no case for on *any* platform even where `VBRK` exists.
 /// That gap is what ERR-terminal-05 turns into an out-of-bounds write; see
 /// [`tty_stty`] for how the port defines it.
-#[allow(non_snake_case)]
-fn tty__getcharindex(i: i32) -> i32 {
+fn tty_char_index(i: i32) -> i32 {
     match usize::try_from(i).ok().and_then(|i| VSUB.get(i).copied()) {
         Some(Some(v)) => v as i32,
         // Out of range, an index the platform has no subscript for, `C_BRK`,
@@ -1040,8 +1033,8 @@ fn tty__getcharindex(i: i32) -> i32 {
     }
 }
 
-/// The `C_*` -> `V*` map, which is `tty__getcharindex`, `tty__getchar` and
-/// `tty__setchar` all three: the C spells the same conditional pair list out
+/// The `C_*` -> `V*` map, which is `tty_char_index`, `tty_get_chars` and
+/// `tty_set_chars` all three: the C spells the same conditional pair list out
 /// in each, and the three lists are identical.
 const VSUB: [Option<usize>; C_NCC] = {
     use plat::*;
@@ -1071,11 +1064,10 @@ const VSUB: [Option<usize>; C_NCC] = {
 
 // [spec:libedit:def:tty.tty-getchar-fn]
 // [spec:libedit:sem:tty.tty-getchar-fn]
-/// C: `static void tty__getchar(struct termios *td, unsigned char *s)` —
+/// C: `static void tty_get_chars(struct termios *td, unsigned char *s)` —
 /// reads `td->c_cc` by `V*` subscript into `s` by `C_*` index. `s` is one row
 /// of [`TtycharT`].
-#[allow(non_snake_case)]
-fn tty__getchar(td: &Termios, s: &mut [u8]) {
+fn tty_get_chars(td: &Termios, s: &mut [u8]) {
     // Slots whose `V*` subscript the platform lacks are **not written** —
     // they keep whatever the destination row already held, which is why the
     // caller must treat an unwritten slot as stale rather than as zero.
@@ -1094,10 +1086,9 @@ fn tty__getchar(td: &Termios, s: &mut [u8]) {
 
 // [spec:libedit:def:tty.tty-setchar-fn]
 // [spec:libedit:sem:tty.tty-setchar-fn]
-/// The inverse of [`tty__getchar`]: writes `s`, indexed by `C_*`, into
+/// The inverse of [`tty_get_chars`]: writes `s`, indexed by `C_*`, into
 /// `td->c_cc`, indexed by `V*`.
-#[allow(non_snake_case)]
-fn tty__setchar(td: &mut Termios, s: &[u8]) {
+fn tty_set_chars(td: &mut Termios, s: &[u8]) {
     // Only `c_cc` is touched — no flag word, no speed — and nothing is pushed
     // to the terminal, so the change reaches it only when a caller writes the
     // struct out. Slots whose `V*` subscript is absent are not written, and
@@ -1181,7 +1172,7 @@ pub(crate) fn tty_bind_char(el: &mut EditLine, force: i32) {
 
 // [spec:libedit:def:tty.tty-get-flag-fn]
 // [spec:libedit:sem:tty.tty-get-flag-fn]
-/// C: `static tcflag_t * tty__get_flag(struct termios *t, int kind)` — picks
+/// C: `static tcflag_t * tty_flag_mut(struct termios *t, int kind)` — picks
 /// one of the four mode words by `MD_INP`/`MD_OUT`/`MD_CTL`/`MD_LIN`, and
 /// aborts on anything else. `tcflag_t` is the `u32` [`Termios`] uses.
 ///
@@ -1192,14 +1183,13 @@ pub(crate) fn tty_bind_char(el: &mut EditLine, force: i32) {
 /// [`tty_update_flags`] are the only ones, both loop `MD_INP..=MD_LIN`, and
 /// [`tty_get_signal_character`] passes a literal. `MD_CHAR` is a bitmap over
 /// `C_*` indices with no flag word behind it and is never fed here.
-#[allow(non_snake_case)]
-fn tty__get_flag(t: &mut Termios, kind: i32) -> &mut u32 {
+fn tty_flag_mut(t: &mut Termios, kind: i32) -> &mut u32 {
     match kind {
         k if k == MD_INP as i32 => &mut t.c_iflag,
         k if k == MD_OUT as i32 => &mut t.c_oflag,
         k if k == MD_CTL as i32 => &mut t.c_cflag,
         k if k == MD_LIN as i32 => &mut t.c_lflag,
-        _ => unreachable!("tty__get_flag: {kind} is not a flag word (ERR-terminal-44)"),
+        _ => unreachable!("tty_flag_mut: {kind} is not a flag word (ERR-terminal-44)"),
     }
 }
 
@@ -1219,9 +1209,9 @@ fn tty_update_flag(el: &mut EditLine, f: u32, mode: i32, kind: i32) -> u32 {
 // [spec:libedit:def:tty.tty-update-flags-fn]
 // [spec:libedit:sem:tty.tty-update-flags-fn]
 fn tty_update_flags(el: &mut EditLine, kind: i32) {
-    let tt = *tty__get_flag(&mut el.el_tty.t_ts, kind);
-    let ed = *tty__get_flag(&mut el.el_tty.t_ed, kind);
-    let ex = *tty__get_flag(&mut el.el_tty.t_ex, kind);
+    let tt = *tty_flag_mut(&mut el.el_tty.t_ts, kind);
+    let ed = *tty_flag_mut(&mut el.el_tty.t_ed, kind);
+    let ex = *tty_flag_mut(&mut el.el_tty.t_ex, kind);
 
     // If the terminal's word still equals the execute word, nothing changed
     // since libedit last wrote it, so there is nothing to adopt. The extra
@@ -1236,8 +1226,8 @@ fn tty_update_flags(el: &mut EditLine, kind: i32) {
         // the target mode is discarded in favour of the terminal's value.
         let ned = tty_update_flag(el, tt, ED_IO as i32, kind);
         let nex = tty_update_flag(el, tt, EX_IO as i32, kind);
-        *tty__get_flag(&mut el.el_tty.t_ed, kind) = ned;
-        *tty__get_flag(&mut el.el_tty.t_ex, kind) = nex;
+        *tty_flag_mut(&mut el.el_tty.t_ed, kind) = ned;
+        *tty_flag_mut(&mut el.el_tty.t_ex, kind) = nex;
     }
 }
 
@@ -1285,13 +1275,13 @@ pub fn tty_rawmode(el: &mut EditLine) -> i32 {
 
     // Step 4. Speed and the eight-bit setting are always believed; everything
     // else is believed only when the terminal was left canonical.
-    el.el_tty.t_eight = tty__geteightbit(&el.el_tty.t_ts);
-    el.el_tty.t_speed = tty__getspeed(&el.el_tty.t_ts);
+    el.el_tty.t_eight = tty_get_eight_bit(&el.el_tty.t_ts);
+    el.el_tty.t_speed = tty_get_speed(&el.el_tty.t_ts);
 
     // Step 5. Note this forces input speed equal to output speed on both
     // structures even if only one of them was stale. Return values ignored.
     let speed = el.el_tty.t_speed;
-    if tty__getspeed(&el.el_tty.t_ex) != speed || tty__getspeed(&el.el_tty.t_ed) != speed {
+    if tty_get_speed(&el.el_tty.t_ex) != speed || tty_get_speed(&el.el_tty.t_ed) != speed {
         cfsetispeed(&mut el.el_tty.t_ex, speed);
         cfsetospeed(&mut el.el_tty.t_ex, speed);
         cfsetispeed(&mut el.el_tty.t_ed, speed);
@@ -1299,7 +1289,7 @@ pub fn tty_rawmode(el: &mut EditLine) -> i32 {
     }
 
     // Step 6. "The terminal is in cooked mode, so believe what we see."
-    if tty__cooked_mode(&el.el_tty.t_ts) {
+    if tty_is_cooked_mode(&el.el_tty.t_ts) {
         // 6a.
         for kind in MD_INP..=MD_LIN {
             tty_update_flags(el, kind as i32);
@@ -1307,14 +1297,14 @@ pub fn tty_rawmode(el: &mut EditLine) -> i32 {
 
         // 6b. Note this inspects `t_ex`, which 6a may just have rewritten,
         // not the raw snapshot.
-        if tty__gettabs(&el.el_tty.t_ex) == 0 {
+        if tty_get_tabs(&el.el_tty.t_ex) == 0 {
             el.el_tty.t_tabs = 0;
         } else {
             el.el_tty.t_tabs = i32::from(el_can_tab(el));
         }
 
         // 6c.
-        tty__getchar(&el.el_tty.t_ts, &mut el.el_tty.t_c[TS_IO]);
+        tty_get_chars(&el.el_tty.t_ts, &mut el.el_tty.t_c[TS_IO]);
 
         // 6d. Did the user change anything? If not, the whole propagation
         // block is skipped.
@@ -1659,7 +1649,7 @@ fn tty_stty_edit(
 
             // `name=` with nothing after the `=` disables the character;
             // otherwise the text is parsed as an escape (`^X`, `\n`, `\033`,
-            // a literal char, ...). `parse__escape` returns -1 for a
+            // a literal char, ...). `parse_escape` returns -1 for a
             // malformed escape and the result is stored as `(cc_t)-1` = 0xFF
             // with no check — reproduced, and it is why `setty erase=X` is
             // 0xFF while `setty erase=^H` works (ERR-input-36).
@@ -1668,21 +1658,21 @@ fn tty_stty_edit(
                 i32::from(el.el_tty.t_vdisable)
             } else {
                 let mut cur: &[u32] = after;
-                parse__escape(&mut cur)
+                parse_escape(&mut cur)
             };
 
-            let sub = tty__getcharindex(c as i32);
+            let sub = tty_char_index(c as i32);
             if sub >= 0 {
                 // The write lands in the selected `struct termios` **only**;
                 // `el->el_tty.t_c[z][...]` is not updated, so any later
-                // `tty__setchar` from `t_c` — which `tty_rawmode` performs
+                // `tty_set_chars` from `t_c` — which `tty_rawmode` performs
                 // whenever it detects a control-character change — silently
                 // reverts it (ERR-terminal-38, disposition `reproduce`). This
                 // is what makes `setty erase=^H` in an `.editrc` not stick.
                 cc_set(tios, sub as usize, v as u8);
             }
             // ERR-terminal-05, disposition `define — reject the unmapped
-            // index`: `tty__getcharindex` has no `C_BRK` case, so on a
+            // index`: `tty_char_index` has no `C_BRK` case, so on a
             // platform whose `ttymodes` carries `brk` the C computes -1 and,
             // once `assert` is compiled out under `NDEBUG`, writes
             // `tios->c_cc[-1]`. Here the write is simply skipped. Unreachable
@@ -1750,6 +1740,7 @@ fn encode_char(c: u32) -> Vec<u8> {
 /// newline fires on `i == 0`, so the output opens with a blank line and the
 /// grouping is offset by one; and the caret rendering `s[i] + 'A' - 1`
 /// produces garbage for any byte outside 1..26, the disable byte included.
+#[cfg(test)]
 fn tty_printchar(el: &mut EditLine, s: &[u8]) {
     let mut out: Vec<u8> = Vec::new();
     for (i, &b) in s.iter().enumerate().take(C_NCC) {
@@ -1781,7 +1772,7 @@ fn tty_setup_flags(el: &mut EditLine, tios: &mut Termios, mode: i32) {
     // Each of `c_iflag`, `c_oflag`, `c_cflag`, `c_lflag` has the mode's
     // `t_clrmask` bits cleared and then its `t_setmask` bits set. `MD_CHAR`
     // is deliberately excluded — control characters are never touched here,
-    // which is also what keeps `tty__get_flag` total. Speed is not touched
+    // which is also what keeps `tty_flag_mut` total. Speed is not touched
     // either, and nothing is pushed to the terminal; the caller decides
     // whether and when to write the struct out.
     //
@@ -1789,9 +1780,9 @@ fn tty_setup_flags(el: &mut EditLine, tios: &mut Termios, mode: i32) {
     // *current*, possibly `setty`-modified, copy of the table rather than on
     // the compiled-in defaults.
     for kind in MD_INP..=MD_LIN {
-        let f = *tty__get_flag(tios, kind as i32);
+        let f = *tty_flag_mut(tios, kind as i32);
         let nf = tty_update_flag(el, f, mode, kind as i32);
-        *tty__get_flag(tios, kind as i32) = nf;
+        *tty_flag_mut(tios, kind as i32) = nf;
     }
 }
 
@@ -1829,7 +1820,7 @@ fn tty_setup_flags(el: &mut EditLine, tios: &mut Termios, mode: i32) {
 #[doc(hidden)]
 pub fn tty_get_signal_character(el: &mut EditLine, sig: i32) -> i32 {
     // ERR-terminal-36, exactly as written: `MD_INP`, not `MD_LIN`.
-    let ed = *tty__get_flag(&mut el.el_tty.t_ed, MD_INP as i32);
+    let ed = *tty_flag_mut(&mut el.el_tty.t_ed, MD_INP as i32);
     if ed & plat::ECHOCTL == 0 {
         return -1;
     }

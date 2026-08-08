@@ -8,7 +8,7 @@ use crate::testkit::{headless_editor, killed, set_line, text};
 ///
 /// `headless_editor` leaves the shipped default, vi insert mode, so
 /// `map_init_emacs` runs over the top of it. That call is also the only thing
-/// that installs `el_map.wordchars` — the `*?_-.[]~=` set `ce__isword`
+/// that installs `el_map.wordchars` — the `*?_-.[]~=` set `ce_is_word`
 /// consults, under which a `.` sits *inside* a word — so a fixture without it
 /// would be testing an editor `el_init` never produces.
 fn el_with(s: &str, at: usize) -> EditLine {

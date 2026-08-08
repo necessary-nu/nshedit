@@ -54,7 +54,7 @@ fn end_of_file_terminates_the_line_without_editing_it() {
 
 // [spec:libedit:sem:common.ed-delete-prev-word-fn/test]
 /// `^W` cuts back to the start of the word before the cursor and leaves
-/// the cursor there. The word test is `ce__isword`, which consults
+/// the cursor there. The word test is `ce_is_word`, which consults
 /// `el_map.wordchars` — so under the emacs set a `.` is *inside* the word
 /// and the whole of `ab.cd` goes, which is the shape of ERR-modes-53.
 #[test]

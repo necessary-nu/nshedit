@@ -269,7 +269,6 @@ pub fn tok_reset_gen<C: TokChar>(tok: &mut TokenizerGen<C>) {
 // [spec:libedit:sem:tokenizer.fun-tok-end-fn]
 /// C: `void FUN(tok,end)(TYPE(Tokenizer) *tok)` — four `free`s, including
 /// the handle itself, so this consumes the `Box` [`tok_init_gen`] handed out.
-#[allow(clippy::boxed_local)]
 pub fn tok_end_gen<C: TokChar>(tok: Box<TokenizerGen<C>>) {
     // C: `free(ifs)`, `free(wspace)`, `free(argv)`, `free(tok)`, in that
     // order, with nothing zeroed first. Dropping the box runs the three Vec

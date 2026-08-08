@@ -1,10 +1,6 @@
 //! Ported from `src/refresh.c`; rules live in
 //! `docs/spec/port/src/refresh.md`.
 
-// The C's function names are kept verbatim, and the `re__` family is not
-// snake case.
-#![allow(non_snake_case)]
-
 use crate::chartype::{
     CHTYPE_ASCIICTL, CHTYPE_NL, CHTYPE_NONPRINT, CHTYPE_PRINT, CHTYPE_TAB, MB_FILL_CHAR,
     VISUAL_WIDTH_MAX, ct_chr_class, ct_visual_char, ct_visual_width,
@@ -15,8 +11,8 @@ use crate::locale;
 use crate::map::ElMapCurrent;
 use crate::prompt::{PromptSide, prompt_print};
 use crate::terminal::{
-    terminal__flush, terminal__putc, terminal_clear_EOL, terminal_deletechars,
-    terminal_insertwrite, terminal_move_to_char, terminal_move_to_line, terminal_overwrite,
+    terminal_clear_eol, terminal_deletechars, terminal_flush, terminal_insertwrite,
+    terminal_move_to_char, terminal_move_to_line, terminal_overwrite, terminal_putc,
 };
 
 // The `el_terminal.t_flags` bits this module tests, via the C's `EL_CAN_*` /
@@ -47,7 +43,7 @@ const SPACE: u32 = b' ' as u32;
 /// One cell of a screen row, answering NUL for anything past its end.
 ///
 /// The C walks rows as `wchar_t *` and relies on every row carrying a
-/// terminator inside its `t_size.h + 1` cells — `re__copy_and_pad` writes one
+/// terminator inside its `t_size.h + 1` cells — `re_copy_and_pad` writes one
 /// at `[t_size.h]`, and `re_putc`/`re_putliteral` write one there before every
 /// wrap. Reading past the end is undefined in the C and is defined here as
 /// reading the terminator that should have been there, so a row left
@@ -114,6 +110,7 @@ pub struct ElRefreshT {
 /// build doing what only a `DEBUG_REFRESH` one may; leaving the formatter
 /// written and tested means turning tracing on is adding a call rather than
 /// reconstructing the format from the rule.
+#[cfg(test)]
 fn re_printstr(el: &EditLine, str: &str, f: &[u32]) {
     // C: `fprintf(__F, "%s:\"", str)`, then `"%c"` per character, then
     // `"\"\r\n"`. The `0177` mask folds every wide character into the ASCII
@@ -477,7 +474,7 @@ pub fn re_refresh(el: &mut EditLine) {
         let row = i as usize;
         re_update_line(el, row, row, i);
         // Disjoint fields, so the two borrows coexist.
-        re__copy_and_pad(&mut el.el_display[row], &el.el_vdisplay[row], width);
+        re_copy_and_pad(&mut el.el_display[row], &el.el_vdisplay[row], width);
     }
 
     // Step 13: the previous image was taller, so erase the surplus rows. The
@@ -495,7 +492,7 @@ pub fn re_refresh(el: &mut EditLine) {
             terminal_move_to_line(el, i);
             terminal_move_to_char(el, 0);
             let len = wcslen(&el.el_display[i as usize]) as i32;
-            terminal_clear_EOL(el, len);
+            terminal_clear_eol(el, len);
             el.el_display[i as usize][0] = 0;
         }
     }
@@ -516,13 +513,13 @@ pub(crate) fn re_goto_bottom(el: &mut EditLine) {
     // Step 2: no `'\r'` — libedit relies on the tty's ONLCR translation to
     // turn this into a CR/LF, the same assumption `terminal_move_to_line`
     // makes when it moves downwards.
-    terminal__putc(el, u32::from(b'\n'));
+    terminal_putc(el, u32::from(b'\n'));
     // Step 3: from here on libedit treats the current physical line as the new
     // origin of the region it owns, so the recorded cursor becomes (0, 0)
     // rather than a row further down.
     re_clear_display(el);
     // Step 4.
-    terminal__flush(el);
+    terminal_flush(el);
 }
 
 // [spec:libedit:def:refresh.re-insert-fn]
@@ -561,7 +558,7 @@ fn re_insert(d: &mut [u32], dat: i32, dlen: i32, s: &[u32], num: i32) {
         d[dlen as usize] = 0;
     }
 
-    // Step 4: copy the new content in. Unlike `re__strncopy` this does not
+    // Step 4: copy the new content in. Unlike `re_strncopy` this does not
     // stop at a NUL in `s`, so exactly `num` cells are written subject to the
     // `d + dlen` bound. Every in-tree call passes `s` running to the end of an
     // `el_vdisplay` row, which by the lockstep-prefix invariant is always at
@@ -605,7 +602,7 @@ fn re_delete(d: &mut [u32], dat: i32, dlen: i32, num: i32) {
     // practice the string's own terminator is shifted down with the rest, so
     // the row still reads correctly. The exception is a row that was full to
     // `dlen`, which is left unterminated until `re_refresh` rebuilds it with
-    // `re__copy_and_pad`.
+    // `re_copy_and_pad`.
     d[dlen as usize] = 0;
 }
 
@@ -614,7 +611,7 @@ fn re_delete(d: &mut [u32], dat: i32, dlen: i32, num: i32) {
 /// `a` is a position in an `el_display` row, `b` the matching position in
 /// an `el_vdisplay` row. Different fields of the same `EditLine`, so the
 /// two borrows coexist.
-fn re__strncopy(a: &mut [u32], b: &[u32], n: usize) {
+fn re_strncopy(a: &mut [u32], b: &[u32], n: usize) {
     // The C's `while (n-- && *b) *a++ = *b++;` — at most `n` cells, stopping
     // at the first NUL in `b`, and unlike `strncpy` it neither pads the
     // destination nor writes a terminator. That is deliberate:
@@ -659,10 +656,10 @@ fn re_clear_eol(el: &mut EditLine, fx: i32, sx: i32, diff: i32) {
     // clamped at zero and the incoming `diff` may be negative. Both call sites
     // are reached only when the corresponding `fx` or `sx` is strictly
     // negative, so the result is always positive in practice; a port must not
-    // rely on that if it reuses the helper, since `terminal_clear_EOL` with a
+    // rely on that if it reuses the helper, since `terminal_clear_eol` with a
     // negative count writes nothing but still moves its recorded column
     // backwards.
-    terminal_clear_EOL(el, diff);
+    terminal_clear_eol(el, diff);
 }
 
 // [spec:libedit:def:refresh.re-update-line-fn]
@@ -929,7 +926,7 @@ fn re_update_line(el: &mut EditLine, old: usize, new: usize, i: i32) {
             // `len` equals `osb - ofd` and so is never negative.
             let len = ((nsb - nfd) - fx) as usize;
             terminal_overwrite(el, &nrow[(nfd + fx) as usize..], len);
-            re__strncopy(
+            re_strncopy(
                 &mut el.el_display[old][(ofd + fx) as usize..],
                 &nrow[(nfd + fx) as usize..],
                 len,
@@ -939,7 +936,7 @@ fn re_update_line(el: &mut EditLine, old: usize, new: usize, i: i32) {
             // Nothing beyond: the row is finished.
             let len = (nsb - nfd) as usize;
             terminal_overwrite(el, &nrow[nfd as usize..], len);
-            re__strncopy(
+            re_strncopy(
                 &mut el.el_display[old][ofd as usize..],
                 &nrow[nfd as usize..],
                 len,
@@ -958,7 +955,7 @@ fn re_update_line(el: &mut EditLine, old: usize, new: usize, i: i32) {
             }
             let len = (nsb - nfd) as usize;
             terminal_overwrite(el, &nrow[nfd as usize..], len);
-            re__strncopy(
+            re_strncopy(
                 &mut el.el_display[old][ofd as usize..],
                 &nrow[nfd as usize..],
                 len,
@@ -1003,7 +1000,7 @@ fn re_update_line(el: &mut EditLine, old: usize, new: usize, i: i32) {
         }
         // Neither branch mirrors anything into `old`; from here on the old
         // image is stale. That is safe only because `re_refresh` rewrites the
-        // whole row with `re__copy_and_pad` immediately afterwards. It is
+        // whole row with `re_copy_and_pad` immediately afterwards. It is
         // *not* safe to reorder these steps: `terminal_move_to_char` moves
         // rightwards by replaying characters out of `el_display`, so `old`
         // must still be accurate for every column to the left of the next
@@ -1040,7 +1037,7 @@ fn re_update_line(el: &mut EditLine, old: usize, new: usize, i: i32) {
             }
             let len = ((nsb - nfd) - fx) as usize;
             terminal_overwrite(el, &nrow[(nfd + fx) as usize..], len);
-            re__strncopy(
+            re_strncopy(
                 &mut el.el_display[old][(ofd + fx) as usize..],
                 &nrow[(nfd + fx) as usize..],
                 len,
@@ -1048,7 +1045,7 @@ fn re_update_line(el: &mut EditLine, old: usize, new: usize, i: i32) {
         } else {
             let len = (nsb - nfd) as usize;
             terminal_overwrite(el, &nrow[nfd as usize..], len);
-            re__strncopy(
+            re_strncopy(
                 &mut el.el_display[old][ofd as usize..],
                 &nrow[nfd as usize..],
                 len,
@@ -1080,7 +1077,7 @@ fn re_update_line(el: &mut EditLine, old: usize, new: usize, i: i32) {
 
 // [spec:libedit:def:refresh.re-copy-and-pad-fn]
 // [spec:libedit:sem:refresh.re-copy-and-pad-fn]
-fn re__copy_and_pad(dst: &mut [u32], src: &[u32], width: usize) {
+fn re_copy_and_pad(dst: &mut [u32], src: &[u32], width: usize) {
     // Step 1: copy until `width` cells or the source terminator, whichever
     // comes first. `MB_FILL_CHAR` cells are copied like any other; being
     // `(wint_t)-1` they are non-zero and never terminate the copy. The C
@@ -1200,7 +1197,7 @@ pub(crate) fn re_refresh_cursor(el: &mut EditLine) {
     // Step 5.
     terminal_move_to_line(el, v);
     terminal_move_to_char(el, h);
-    terminal__flush(el);
+    terminal_flush(el);
 }
 
 // [spec:libedit:def:refresh.re-fastputc-fn]
@@ -1218,9 +1215,9 @@ fn re_fastputc(el: &mut EditLine, c: u32) {
         re_fastputc(el, SPACE);
     }
 
-    // Step 3: `terminal__putc` writes nothing at all for `MB_FILL_CHAR` and
+    // Step 3: `terminal_putc` writes nothing at all for `MB_FILL_CHAR` and
     // expands an `EL_LITERAL` magic character to its saved byte string.
-    terminal__putc(el, c);
+    terminal_putc(el, c);
 
     // Step 4: a character of width `w` advances the column by `max(w, 1)` —
     // widths 0 and -1 still consume a whole cell and a whole column, the same
@@ -1277,7 +1274,7 @@ fn re_fastputc(el: &mut EditLine, c: u32) {
 
         if let Some(row) = lastline {
             let width = el.el_terminal.t_size.h.max(0) as usize;
-            re__copy_and_pad(&mut el.el_display[row], &[], width);
+            re_copy_and_pad(&mut el.el_display[row], &[], width);
         }
 
         // Force the physical wrap. With auto margins the terminal wraps by
@@ -1286,12 +1283,12 @@ fn re_fastputc(el: &mut EditLine, c: u32) {
         // backspace make the pending wrap resolve now.
         if el.el_terminal.t_flags & TERM_HAS_AUTO_MARGINS != 0 {
             if el.el_terminal.t_flags & TERM_HAS_MAGIC_MARGINS != 0 {
-                terminal__putc(el, SPACE);
-                terminal__putc(el, u32::from(b'\x08'));
+                terminal_putc(el, SPACE);
+                terminal_putc(el, u32::from(b'\x08'));
             }
         } else {
-            terminal__putc(el, u32::from(b'\r'));
-            terminal__putc(el, u32::from(b'\n'));
+            terminal_putc(el, u32::from(b'\r'));
+            terminal_putc(el, u32::from(b'\n'));
         }
     }
 }
@@ -1358,7 +1355,7 @@ pub(crate) fn re_fastaddc(el: &mut EditLine) {
         _ => {}
     }
 
-    terminal__flush(el);
+    terminal_flush(el);
 }
 
 // [spec:libedit:def:refresh.re-clear-display-fn]
@@ -1390,15 +1387,15 @@ pub fn re_clear_display(el: &mut EditLine) {
 /// has in common.
 ///
 /// ERR-terminal-52, disposition `reproduce`: it goes straight out through
-/// `terminal__putc`, so `el_cursor` never learns the terminal moved and the
+/// `terminal_putc`, so `el_cursor` never learns the terminal moved and the
 /// `terminal_move_to_line` that follows computes its motion from a stale
 /// value. The sequence is only coherent because the sole caller runs
 /// `re_clear_display` immediately afterwards, forcing the recorded cursor to
 /// (0, 0), and then redraws everything. The byte sequence a terminal receives
 /// is the observable behaviour, so this is reproduced rather than "repaired".
 fn scroll_one_line(el: &mut EditLine) {
-    terminal__putc(el, u32::from(b'\r'));
-    terminal__putc(el, u32::from(b'\n'));
+    terminal_putc(el, u32::from(b'\r'));
+    terminal_putc(el, u32::from(b'\n'));
 }
 
 /// Really blank rows `0..=rows`, bottom-up, one clear-to-end-of-line each.
@@ -1414,7 +1411,7 @@ fn clear_rows_bottom_up(el: &mut EditLine, rows: i32) {
         terminal_move_to_line(el, i);
         terminal_move_to_char(el, 0);
         let h = el.el_terminal.t_size.h;
-        terminal_clear_EOL(el, h);
+        terminal_clear_eol(el, h);
     }
 }
 

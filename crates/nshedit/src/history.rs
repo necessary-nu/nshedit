@@ -39,8 +39,6 @@
 // through `el_history.ref` (a `void *`), `history_init_gen`/`history_end_gen`
 // because they are `malloc`/`free` in the C. The lint is about the public
 // face, and this face is the C ABI's.
-#![allow(clippy::not_unsafe_ptr_arg_deref)]
-
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 use std::collections::VecDeque;
@@ -1263,6 +1261,10 @@ pub fn history_init_gen<C: HistChar>() -> *mut HistoryGen<C> {
 /// build and `history_end` in the narrow one, both declared in `histedit.h`.
 /// The two spellings are [`history_wend`] and [`history_end`]. Frees `h`; the
 /// caller must not touch it again.
+#[expect(
+    clippy::not_unsafe_ptr_arg_deref,
+    reason = "the temporary compatibility handle is validated before its owned allocation is reclaimed"
+)]
 pub fn history_end_gen<C: HistChar>(h: *mut HistoryGen<C>) {
     if h.is_null() {
         // The C does not check, so a NULL `h` dereferences — undefined, not a
@@ -2141,6 +2143,10 @@ pub enum HistoryArg<'a, C> {
 /// opcode, whose numbering is ABI. `h` is raw because the C does not check it
 /// for NULL, because internal callers reach it through `el_history.ref` (a
 /// `void *`), and because `H_END` frees it here.
+#[expect(
+    clippy::not_unsafe_ptr_arg_deref,
+    reason = "the temporary compatibility dispatcher validates its opaque handle before borrowing it"
+)]
 pub fn history_gen<C: HistChar>(
     h: *mut HistoryGen<C>,
     ev: &mut HistEventGen<C>,

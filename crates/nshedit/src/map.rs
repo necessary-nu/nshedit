@@ -13,11 +13,11 @@ use crate::fcns::*;
 // call, so the tag is `keymacro.h`'s and belongs with the module that owns
 // that header.
 use crate::keymacro::{
-    XK_CMD, XK_STR, keymacro__decode_str, keymacro_add, keymacro_clear, keymacro_delete,
+    XK_CMD, XK_STR, keymacro_add, keymacro_clear, keymacro_decode_str, keymacro_delete,
     keymacro_map_cmd, keymacro_map_str, keymacro_print, keymacro_reset,
 };
 use crate::locale;
-use crate::parse::{parse__string, parse_cmd};
+use crate::parse::{parse_cmd, parse_string};
 use crate::terminal::{
     terminal_bind_arrow, terminal_clear_arrow, terminal_print_arrow, terminal_set_arrow,
 };
@@ -38,7 +38,7 @@ pub const N_KEYS: usize = 256;
 // the module that ends up owning its header.
 
 /// C: `#define STRQQ "\"\""` (`chared.h`) — the separator that makes
-/// `keymacro__decode_str` wrap its rendering in double quotes.
+/// `keymacro_decode_str` wrap its rendering in double quotes.
 const STRQQ: &[u8] = b"\"\"";
 
 /// C: `CONTROL('X')` (`tty.h`: `(A) & 037`) — the lead-in of emacs mode's one
@@ -1359,7 +1359,7 @@ fn map_print_key(el: &mut EditLine, map: ElMapCurrent, r#in: &[u32]) {
     // The empty separator means no surrounding quotes. An empty `in` renders
     // as `^@` and looks up `map[0]`, so `bind ""` reports the binding of NUL.
     let mut outbuf = [0u8; EL_BUFSIZ];
-    keymacro__decode_str(upto_nul(r#in), &mut outbuf, EL_BUFSIZ, b"");
+    keymacro_decode_str(upto_nul(r#in), &mut outbuf, EL_BUFSIZ, b"");
 
     // ERR-modes-31: the keymap index is `(unsigned char) *in`, so a first
     // character above U+00FF wraps modulo 256 onto an unrelated slot.
@@ -1559,12 +1559,12 @@ pub fn map_bind(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
         upto_nul(arg)
     } else {
         // ERR-modes-13, disposition define: the C decodes into a 1024-wide
-        // character stack buffer and `parse__string` bounds nothing, so a
+        // character stack buffer and `parse_string` bounds nothing, so a
         // longer argument smashes the stack. The buffer is sized by the input
         // here — the decode never grows a string — which removes the overflow
         // without truncating anything the C would have accepted.
         let mut buf = vec![0u32; arg.len() + 1];
-        let Some(n) = parse__string(&mut buf, arg).map(<[u32]>::len) else {
+        let Some(n) = parse_string(&mut buf, arg).map(<[u32]>::len) else {
             let mut out = wcs_to_mb(prog);
             out.extend_from_slice(b": Invalid \\ or ^ in instring.\n");
             el.write_errfile(&out);
@@ -1625,7 +1625,7 @@ pub fn map_bind(el: &mut EditLine, argc: i32, argv: &[&[u32]]) -> i32 {
     match ntype {
         XK_STR => {
             let mut buf = vec![0u32; value.len() + 1];
-            let Some(n) = parse__string(&mut buf, value).map(<[u32]>::len) else {
+            let Some(n) = parse_string(&mut buf, value).map(<[u32]>::len) else {
                 let mut out = wcs_to_mb(prog);
                 out.extend_from_slice(b": Invalid \\ or ^ in outstring.\n");
                 el.write_errfile(&out);
@@ -1796,11 +1796,11 @@ fn wcsdup(s: &[u32]) -> Option<Vec<u32>> {
     Some(out)
 }
 
-/// C: `keymacro__decode_str(str, buf, sizeof buf, sep)` followed by `%s` of
+/// C: `keymacro_decode_str(str, buf, sizeof buf, sep)` followed by `%s` of
 /// the result, which is what all six call sites in `map.c` do.
 fn decode(s: &[u32], sep: &[u8]) -> Vec<u8> {
     let mut buf = [0u8; EL_BUFSIZ];
-    keymacro__decode_str(upto_nul(s), &mut buf, EL_BUFSIZ, sep);
+    keymacro_decode_str(upto_nul(s), &mut buf, EL_BUFSIZ, sep);
     upto_nul(&buf).to_vec()
 }
 

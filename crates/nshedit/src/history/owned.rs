@@ -90,7 +90,7 @@ impl OwnedHistoryW {
     /// table does not reach — `history_load_in`, whose opcode only takes a
     /// path. Not offered to callers: [`OwnedHistoryW::exec`] is the escape
     /// hatch, and it is the one that stays inside the C's own surface.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "bsd"))]
     pub(super) fn handle(&mut self) -> &mut HistoryW {
         // SAFETY: the handle is the one `history_winit` returned into this
         // wrapper's field, which only `Drop` releases.
