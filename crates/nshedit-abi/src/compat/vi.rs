@@ -1472,4 +1472,5 @@ pub(crate) fn vi_redo(el: &mut EditLine, c: u32) -> ElActionT {
 }
 
 #[cfg(test)]
+#[path = "vi/test.rs"]
 mod test;

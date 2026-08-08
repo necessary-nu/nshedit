@@ -189,8 +189,11 @@ pub mod refresh;
 pub mod keymacro;
 #[path = "../../nshedit-abi/src/compat/map.rs"]
 pub mod map;
+#[path = "../../nshedit-abi/src/compat/parse.rs"]
 pub mod parse;
+#[path = "../../nshedit-abi/src/compat/read.rs"]
 pub mod read;
+#[path = "../../nshedit-abi/src/compat/sig.rs"]
 pub mod sig;
 
 // History storage and search.
@@ -199,6 +202,7 @@ pub mod hist;
 pub mod histfile;
 // [spec:nshedit:req:core.history+1]
 pub mod history;
+#[path = "../../nshedit-abi/src/compat/search.rs"]
 pub mod search;
 
 // Editor command sets, and the command table `src/makelist` generates from
@@ -209,6 +213,7 @@ pub mod common;
 pub mod emacs;
 #[path = "../../nshedit-abi/src/compat/fcns.rs"]
 pub(crate) mod fcns;
+#[path = "../../nshedit-abi/src/compat/vi.rs"]
 pub mod vi;
 
 // Completion and tokenization.
@@ -224,4 +229,5 @@ pub mod el;
 // of them because five modules were each constructing their own and no two
 // agreed on which subsystem a headless editor still needs.
 #[cfg(test)]
+#[path = "../../nshedit-abi/src/compat/testkit.rs"]
 mod testkit;

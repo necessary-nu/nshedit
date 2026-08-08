@@ -1185,6 +1185,7 @@ pub(crate) fn cv_csearch(
 }
 
 #[cfg(test)]
+#[path = "search/test.rs"]
 mod test;
 
 #[cfg(test)]
