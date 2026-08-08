@@ -1,47 +1,21 @@
 use super::*;
-use crate::chared::{DELETE, ch_init};
-use crate::el::blank_editline;
-use crate::map::MAP_EMACS;
-use crate::read::{el_wpush, read_init};
-use crate::search::search_init;
+use crate::chared::DELETE;
+use crate::map::map_init_emacs;
+use crate::read::el_wpush;
+use crate::testkit::{headless_editor, set_line};
 
-/// C: `wcsdup(L"*?_-.[]~=")` from `map_init_emacs`. `ch_init` does not
-/// install it and every word test in this file consults it, so a helper
-/// that left it unset would be testing an editor state `el_init` never
-/// produces — and one in which `.` is not a word character.
-const WORDCHARS_EMACS: &str = "*?_-.[]~=";
-
-/// An editor in the state `el_init` leaves behind, with `s` in the line
-/// and the cursor at `at`.
+/// The shared editor under the emacs bindings, with `s` in the line and
+/// the cursor at `at`.
 ///
-/// `ch_init` does the buffers: all four are `EL_BUFSIZ` and `limit` sits
-/// two slots below the end, which is the slack the insert paths shift
-/// into. The screen matters as much as the buffers — `re_refresh` walks
-/// `el_display` under `t_size`, and with a zero-sized terminal it
-/// recurses until the stack runs out — so a real one is fitted here even
-/// for tests that never look at it.
+/// `headless_editor` leaves the shipped default, vi insert mode, so
+/// `map_init_emacs` runs over the top of it. That call is also the only
+/// thing that installs `el_map.wordchars` — the `*?_-.[]~=` set every word
+/// test here consults, and under which `.` is a word character — so a
+/// fixture without it would be testing an editor `el_init` never produces.
 fn el_with(s: &str, at: usize) -> EditLine {
-    let mut el = blank_editline();
-    ch_init(&mut el);
-    let text: Vec<u32> = s.chars().map(u32::from).collect();
-    el.el_line.buffer[..text.len()].copy_from_slice(&text);
-    el.el_line.lastchar = text.len();
-    el.el_line.cursor = at;
-    // `el_init` allocates the pattern buffer; `c_setpat` writes through it.
-    search_init(&mut el);
-    // Nothing here has a terminal to talk to, and descriptor 0 is the
-    // test runner's. `write_fd` already treats a negative one as "no
-    // destination", so the editor writes into the void instead of
-    // spraying escape sequences over the test output.
-    el.el_infd = -1;
-    el.el_outfd = -1;
-    el.el_errfd = -1;
-    el.el_map.r#type = MAP_EMACS;
-    el.el_map.wordchars = Some(WORDCHARS_EMACS.chars().map(u32::from).collect());
-    el.el_terminal.t_size.h = 80;
-    el.el_terminal.t_size.v = 24;
-    el.el_display = vec![vec![0u32; 81]; 24];
-    el.el_vdisplay = vec![vec![0u32; 81]; 24];
+    let mut el = headless_editor(80, 24);
+    map_init_emacs(&mut el);
+    set_line(&mut el, s, at);
     el
 }
 
@@ -74,14 +48,6 @@ fn stash(el: &EditLine) -> String {
 fn feed(el: &mut EditLine, s: &str) {
     let chars: Vec<u32> = s.chars().map(u32::from).collect();
     el_wpush(el, Some(&chars));
-}
-
-/// An editor carrying a history stash of the size `hist_init` gives it,
-/// which is what the save-and-restore paths write through.
-fn with_stash(el: &mut EditLine) {
-    el.el_history.buf = vec![0u32; EL_BUFSIZ];
-    el.el_history.sz = EL_BUFSIZ;
-    el.el_history.last = 0;
 }
 
 // [spec:libedit:sem:common.ed-end-of-file-fn/test]
@@ -188,7 +154,6 @@ fn delete_next_char_clamps_its_count_and_still_fills_the_kill_buffer() {
 #[test]
 fn quoted_insert_inserts_the_next_character_argument_times() {
     let mut el = el_with("ab", 2);
-    read_init(&mut el);
     el_wpush(&mut el, Some(&[u32::from(b'\t')]));
     el.el_state.argument = 3;
 
@@ -442,7 +407,6 @@ fn a_zero_count_moves_neither_line_motion_off_the_buffer() {
 #[test]
 fn the_command_prompt_destroys_the_line_and_leaves_command_mode() {
     let mut el = el_with("some line", 4);
-    read_init(&mut el);
     // Unrecognised, so `parse_line` answers -1 and this beeps; that is
     // still the `CC_REFRESH` path.
     feed(&mut el, "nosuchcommand\r");
@@ -466,7 +430,6 @@ fn the_command_prompt_destroys_the_line_and_leaves_command_mode() {
 #[test]
 fn searching_backwards_stashes_the_live_line_first() {
     let mut el = el_with("hello", 5);
-    with_stash(&mut el);
     el.el_chared.c_vcmd.action = DELETE;
     el.el_chared.c_undo.len = 3;
 
@@ -486,7 +449,6 @@ fn searching_backwards_stashes_the_live_line_first() {
 #[test]
 fn a_negative_event_number_is_repaired_rather_than_searched() {
     let mut el = el_with("hello", 5);
-    with_stash(&mut el);
     el.el_history.eventno = -1;
 
     assert_eq!(ed_search_prev_history(&mut el, 0), CC_ERROR);
@@ -502,7 +464,6 @@ fn a_negative_event_number_is_repaired_rather_than_searched() {
 #[test]
 fn searching_forwards_refuses_at_the_live_line_and_saves_nothing() {
     let mut el = el_with("hello", 5);
-    with_stash(&mut el);
     el.el_chared.c_vcmd.action = DELETE;
     el.el_chared.c_undo.len = 3;
 

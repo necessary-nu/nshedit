@@ -110,6 +110,40 @@ fn el_getenv(el: &EditLine, name: &CStr) -> Option<OsString> {
     }
 }
 
+/// The tail every motion command ends on: with an operator armed, the span
+/// from `c_vcmd.pos` to wherever the cursor has just landed is deleted or
+/// yanked and the line is redrawn; with none armed the cursor is all that
+/// moved.
+///
+/// `cv_delfini` clears `c_vcmd.action` itself, so a motion cannot complete two
+/// operators, and it is what decides the direction of the span — every caller
+/// has already written the landing position into `el_line.cursor`.
+pub(crate) fn end_motion(el: &mut EditLine) -> ElActionT {
+    if el.el_chared.c_vcmd.action != NOP {
+        cv_delfini(el);
+        return CC_REFRESH;
+    }
+    CC_CURSOR
+}
+
+/// [`end_motion`] behind the C's `el_map.type == MAP_VI` test.
+///
+/// Which motions carry that test is not a distinction the C draws on purpose:
+/// `w`/`W` have it and `b`/`B`/`e`/`E`/`0`/`%` do not, and the ones in
+/// [`crate::common`] and [`crate::emacs`] all do. Since the test is on the
+/// keymap *type* and not on which map is currently active, the ones that carry
+/// it complete a pending vi operator whenever the editor has been put in vi
+/// mode — including when the key that reached them was bound in an emacs map.
+/// The two spellings are kept apart so a reader can see at each call site
+/// which one the C wrote.
+pub(crate) fn end_vi_motion(el: &mut EditLine) -> ElActionT {
+    if el.el_map.r#type == MAP_VI {
+        end_motion(el)
+    } else {
+        CC_CURSOR
+    }
+}
+
 // [spec:libedit:def:vi.cv-action-fn]
 // [spec:libedit:sem:vi.cv-action-fn]
 /// C: `static el_action_t cv_action(EditLine *el, wint_t c)`
@@ -133,8 +167,7 @@ fn cv_action(el: &mut EditLine, c: u32) -> ElActionT {
         }
         // The whole line `[buffer, lastchar)` replaces the kill buffer; a
         // zero-length line empties it.
-        let len = el.el_line.lastchar as i32;
-        cv_yank(el, 0, len);
+        cv_yank(el, 0, el.el_line.lastchar as i32);
         el.el_chared.c_vcmd.action = NOP;
         // C: `c_vcmd.pos = 0`, a null pointer rather than `buffer`.
         // `def:chared.c-vcmd-t` made `pos` an offset, which collapses NULL
@@ -229,19 +262,13 @@ pub(crate) fn vi_prev_big_word(el: &mut EditLine, c: u32) -> ElActionT {
         return CC_ERROR;
     }
 
-    let cursor = el.el_line.cursor;
-    let n = el.el_state.argument;
-    el.el_line.cursor = cv_prev_word(el, cursor, 0, n, cv__isWord);
+    el.el_line.cursor = cv_prev_word(el, el.el_line.cursor, 0, el.el_state.argument, cv__isWord);
 
     // No `el_map.type == MAP_VI` guard here, unlike `vi_next_big_word`. The
     // landing position is left of `c_vcmd.pos`, so `cv_delfini` takes its
     // negative-size branch: `dB` deletes `[new_cursor, c_vcmd.pos)`, exclusive
     // of the character that was under the cursor.
-    if el.el_chared.c_vcmd.action != NOP {
-        cv_delfini(el);
-        return CC_REFRESH;
-    }
-    CC_CURSOR
+    end_motion(el)
 }
 
 // [spec:libedit:def:vi.vi-prev-word-fn]
@@ -255,15 +282,9 @@ pub(crate) fn vi_prev_word(el: &mut EditLine, c: u32) -> ElActionT {
 
     // `cv__isword` — three classes, and a word is a maximal run of one class,
     // so a punctuation run is its own word here where `B` swallows it.
-    let cursor = el.el_line.cursor;
-    let n = el.el_state.argument;
-    el.el_line.cursor = cv_prev_word(el, cursor, 0, n, cv__isword);
+    el.el_line.cursor = cv_prev_word(el, el.el_line.cursor, 0, el.el_state.argument, cv__isword);
 
-    if el.el_chared.c_vcmd.action != NOP {
-        cv_delfini(el);
-        return CC_REFRESH;
-    }
-    CC_CURSOR
+    end_motion(el)
 }
 
 // [spec:libedit:def:vi.vi-next-big-word-fn]
@@ -280,20 +301,19 @@ pub(crate) fn vi_next_big_word(el: &mut EditLine, c: u32) -> ElActionT {
         return CC_ERROR;
     }
 
-    let cursor = el.el_line.cursor;
-    let last = el.el_line.lastchar;
-    let n = el.el_state.argument;
-    el.el_line.cursor = cv_next_word(el, cursor, last, n, cv__isWord);
+    el.el_line.cursor = cv_next_word(
+        el,
+        el.el_line.cursor,
+        el.el_line.lastchar,
+        el.el_state.argument,
+        cv__isWord,
+    );
 
     // No `cursor++`: `dW`/`cW`/`yW` is exclusive of the character at the
     // landing position, which is the key difference from `E`. The `MAP_VI`
     // guard is the C's and means a pending operator is ignored when this is
     // invoked from an emacs-type map.
-    if el.el_map.r#type == MAP_VI && el.el_chared.c_vcmd.action != NOP {
-        cv_delfini(el);
-        return CC_REFRESH;
-    }
-    CC_CURSOR
+    end_vi_motion(el)
 }
 
 // [spec:libedit:def:vi.vi-next-word-fn]
@@ -309,16 +329,15 @@ pub(crate) fn vi_next_word(el: &mut EditLine, c: u32) -> ElActionT {
     // `cv_next_word` suppresses its trailing-whitespace skip on the last
     // iteration when `c_vcmd.action` is exactly `DELETE|INSERT`, which is what
     // makes `cw` behave like `ce`; it does not apply to `d` or `y`.
-    let cursor = el.el_line.cursor;
-    let last = el.el_line.lastchar;
-    let n = el.el_state.argument;
-    el.el_line.cursor = cv_next_word(el, cursor, last, n, cv__isword);
+    el.el_line.cursor = cv_next_word(
+        el,
+        el.el_line.cursor,
+        el.el_line.lastchar,
+        el.el_state.argument,
+        cv__isword,
+    );
 
-    if el.el_map.r#type == MAP_VI && el.el_chared.c_vcmd.action != NOP {
-        cv_delfini(el);
-        return CC_REFRESH;
-    }
-    CC_CURSOR
+    end_vi_motion(el)
 }
 
 // [spec:libedit:def:vi.vi-change-case-fn]
@@ -427,8 +446,7 @@ pub(crate) fn vi_substitute_char(el: &mut EditLine, c: u32) -> ElActionT {
     // path here — with the cursor at `lastchar` nothing is deleted, the kill
     // buffer is emptied, undo is still snapshotted and insert mode is still
     // entered.
-    let n = el.el_state.argument;
-    c_delafter(el, n);
+    c_delafter(el, el.el_state.argument);
     el.el_map.current = ElMapCurrent::Key;
     CC_REFRESH
 }
@@ -441,8 +459,7 @@ pub(crate) fn vi_substitute_line(el: &mut EditLine, c: u32) -> ElActionT {
     cv_undo(el);
     // ERR-modes-47: `em_kill_line` copies the identical span over this one, so
     // the first yank is redundant; the end state is what matters.
-    let len = el.el_line.lastchar as i32;
-    cv_yank(el, 0, len);
+    cv_yank(el, 0, el.el_line.lastchar as i32);
     // Empties the line and sets `c_kill.last`; its `CC_REFRESH` is discarded.
     let _ = em_kill_line(el, 0);
     el.el_map.current = ElMapCurrent::Key;
@@ -456,9 +473,8 @@ pub(crate) fn vi_change_to_eol(el: &mut EditLine, c: u32) -> ElActionT {
 
     cv_undo(el);
     // ERR-modes-47 again: `ed_kill_line` re-yanks the same span.
-    let cursor = el.el_line.cursor;
-    let size = (el.el_line.lastchar - cursor) as i32;
-    cv_yank(el, cursor, size);
+    let size = (el.el_line.lastchar - el.el_line.cursor) as i32;
+    cv_yank(el, el.el_line.cursor, size);
     let _ = ed_kill_line(el, 0);
     el.el_map.current = ElMapCurrent::Key;
     // No error path: on an empty line this yanks nothing, deletes nothing and
@@ -530,20 +546,21 @@ pub(crate) fn vi_end_big_word(el: &mut EditLine, c: u32) -> ElActionT {
         return CC_ERROR;
     }
 
-    let cursor = el.el_line.cursor;
-    let last = el.el_line.lastchar;
-    let n = el.el_state.argument;
-    el.el_line.cursor = cv__endword(el, cursor, last, n, cv__isWord);
+    el.el_line.cursor = cv__endword(
+        el,
+        el.el_line.cursor,
+        el.el_line.lastchar,
+        el.el_state.argument,
+        cv__isWord,
+    );
 
     // The `+1` makes `dE`/`cE`/`yE` inclusive of the character landed on,
     // which is the whole reason an end-of-word motion differs from `W`. No
     // `MAP_VI` guard here, unlike `vi_next_big_word`.
     if el.el_chared.c_vcmd.action != NOP {
         el.el_line.cursor += 1;
-        cv_delfini(el);
-        return CC_REFRESH;
     }
-    CC_CURSOR
+    end_motion(el)
 }
 
 // [spec:libedit:def:vi.vi-end-word-fn]
@@ -557,17 +574,18 @@ pub(crate) fn vi_end_word(el: &mut EditLine, c: u32) -> ElActionT {
 
     // The three-class `cv__isword`, so `foo.bar` is three words here and one
     // for `E`.
-    let cursor = el.el_line.cursor;
-    let last = el.el_line.lastchar;
-    let n = el.el_state.argument;
-    el.el_line.cursor = cv__endword(el, cursor, last, n, cv__isword);
+    el.el_line.cursor = cv__endword(
+        el,
+        el.el_line.cursor,
+        el.el_line.lastchar,
+        el.el_state.argument,
+        cv__isword,
+    );
 
     if el.el_chared.c_vcmd.action != NOP {
         el.el_line.cursor += 1;
-        cv_delfini(el);
-        return CC_REFRESH;
     }
-    CC_CURSOR
+    end_motion(el)
 }
 
 // [spec:libedit:def:vi.vi-undo-fn]
@@ -643,13 +661,9 @@ pub(crate) fn vi_zero(el: &mut EditLine, c: u32) -> ElActionT {
     el.el_line.cursor = 0;
     // The landing position is at or left of `c_vcmd.pos`, so `cv_delfini`
     // takes the negative branch: `d0` deletes `[buffer, c_vcmd.pos)`,
-    // exclusive of the character under the cursor.
-    if el.el_chared.c_vcmd.action != NOP {
-        cv_delfini(el);
-        return CC_REFRESH;
-    }
-    // No error path: `0` on an empty line simply stays at `buffer`.
-    CC_CURSOR
+    // exclusive of the character under the cursor. No error path: `0` on an
+    // empty line simply stays at `buffer`.
+    end_motion(el)
 }
 
 // [spec:libedit:def:vi.vi-delete-prev-char-fn]
@@ -710,8 +724,7 @@ pub(crate) fn vi_kill_line_prev(el: &mut EditLine, c: u32) -> ElActionT {
     // 2. ERR-modes-19 and ERR-modes-47: `c_delbefore`'s `current != emacs`
     //    test is a tautology, so it always snapshots undo and re-yanks the
     //    same span over the copy just made. That is what makes `^U` undoable.
-    let num = el.el_line.cursor as i32;
-    c_delbefore(el, num);
+    c_delbefore(el, el.el_line.cursor as i32);
 
     // 3. Zap.
     el.el_line.cursor = 0;
@@ -776,8 +789,7 @@ pub(crate) fn vi_next_char(el: &mut EditLine, c: u32) -> ElActionT {
     // `(wint_t)-1` is the "prompt for the target now" sentinel; `tflag = 0`
     // lands on the match. A pending operator makes this inclusive of the
     // target, because the direction is positive.
-    let n = el.el_state.argument;
-    cv_csearch(el, CHAR_FWD, u32::MAX, n, 0)
+    cv_csearch(el, CHAR_FWD, u32::MAX, el.el_state.argument, 0)
 }
 
 // [spec:libedit:def:vi.vi-prev-char-fn]
@@ -786,8 +798,7 @@ pub(crate) fn vi_prev_char(el: &mut EditLine, c: u32) -> ElActionT {
     let _ = c;
     // Negative direction, so no `cursor++`: `dF<ch>` deletes
     // `[match, original_cursor)`.
-    let n = el.el_state.argument;
-    cv_csearch(el, CHAR_BACK, u32::MAX, n, 0)
+    cv_csearch(el, CHAR_BACK, u32::MAX, el.el_state.argument, 0)
 }
 
 // [spec:libedit:def:vi.vi-to-next-char-fn]
@@ -798,16 +809,14 @@ pub(crate) fn vi_to_next_char(el: &mut EditLine, c: u32) -> ElActionT {
     // ERR-modes-64: a following `;` re-finds the same occurrence and does not
     // move, because the "skip an adjacent match" test only fires when the
     // cursor is *on* the target, which `t` never leaves it.
-    let n = el.el_state.argument;
-    cv_csearch(el, CHAR_FWD, u32::MAX, n, 1)
+    cv_csearch(el, CHAR_FWD, u32::MAX, el.el_state.argument, 1)
 }
 
 // [spec:libedit:def:vi.vi-to-prev-char-fn]
 // [spec:libedit:sem:vi.vi-to-prev-char-fn]
 pub(crate) fn vi_to_prev_char(el: &mut EditLine, c: u32) -> ElActionT {
     let _ = c;
-    let n = el.el_state.argument;
-    cv_csearch(el, CHAR_BACK, u32::MAX, n, 1)
+    cv_csearch(el, CHAR_BACK, u32::MAX, el.el_state.argument, 1)
 }
 
 // [spec:libedit:def:vi.vi-repeat-next-char-fn]
@@ -819,11 +828,13 @@ pub(crate) fn vi_repeat_next_char(el: &mut EditLine, c: u32) -> ElActionT {
     // helper rewrites the same three values before scanning, so `;` is
     // idempotent with respect to them, and answers `CC_ERROR` when `chacha` is
     // still 0 — no character search has been performed yet.
-    let dir = el.el_search.chadir;
-    let cha = el.el_search.chacha;
-    let n = el.el_state.argument;
-    let tflag = i32::from(el.el_search.chatflg);
-    cv_csearch(el, dir, cha, n, tflag)
+    cv_csearch(
+        el,
+        el.el_search.chadir,
+        el.el_search.chacha,
+        el.el_state.argument,
+        i32::from(el.el_search.chatflg),
+    )
 }
 
 // [spec:libedit:def:vi.vi-repeat-prev-char-fn]
@@ -832,10 +843,13 @@ pub(crate) fn vi_repeat_prev_char(el: &mut EditLine, c: u32) -> ElActionT {
     let _ = c;
 
     let dir = el.el_search.chadir;
-    let cha = el.el_search.chacha;
-    let n = el.el_state.argument;
-    let tflag = i32::from(el.el_search.chatflg);
-    let r = cv_csearch(el, -dir, cha, n, tflag);
+    let r = cv_csearch(
+        el,
+        -dir,
+        el.el_search.chacha,
+        el.el_state.argument,
+        i32::from(el.el_search.chatflg),
+    );
     // Undo the helper's overwrite of `chadir`, on the error paths too, so a
     // following `;` still goes the original way and repeated `,` does not
     // alternate.
@@ -917,25 +931,22 @@ pub(crate) fn vi_match(el: &mut EditLine, c: u32) -> ElActionT {
     //    with `delta` declared `size_t`. The backward direction is produced by
     //    `delta = 1 - (delta & 1) * 2`, which in `size_t` arithmetic is
     //    `SIZE_MAX`, not -1 — so `delta > 0` is **always true** and the
-    //    increment is unconditional. `sem:vi.vi-match-fn` step 6 describes it
-    //    as conditional; the C wins, and this is the one place in the file
-    //    where the two disagree. Measured, not inferred: `1 - (delta & 1) * 2`
-    //    compiles to 18446744073709551615 for an odd `delta` on LP64, and
-    //    `cp += delta` still steps backward because the pointer arithmetic
-    //    converts it to -1.
+    //    increment is unconditional (ERR-modes-73). Measured, not inferred:
+    //    `1 - (delta & 1) * 2` compiles to 18446744073709551615 for an odd
+    //    `delta` on LP64, and `cp += delta` still steps backward because the
+    //    pointer arithmetic converts it to -1.
     //
-    //    ERR-modes-66's substance survives either reading: for a backward
-    //    match the range ends up `[matched_open + 1, c_vcmd.pos)`, so the
-    //    matched opening bracket is *not* deleted, which is what the C's own
-    //    comment says POSIX wants and where NetBSD vi differs. The range is
-    //    anchored at `c_vcmd.pos`, not at the bracket, so anything between the
-    //    anchor and the bracket is swept in too. ERR-modes-68: `3%` is `%`.
+    //    ERR-modes-66 is the consequence: for a backward match the range ends
+    //    up `[matched_open + 1, c_vcmd.pos)`, so the matched opening bracket
+    //    is *not* deleted — which is what the C's own comment says POSIX
+    //    wants, but by accident of the type rather than by the dead guard it
+    //    annotates. The range is anchored at `c_vcmd.pos`, not at the bracket,
+    //    so anything between the anchor and the bracket is swept in too.
+    //    ERR-modes-68: `3%` is `%`.
     if el.el_chared.c_vcmd.action != NOP {
         el.el_line.cursor += 1;
-        cv_delfini(el);
-        return CC_REFRESH;
     }
-    CC_CURSOR
+    end_motion(el)
 }
 
 // [spec:libedit:def:vi.vi-undo-line-fn]
@@ -976,9 +987,8 @@ pub(crate) fn vi_yank_end(el: &mut EditLine, c: u32) -> ElActionT {
     // ERR-modes-59: `[cursor, lastchar)` only — libedit's `Y` is `y$`, where
     // real vi's yanks the whole line. Nothing is deleted, the cursor does not
     // move and no undo snapshot is taken. ERR-modes-68: the count is ignored.
-    let cursor = el.el_line.cursor;
-    let size = (el.el_line.lastchar - cursor) as i32;
-    cv_yank(el, cursor, size);
+    let size = (el.el_line.lastchar - el.el_line.cursor) as i32;
+    cv_yank(el, el.el_line.cursor, size);
     // No error path: at `lastchar` this yanks zero characters, which leaves an
     // empty kill buffer and so makes the next `p`/`P` fail.
     CC_REFRESH

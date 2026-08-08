@@ -811,10 +811,8 @@ fn a_backward_match_under_an_operator_spares_both_brackets() {
 #[test]
 fn undo_line_reloads_the_selected_history_event() {
     let mut el = el_with("new", 3);
-    el.el_history.buf = vec![0u32; EL_BUFSIZ];
     let stash: Vec<u32> = "old line".chars().map(u32::from).collect();
     el.el_history.buf[..stash.len()].copy_from_slice(&stash);
-    el.el_history.sz = EL_BUFSIZ;
     el.el_history.last = stash.len();
     el.el_history.eventno = 0;
 
@@ -1023,14 +1021,6 @@ fn pattern(el: &EditLine) -> String {
         .collect()
 }
 
-/// A history stash of the size `hist_init` gives it, which is what the
-/// save-and-restore paths write through.
-fn with_stash(el: &mut EditLine) {
-    el.el_history.buf = vec![0u32; EL_BUFSIZ];
-    el.el_history.sz = EL_BUFSIZ;
-    el.el_history.last = 0;
-}
-
 /// The stashed live line as `el_history.last` describes it.
 fn stash(el: &EditLine) -> String {
     el.el_history.buf[..el.el_history.last]
@@ -1057,7 +1047,6 @@ fn the_history_searches_wrap_the_pattern_and_eat_the_line() {
         (vi_search_next, ED_SEARCH_NEXT_HISTORY),
     ] {
         let mut el = el_with("editing this", 5);
-        with_stash(&mut el);
         feed(&mut el, "foo\r");
 
         // No history store is attached, so the search cannot succeed;
@@ -1078,7 +1067,6 @@ fn the_history_searches_wrap_the_pattern_and_eat_the_line() {
 #[test]
 fn to_history_line_stashes_the_live_line_and_restores_on_failure() {
     let mut el = el_with("abc", 2);
-    with_stash(&mut el);
     el.el_history.eventno = 0;
 
     assert_eq!(vi_to_history_line(&mut el, 0), CC_ERROR);
@@ -1095,7 +1083,6 @@ fn to_history_line_stashes_the_live_line_and_restores_on_failure() {
 #[test]
 fn a_counted_to_history_line_leaves_the_event_number_at_one_on_failure() {
     let mut el = el_with("abc", 2);
-    with_stash(&mut el);
     el.el_history.eventno = 0;
     el.el_state.doingarg = 1;
     el.el_state.argument = 2;

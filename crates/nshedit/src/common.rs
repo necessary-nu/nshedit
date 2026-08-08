@@ -1,8 +1,8 @@
 //! Ported from `src/common.c`; rules live in `docs/spec/port/src/common.md`.
 
 use crate::chared::{
-    NOP, c__prev_word, c_delafter, c_delbefore, c_gets, c_hpos, c_insert, ce__isword,
-    ch_enlargebufs, ch_reset, cv_delfini,
+    MODE_INSERT, MODE_REPLACE_1, NOP, c__prev_word, c_delafter, c_delbefore, c_gets, c_hpos,
+    c_insert, ce__isword, ch_enlargebufs, ch_reset,
 };
 use crate::el::{EL_BUFSIZ, EditLine, ElActionT};
 use crate::fcns::EM_UNIVERSAL_ARGUMENT;
@@ -19,22 +19,22 @@ use crate::refresh::{re_clear_display, re_fastaddc, re_goto_bottom, re_refresh};
 use crate::search::{c_hmatch, c_setpat};
 use crate::terminal::{terminal__putc, terminal_beep, terminal_clear_screen};
 use crate::tty::{tty_noquotemode, tty_quotemode};
-use crate::vi::vi_command_mode;
+use crate::vi::{end_motion, end_vi_motion, vi_command_mode};
 
-// C: `chared.h` — `el_state.inputmode`. These belong in [`crate::chared`]
-// alongside `NOP`/`DELETE`/`INSERT`/`YANK`, which come from the same header;
-// that module does not carry them yet and this one may not add them, so they
-// are private here and idiomatization should hoist them.
-/// C: `#define MODE_INSERT 0`.
-const MODE_INSERT: i32 = 0;
-/// C: `#define MODE_REPLACE_1 2` — vi `r`, a single overwrite.
-const MODE_REPLACE_1: i32 = 2;
+/// C: the bare `1000000` each of the three repeat-count accumulators tests
+/// `el_state.argument` against — the two here and `em_universal_argument`.
+///
+/// ERR-modes-49: all three test it *before* they multiply, so this is not the
+/// largest count they will hold. A digit accumulator reaches 10000009 and
+/// `em_universal_argument` reaches 4000000. Naming the number does not change
+/// that; it keeps the three from drifting apart.
+pub(crate) const ARGUMENT_CAP: i32 = 1_000_000;
 
 /// C: `iswdigit`.
 ///
 /// Belongs in [`crate::locale`] beside `iswspace`/`iswalnum`, which is where a
-/// second caller should find it; it is private here for the same reason the
-/// `MODE_*` constants are.
+/// second caller should find it; it is private here because this module may
+/// not add to that one.
 ///
 /// ASCII `0`-`9` in both of the port's charsets. POSIX pins the `digit` class
 /// to exactly those ten characters in every locale, and that is what the
@@ -79,12 +79,20 @@ fn line_terminate(el: &mut EditLine) {
 
 /// C: the `for (p = …, kp = el->el_chared.c_kill.buf; p < …; p++) *kp++ = *p`
 /// loops that fill the kill buffer from a range of the line, followed by
-/// `el->el_chared.c_kill.last = kp`.
+/// `el->el_chared.c_kill.last = kp` — the one shape every kill and copy in
+/// this module and in [`crate::emacs`] uses.
+///
+/// `kp` starts at index 0 every time, which is ERR-modes-54: kills never
+/// accumulate in either direction, and saving a zero-length span sets `last`
+/// to 0 and so *empties* the kill buffer, after which `em_yank` returns
+/// `CC_NORM` and inserts nothing.
 ///
 /// The C bounds-checks nothing and needs to: the kill buffer is allocated and
-/// reallocated to the same size as the line buffer and the range is a subrange
-/// of the line, so it always fits. The clamp here never bites.
-fn kill_copy(el: &mut EditLine, from: usize, to: usize) {
+/// reallocated to the same size as the line buffer, and every range handed
+/// here is a subrange of that allocation — `em_kill_region` reaches here with
+/// a mark that may sit above `lastchar`, but a mark is only ever a former
+/// cursor value or the head of the line. The clamp never bites.
+pub(crate) fn kill_save(el: &mut EditLine, from: usize, to: usize) {
     let mut kp = 0;
     let mut p = from;
     while p < to {
@@ -293,7 +301,7 @@ pub(crate) fn ed_delete_prev_word(el: &mut EditLine, c: u32) -> ElActionT {
     // ERR-modes-19 makes its `el_map.current != el_map.emacs` test a
     // tautology, so the kill buffer ends up with byte-identical content either
     // way.
-    kill_copy(el, cp, el.el_line.cursor);
+    kill_save(el, cp, el.el_line.cursor);
 
     // ERR-modes-19: `c_delbefore` also takes a full-line `cv_undo` snapshot,
     // in emacs mode as much as in vi.
@@ -356,7 +364,7 @@ pub(crate) fn ed_kill_line(el: &mut EditLine, c: u32) -> ElActionT {
     let _ = c;
 
     // 1. The kill buffer is not NUL-terminated; `c_kill.last` is the length.
-    kill_copy(el, el.el_line.cursor, el.el_line.lastchar);
+    kill_save(el, el.el_line.cursor, el.el_line.lastchar);
 
     // 2. Truncate. The killed characters stay physically in the line buffer
     //    above the new `lastchar` — unobservable, but it is what leaves
@@ -375,18 +383,18 @@ pub(crate) fn ed_move_to_end(el: &mut EditLine, c: u32) -> ElActionT {
     let _ = c;
 
     el.el_line.cursor = el.el_line.lastchar;
-    if el.el_map.r#type == MAP_VI {
-        if el.el_chared.c_vcmd.action != NOP {
-            // The operator's range reaches `lastchar`, because the back-step
-            // below is skipped on this path.
-            cv_delfini(el);
-            return CC_REFRESH;
-        }
-        // `VI_MOVE` is unconditionally defined in `chared.h`, so this is live:
-        // it leaves the vi cursor *on* the last character.
-        if el.el_line.cursor > 0 {
-            el.el_line.cursor -= 1;
-        }
+    if el.el_map.r#type != MAP_VI {
+        return CC_CURSOR;
+    }
+    if el.el_chared.c_vcmd.action != NOP {
+        // The operator's range reaches `lastchar`, because the back-step below
+        // is skipped on this path.
+        return end_motion(el);
+    }
+    // `VI_MOVE` is unconditionally defined in `chared.h`, so this is live: it
+    // leaves the vi cursor *on* the last character.
+    if el.el_line.cursor > 0 {
+        el.el_line.cursor -= 1;
     }
     CC_CURSOR
 }
@@ -415,12 +423,8 @@ pub(crate) fn ed_move_to_beg(el: &mut EditLine, c: u32) -> ElActionT {
         {
             el.el_line.cursor += 1;
         }
-        if el.el_chared.c_vcmd.action != NOP {
-            cv_delfini(el);
-            return CC_REFRESH;
-        }
     }
-    CC_CURSOR
+    end_vi_motion(el)
 }
 
 // [spec:libedit:def:common.ed-transpose-chars-fn]
@@ -491,11 +495,7 @@ pub(crate) fn ed_next_char(el: &mut EditLine, c: u32) -> ElActionT {
     el.el_line.cursor = moved.clamp(0, lim as isize) as usize;
 
     // 4.
-    if el.el_map.r#type == MAP_VI && el.el_chared.c_vcmd.action != NOP {
-        cv_delfini(el);
-        return CC_REFRESH;
-    }
-    CC_CURSOR
+    end_vi_motion(el)
 }
 
 // [spec:libedit:def:common.ed-prev-word-fn]
@@ -512,11 +512,7 @@ pub(crate) fn ed_prev_word(el: &mut EditLine, c: u32) -> ElActionT {
     // punctuation the way real vi does.
     el.el_line.cursor = c__prev_word(el, el.el_line.cursor, 0, el.el_state.argument, ce__isword);
 
-    if el.el_map.r#type == MAP_VI && el.el_chared.c_vcmd.action != NOP {
-        cv_delfini(el);
-        return CC_REFRESH;
-    }
-    CC_CURSOR
+    end_vi_motion(el)
 }
 
 // [spec:libedit:def:common.ed-prev-char-fn]
@@ -539,11 +535,7 @@ pub(crate) fn ed_prev_char(el: &mut EditLine, c: u32) -> ElActionT {
 
     // Unlike `ed_next_char` there is no vi "must stay on a character" guard:
     // moving left onto `buffer` is always legal.
-    if el.el_map.r#type == MAP_VI && el.el_chared.c_vcmd.action != NOP {
-        cv_delfini(el);
-        return CC_REFRESH;
-    }
-    CC_CURSOR
+    end_vi_motion(el)
 }
 
 // [spec:libedit:def:common.ed-quoted-insert-fn]
@@ -587,10 +579,9 @@ pub(crate) fn ed_digit(el: &mut EditLine, c: u32) -> ElActionT {
             // this: a second digit sees `lastcmd == ED_DIGIT` and appends.
             el.el_state.argument = digit;
         } else {
-            // ERR-modes-49: the cap is tested before the multiply, so
-            // `argument` tops out at 10000009 — which is also why the multiply
-            // and add below cannot overflow.
-            if el.el_state.argument > 1000000 {
+            // ERR-modes-49, which is also why the multiply and add below
+            // cannot overflow.
+            if el.el_state.argument > ARGUMENT_CAP {
                 return CC_ERROR;
             }
             el.el_state.argument = el.el_state.argument * 10 + digit;
@@ -615,7 +606,7 @@ pub(crate) fn ed_argument_digit(el: &mut EditLine, c: u32) -> ElActionT {
     if el.el_state.doingarg != 0 {
         // ERR-modes-49 again, and no `em_universal_argument` special case:
         // this one never falls through to `ed_insert` either.
-        if el.el_state.argument > 1000000 {
+        if el.el_state.argument > ARGUMENT_CAP {
             return CC_ERROR;
         }
         el.el_state.argument = el.el_state.argument * 10 + digit;
