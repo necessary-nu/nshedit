@@ -28,15 +28,13 @@ alternatives (
 )
 consequences {
     accepted (
-        "Logical text has explicit variants for Unicode scalar values, undecodable bytes, and compatibility wide values that are not Unicode scalars."
-        "Rendered cells are a separate type with explicit text, continuation, and padding states. No spare character bits carry display sentinels."
+        "TextUnit represents a Unicode scalar, a raw undecodable byte, or a validated non-scalar compatibility-wide value; Text owns a sequence of those units."
+        "ScreenCell represents visible scalar text, continuation, padding, or a typed LiteralId. No spare character bits carry display sentinels."
         "Narrow multibyte and wide C conversion occurs in nshedit-abi under the active locale contract. The core does not expose wchar_t or locale conversion buffers."
         "Native history remains byte-preserving and rejects or reports representations it cannot round-trip instead of silently truncating at NUL."
         "Public cursor and span values use checked domain indices rather than raw pointers or unchecked integer differences."
     )
-    deferred (
-        "The exact public names and storage optimization of the text variants are chosen with the domain-model implementation; their semantic distinctions are fixed here."
-    )
+    deferred ()
 }
 edges {
     requires ([dec:libedit:idiomatic-core])

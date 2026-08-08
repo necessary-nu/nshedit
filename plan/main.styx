@@ -2273,6 +2273,21 @@ children (
                     native-impl ([spec:nshedit:req:core.typed-domain] [spec:nshedit:req:core.text-screen-model])
                 }
                 deps (greenfield-lint-baseline)
+                log (
+                    {
+                        at 2026-08-08T16:27:59.673188255Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T16:39:57.901471636Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Corrected core.typed-domain to v1 because its old whole-public-API wording duplicated core.public-surface and made the dependency graph impossible: the ABI adapter necessarily depends on transitional public compatibility modules until the editor shell and effect runtime exist. This node now establishes the Rust-native domain vocabulary and bans C encodings inside it; greenfield-public-firewall remains the dependency-owned point that removes legacy types from every public nshedit operation. The accepted model names are Text/TextUnit for logical input and Screen/ScreenCell for rendered state, with explicit raw-byte, non-scalar-wide, continuation, padding, and LiteralId variants."
+                    }
+                )
             }
 
             {

@@ -36,11 +36,11 @@ states where those semantics may live and what the native Rust API must be.
 
 ## Native domain
 
-> [spec:nshedit:req:core.typed-domain]
+> [spec:nshedit:req:core.typed-domain+1]
 > Native configuration, modes, commands, outcomes, and failures MUST use
-> Rust enums, newtypes, structs, `Option`, and `Result`. The public API MUST
-> NOT use integer operation codes, bit-packed flag words, errno protocols,
-> or sentinel values to represent domain state.
+> Rust enums, newtypes, structs, `Option`, and `Result`. The native domain
+> model MUST NOT use integer operation codes, bit-packed flag words, errno
+> protocols, or sentinel values to represent domain state.
 
 > [spec:nshedit:req:core.text-screen-model]
 > Logical input text and rendered screen cells MUST be distinct types.

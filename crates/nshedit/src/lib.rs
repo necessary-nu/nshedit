@@ -92,6 +92,10 @@
 //! Anything that departs from the C's own shape says so at the field.
 
 // [spec:nshedit:req:workspace.no-legacy-allows]
+// [spec:nshedit:req:core.typed-domain+1]
+/// Rust-native editor values shared by the safe editor shell and its hosts.
+pub mod domain;
+
 // Public headers.
 pub mod editline;
 pub mod histedit;
