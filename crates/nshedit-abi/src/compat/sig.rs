@@ -2,9 +2,9 @@
 
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use crate::el::EditLine;
-use crate::terminal::terminal_flush;
-use crate::tty::{tty_cookedmode, tty_rawmode};
+use crate::compat::el::EditLine;
+use crate::compat::terminal::terminal_flush;
+use crate::compat::tty::{tty_cookedmode, tty_rawmode};
 
 /// C: `#define ALLSIGSNO 7` — `SIGINT`, `SIGTSTP`, `SIGQUIT`, `SIGHUP`,
 /// `SIGTERM`, `SIGCONT`, `SIGWINCH`, in that fixed table order.
@@ -204,7 +204,7 @@ pub(crate) fn sig_handler(el: &mut EditLine, signo: i32) {
             // out in full rather than imported: `el_resize` next to
             // `EditLine` in one `use` is the single ordering rustfmt's 2015
             // and 2024 style editions disagree about.
-            crate::el::el_resize(el);
+            crate::compat::el::el_resize(el);
         }
         _ => {
             // SIGINT, SIGTSTP, SIGQUIT, SIGHUP, SIGTERM: restore the
@@ -456,7 +456,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::el::blank_editline;
+    use crate::compat::el::blank_editline;
 
     /// Signal dispositions are process-wide, so the tests below cannot run at
     /// the same time as each other — `cargo test` runs them on threads of one

@@ -1,23 +1,23 @@
 //! Ported from `src/refresh.c`; rules live in
 //! `docs/spec/port/src/refresh.md`.
 
-use crate::chartype::{
+use crate::compat::chartype::{
     CHTYPE_ASCIICTL, CHTYPE_NL, CHTYPE_NONPRINT, CHTYPE_PRINT, CHTYPE_TAB, MB_FILL_CHAR,
     VISUAL_WIDTH_MAX, ct_chr_class, ct_visual_char, ct_visual_width,
 };
-use crate::el::{CoordT, EditLine};
-use crate::literal::{literal_add, literal_clear};
-use crate::locale;
-use crate::map::ElMapCurrent;
-use crate::prompt::{PromptSide, prompt_print};
-use crate::terminal::{
+use crate::compat::el::{CoordT, EditLine};
+use crate::compat::literal::{literal_add, literal_clear};
+use crate::compat::locale;
+use crate::compat::map::ElMapCurrent;
+use crate::compat::prompt::{PromptSide, prompt_print};
+use crate::compat::terminal::{
     terminal_clear_eol, terminal_deletechars, terminal_flush, terminal_insertwrite,
     terminal_move_to_char, terminal_move_to_line, terminal_overwrite, terminal_putc,
 };
 
 // The `el_terminal.t_flags` bits this module tests, via the C's `EL_CAN_*` /
 // `EL_HAS_*` convenience macros. C: `src/terminal.h`. Private because
-// `crate::terminal` has no counterpart yet; adopting one later is then a
+// `crate::compat::terminal` has no counterpart yet; adopting one later is then a
 // mechanical substitution.
 /// C: `#define TERM_CAN_INSERT 0x001`.
 const TERM_CAN_INSERT: i32 = 0x001;
@@ -234,7 +234,7 @@ fn re_addc(el: &mut EditLine, c: u32) {
 /// at all. Those two things are the arguments here.
 ///
 /// They are not a slice and an index into it, because that pair is a trap:
-/// [`crate::literal::literal_add`] encodes `buf[..end]` and `buf[end + 1]` and
+/// [`crate::compat::literal::literal_add`] encodes `buf[..end]` and `buf[end + 1]` and
 /// never `buf[end]`, so a caller that put the closing delimiter one place
 /// further along would compile, run, and intern the wrong bytes in silence.
 /// A sequence and a character cannot be got wrong that way and need no

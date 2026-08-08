@@ -3,7 +3,7 @@ use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 
 use super::*;
-use crate::testkit::{headless_editor, set_line};
+use crate::compat::testkit::{headless_editor, set_line};
 
 /// Text as the line buffer carries it.
 fn wide(s: &str) -> Vec<u32> {

@@ -1,13 +1,13 @@
 //! Ported from `src/parse.c`; rules live in `docs/spec/port/src/parse.md`.
 
-use crate::domain::{Text, TextUnit};
-use crate::editor::{Tokenization, Tokenizer};
-use crate::el::{EditLine, el_editmode};
-use crate::hist::hist_command;
-use crate::map::map_bind;
-use crate::search::el_match;
-use crate::terminal::{terminal_echotc, terminal_settc, terminal_telltc};
-use crate::tty::tty_stty;
+use crate::compat::domain::{Text, TextUnit};
+use crate::compat::editor::{Tokenization, Tokenizer};
+use crate::compat::el::{EditLine, el_editmode};
+use crate::compat::hist::hist_command;
+use crate::compat::map::map_bind;
+use crate::compat::search::el_match;
+use crate::compat::terminal::{terminal_echotc, terminal_settc, terminal_telltc};
+use crate::compat::tty::tty_stty;
 
 /// The C's `s[i]` on a NUL-terminated `const wchar_t *`: one element past the
 /// content reads as the terminator.
@@ -508,7 +508,7 @@ pub(crate) fn parse_cmd(el: &mut EditLine, cmd: &[u32]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::el::blank_editline;
+    use crate::compat::el::blank_editline;
 
     /// A wide string from ASCII source text, as every caller of this module
     /// has after tokenising an editrc line.

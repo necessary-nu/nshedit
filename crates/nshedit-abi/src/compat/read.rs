@@ -24,21 +24,23 @@ use std::io::Read;
 use std::mem::ManuallyDrop;
 use std::os::fd::FromRawFd;
 
-use crate::chared::{NOP, ch_enlargebufs, ch_reset};
-use crate::el::{EDIT_DISABLED, EditLine, ElActionT, FIXIO, HANDLE_SIGNALS, NO_TTY, UNBUFFERED};
-use crate::errno::{self, EBADF, EILSEQ, EINTR, EIO, EWOULDBLOCK};
-use crate::fcns::{ED_INSERT, ED_SEQUENCE_LEAD_IN, VI_DELETE_PREV_CHAR};
-use crate::histedit::{
+use crate::compat::chared::{NOP, ch_enlargebufs, ch_reset};
+use crate::compat::el::{
+    EDIT_DISABLED, EditLine, ElActionT, FIXIO, HANDLE_SIGNALS, NO_TTY, UNBUFFERED,
+};
+use crate::compat::errno::{self, EBADF, EILSEQ, EINTR, EIO, EWOULDBLOCK};
+use crate::compat::fcns::{ED_INSERT, ED_SEQUENCE_LEAD_IN, VI_DELETE_PREV_CHAR};
+use crate::compat::histedit::{
     CC_ARGHACK, CC_CURSOR, CC_EOF, CC_FATAL, CC_NEWLINE, CC_NORM, CC_REDISPLAY, CC_REFRESH,
     CC_REFRESH_BEEP, ElRfuncT,
 };
-use crate::keymacro::{KeymacroValueT, XK_CMD, XK_NOD, XK_STR, keymacro_get};
-use crate::locale;
-use crate::map::{ElMapCurrent, MAP_VI, N_KEYS};
-use crate::refresh::{re_clear_display, re_clear_lines, re_refresh, re_refresh_cursor};
-use crate::sig::{sig_clr, sig_handler, sig_set, signo};
-use crate::terminal::{terminal_beep, terminal_flush};
-use crate::tty::{tty_cookedmode, tty_rawmode};
+use crate::compat::keymacro::{KeymacroValueT, XK_CMD, XK_NOD, XK_STR, keymacro_get};
+use crate::compat::locale;
+use crate::compat::map::{ElMapCurrent, MAP_VI, N_KEYS};
+use crate::compat::refresh::{re_clear_display, re_clear_lines, re_refresh, re_refresh_cursor};
+use crate::compat::sig::{sig_clr, sig_handler, sig_set, signo};
+use crate::compat::terminal::{terminal_beep, terminal_flush};
+use crate::compat::tty::{tty_cookedmode, tty_rawmode};
 
 /// C: `#define EL_MAXMACRO 10` — the macro nesting limit.
 pub const EL_MAXMACRO: usize = 10;
@@ -333,7 +335,7 @@ fn read_getcmd(el: &mut EditLine, cmdnum: &mut ElActionT, ch: &mut u32) -> i32 {
                     // consumed are DISCARDED, so an unrecognised escape
                     // sequence swallows its own bytes.
                     //
-                    // `crate::keymacro` represents that NULL as `Str` with an
+                    // `crate::compat::keymacro` represents that NULL as `Str` with an
                     // empty buffer, so an empty string binding and a mismatch
                     // are the same value here and both take the beep. That
                     // conflation is the enum's, not this function's — a
@@ -377,7 +379,7 @@ fn read_getcmd(el: &mut EditLine, cmdnum: &mut ElActionT, ch: &mut u32) -> i32 {
 
 /// What `mbrtowc(3)` distinguishes and [`locale::mbrtowc`] does not.
 ///
-/// `crate::locale` folds `(size_t)-1` and `(size_t)-2` into one `Bad`, because
+/// `crate::compat::locale` folds `(size_t)-1` and `(size_t)-2` into one `Bad`, because
 /// every other caller in the crate tests `clen < 0` and treats them alike.
 /// [`read_char`] is the exception and the difference is load-bearing there:
 /// invalid resynchronises and discards, incomplete reads another byte.
@@ -498,7 +500,7 @@ unsafe extern "C" fn read_char(el: *mut EditLine, cp: *mut u32) -> c_int {
             //
             // `sem:sig.sig-handler-fn` no longer describes an installed
             // handler: the ABI crate's real handler does nothing but store
-            // `signo` into this atomic, and `crate::sig::sig_handler` is the
+            // `signo` into this atomic, and `crate::compat::sig::sig_handler` is the
             // *body*, to be run from ordinary context by whoever notices. The
             // read loop is that whoever — it is the only place in the library
             // that polls `sig_no` — so the call goes here, before the
@@ -592,7 +594,7 @@ unsafe extern "C" fn read_char(el: *mut EditLine, cp: *mut u32) -> c_int {
             // conversion is wrong and no shift state is carried, between
             // bytes or between characters (ERR-input-26, disposition
             // `reproduce` — the rule calls it specified behaviour the port
-            // inherits). `crate::locale` models no stateful codec at all, so
+            // inherits). `crate::compat::locale` models no stateful codec at all, so
             // there is nothing here that could carry state even by accident.
             match decode(cs, &cbuf[..cbp]) {
                 // Step 4e. ANY other return, including 0: a return of 0 means
@@ -797,7 +799,7 @@ pub fn read_prepare(el: &mut EditLine) {
     // Step 4. Unconditional on every line, not cached: the C notes this is
     // "relatively cheap, and things go terribly wrong if we have the wrong
     // size".
-    crate::el::el_resize(el);
+    crate::compat::el::el_resize(el);
     // Step 5.
     re_clear_display(el);
     // Step 6.
@@ -1154,7 +1156,7 @@ mod tests {
     use std::os::fd::AsRawFd;
 
     use super::*;
-    use crate::testkit::headless_editor;
+    use crate::compat::testkit::headless_editor;
 
     thread_local! {
         /// What [`feed`] hands back, one call at a time. Thread local because

@@ -2,26 +2,26 @@
 
 use std::borrow::Cow;
 
-use crate::chartype::upto_nul;
-use crate::el::{EL_BUFSIZ, EditLine, ElActionT};
+use crate::compat::chartype::upto_nul;
+use crate::compat::el::{EL_BUFSIZ, EditLine, ElActionT};
 // The generated command table. A glob import because the three keymap tables
-// below name 86 of the 96 commands one by one; `crate::fcns` is generated
+// below name 86 of the 96 commands one by one; `crate::compat::fcns` is generated
 // output and publishes nothing else.
-use crate::fcns::*;
+use crate::compat::fcns::*;
 // `XK_CMD`/`XK_STR` come from here rather than being respelled: `keymacro`
 // models the *value* as an enum but still takes the C's `int` tag at every
 // call, so the tag is `keymacro.h`'s and belongs with the module that owns
 // that header.
-use crate::keymacro::{
+use crate::compat::keymacro::{
     XK_CMD, XK_STR, keymacro_add, keymacro_clear, keymacro_decode_str, keymacro_delete,
     keymacro_map_cmd, keymacro_map_str, keymacro_print, keymacro_reset,
 };
-use crate::locale;
-use crate::parse::{parse_cmd, parse_string};
-use crate::terminal::{
+use crate::compat::locale;
+use crate::compat::parse::{parse_cmd, parse_string};
+use crate::compat::terminal::{
     terminal_bind_arrow, terminal_clear_arrow, terminal_print_arrow, terminal_set_arrow,
 };
-use crate::tty::tty_bind_char;
+use crate::compat::tty::tty_bind_char;
 
 /// C: `#define MAP_EMACS 0` — the value of `el_map.type`, an independent
 /// mode tag. Note this is *not* how "are we in vi command mode" is tested;
@@ -60,7 +60,7 @@ const CONTROL_X: u32 = 0x18;
 /// The port's own 96 commands are ordinary Rust functions taking
 /// `&mut EditLine` (`plan/decisions/idiomatic-core.md`), so they are not
 /// values of this type. [`el_func!`] is the one-line trampoline that makes
-/// each one into a value of it, and `crate::fcns::EL_FUNC` is the table it
+/// each one into a value of it, and `crate::compat::fcns::EL_FUNC` is the table it
 /// builds. Nothing observable depends on the identity of a stored pointer —
 /// no rule compares `el_map.func[n]` against anything — so the indirection is
 /// invisible across the ABI.
@@ -80,12 +80,15 @@ macro_rules! el_func {
         /// `el` must be the live `EditLine` libedit is dispatching for, which
         /// is what `sem:map.map-init-fn` installs this table against and what
         /// `sem:read.el-wgets-fn` passes at every dispatch.
-        unsafe extern "C" fn shim(el: *mut $crate::el::EditLine, c: u32) -> $crate::el::ElActionT {
+        unsafe extern "C" fn shim(
+            el: *mut $crate::compat::el::EditLine,
+            c: u32,
+        ) -> $crate::compat::el::ElActionT {
             // SAFETY: the caller's obligation above; the command borrows the
             // handle only for the duration of this call.
             $cmd(unsafe { &mut *el }, c)
         }
-        shim as $crate::map::ElFuncT
+        shim as $crate::compat::map::ElFuncT
     }};
 }
 pub(crate) use el_func;
@@ -976,7 +979,7 @@ static EL_MAP_VI_COMMAND: [ElActionT; N_KEYS] = [
 ];
 
 /// C: `L"..."` for an ASCII literal, as the crate carries wide strings.
-/// `crate::fcns` has the same helper and keeps it private, being generated
+/// `crate::compat::fcns` has the same helper and keeps it private, being generated
 /// output.
 const fn wide<const N: usize>(s: &[u8; N]) -> [u32; N] {
     let mut out = [0u32; N];
@@ -1051,7 +1054,7 @@ pub(crate) fn map_init(el: &mut EditLine) -> i32 {
 
     // Step 6. The copy length is `EL_NUM_FCNS` for both tables, which is
     // correct only because the numbering and the help table come from the
-    // same `makelist` scan — `crate::fcns` has the tests that pin it.
+    // same `makelist` scan — `crate::compat::fcns` has the tests that pin it.
     let mut func: Vec<ElFuncT> = Vec::new();
     if func.try_reserve(EL_NUM_FCNS).is_err() {
         map_end(el);
@@ -1881,7 +1884,7 @@ mod tests {
     /// standard input, and several of the functions below print on their
     /// error paths. The screen size is arbitrary: nothing here draws.
     fn mapped_editline() -> EditLine {
-        crate::testkit::headless_editor(80, 24)
+        crate::compat::testkit::headless_editor(80, 24)
     }
 
     fn w(s: &str) -> Vec<u32> {
@@ -1946,7 +1949,7 @@ mod tests {
     // [spec:libedit:sem:map.map-get-wordchars-fn/test]
     #[test]
     fn the_word_character_set_round_trips_and_may_legitimately_be_absent() {
-        let mut el = crate::el::blank_editline();
+        let mut el = crate::compat::el::blank_editline();
         let mut got: Option<Vec<u32>> = Some(w("stale"));
         assert_eq!(map_get_wordchars(&mut el, &mut got), 0);
         assert_eq!(got, None, "absent is reported as success, not as empty");

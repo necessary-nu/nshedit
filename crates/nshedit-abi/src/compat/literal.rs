@@ -1,8 +1,8 @@
 //! Ported from `src/literal.c`; rules live in
 //! `docs/spec/port/src/literal.md`.
 
-use crate::chartype::{MB_FILL_CHAR, ct_encode_char};
-use crate::locale::{self, MB_LEN_MAX};
+use crate::compat::chartype::{MB_FILL_CHAR, ct_encode_char};
+use crate::compat::locale::{self, MB_LEN_MAX};
 
 /// C: `EL_LITERAL` in `src/literal.h` — `(wint_t)0x80000000`, bit 31 alone.
 ///
@@ -66,7 +66,7 @@ pub struct ElLiteralT {
 
 // [spec:libedit:def:literal.literal-init-fn]
 // [spec:libedit:sem:literal.literal-init-fn]
-pub(crate) fn literal_init(el: &mut crate::el::EditLine) {
+pub(crate) fn literal_init(el: &mut crate::compat::el::EditLine) {
     // The C is `memset(&el->el_literal, 0, sizeof(*l))`, which for these
     // three fields means a NULL table and both counters 0. No table is
     // allocated, so the first `literal_add` is the one that pays for the
@@ -89,7 +89,7 @@ pub(crate) fn literal_init(el: &mut crate::el::EditLine) {
 
 // [spec:libedit:def:literal.literal-end-fn]
 // [spec:libedit:sem:literal.literal-end-fn]
-pub(crate) fn literal_end(el: &mut crate::el::EditLine) {
+pub(crate) fn literal_end(el: &mut crate::compat::el::EditLine) {
     // The whole body, in the C too: the table and the byte strings it points
     // at are the store's only resources. Idempotent, because `literal_clear`
     // leaves `l_len == 0` and a second call takes its early return, and it
@@ -104,7 +104,7 @@ pub(crate) fn literal_end(el: &mut crate::el::EditLine) {
 
 // [spec:libedit:def:literal.literal-clear-fn]
 // [spec:libedit:sem:literal.literal-clear-fn]
-pub(crate) fn literal_clear(el: &mut crate::el::EditLine) {
+pub(crate) fn literal_clear(el: &mut crate::compat::el::EditLine) {
     let l = &mut el.el_literal;
 
     // Step 1. The guard is on `l_len`, the allocated capacity, not on
@@ -149,7 +149,7 @@ pub(crate) fn literal_clear(el: &mut crate::el::EditLine) {
 ///
 /// Returns the C's `wint_t`: `EL_LITERAL | index` on success, 0 on failure.
 pub(crate) fn literal_add(
-    el: &mut crate::el::EditLine,
+    el: &mut crate::compat::el::EditLine,
     buf: &[u32],
     end: usize,
     wp: &mut i32,
@@ -260,7 +260,7 @@ pub(crate) fn literal_add(
 /// `idx` still carries the `EL_LITERAL` bit, which the C asserts on and then
 /// masks off. The result borrows `el.el_literal.l_buf`, as the C's
 /// `const char *` does.
-pub(crate) fn literal_get(el: &mut crate::el::EditLine, idx: u32) -> &[u8] {
+pub(crate) fn literal_get(el: &mut crate::compat::el::EditLine, idx: u32) -> &[u8] {
     let l = &el.el_literal;
 
     // Step 1. The C is `assert(idx & EL_LITERAL)`, a bitwise test, so
@@ -369,7 +369,7 @@ fn encode_onto(out: &mut Vec<u8>, c: u32) -> bool {
 }
 
 // `wcwidth`, `MB_LEN_MAX` and the two interval tables that used to live here
-// are `crate::locale`'s. `literal_add` calls `wcwidth` directly in the C — not
+// are `crate::compat::locale`'s. `literal_add` calls `wcwidth` directly in the C — not
 // `chartype::ct_visual_width`, which is a different function with a different
 // contract (it answers per `ct_chr_class` and returns 7 or 8 for a
 // non-printable) — and `refresh.c` calls it directly too, ahead of
@@ -380,7 +380,7 @@ fn encode_onto(out: &mut Vec<u8>, c: u32) -> bool {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::el::{EditLine, blank_editline};
+    use crate::compat::el::{EditLine, blank_editline};
 
     /// `literal_add` takes the sequence as `buf[..end]` and the VISIBLE
     /// character as `buf[end]`, so a call needs one more element than `end`.

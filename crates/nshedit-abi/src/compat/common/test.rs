@@ -1,8 +1,8 @@
 use super::*;
-use crate::chared::DELETE;
-use crate::map::map_init_emacs;
-use crate::read::el_wpush;
-use crate::testkit::{headless_editor, killed, set_line, text};
+use crate::compat::chared::DELETE;
+use crate::compat::map::map_init_emacs;
+use crate::compat::read::el_wpush;
+use crate::compat::testkit::{headless_editor, killed, set_line, text};
 
 /// The shared editor under the emacs bindings, with `s` in the line and
 /// the cursor at `at`.

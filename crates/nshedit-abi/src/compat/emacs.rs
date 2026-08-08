@@ -1,17 +1,17 @@
 //! Ported from `src/emacs.c`; rules live in `docs/spec/port/src/emacs.md`.
 
-use crate::chared::{
+use crate::compat::chared::{
     MODE_INSERT, MODE_REPLACE, c_delafter, c_delafter1, c_delbefore, c_delbefore1, c_insert,
     c_next_word, c_prev_word, ce_is_word,
 };
-use crate::common::{ARGUMENT_CAP, kill_save};
-use crate::el::{EditLine, ElActionT};
-use crate::fcns::{ED_SEARCH_NEXT_HISTORY, ED_SEARCH_PREV_HISTORY};
-use crate::histedit::{CC_ARGHACK, CC_CURSOR, CC_EOF, CC_ERROR, CC_NORM, CC_REFRESH};
-use crate::locale::{self, iswalpha, iswlower, iswupper, towlower, towupper};
-use crate::search::ce_inc_search;
-use crate::terminal::{terminal_beep, terminal_writec};
-use crate::vi::end_vi_motion;
+use crate::compat::common::{ARGUMENT_CAP, kill_save};
+use crate::compat::el::{EditLine, ElActionT};
+use crate::compat::fcns::{ED_SEARCH_NEXT_HISTORY, ED_SEARCH_PREV_HISTORY};
+use crate::compat::histedit::{CC_ARGHACK, CC_CURSOR, CC_EOF, CC_ERROR, CC_NORM, CC_REFRESH};
+use crate::compat::locale::{self, iswalpha, iswlower, iswupper, towlower, towupper};
+use crate::compat::search::ce_inc_search;
+use crate::compat::terminal::{terminal_beep, terminal_writec};
+use crate::compat::vi::end_vi_motion;
 
 // [spec:libedit:def:emacs.em-delete-or-list-fn]
 // [spec:libedit:sem:emacs.em-delete-or-list-fn]

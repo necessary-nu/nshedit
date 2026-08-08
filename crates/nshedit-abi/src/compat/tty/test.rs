@@ -3,7 +3,7 @@ use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::*;
-use crate::el::{CoordT, blank_editline};
+use crate::compat::el::{CoordT, blank_editline};
 
 /// An editor with the mode tables loaded, as `tty_init` leaves them, and
 /// **no terminal on any descriptor**.

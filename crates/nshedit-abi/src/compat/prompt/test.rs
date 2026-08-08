@@ -8,8 +8,8 @@ use core::cell::Cell;
 use core::ptr;
 
 use super::*;
-use crate::el::blank_editline;
-use crate::locale;
+use crate::compat::el::blank_editline;
+use crate::compat::locale;
 
 /// C: `#define EL_RPROMPT 12`, the op `prompt_set` and `prompt_get` both treat
 /// as "not the left-hand prompt". `prompt_print` takes a [`PromptSide`].

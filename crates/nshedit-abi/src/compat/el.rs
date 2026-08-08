@@ -10,11 +10,11 @@
 //! varargs dispatch belongs to the ABI crate. So none of the three carries
 //! over; the locale-sensitive work that does happen here is the multibyte
 //! conversion in `ct_decode_string`/`ct_encode_string` and the `iswspace`
-//! skip in [`el_source`], all of it served by `crate::locale`.
+//! skip in [`el_source`], all of it served by `crate::compat::locale`.
 //!
 //! `sem:el.el-init-internal-fn` records that this file never calls
 //! `setlocale`, so a C `EditLine` constructed before `setlocale(LC_CTYPE, "")`
-//! decodes its program name in the C locale. `crate::locale` already documents
+//! decodes its program name in the C locale. `crate::compat::locale` already documents
 //! why the port cannot reproduce that (it resolves the charset from the
 //! environment, i.e. as if the program had called `setlocale(LC_ALL, "")`), and
 //! why the difference is not observable from here.
@@ -57,28 +57,28 @@ pub(crate) const NO_RESET: i32 = 0x080;
 /// Selects the EINTR-recovery path in the read loop; `el_get` reports this
 /// bit raw rather than as a boolean, which `sem:histedit.el-get-fn` records.
 pub(crate) const FIXIO: i32 = 0x100;
-use crate::chared::{CKillT, CRedoT, CUndoT, CVcmdT, ElCharedT, ch_end, ch_init, ch_reset};
-use crate::chartype::{CtBufferT, ct_decode_string, ct_encode_string};
+use crate::compat::chared::{CKillT, CRedoT, CUndoT, CVcmdT, ElCharedT, ch_end, ch_init, ch_reset};
+use crate::compat::chartype::{CtBufferT, ct_decode_string, ct_encode_string};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::hist::{EditorHistory, ElHistoryT, HistSource, hist_end, hist_init};
-use crate::histedit::HistEventW;
-use crate::keymacro::{ElKeymacroT, KeymacroValueT, keymacro_end, keymacro_init};
-use crate::literal::{ElLiteralT, literal_end, literal_init};
-use crate::locale;
-use crate::map::{ElMapCurrent, ElMapT, map_end, map_init};
-use crate::parse::parse_line;
-use crate::prompt::{ElPromptT, prompt_end, prompt_init};
-use crate::read::{ElReadT, read_end, read_init};
-use crate::refresh::ElRefreshT;
-use crate::search::{ElSearchT, search_end, search_init};
-use crate::sig::{ElSignalT, sig_end, sig_init};
-use crate::terminal::{
+use crate::compat::hist::{EditorHistory, ElHistoryT, HistSource, hist_end, hist_init};
+use crate::compat::histedit::HistEventW;
+use crate::compat::keymacro::{ElKeymacroT, KeymacroValueT, keymacro_end, keymacro_init};
+use crate::compat::literal::{ElLiteralT, literal_end, literal_init};
+use crate::compat::locale;
+use crate::compat::map::{ElMapCurrent, ElMapT, map_end, map_init};
+use crate::compat::parse::parse_line;
+use crate::compat::prompt::{ElPromptT, prompt_end, prompt_init};
+use crate::compat::read::{ElReadT, read_end, read_init};
+use crate::compat::refresh::ElRefreshT;
+use crate::compat::search::{ElSearchT, search_end, search_init};
+use crate::compat::sig::{ElSignalT, sig_end, sig_init};
+use crate::compat::terminal::{
     ElTerminalT, block_sigwinch, set_sigmask, terminal_beep, terminal_change_size, terminal_end,
     terminal_get_size, terminal_init,
 };
-use crate::tty::{
+use crate::compat::tty::{
     C_NCC, ElTtyT, NN_IO, Termios, TtypermEntry, termios_zeroed, tty_cookedmode, tty_end, tty_init,
     tty_rawmode,
 };
@@ -89,7 +89,7 @@ use crate::tty::{
 /// `tty.c`'s translation has no home for the POSIX `TCSA*` constants yet and
 /// `tty_end`'s `how` is the raw POSIX action, so the value is spelled out
 /// here — Linux's, per `plan/decisions/posix-only-scope.md`. Private on
-/// purpose; it belongs in `crate::tty` once that module publishes them, the
+/// purpose; it belongs in `crate::compat::tty` once that module publishes them, the
 /// same disposition `hist.rs` records for the header constants it carries.
 const TCSAFLUSH: i32 = 2;
 
@@ -103,7 +103,7 @@ const TCSAFLUSH: i32 = 2;
 ///
 /// Nothing in this crate ever reads or writes through one. Every byte the C
 /// would have put in a stream goes to the matching `el_infd`/`el_outfd`/
-/// `el_errfd` descriptor instead, through [`crate::stdio`] — which is why the
+/// `el_errfd` descriptor instead, through [`crate::compat::stdio`] — which is why the
 /// `EditLine` carries both, and what makes three null streams a complete
 /// answer for a Rust caller building an editor with [`el_init_fd`]. The
 /// corollary is the trap: storing a real stream in `el_outfile` and leaving
@@ -266,7 +266,7 @@ impl EditLine {
     ///
     /// This is the Rust-facing counterpart to `el_set(el, EL_HIST, history,
     /// h)`, and the only one a program that does not link `nshedit-abi` can
-    /// use: the C route takes a [`crate::hist::HistFunT`], which is variadic,
+    /// use: the C route takes a [`crate::compat::hist::HistFunT`], which is variadic,
     /// and stable Rust cannot define a variadic function. Without this an
     /// editor built on the library directly has no history at all — `^P`,
     /// `^N`, vi's `k` and `j`, and `^R` all do nothing.
@@ -279,7 +279,7 @@ impl EditLine {
     /// So this takes a shared handle rather than a value, and dropping the
     /// editor leaves the caller's history intact.
     ///
-    /// [`crate::history::HistorySession`] implements [`EditorHistory`], so the
+    /// [`crate::compat::history::HistorySession`] implements [`EditorHistory`], so the
     /// built-in store needs no adapter:
     ///
     /// ```no_run
@@ -319,7 +319,7 @@ impl EditLine {
 /// the file's only locale-sensitive decision, and that the arm itself belongs
 /// to the ABI crate — the varargs dispatch is
 /// `plan/decisions/idiomatic-core.md`'s, not the core's. That leaves the
-/// dispatch needing the answer and having no way to ask: `crate::locale` is
+/// dispatch needing the answer and having no way to ask: `crate::compat::locale` is
 /// `pub(crate)`, and `plan/decisions/no-c-ffi.md` bars `nshedit-abi` from
 /// naming libc's `MB_CUR_MAX` (the ration is spent on the `errno` accessor).
 /// So the core answers, in one line, and this is the whole of it.
@@ -329,13 +329,13 @@ impl EditLine {
 /// the wide `EL_HIST` clears `NARROW_HISTORY` only when this is 1, which is
 /// ERR-core-api-16.
 ///
-/// Divergence, inherited from `crate::locale` and observable exactly here:
+/// Divergence, inherited from `crate::compat::locale` and observable exactly here:
 /// the C's `MB_CUR_MAX` follows `setlocale`, so a program that never calls it
 /// reads 1 whatever the environment says, while this reads the environment as
 /// if `setlocale(LC_ALL, "")` had run. A C application that sets no locale and
 /// runs under a UTF-8 `LANG` therefore has `el_set(EL_HIST, ...)` followed by
 /// `el_wset(EL_HIST, ...)` clear `NARROW_HISTORY` where the port leaves it
-/// set. `crate::locale` records why the port cannot follow `setlocale` at all.
+/// set. `crate::compat::locale` records why the port cannot follow `setlocale` at all.
 #[doc(hidden)]
 pub fn mb_cur_max() -> usize {
     locale::mb_cur_max(locale::charset())
@@ -566,7 +566,7 @@ fn fileno(_stream: CFile) -> i32 {
 ///
 /// # Not the entry point. Use [`el_init_fd`]
 ///
-/// Hidden for the same reason [`crate::hist::hist_set`] is: it is here so
+/// Hidden for the same reason [`crate::compat::hist::hist_set`] is: it is here so
 /// `nshedit-abi` has a Rust counterpart to call, and a Rust caller cannot use
 /// it correctly. A `FILE *` is the C library's object and
 /// `plan/decisions/no-c-ffi.md` reserves reaching into one for the ABI crate,
@@ -1267,7 +1267,7 @@ pub fn el_source(el: &mut EditLine, fname: Option<&Path>) -> i32 {
         //    `ct_decode_string` returns the content without its terminator.
         //
         //    Queried per line rather than once for the file, because the C's
-        //    `iswspace` reads `LC_CTYPE` on every call and `crate::locale`
+        //    `iswspace` reads `LC_CTYPE` on every call and `crate::compat::locale`
         //    keeps a snapshot that `locale::refresh` can replace.
         let cs = locale::charset();
         let mut dptr = 0;

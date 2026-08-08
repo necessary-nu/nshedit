@@ -8,12 +8,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::*;
-use crate::chared::DELETE;
-use crate::domain::Text;
-use crate::histedit::{CC_EOF, CC_NEWLINE};
-use crate::history::{HistorySession, PushResult};
-use crate::map::map_init_emacs;
-use crate::testkit::{headless_editor, text};
+use crate::compat::chared::DELETE;
+use crate::compat::domain::Text;
+use crate::compat::histedit::{CC_EOF, CC_NEWLINE};
+use crate::compat::history::{HistorySession, PushResult};
+use crate::compat::map::map_init_emacs;
+use crate::compat::testkit::{headless_editor, text};
 
 /// The shared editor in emacs mode, which is where `^R`, `^S` and the
 /// incremental search are typed.

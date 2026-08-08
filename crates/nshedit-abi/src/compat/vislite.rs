@@ -9,7 +9,7 @@
 //!
 //! Routing it through the `bsd` crate made a human-readable listing depend on
 //! an optional feature. `bsd` is off by default, the seam in
-//! [`crate::histfile`] answers `None` when it is off, and `hist_command` turns
+//! [`crate::compat::histfile`] answers `None` when it is off, and `hist_command` turns
 //! a `None` into the C's -1 — so on the build that actually ships, the
 //! `history` builtin printed nothing and reported failure. A listing is not
 //! the place to carry an optional dependency.
@@ -18,7 +18,7 @@
 //! `VIS_HTTPSTYLE` or `VIS_MIMESTYLE`, no `VIS_GLOB`/`VIS_SHELL`, no caller
 //! extra list, no bound to truncate at, and no decoder. Reading history files
 //! still needs the whole engine in the other direction, and
-//! [`crate::histfile::vis_decode_into`] still takes it from `bsd`; this module
+//! [`crate::compat::histfile::vis_decode_into`] still takes it from `bsd`; this module
 //! does not touch that path.
 //!
 //! # Why it lives here and not in `histfile`
@@ -59,7 +59,7 @@
 //! terminator, so it always succeeds. That is why a NUL escapes as `\000`
 //! rather than as the `\^@` its control-character shape would suggest.
 
-use crate::locale::{self, Charset, MB_LEN_MAX, Mb};
+use crate::compat::locale::{self, Charset, MB_LEN_MAX, Mb};
 
 /// Which of `vis(3)`'s whitespace flags are set.
 ///

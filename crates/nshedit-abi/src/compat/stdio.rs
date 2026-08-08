@@ -14,7 +14,7 @@ use std::io::Write;
 use std::mem::ManuallyDrop;
 use std::os::fd::FromRawFd;
 
-use crate::el::EditLine;
+use crate::compat::el::EditLine;
 
 /// The one place the core touches an output descriptor.
 ///

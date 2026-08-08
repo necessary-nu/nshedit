@@ -6,7 +6,7 @@
 //! Every rule in this file is written against libc: `mbstowcs`, `wctomb`,
 //! `wcrtomb`, `iswcntrl`, `iswprint` and `wcwidth`, each reading the process's
 //! `LC_CTYPE`. `plan/decisions/no-c-ffi.md` bars linking libc, so the port has
-//! to supply them, and `crate::locale` is that supply — for this module,
+//! to supply them, and `crate::compat::locale` is that supply — for this module,
 //! for `literal`, `vis`, `refresh`, `map` and `search` alike. What it does and
 //! does not model is documented there; two facts matter to the rules in this
 //! file:
@@ -36,7 +36,7 @@
 //! ABI shim can hand out `cbuff.as_ptr()`/`wbuff.as_ptr()` unchanged and the
 //! returned length is the `strlen`/`wcslen` a C caller would compute.
 
-use crate::locale;
+use crate::compat::locale;
 
 // [spec:libedit:def:chartype.ct-buffer-t]
 /// Conversion buffer: a byte half and a wide half, each grown independently.
@@ -911,5 +911,5 @@ mod tests {
     }
 
     // The locale layer's own tests — the charset parser, the codec, the
-    // predicates and the width tables — live with it in `crate::locale`.
+    // predicates and the width tables — live with it in `crate::compat::locale`.
 }

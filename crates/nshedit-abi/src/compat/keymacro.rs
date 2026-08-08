@@ -3,13 +3,13 @@
 
 use std::process;
 
-use crate::chartype::{
+use crate::compat::chartype::{
     VISUAL_WIDTH_MAX, ct_encode_char, ct_encode_string, ct_visual_char, upto_nul,
 };
-use crate::el::{EL_BUFSIZ, EditLine, ElActionT};
-use crate::fcns::ED_SEQUENCE_LEAD_IN;
-use crate::map::{ElMapCurrent, N_KEYS};
-use crate::read::el_wgetc;
+use crate::compat::el::{EL_BUFSIZ, EditLine, ElActionT};
+use crate::compat::fcns::ED_SEQUENCE_LEAD_IN;
+use crate::compat::map::{ElMapCurrent, N_KEYS};
+use crate::compat::read::el_wgetc;
 
 /// C: `#define XK_CMD 0` — the node's `val` is an editor action.
 pub(crate) const XK_CMD: i32 = 0;
@@ -1054,7 +1054,7 @@ fn addc(buf: &mut [u8], len: usize, b: &mut usize, c: u8) {
 /// encoding, stopping at the first character it cannot represent.
 fn encode_wide(s: &[u32]) -> Vec<u8> {
     let mut out = Vec::new();
-    let mut scratch = [0u8; crate::locale::MB_LEN_MAX];
+    let mut scratch = [0u8; crate::compat::locale::MB_LEN_MAX];
     for &c in upto_nul(s) {
         let n = ct_encode_char(&mut scratch, c);
         if n <= 0 {
@@ -1110,8 +1110,8 @@ fn kprint_line(el: &EditLine, key: &[u8], what: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::el::blank_editline;
-    use crate::read::{el_wpush, read_init};
+    use crate::compat::el::blank_editline;
+    use crate::compat::read::{el_wpush, read_init};
 
     fn w(s: &str) -> Vec<u32> {
         s.chars().map(u32::from).collect()

@@ -4,22 +4,24 @@ use core::cell::Cell;
 #[cfg(test)]
 use core::ffi::c_char;
 
-use crate::chared::{CHAR_FWD, NOP};
-use crate::chared::{c_gets, c_next_word, ce_is_word, cv_delfini};
-use crate::common::{ed_end_of_file, ed_newline, ed_search_next_history, ed_search_prev_history};
-use crate::el::EL_BUFSIZ;
-use crate::el::{EditLine, ElActionT};
-use crate::fcns::{
+use crate::compat::chared::{CHAR_FWD, NOP};
+use crate::compat::chared::{c_gets, c_next_word, ce_is_word, cv_delfini};
+use crate::compat::common::{
+    ed_end_of_file, ed_newline, ed_search_next_history, ed_search_prev_history,
+};
+use crate::compat::el::EL_BUFSIZ;
+use crate::compat::el::{EditLine, ElActionT};
+use crate::compat::fcns::{
     ED_DELETE_PREV_CHAR, ED_DIGIT, ED_INSERT, ED_SEARCH_NEXT_HISTORY, ED_SEARCH_PREV_HISTORY,
     EM_DELETE_PREV_CHAR, EM_INC_SEARCH_NEXT, EM_INC_SEARCH_PREV,
 };
-use crate::hist::hist_get;
-use crate::histedit::{CC_CURSOR, CC_ERROR, CC_NORM, CC_REFRESH};
-use crate::map::ElMapCurrent;
-use crate::map::MAP_VI;
-use crate::read::{el_wgetc, el_wpush};
-use crate::refresh::re_refresh;
-use crate::terminal::terminal_beep;
+use crate::compat::hist::hist_get;
+use crate::compat::histedit::{CC_CURSOR, CC_ERROR, CC_NORM, CC_REFRESH};
+use crate::compat::map::ElMapCurrent;
+use crate::compat::map::MAP_VI;
+use crate::compat::read::{el_wgetc, el_wpush};
+use crate::compat::refresh::re_refresh;
+use crate::compat::terminal::terminal_beep;
 
 // ---------------------------------------------------------------------------
 // Constants the C takes from headers this crate has not grown yet.
@@ -27,7 +29,7 @@ use crate::terminal::terminal_beep;
 // `CC_*` are `histedit.h`; `EL_BUFSIZ` and `ANCHOR` are `el.h`; `MAP_VI` is
 // `map.h`; `NOP` and `CHAR_FWD` are `chared.h`. The `ED_*`/`EM_*` command codes
 // are `fcns.h`, which `src/makelist` generates; they come from
-// [`crate::fcns`] and are no longer restated here.
+// [`crate::compat::fcns`] and are no longer restated here.
 //
 // The two history-search codes double as this file's `dir`/`newdir` values and
 // as the sentinel `c_setpat` tests for, all of which are the C's `int`, so they

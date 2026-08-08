@@ -1,25 +1,25 @@
 //! Ported from `src/common.c`; rules live in `docs/spec/port/src/common.md`.
 
-use crate::chared::{
+use crate::compat::chared::{
     MODE_INSERT, MODE_REPLACE_1, NOP, c_delafter, c_delbefore, c_gets, c_hpos, c_insert,
     c_prev_word, ce_is_word, ch_enlargebufs, ch_reset,
 };
-use crate::el::{EL_BUFSIZ, EditLine, ElActionT};
-use crate::fcns::EM_UNIVERSAL_ARGUMENT;
-use crate::hist::{hist_first, hist_get, hist_next};
-use crate::histedit::{
+use crate::compat::el::{EL_BUFSIZ, EditLine, ElActionT};
+use crate::compat::fcns::EM_UNIVERSAL_ARGUMENT;
+use crate::compat::hist::{hist_first, hist_get, hist_next};
+use crate::compat::histedit::{
     CC_ARGHACK, CC_CURSOR, CC_EOF, CC_ERROR, CC_NEWLINE, CC_NORM, CC_REDISPLAY, CC_REFRESH,
     CC_REFRESH_BEEP,
 };
-use crate::locale;
-use crate::map::{ElMapCurrent, MAP_VI};
-use crate::parse::parse_line;
-use crate::read::el_wgetc;
-use crate::refresh::{re_clear_display, re_fastaddc, re_goto_bottom, re_refresh};
-use crate::search::{c_hmatch, c_setpat};
-use crate::terminal::{terminal_beep, terminal_clear_screen, terminal_putc};
-use crate::tty::{tty_noquotemode, tty_quotemode};
-use crate::vi::{end_motion, end_vi_motion, vi_command_mode};
+use crate::compat::locale;
+use crate::compat::map::{ElMapCurrent, MAP_VI};
+use crate::compat::parse::parse_line;
+use crate::compat::read::el_wgetc;
+use crate::compat::refresh::{re_clear_display, re_fastaddc, re_goto_bottom, re_refresh};
+use crate::compat::search::{c_hmatch, c_setpat};
+use crate::compat::terminal::{terminal_beep, terminal_clear_screen, terminal_putc};
+use crate::compat::tty::{tty_noquotemode, tty_quotemode};
+use crate::compat::vi::{end_motion, end_vi_motion, vi_command_mode};
 
 /// C: the bare `1000000` each of the three repeat-count accumulators tests
 /// `el_state.argument` against — the two here and `em_universal_argument`.
@@ -32,7 +32,7 @@ pub(crate) const ARGUMENT_CAP: i32 = 1_000_000;
 
 /// C: `iswdigit`.
 ///
-/// Belongs in [`crate::locale`] beside `iswspace`/`iswalnum`, which is where a
+/// Belongs in [`crate::compat::locale`] beside `iswspace`/`iswalnum`, which is where a
 /// second caller should find it; it is private here because this module may
 /// not add to that one.
 ///
@@ -80,7 +80,7 @@ fn line_terminate(el: &mut EditLine) {
 /// C: the `for (p = …, kp = el->el_chared.c_kill.buf; p < …; p++) *kp++ = *p`
 /// loops that fill the kill buffer from a range of the line, followed by
 /// `el->el_chared.c_kill.last = kp` — the one shape every kill and copy in
-/// this module and in [`crate::emacs`] uses.
+/// this module and in [`crate::compat::emacs`] uses.
 ///
 /// `kp` starts at index 0 every time, which is ERR-modes-54: kills never
 /// accumulate in either direction, and saving a zero-length span sets `last`

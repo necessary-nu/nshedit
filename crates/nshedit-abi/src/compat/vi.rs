@@ -11,31 +11,31 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::chared::{
+use crate::compat::chared::{
     CHAR_BACK, CHAR_FWD, DELETE, INSERT, MODE_INSERT, MODE_REPLACE, MODE_REPLACE_1, NOP, YANK,
     c_delafter, c_delbefore, c_delbefore1, c_insert, cv_delfini, cv_end_word, cv_is_big_word,
     cv_is_word, cv_next_word, cv_prev_word, cv_undo, cv_yank,
 };
-use crate::chartype::ct_decode_string;
-use crate::common::{ed_argument_digit, ed_kill_line, ed_newline, ed_next_char};
-use crate::el::{EL_BUFSIZ, EditLine, ElActionT};
-use crate::emacs::em_kill_line;
-use crate::errno::{ERANGE, set_errno};
-use crate::fcns::{ED_SEARCH_NEXT_HISTORY, ED_SEARCH_PREV_HISTORY};
-use crate::hist::{hist_first, hist_get};
-use crate::histedit::{CC_ARGHACK, CC_CURSOR, CC_EOF, CC_ERROR, CC_NORM, CC_REFRESH};
-use crate::locale::{self, iswlower, iswupper, towlower, towupper};
-use crate::map::{ElMapCurrent, MAP_VI};
-use crate::read::{el_wgetc, el_wpush};
-use crate::refresh::{re_fastaddc, re_refresh};
-use crate::search::{cv_csearch, cv_repeat_srch, cv_search};
-use crate::terminal::{terminal_beep, terminal_writec};
+use crate::compat::chartype::ct_decode_string;
+use crate::compat::common::{ed_argument_digit, ed_kill_line, ed_newline, ed_next_char};
+use crate::compat::el::{EL_BUFSIZ, EditLine, ElActionT};
+use crate::compat::emacs::em_kill_line;
+use crate::compat::errno::{ERANGE, set_errno};
+use crate::compat::fcns::{ED_SEARCH_NEXT_HISTORY, ED_SEARCH_PREV_HISTORY};
+use crate::compat::hist::{hist_first, hist_get};
+use crate::compat::histedit::{CC_ARGHACK, CC_CURSOR, CC_EOF, CC_ERROR, CC_NORM, CC_REFRESH};
+use crate::compat::locale::{self, iswlower, iswupper, towlower, towupper};
+use crate::compat::map::{ElMapCurrent, MAP_VI};
+use crate::compat::read::{el_wgetc, el_wpush};
+use crate::compat::refresh::{re_fastaddc, re_refresh};
+use crate::compat::search::{cv_csearch, cv_repeat_srch, cv_search};
+use crate::compat::terminal::{terminal_beep, terminal_writec};
 
 // ---------------------------------------------------------------------------
 // Constants and libc calls the C reaches through headers and libraries this
 // crate has no home for yet. Each is noted where it is used; none of them is a
-// re-declaration of something `crate::chared`, `crate::el`, `crate::map`,
-// `crate::histedit`, `crate::locale` or `crate::errno` already publishes.
+// re-declaration of something `crate::compat::chared`, `crate::compat::el`, `crate::compat::map`,
+// `crate::compat::histedit`, `crate::compat::locale` or `crate::compat::errno` already publishes.
 // ---------------------------------------------------------------------------
 
 /// C: `vi.c` — `#define TMP_BUFSIZ (EL_BUFSIZ * MB_LEN_MAX)`.
@@ -52,7 +52,7 @@ const TMP_BUFSIZ: usize = EL_BUFSIZ * locale::MB_LEN_MAX;
 /// [`locale::wcrtomb`] so it cannot disagree with the rest of the crate.
 ///
 /// The `errno = ERANGE` write on the no-single-byte-form path is recorded in
-/// [`crate::errno`] like every other errno the port sets. Nothing in this
+/// [`crate::compat::errno`] like every other errno the port sets. Nothing in this
 /// crate reads it and [`vi_alias`] — the sole caller — folds -1 and 0 into the
 /// same `CC_ERROR`, so it is unobservable here; it is written anyway so that
 /// this stand-in and the ABI crate's `el_getc`, which publishes the same value
@@ -82,11 +82,11 @@ fn el_getc(el: &mut EditLine, cp: &mut u8) -> i32 {
 
 /// C: `(el->el_getenv)(name)`, per `sem:el.editline.el-getenv-fn`.
 ///
-/// The hook and the built-in default have different shapes — [`crate::el`]'s
+/// The hook and the built-in default have different shapes — [`crate::compat::el`]'s
 /// own note says the two "are reconciled where the hook is consulted, not
 /// here", and this is the first consult site in the crate. An installed hook
 /// hands back a borrowed `char *` across the C ABI and is called through;
-/// `None` is the built-in [`crate::el::secure_getenv`], which owns what it
+/// `None` is the built-in [`crate::compat::el::secure_getenv`], which owns what it
 /// returns. Both answers are copied out, because the C only ever uses the
 /// value before the next hook call.
 fn el_getenv(el: &EditLine, name: &CStr) -> Option<OsString> {
@@ -106,7 +106,7 @@ fn el_getenv(el: &EditLine, name: &CStr) -> Option<OsString> {
             let bytes = unsafe { CStr::from_ptr(value) }.to_bytes().to_vec();
             Some(OsString::from_vec(bytes))
         }
-        None => crate::el::secure_getenv(&name.to_string_lossy()),
+        None => crate::compat::el::secure_getenv(&name.to_string_lossy()),
     }
 }
 
@@ -130,7 +130,7 @@ pub(crate) fn end_motion(el: &mut EditLine) -> ElActionT {
 ///
 /// Which motions carry that test is not a distinction the C draws on purpose:
 /// `w`/`W` have it and `b`/`B`/`e`/`E`/`0`/`%` do not, and the ones in
-/// [`crate::common`] and [`crate::emacs`] all do. Since the test is on the
+/// [`crate::compat::common`] and [`crate::compat::emacs`] all do. Since the test is on the
 /// keymap *type* and not on which map is currently active, the ones that carry
 /// it complete a pending vi operator whenever the editor has been put in vi
 /// mode — including when the key that reached them was bound in an emacs map.

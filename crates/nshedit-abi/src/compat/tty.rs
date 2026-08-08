@@ -1,17 +1,17 @@
 //! Ported from `src/tty.c`; rules live in `docs/spec/port/src/tty.md`.
 
-use crate::chartype::{ct_encode_char, ct_encode_string};
-use crate::el::{EDIT_DISABLED, EL_BUFSIZ, EditLine, ElActionT, NO_RESET};
-use crate::fcns::{
+use crate::compat::chartype::{ct_encode_char, ct_encode_string};
+use crate::compat::el::{EDIT_DISABLED, EL_BUFSIZ, EditLine, ElActionT, NO_RESET};
+use crate::compat::fcns::{
     ED_DELETE_PREV_WORD, ED_INSERT, ED_PREV_CHAR, ED_PREV_WORD, ED_QUOTED_INSERT, ED_REDISPLAY,
     ED_UNASSIGNED, EM_DELETE_OR_LIST, EM_DELETE_PREV_CHAR, EM_KILL_LINE, VI_DELETE_PREV_CHAR,
     VI_KILL_LINE_PREV, VI_LIST_OR_EOF,
 };
-use crate::keymacro::keymacro_clear;
-use crate::locale::MB_LEN_MAX;
-use crate::map::{ElMapCurrent, MAP_VI, N_KEYS};
-use crate::parse::parse_escape;
-use crate::terminal::TERM_CAN_TAB;
+use crate::compat::keymacro::keymacro_clear;
+use crate::compat::locale::MB_LEN_MAX;
+use crate::compat::map::{ElMapCurrent, MAP_VI, N_KEYS};
+use crate::compat::parse::parse_escape;
+use crate::compat::terminal::TERM_CAN_TAB;
 
 /// C: `#define NN_IO 3` — the number of I/O modes (`ED_IO`, `EX_IO`,
 /// `QU_IO`).

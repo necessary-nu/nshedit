@@ -1,7 +1,7 @@
 use super::*;
-use crate::el::blank_editline;
-use crate::read::el_wpush;
-use crate::testkit::{headless_editor, killed, set_line, text};
+use crate::compat::el::blank_editline;
+use crate::compat::read::el_wpush;
+use crate::compat::testkit::{headless_editor, killed, set_line, text};
 
 /// The shared editor holding `s`, cursor at `at`.
 fn editor(s: &str, at: usize) -> EditLine {

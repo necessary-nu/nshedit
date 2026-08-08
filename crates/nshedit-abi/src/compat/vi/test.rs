@@ -1,10 +1,10 @@
 use super::*;
-use crate::common::ed_insert;
-use crate::hist::HistSource;
-use crate::histedit::CC_NEWLINE;
-use crate::histedit::{H_FIRST, HistEventW};
-use crate::map::ElFuncT;
-use crate::testkit::{headless_editor, killed, set_line, text};
+use crate::compat::common::ed_insert;
+use crate::compat::hist::HistSource;
+use crate::compat::histedit::CC_NEWLINE;
+use crate::compat::histedit::{H_FIRST, HistEventW};
+use crate::compat::map::ElFuncT;
+use crate::compat::testkit::{headless_editor, killed, set_line, text};
 use core::ffi::{c_int, c_void};
 use std::sync::OnceLock;
 

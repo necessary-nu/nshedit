@@ -39,10 +39,10 @@
 
 use std::io::Read;
 
-use crate::chared::{el_deletestr, el_winsertstr};
-use crate::chartype::{ct_decode_string, ct_encode_string};
-use crate::el::{EditLine, el_beep};
-use crate::histedit::{CC_NORM, CC_REDISPLAY, CC_REFRESH};
+use crate::compat::chared::{el_deletestr, el_winsertstr};
+use crate::compat::chartype::{ct_decode_string, ct_encode_string};
+use crate::compat::el::{EditLine, el_beep};
+use crate::compat::histedit::{CC_NORM, CC_REDISPLAY, CC_REFRESH};
 
 /// C: `#define FN_QUOTE_MATCH 1U` — quote the returned match.
 ///

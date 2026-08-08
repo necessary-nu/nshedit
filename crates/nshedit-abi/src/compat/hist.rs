@@ -6,15 +6,15 @@ use std::ffi::CStr;
 use std::ptr;
 use std::rc::Rc;
 
-use crate::chared::ch_enlargebufs;
-use crate::chartype::{ct_decode_string, ct_encode_string};
-use crate::el::{EL_BUFSIZ, NARROW_HISTORY};
-use crate::el::{EditLine, ElActionT};
-use crate::histedit::{
+use crate::compat::chared::ch_enlargebufs;
+use crate::compat::chartype::{ct_decode_string, ct_encode_string};
+use crate::compat::el::{EL_BUFSIZ, NARROW_HISTORY};
+use crate::compat::el::{EditLine, ElActionT};
+use crate::compat::histedit::{
     CC_ERROR, CC_REFRESH, H_FIRST, H_LAST, H_NEXT, H_PREV, H_SETSIZE, H_SETUNIQUE,
 };
-use crate::histedit::{HistEvent, HistEventW};
-use crate::map::MAP_VI;
+use crate::compat::histedit::{HistEvent, HistEventW};
+use crate::compat::map::MAP_VI;
 
 // Constants the C reaches through its headers. None of `el.h`, `map.h`,
 // `histedit.h` or `vis.h` has a Rust home that publishes these yet, so they
@@ -492,10 +492,10 @@ pub(crate) fn hist_command(el: &mut EditLine, argc: i32, argv: *const *const u32
             // `vislite::encode` returns what it produced, so there is no destination
             // to size.
             //
-            // `crate::vislite` and not the `bsd` seam: `bsd` is off by default,
+            // `crate::compat::vislite` and not the `bsd` seam: `bsd` is off by default,
             // and routing a human-readable listing through it made the builtin
             // return -1 and print nothing on every build that ships.
-            let buf = crate::vislite::encode(crate::vislite::Escape::Nl, &src);
+            let buf = crate::compat::vislite::encode(crate::compat::vislite::Escape::Nl, &src);
 
             // C: `fprintf(el->el_outfile, "%d\t%s\n", hno++, buf)`. The number
             // is a fresh 1-based counter over this walk, not `ev.num`, and

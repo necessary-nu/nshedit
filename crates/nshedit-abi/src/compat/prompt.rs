@@ -2,9 +2,9 @@
 
 use core::ptr;
 
-use crate::chartype::ct_decode_string;
-use crate::el::{CoordT, EditLine};
-use crate::refresh::{re_putc, re_putliteral};
+use crate::compat::chartype::ct_decode_string;
+use crate::compat::el::{CoordT, EditLine};
+use crate::compat::refresh::{re_putc, re_putliteral};
 
 // The `el_set`/`el_get` ops [`prompt_set`] and [`prompt_get`] test `op`
 // against. They belong to `histedit.h`, which has no Rust counterpart yet;

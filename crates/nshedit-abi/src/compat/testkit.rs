@@ -13,15 +13,15 @@
 //! [`headless_editor`] fills in the screen they would have produced. `sig_init`
 //! installs nothing and records nothing a test can see.
 
-use crate::chared::ch_init;
-use crate::el::{EditLine, blank_editline};
-use crate::hist::hist_init;
-use crate::keymacro::keymacro_init;
-use crate::literal::literal_init;
-use crate::map::map_init;
-use crate::prompt::prompt_init;
-use crate::read::read_init;
-use crate::search::search_init;
+use crate::compat::chared::ch_init;
+use crate::compat::el::{EditLine, blank_editline};
+use crate::compat::hist::hist_init;
+use crate::compat::keymacro::keymacro_init;
+use crate::compat::literal::literal_init;
+use crate::compat::map::map_init;
+use crate::compat::prompt::prompt_init;
+use crate::compat::read::read_init;
+use crate::compat::search::search_init;
 
 /// An editor in the state `el_init` leaves behind, on an `h`-by-`v` screen,
 /// with nothing to write to.

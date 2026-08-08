@@ -3,10 +3,10 @@ use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::*;
-use crate::el::CoordT;
-use crate::literal::{EL_LITERAL, literal_get};
-use crate::terminal::{T_CE, T_STR};
-use crate::testkit::headless_editor;
+use crate::compat::el::CoordT;
+use crate::compat::literal::{EL_LITERAL, literal_get};
+use crate::compat::terminal::{T_CE, T_STR};
+use crate::compat::testkit::headless_editor;
 
 /// A screen row of `dlen` cells plus the reserved terminator slot at
 /// `d[dlen]` that both `re_insert` and `re_delete` write, holding `s` and

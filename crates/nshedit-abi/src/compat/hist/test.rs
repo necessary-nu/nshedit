@@ -2,11 +2,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::*;
-use crate::common::{ed_next_history, ed_prev_history};
-use crate::domain::Text;
-use crate::histedit::CC_REFRESH_BEEP;
-use crate::history::{HistorySession, PushResult};
-use crate::testkit::{headless_editor, text};
+use crate::compat::common::{ed_next_history, ed_prev_history};
+use crate::compat::domain::Text;
+use crate::compat::histedit::CC_REFRESH_BEEP;
+use crate::compat::history::{HistorySession, PushResult};
+use crate::compat::testkit::{headless_editor, text};
 
 /// An editor in the state `el_init` leaves behind, on an ordinary screen.
 fn editor() -> EditLine {
@@ -255,7 +255,7 @@ fn a_byte_oriented_history_is_decoded_rather_than_refused() {
     el.set_history(Rc::new(RefCell::new(ByteStore(vec![b"echo hi"]))));
     el.el_state.argument = 1;
 
-    assert_eq!(el.el_flags & crate::el::NARROW_HISTORY, 0);
+    assert_eq!(el.el_flags & crate::compat::el::NARROW_HISTORY, 0);
     assert_eq!(ed_prev_history(&mut el, 0), CC_REFRESH);
     assert_eq!(text(&el), "echo hi");
 }
@@ -572,7 +572,7 @@ fn every_narrow_failure_is_the_same_null() {
 #[test]
 fn the_narrow_path_never_writes_the_shared_event_cookie() {
     let mut el = editor();
-    el.el_flags |= crate::el::NARROW_HISTORY;
+    el.el_flags |= crate::compat::el::NARROW_HISTORY;
     attach_c(&mut el, narrow_hook);
 
     assert_eq!(hist_first(&mut el), Some(wide("echo hi")));
@@ -618,7 +618,7 @@ fn only_a_c_dispatcher_is_reachable_from_here() {
 
     // The flag is the only thing that could route a fetch through
     // `hist_convert`, and it does not apply to a Rust store.
-    el.el_flags |= crate::el::NARROW_HISTORY;
+    el.el_flags |= crate::compat::el::NARROW_HISTORY;
     assert_eq!(hist_first(&mut el), Some(wide("echo hi")));
 }
 

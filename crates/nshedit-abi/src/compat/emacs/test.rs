@@ -1,7 +1,7 @@
 use super::*;
-use crate::chared::MODE_REPLACE_1;
-use crate::map::map_init_emacs;
-use crate::testkit::{headless_editor, killed, set_line, text};
+use crate::compat::chared::MODE_REPLACE_1;
+use crate::compat::map::map_init_emacs;
+use crate::compat::testkit::{headless_editor, killed, set_line, text};
 
 /// The shared editor under the emacs bindings, with `s` in the line and the
 /// cursor at `at`.

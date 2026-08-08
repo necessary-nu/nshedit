@@ -4,8 +4,8 @@ use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::*;
-use crate::el::blank_editline;
-use crate::fcns::ED_INSERT;
+use crate::compat::el::blank_editline;
+use crate::compat::fcns::ED_INSERT;
 
 /// An editor with the capability tables allocated and nothing loaded into
 /// them, so each test installs exactly the capabilities it is about.

@@ -12,7 +12,7 @@
 
 use core::ffi::{c_char, c_int};
 
-use crate::el::ElActionT;
+use crate::compat::el::ElActionT;
 
 // The `el_action_t` an editor command returns. C: `histedit.h` defines these
 // as untyped `#define`s; here they carry the type the commands return, so a
@@ -76,8 +76,8 @@ pub const H_SAVE_FP: i32 = 26;
 pub const H_NSAVE_FP: i32 = 27;
 
 /// C: `typedef struct editline EditLine;` — the editor handle. Its body is
-/// `def:el.editline`, in [`crate::el`].
-pub use crate::el::EditLine;
+/// `def:el.editline`, in [`crate::compat::el`].
+pub use crate::compat::el::EditLine;
 /// C: `struct lineinfo` and `struct lineinfow`, which differ only in their
 /// three members' character type.
 ///

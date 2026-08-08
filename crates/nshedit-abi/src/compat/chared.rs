@@ -3,15 +3,15 @@
 use core::ffi::{c_char, c_void};
 use core::ptr;
 
-use crate::common::ed_end_of_file;
-use crate::el::{EL_BUFSIZ, EditLine, ElActionT};
-use crate::fcns::ED_UNASSIGNED;
-use crate::hist::hist_enlargebuf;
-use crate::locale;
-use crate::map::ElMapCurrent;
-use crate::read::el_wgetc;
-use crate::refresh::{re_refresh, re_refresh_cursor};
-use crate::terminal::terminal_beep;
+use crate::compat::common::ed_end_of_file;
+use crate::compat::el::{EL_BUFSIZ, EditLine, ElActionT};
+use crate::compat::fcns::ED_UNASSIGNED;
+use crate::compat::hist::hist_enlargebuf;
+use crate::compat::locale;
+use crate::compat::map::ElMapCurrent;
+use crate::compat::read::el_wgetc;
+use crate::compat::refresh::{re_refresh, re_refresh_cursor};
+use crate::compat::terminal::terminal_beep;
 
 // Pending vi operator, held in `c_vcmd.action`. C: `chared.h`. DELETE,
 // INSERT and YANK combine, and the exact combination DELETE|INSERT is what

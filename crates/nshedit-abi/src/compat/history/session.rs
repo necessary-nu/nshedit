@@ -2,8 +2,8 @@
 
 use std::num::NonZeroUsize;
 
-use crate::domain::{Direction, Text, TextUnit};
-use crate::hist::{EditorHistory, HistLine, HistText};
+use crate::compat::domain::{Direction, Text, TextUnit};
+use crate::compat::hist::{EditorHistory, HistLine, HistText};
 
 use super::{
     DuplicatePolicy, HistoryCursor, HistoryEntry, HistoryId, HistoryStore, Navigation, PushError,

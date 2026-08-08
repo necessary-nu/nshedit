@@ -231,3 +231,19 @@ pub mod el;
 #[cfg(test)]
 #[path = "../../nshedit-abi/src/compat/testkit.rs"]
 mod testkit;
+
+// The translated compatibility engine is being detached from this crate in
+// place. Its sources already live under `nshedit-abi`; this private namespace
+// keeps each intermediate rewrite buildable until that crate owns the module
+// tree directly and these aliases disappear with the legacy public exports.
+#[doc(hidden)]
+pub(crate) mod compat {
+    pub(crate) use crate::{
+        chared, chartype, common, domain, editor, el, emacs, errno, fcns, hist, histedit, keymacro,
+        literal, locale, map, parse, prompt, read, refresh, search, sig, stdio, terminal, tty, vi,
+        vislite,
+    };
+
+    #[cfg(test)]
+    pub(crate) use crate::{history, testkit};
+}

@@ -32,22 +32,22 @@ use std::io::Write;
 use nshterm::TermInfo;
 use nshterm::parm::{Param, Variables, expand};
 
-use crate::chartype::{
+use crate::compat::chartype::{
     MB_FILL_CHAR, VISUAL_WIDTH_MAX, ct_decode_string, ct_encode_char, ct_encode_string,
     ct_visual_char, ct_visual_string,
 };
-use crate::el::{CoordT, EDIT_DISABLED, EditLine, ElActionT};
-use crate::fcns::{
+use crate::compat::el::{CoordT, EDIT_DISABLED, EditLine, ElActionT};
+use crate::compat::fcns::{
     ED_DELETE_NEXT_CHAR, ED_MOVE_TO_BEG, ED_MOVE_TO_END, ED_NEXT_CHAR, ED_NEXT_HISTORY,
     ED_PREV_CHAR, ED_PREV_HISTORY, ED_SEQUENCE_LEAD_IN, ED_UNASSIGNED,
 };
-use crate::keymacro::{KeymacroValueT, keymacro_add, keymacro_clear, keymacro_kprint};
-use crate::literal::{EL_LITERAL, literal_get};
-use crate::locale;
-use crate::map::{ElMapCurrent, MAP_VI};
-use crate::refresh::re_clear_display;
-use crate::stdio::write_fd;
-use crate::tty::SpeedT;
+use crate::compat::keymacro::{KeymacroValueT, keymacro_add, keymacro_clear, keymacro_kprint};
+use crate::compat::literal::{EL_LITERAL, literal_get};
+use crate::compat::locale;
+use crate::compat::map::{ElMapCurrent, MAP_VI};
+use crate::compat::refresh::re_clear_display;
+use crate::compat::stdio::write_fd;
+use crate::compat::tty::SpeedT;
 
 /// C: `#define TC_BUFSIZE ((size_t)2048)`.
 const TC_BUFSIZE: usize = 2048;
@@ -1660,7 +1660,7 @@ fn getenv(el: &EditLine, name: &str) -> Option<String> {
             // rather than carried; terminal type names are ASCII.
             Some(s.to_string_lossy().into_owned())
         }
-        None => crate::el::secure_getenv(name).map(|v| v.to_string_lossy().into_owned()),
+        None => crate::compat::el::secure_getenv(name).map(|v| v.to_string_lossy().into_owned()),
     }
 }
 
