@@ -457,8 +457,12 @@ thread_local! {
     /// has, and drops only the cross-thread race, which the C does not
     /// define anyway.
     ///
-    /// The signature cannot take it as a parameter and `ElSearchT` is not
-    /// this module's to extend, so this is where it lives.
+    /// Where it belongs is [`ElSearchT`], beside `patbuf` and `chacha`: that
+    /// is per-editor state reached through the `el` every level already
+    /// carries, and it would put the dependency in the signature instead of
+    /// here. The field is not there yet only because the one place an
+    /// `ElSearchT` is built is `el_init`'s struct literal, which belongs to
+    /// another translation.
     static PCHAR: Cell<u32> = const { Cell::new(':' as u32) };
 }
 

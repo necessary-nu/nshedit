@@ -1,17 +1,16 @@
 //! Tests for the ported `src/history.c`.
 //!
-//! The two link-level functions are exercised against a bare
-//! [`HistoryTGen`] — the store `history_def_init` produces, without the
-//! [`HistoryGen`] vtable around it — because that is the only place their
-//! contract is visible: `history_def_enter` calls the raw bodies, so the
-//! wrappers named by the rules have no in-tree caller of their own.
+//! The two list-level functions are exercised against a bare
+//! [`HistoryTGen`] — the store without the [`HistoryGen`] vtable around it —
+//! because that is the only place their contract is visible on its own. The
+//! store is a value with a destructor, so a test that wants one writes
+//! `HistoryTGen::new(max)` and nothing else.
 //!
 //! Writing `_HiStOrY_V2_` needs no feature: the escape it wants is
 //! `strvis(..., VIS_WHITE)` and [`crate::vislite`] supplies it. Reading one
 //! still does — `vis_decode_into` is a stub without `bsd` — so the round-trip
 //! test is `cfg`d and the save-only ones are not.
 
-use core::marker::PhantomData;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::*;
@@ -32,61 +31,17 @@ fn cstr(s: &str) -> Vec<u32> {
     v
 }
 
-/// The builtin store on its own, with a destructor.
-///
-/// `history_def_init` hands back a `void *` the caller must remember to clear
-/// and free; wrapping it is what keeps these tests from leaking a list apiece.
-struct Builtin<C: HistChar> {
-    p: *mut c_void,
-    _c: PhantomData<C>,
-}
-
-impl<C: HistChar> Builtin<C> {
-    fn new(max: i32) -> Self {
-        let mut p: *mut c_void = ptr::null_mut();
-        let mut ev = scratch_ev::<C>();
-        assert_eq!(history_def_init::<C>(&mut p, &mut ev, max), 0);
-        Self { p, _c: PhantomData }
-    }
-
-    fn store(&mut self) -> &mut HistoryTGen<C> {
-        // SAFETY: `p` is what `history_def_init` produced above, and nothing
-        // else holds a reference to it.
-        unsafe { &mut *self.p.cast::<HistoryTGen<C>>() }
-    }
-
-    /// The embedded sentinel, which is the one node that is not an entry.
-    fn sentinel(&mut self) -> *mut HentryGen<C> {
-        ptr::from_mut(&mut self.store().list)
-    }
-
-    /// The entry text, newest first.
-    fn entries(&mut self) -> Vec<String> {
-        let list = self.sentinel();
-        let mut out = Vec::new();
-        // SAFETY: the list is circular through the sentinel and every node on
-        // it is one this module allocated.
-        unsafe {
-            let mut p = (*list).next;
-            while p != list {
-                out.push(text((*p).ev.str.cast::<u32>()));
-                p = (*p).next;
-            }
-        }
-        out
-    }
-}
-
-impl<C: HistChar> Drop for Builtin<C> {
-    fn drop(&mut self) {
-        let mut ev = scratch_ev::<C>();
-        // SAFETY: `p` is still the store `history_def_init` produced; the
-        // clear frees every entry and the free releases the store itself.
-        unsafe {
-            history_def_clear::<C>(self.p, &mut ev);
-            free_alloc(self.p.cast::<HistoryTGen<C>>());
-        }
-    }
+/// The entry text of a bare store, newest first.
+fn entries(h: &HistoryTGen<u32>) -> Vec<String> {
+    h.entries
+        .iter()
+        .map(|e| {
+            e.text()
+                .iter()
+                .map(|&c| char::from_u32(c).unwrap())
+                .collect()
+        })
+        .collect()
 }
 
 /// A `Char *` the store owns, as a `String`.
@@ -119,9 +74,9 @@ fn scratch_path(tag: &str) -> std::path::PathBuf {
 // history_def_insert
 // ---------------------------------------------------------------------------
 
-/// Insertion is at the *head*, so "first" is the most recent entry, and the
-/// four pointer writes have to leave the circle intact from both ends. Ids
-/// come off a counter that only ever increases.
+/// Insertion is at the *head*, so "first" is the most recent entry. Ids come
+/// off a counter that only ever increases, and the text is the store's own
+/// copy rather than the caller's buffer.
 ///
 /// Nothing is trimmed here: `max` is 0 and both entries survive, because
 /// eviction belongs to `history_def_enter` and this function has none. That
@@ -129,11 +84,14 @@ fn scratch_path(tag: &str) -> std::path::PathBuf {
 // [spec:libedit:sem:history.history-def-insert-fn/test]
 #[test]
 fn an_insert_links_at_the_head_and_takes_its_own_copy() {
-    let mut b = Builtin::<u32>::new(0);
+    let mut h = HistoryTGen::<u32>::new(0);
     let mut ev = scratch_ev::<u32>();
 
     let src = cstr("first");
-    assert_eq!(history_def_insert(b.store(), &mut ev, src.as_ptr()), 0);
+    assert_eq!(
+        history_def_insert(&mut h, &mut ev, &src[..src.len() - 1]),
+        0
+    );
     assert_eq!(ev.num, 1, "ids start at 1, so 0 can mean 'no event'");
     assert_eq!(text(ev.str), "first");
     assert_ne!(
@@ -142,49 +100,44 @@ fn an_insert_links_at_the_head_and_takes_its_own_copy() {
         "the store duplicates the caller's string rather than borrowing it"
     );
 
-    let src2 = cstr("second");
-    assert_eq!(history_def_insert(b.store(), &mut ev, src2.as_ptr()), 0);
+    assert_eq!(history_def_insert(&mut h, &mut ev, &wide("second")), 0);
     assert_eq!(ev.num, 2);
 
-    assert_eq!(b.entries(), vec!["second", "first"], "newest first");
-
-    let list = b.sentinel();
-    let st = b.store();
-    assert_eq!(st.cur, 2);
-    assert_eq!(st.eventid, 2);
+    assert_eq!(entries(&h), vec!["second", "first"], "newest first");
+    assert_eq!(h.cur(), 2);
+    assert_eq!(h.eventid, 2);
     assert_eq!(
-        st.cursor, st.list.next,
+        h.cursor,
+        Some(0),
         "an insert always repositions onto the new entry"
     );
-    // SAFETY: both nodes are live entries of this store's list.
-    unsafe {
-        assert_eq!((*st.list.next).prev, list, "the head links back");
-        assert_eq!((*st.list.prev).next, list, "and the tail links round");
-    }
 }
 
 /// A NULL string is defined as `STR("")` rather than reproduced as the C's
 /// unchecked `Strdup` (ERR-history-40): the entry exists, it is empty, and
-/// every later walk over it is on a defined route.
+/// every later walk over it is on a defined route. The definition lives in
+/// `s_in`, so the empty slice is what the insert itself ever sees.
 // [spec:libedit:sem:history.history-def-insert-fn/test]
 #[test]
 fn a_null_string_becomes_an_empty_entry_rather_than_a_fault() {
-    let mut b = Builtin::<u32>::new(0);
+    let mut h = HistoryTGen::<u32>::new(0);
     let mut ev = scratch_ev::<u32>();
-    assert_eq!(history_def_insert(b.store(), &mut ev, ptr::null()), 0);
+    // SAFETY: a NULL is one of the two values `s_in` accepts.
+    let empty = unsafe { s_in::<u32>(ptr::null()) };
+    assert_eq!(history_def_insert(&mut h, &mut ev, empty), 0);
     assert_eq!(ev.num, 1);
     assert_eq!(text(ev.str), "");
-    assert_eq!(b.store().cur, 1);
+    assert_eq!(h.cur(), 1);
 }
 
 // ---------------------------------------------------------------------------
 // history_def_delete
 // ---------------------------------------------------------------------------
 
-/// Deleting is an unlink plus a cursor repair, and the repair is the subtle
-/// half: the cursor moves to `prev` — toward *newer* entries — and falls
-/// through to `next` only when that would be the sentinel, so deleting the
-/// newest entry lands on the second-newest rather than on nothing.
+/// Deleting is a removal plus a cursor repair, and the repair is the subtle
+/// half: the cursor moves toward *newer* entries and falls back to the older
+/// side only when there is no newer one, so deleting the newest entry lands on
+/// the second-newest rather than on nothing.
 ///
 /// `eventid` is deliberately not adjusted, so the ids of deleted events are
 /// never handed out again; `ev` is accepted and never written, which is why
@@ -192,11 +145,10 @@ fn a_null_string_becomes_an_empty_entry_rather_than_a_fault() {
 // [spec:libedit:sem:history.history-def-delete-fn/test]
 #[test]
 fn a_delete_repairs_the_cursor_toward_the_newer_entry() {
-    let mut b = Builtin::<u32>::new(0);
+    let mut h = HistoryTGen::<u32>::new(0);
     let mut ev = scratch_ev::<u32>();
     for s in ["oldest", "middle", "newest"] {
-        let z = cstr(s);
-        history_def_insert(b.store(), &mut ev, z.as_ptr());
+        history_def_insert(&mut h, &mut ev, &wide(s));
     }
 
     // A value the delete must leave alone.
@@ -206,54 +158,71 @@ fn a_delete_repairs_the_cursor_toward_the_newer_entry() {
     };
 
     // The cursor is on "newest" — the insert put it there — so deleting that
-    // entry has to move it rather than leave it dangling.
-    let list = b.sentinel();
-    // SAFETY: the head of a three-entry list is a real entry.
-    let newest = unsafe { (*list).next };
-    history_def_delete(b.store(), &mut untouched, newest);
+    // entry has to move it rather than leave it on nothing.
+    history_def_delete(&mut h, &mut untouched, 0);
 
     assert_eq!(untouched.num, 4242, "`ev` is threaded through and ignored");
     assert!(untouched.str.is_null());
-    assert_eq!(b.entries(), vec!["middle", "oldest"]);
-    // SAFETY: the cursor is on a live entry, as the repair guarantees.
-    assert_eq!(text(unsafe { (*b.store().cursor).ev.str }), "middle");
-    assert_eq!(b.store().cur, 2);
+    assert_eq!(entries(&h), vec!["middle", "oldest"]);
+    assert_eq!(h.current().map(HentryGen::text), Some(&wide("middle")[..]));
+    assert_eq!(h.cur(), 2);
     assert_eq!(
-        b.store().eventid,
-        3,
+        h.eventid, 3,
         "the id counter does not rewind, so ids are never reused"
     );
 
     // An entry the cursor is not on leaves the cursor where it is.
-    // SAFETY: the tail of a two-entry list is a real entry.
-    let oldest = unsafe { (*list).prev };
-    history_def_delete(b.store(), &mut untouched, oldest);
-    assert_eq!(b.entries(), vec!["middle"]);
-    // SAFETY: as above.
-    assert_eq!(text(unsafe { (*b.store().cursor).ev.str }), "middle");
+    history_def_delete(&mut h, &mut untouched, 1);
+    assert_eq!(entries(&h), vec!["middle"]);
+    assert_eq!(h.current().map(HentryGen::text), Some(&wide("middle")[..]));
 
     // And the sole remaining entry leaves it parked on the sentinel, which is
     // the "no current event" state.
-    // SAFETY: as above.
-    let sole = unsafe { (*list).next };
-    history_def_delete(b.store(), &mut untouched, sole);
-    assert!(b.entries().is_empty());
-    assert_eq!(b.store().cur, 0);
-    assert_eq!(b.store().cursor, list);
-    assert_eq!(b.store().eventid, 3);
+    history_def_delete(&mut h, &mut untouched, 0);
+    assert!(entries(&h).is_empty());
+    assert_eq!(h.cur(), 0);
+    assert_eq!(h.cursor, None);
+    assert_eq!(h.eventid, 3);
 }
 
-/// The sentinel is the list header embedded in the store, not an entry, and
-/// unlinking it would fold the list into itself. The C calls `abort()`; a
-/// panic is the same contract, and no caller in this file can reach it.
+/// The other half of "deleting an entry the cursor is not on leaves the cursor
+/// alone", and the half the C gets for free: it names entries by address, so
+/// removing one never disturbs another. Naming them by position does, and
+/// removing an entry *newer* than the cursor slides everything below it up, so
+/// leaving the index untouched would silently move the cursor to a different
+/// event.
+///
+/// Neither deleting opcode reaches this — both delete at the cursor, and
+/// eviction takes the tail with the cursor on the head — so nothing but the
+/// removal itself is under test here.
 // [spec:libedit:sem:history.history-def-delete-fn/test]
 #[test]
-#[should_panic(expected = "sentinel")]
-fn deleting_the_list_header_is_a_programming_error() {
-    let mut b = Builtin::<u32>::new(0);
+fn deleting_a_newer_entry_keeps_the_cursor_on_the_same_event() {
+    let mut h = HistoryTGen::<u32>::new(0);
     let mut ev = scratch_ev::<u32>();
-    let list = b.sentinel();
-    history_def_delete(b.store(), &mut ev, list);
+    for s in ["oldest", "middle", "newest"] {
+        history_def_insert(&mut h, &mut ev, &wide(s));
+    }
+    h.cursor = Some(2);
+
+    history_def_delete(&mut h, &mut ev, 0);
+
+    assert_eq!(entries(&h), vec!["middle", "oldest"]);
+    assert_eq!(h.cursor, Some(1), "the index moved with the entry");
+    assert_eq!(h.current().map(HentryGen::text), Some(&wide("oldest")[..]));
+}
+
+/// Naming something that is not an entry — the C passes its list sentinel, and
+/// here that is any index past the end — would fold the list into itself. The
+/// C calls `abort()`; a panic is the same contract, and no caller in this file
+/// can reach it.
+// [spec:libedit:sem:history.history-def-delete-fn/test]
+#[test]
+#[should_panic(expected = "not an entry")]
+fn deleting_something_that_is_not_an_entry_is_a_programming_error() {
+    let mut h = HistoryTGen::<u32>::new(0);
+    let mut ev = scratch_ev::<u32>();
+    history_def_delete(&mut h, &mut ev, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -457,30 +426,34 @@ fn the_bounded_save_writes_one_more_entry_than_asked_for() {
 /// text survives — no ids, no timestamps, no per-entry data — so the reloaded
 /// store renumbers from 1.
 ///
+/// The two halves meet in a `Vec<u8>` and never touch a filesystem. That is
+/// what the reader/writer split is for: `history_save_out` and
+/// `history_load_in` are the whole of the format, and `history_save` and
+/// `history_load` add only an `open`. The path halves are covered by the two
+/// tests either side of this one.
+///
 /// The non-ASCII entry is the interesting one. The file is bytes in both
 /// builds, so the wide store encodes to the locale on the way out and decodes
 /// on the way back in, and `VIS_WHITE` escapes each of those bytes
-/// individually.
-// [spec:libedit:sem:history.history-save-fn/test]
+/// individually — which is why the charset is pinned rather than inherited
+/// from whatever locale the test run happens to have.
+// [spec:libedit:sem:history.history-save-fp-fn/test]
 // [spec:libedit:sem:history.history-load-fn/test]
 #[cfg(feature = "bsd")]
 #[test]
 fn a_saved_history_reloads_into_the_same_entries_in_the_same_order() {
-    use crate::histedit::H_SAVE;
-
-    let path = scratch_path("roundtrip");
-    let p = path.to_str().unwrap();
+    let _charset = crate::locale::pin_charset(crate::locale::Charset::Utf8);
     let entries = ["one two", "échò", "tab\there"];
 
     let mut h = OwnedHistoryW::with_size(8);
     for s in entries {
         h.enter(&wide(s));
     }
-    assert_eq!(h.exec(H_SAVE, HistoryArg::Path(p)).0, 3);
+    let mut file: Vec<u8> = Vec::new();
+    assert_eq!(history_save_out(h.handle(), usize::MAX, &mut file, true), 3);
 
     let mut g = OwnedHistoryW::with_size(8);
-    assert_eq!(g.exec(H_LOAD, HistoryArg::Path(p)).0, 3);
-    let _ = std::fs::remove_file(&path);
+    assert_eq!(history_load_in(g.handle(), &mut &file[..]), 3);
 
     let mut got = Vec::new();
     let mut cur = g.first();

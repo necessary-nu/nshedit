@@ -18,14 +18,21 @@
 //! and cannot drift between the two, which is the property `historyn.c` has
 //! and a hand-copied narrow implementation would not.
 //!
-//! The builtin history is a circular doubly-linked list with a sentinel
-//! embedded in the owner (`history_t.list`), and every entry links back to
-//! that sentinel. The links stay raw pointers: they are neither rebased by a
-//! `realloc` (each node is its own allocation) nor expressible as offsets
-//! into any one buffer, and a safe re-shaping — an arena, or `Rc`/`Weak` —
-//! is a structural change this wave is not making. Whichever the history
-//! translation picks, `sem:history.history-def-insert-fn`'s
-//! four-pointer link order is the behaviour to preserve.
+//! The builtin history is a circular doubly-linked list in the C, with a
+//! sentinel embedded in the owner (`history_t.list`) that every entry links
+//! back to and that `cursor` points at to mean "no current event". None of
+//! that is observable: the API hands out event ids and borrowed strings, never
+//! a node. So the port holds the entries in a [`VecDeque`] newest-first with
+//! the cursor an `Option<usize>`, which says the same thing — insertion at the
+//! head, eviction from the tail, "first" the most recent — and says it without
+//! a single link pointer. What survives from `sem:history.history-def-insert-fn`
+//! is its *effect*: a new entry becomes the newest, takes the next id and the
+//! cursor.
+//!
+//! One pointer does remain, and it is the ABI: `ev->str` is a borrowed
+//! `Char *` into the entry's own storage, valid until that entry is deleted or
+//! replaced. Each entry owns a NUL-terminated `Vec<C>`, whose buffer does not
+//! move when the deque reshuffles, so the borrow is as stable as the C's.
 
 // The three public entry points take the C's raw handle and dereference it:
 // `history_gen` because `H_END` frees it and because internal callers reach it
@@ -36,6 +43,7 @@
 
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
+use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Seek, Write};
 use std::mem::ManuallyDrop;
@@ -295,51 +303,139 @@ pub struct HistoryGen<C> {
 /// A layout-compatible twin of [`HistEventGen`] whose `str` member is not
 /// `const`.
 ///
-/// It exists only so `history_def_add` can get a mutable handle on an
-/// entry's string; see `sem:history.history-def-add-fn`. The
-/// C reaches it by casting, so the layout must stay identical.
+/// The C reaches an entry's string through this cast, because the entry
+/// embeds a `TYPE(HistEvent)` whose `str` is `const Char *` and the string is
+/// nevertheless the entry's to free. [`HentryGen`] owns its text outright, so
+/// nothing here needs the cast and nothing constructs one of these; the type
+/// stays because the C typedef does, and because a caller reading the C's
+/// header will look for it.
 #[repr(C)]
 pub struct HistEventPrivateGen<C> {
+    /// C: `int num`.
     pub num: i32,
+    /// C: `Char *str`, the member the whole twin exists for.
     pub str: *mut C,
 }
 
 // [spec:libedit:def:history.hentry-t]
 /// One entry in the builtin history list.
+///
+/// The C's `next`/`prev` links are gone: [`HistoryTGen`] holds the entries in
+/// order, so an entry is just its id, its text and the client's cookie.
 pub struct HentryGen<C> {
-    /// What we return. `ev.str` is the entry's own `Strdup`ed copy, which
-    /// the entry owns and frees; every `HistEventGen` handed to a caller
-    /// borrows it.
-    pub ev: HistEventGen<C>,
+    /// C: `ev.num` — the event id.
+    num: i32,
+    /// C: `ev.str` — the entry's own `Strdup`ed copy, **terminator included**,
+    /// because that pointer is handed across the ABI as a `Char *`.
+    ///
+    /// Owned, so the entry frees it by being dropped. The buffer stays put
+    /// while the entry moves around the deque, which is what makes the
+    /// borrowed `ev->str` last exactly as long as the C's does.
+    cstr: Vec<C>,
     /// C: `void *data` — per-entry client data, stored and handed back
-    /// untouched.
-    pub data: *mut c_void,
-    /// Next entry. Circular: the last entry points at the owner's sentinel.
-    pub next: *mut HentryGen<C>,
-    /// Previous entry. Circular in the same way.
-    pub prev: *mut HentryGen<C>,
+    /// untouched. Never freed here; it is the caller's property.
+    data: *mut c_void,
+}
+
+impl<C: HistChar> HentryGen<C> {
+    /// The entry's text, without the terminator the ABI needs.
+    fn text(&self) -> &[C] {
+        &self.cstr[..self.cstr.len() - 1]
+    }
+
+    /// C: `*ev = <entry>->ev` — a by-value copy of the event, so `ev->str` is
+    /// a *borrowed* pointer to the entry's own string.
+    fn copy_into(&self, ev: &mut HistEventGen<C>) {
+        ev.num = self.num;
+        ev.str = self.cstr.as_ptr();
+    }
 }
 
 // [spec:libedit:def:history.history-t]
 /// The builtin history implementation's state, reached through
 /// [`HistoryGen::h_ref`].
 pub struct HistoryTGen<C> {
-    /// Fake list header element. Both links point at it when the list is
-    /// empty, and `cursor == &list` is the "no current event" state.
-    pub list: HentryGen<C>,
-    /// Current element in the list, or `&list`.
-    pub cursor: *mut HentryGen<C>,
+    /// The events, **newest first**: index 0 is the C's `list.next` and the
+    /// last index its `list.prev`, so "first" is the most recent entry and
+    /// `H_NEXT` walks toward higher indices.
+    entries: VecDeque<HentryGen<C>>,
+    /// Current element, or `None` for the C's cursor-parked-on-the-sentinel —
+    /// the "no current event" state, which an empty list is always in and a
+    /// failed `H_SET` puts a populated one into.
+    cursor: Option<usize>,
     /// Maximum number of events. Starts at 0, so nothing is retained until
     /// the caller issues `H_SETSIZE`.
-    pub max: i32,
-    /// Current number of events.
-    pub cur: i32,
+    max: i32,
     /// For generation of unique event ids. Ids start at 1 and are never
     /// reused, which is what makes 0 usable as an "invalid id" sentinel.
-    pub eventid: i32,
+    eventid: i32,
     /// C: `int flags` — `H_UNIQUE` (1) is the only bit. Left an integer
     /// because the C treats it as a flag word.
-    pub flags: i32,
+    flags: i32,
+}
+
+impl<C: HistChar> HistoryTGen<C> {
+    /// The store `history_def_init` allocates, as a value.
+    ///
+    /// C: steps 2 to 7 of `sem:history.history-def-init-fn`. The empty
+    /// circular list and the cursor on the sentinel are both "no entries and
+    /// no position", which is what a default [`VecDeque`] and a `None` say.
+    fn new(n: i32) -> Self {
+        Self {
+            entries: VecDeque::new(),
+            cursor: None,
+            // Negative maxima are impossible from here on.
+            max: n.max(0),
+            // So the first entry gets id 1.
+            eventid: 0,
+            // `H_UNIQUE` off.
+            flags: 0,
+        }
+    }
+
+    /// C: `h->cur` — the number of events stored.
+    ///
+    /// Derived rather than stored: the C keeps a counter beside the list and
+    /// every insert and delete has to remember to move it. The saturation is
+    /// unreachable — an `i32` of entries is more than any process can hold —
+    /// and is there so the conversion has no failure case to invent one for.
+    fn cur(&self) -> i32 {
+        i32::try_from(self.entries.len()).unwrap_or(i32::MAX)
+    }
+
+    /// The entry the cursor is on, or `None` when it is on the sentinel.
+    fn current(&self) -> Option<&HentryGen<C>> {
+        self.entries.get(self.cursor?)
+    }
+
+    /// Remove the entry at `at`, repair the cursor, and hand the entry back
+    /// for the caller to drop or to leak.
+    ///
+    /// C: steps 3, 4 and 6 of `sem:history.history-def-delete-fn`. The repair
+    /// is the subtle half and reads differently on indices than on links: the
+    /// C moves the cursor to `hp->prev` (toward *newer*) and falls through to
+    /// `hp->next` only when that would be the sentinel, so an entry removed
+    /// from under the cursor lands on the newer neighbour, or on the older one
+    /// when it was already the newest, or on the sentinel when it was the only
+    /// entry. Every index above `at` then shifts down by one.
+    ///
+    /// `None` is the C's `abort()` on the sentinel, left for the caller to
+    /// decide about; nothing in this file can reach it.
+    fn remove(&mut self, at: usize) -> Option<HentryGen<C>> {
+        let entry = self.entries.remove(at)?;
+        self.cursor = match self.cursor {
+            Some(i) if i == at => match at.checked_sub(1) {
+                // The newer neighbour.
+                Some(newer) => Some(newer),
+                // `at` was the newest, so the older one — which the removal
+                // has just shifted into index 0 — or nothing at all.
+                None => (!self.entries.is_empty()).then_some(0),
+            },
+            Some(i) if i > at => Some(i - 1),
+            other => other,
+        };
+        Some(entry)
+    }
 }
 
 /// C: `#define H_UNIQUE 1` — the only bit in [`HistoryTGen::flags`], declared
@@ -389,13 +485,6 @@ fn scratch_ev<C: HistChar>() -> HistEventGen<C> {
     }
 }
 
-/// C: `*ev = <entry>->ev` — a by-value copy of the event, so `ev->str` is a
-/// *borrowed* pointer to the entry's own string.
-fn ev_copy<C: HistChar>(dst: &mut HistEventGen<C>, src: &HistEventGen<C>) {
-    dst.num = src.num;
-    dst.str = src.str;
-}
-
 // The allocation helpers. The C's `h_malloc`/`h_free` failure paths are
 // observable — `_HE_MALLOC_FAILED` crosses the ABI — so every allocation here
 // is fallible, which rules out plain `Box::new`.
@@ -418,53 +507,35 @@ unsafe fn free_alloc<T>(p: *mut T) {
     drop(unsafe { Box::from_raw(ptr::slice_from_raw_parts_mut(p, 1)) });
 }
 
-/// C: `h_malloc(n * sizeof(Char))`, zero filled.
-///
-/// Every string this module owns is allocated here and is exactly
-/// `Strlen + 1` elements long, which is what lets [`s_free`] recover the
-/// length by scanning.
-fn s_alloc<C: HistChar>(n: usize) -> Option<*mut C> {
+/// C: `Strdup(s)` — the owned, NUL-terminated copy an entry keeps. `None` is
+/// the C's NULL, i.e. `_HE_MALLOC_FAILED`.
+fn s_own<C: HistChar>(s: &[C]) -> Option<Vec<C>> {
     let mut v: Vec<C> = Vec::new();
-    v.try_reserve_exact(n).ok()?;
-    v.resize(n, C::NUL);
-    Some(Box::into_raw(v.into_boxed_slice()).cast::<C>())
+    v.try_reserve_exact(s.len() + 1).ok()?;
+    v.extend_from_slice(s);
+    v.push(C::NUL);
+    Some(v)
 }
 
-/// C: `h_free(str)` for an entry's own string.
+/// C: a `Strdup` whose ownership passes across the ABI and which the library
+/// never frees — ERR-history-15's copy of a deleted entry's text.
 ///
-/// # Safety
-///
-/// `s` must be NULL or a live pointer from [`s_alloc`]/[`s_dup`] whose
-/// allocation is `s_len(s) + 1` elements.
-unsafe fn s_free<C: HistChar>(s: *mut C) {
-    if s.is_null() {
-        return;
+/// The leak is the contract, not an oversight: `H_DEL` and `H_DELDATA` hand
+/// the caller `ev->str` and the public API never says who frees it, so the
+/// pointer has to outlive everything here. A NULL is the C's unchecked
+/// allocation failure, which does not stop the deletion.
+fn s_hand_over<C: HistChar>(s: &[C]) -> *const C {
+    match s_own(s) {
+        Some(v) => Vec::leak(v).as_ptr(),
+        None => ptr::null(),
     }
-    let n = unsafe { s_len(s) } + 1;
-    drop(unsafe { Box::from_raw(ptr::slice_from_raw_parts_mut(s, n)) });
 }
 
-/// C: `Strdup(s)` — `wcsdup` wide, `strdup` narrow. `None` is its NULL.
+/// The caller's `const Char *`, as the characters before its terminator.
 ///
-/// A NULL `s` duplicates the empty string; see the NULL-string note on
-/// [`s_len`].
-fn s_dup<C: HistChar>(s: *const C) -> Option<*mut C> {
-    // SAFETY: `s` is NULL or a NUL-terminated string, which is this module's
-    // invariant for every `Char *` it stores or is handed.
-    let len = unsafe { s_len(s) };
-    let p = s_alloc(len + 1)?;
-    if len > 0 {
-        // SAFETY: `len` elements were just measured in `s`, and `p` was just
-        // allocated with `len + 1`.
-        unsafe { ptr::copy_nonoverlapping(s, p, len) };
-    }
-    // SAFETY: as above; the terminator slot is the last one allocated.
-    unsafe { *p.add(len) = C::NUL };
-    Some(p)
-}
-
-/// C: `Strlen(s)` — `wcslen` wide, `strlen` narrow. Counts `Char`s, so the
-/// narrow build counts **bytes** where the wide one counts characters.
+/// One `unsafe` at the edge instead of `Strlen`/`Strcmp`/`Strncmp` scattered
+/// through the bodies: everything past this point is a slice. Counts `Char`s,
+/// so the narrow build counts **bytes** where the wide one counts characters.
 ///
 /// **A NULL `s` is the empty string.** The C passes an unchecked caller
 /// pointer to `Strlen`/`Strdup`/`Strcmp` in `history_def_add`,
@@ -476,72 +547,18 @@ fn s_dup<C: HistChar>(s: *const C) -> Option<*mut C> {
 ///
 /// # Safety
 ///
-/// `s` must be NULL or point at a NUL-terminated string.
-unsafe fn s_len<C: HistChar>(s: *const C) -> usize {
+/// `s` must be NULL or point at a NUL-terminated string that outlives `'a`.
+unsafe fn s_in<'a, C: HistChar>(s: *const C) -> &'a [C] {
     if s.is_null() {
-        return 0;
+        return &[];
     }
     let mut n = 0;
     // SAFETY: the caller guarantees a terminator.
     while unsafe { *s.add(n) } != C::NUL {
         n += 1;
     }
-    n
-}
-
-/// C: `Strcmp(a, b) == 0`. Only equality is ever tested.
-///
-/// # Safety
-///
-/// Both must be NULL or NUL-terminated strings.
-unsafe fn s_cmp_eq<C: HistChar>(a: *const C, b: *const C) -> bool {
-    let mut i = 0;
-    loop {
-        // SAFETY: both walks stop at the first difference or terminator.
-        let (x, y) = unsafe { (s_at(a, i), s_at(b, i)) };
-        if x != y {
-            return false;
-        }
-        if x == C::NUL {
-            return true;
-        }
-        i += 1;
-    }
-}
-
-/// C: `Strncmp(a, b, n) == 0`, the prefix test of the two string searches.
-///
-/// # Safety
-///
-/// Both must be NULL or NUL-terminated strings.
-unsafe fn s_ncmp_eq<C: HistChar>(a: *const C, b: *const C, n: usize) -> bool {
-    for i in 0..n {
-        // SAFETY: the loop stops at the first difference or terminator, both
-        // of which are within the caller's strings.
-        let (x, y) = unsafe { (s_at(a, i), s_at(b, i)) };
-        if x != y {
-            return false;
-        }
-        if x == C::NUL {
-            return true;
-        }
-    }
-    true
-}
-
-/// One character of a string, with a NULL string reading as `STR("")`.
-///
-/// # Safety
-///
-/// `s` must be NULL or a NUL-terminated string, and `i` at most its
-/// terminator's index.
-unsafe fn s_at<C: HistChar>(s: *const C, i: usize) -> C {
-    if s.is_null() {
-        C::NUL
-    } else {
-        // SAFETY: the caller's bound.
-        unsafe { *s.add(i) }
-    }
+    // SAFETY: `n` characters were just read, and the string is contiguous.
+    unsafe { core::slice::from_raw_parts(s, n) }
 }
 
 // The callback table. C: the `HNEXT`/`HFIRST`/… macros, each
@@ -623,23 +640,29 @@ fn is_def_next<C: HistChar>(f: Option<HistoryGfunT<C>>) -> bool {
     matches!(f, Some(f) if ptr::fn_addr_eq(f, history_def_next::<C> as HistoryGfunT<C>))
 }
 
-/// Does `h` still carry the builtin implementation?
-///
-/// Not a ported function: the C spells this `h->h_next == history_def_next`
-/// at each of the six sites that needs it, which a caller outside this module
-/// cannot write because `history_def_next` is `static`. The port needs it to
-/// *be* callable from outside — `crate::hist`'s `hist_command` has to tell a
-/// caller-supplied store from libedit's own before it dispatches
-/// `history size` / `history unique` (ERR-history-05), and `el_history.ref`
-/// is an opaque `void *` there. A NULL handle is not one of ours.
-pub fn is_builtin<C: HistChar>(h: *mut HistoryGen<C>) -> bool {
-    if h.is_null() {
-        return false;
+impl<C: HistChar> HistoryGen<C> {
+    /// The builtin store behind `h_ref`, or `None` when a caller-supplied
+    /// function set is installed.
+    ///
+    /// C: `h->h_next == history_def_next` followed by
+    /// `(history_t *)h->h_ref`, which appears at eight sites — the four
+    /// size/unique accessors, `history_set_fun`, and the three opcodes that do
+    /// it *without* the test (ERR-history-02). Pairing them makes the cast
+    /// unreachable without the proof, so the eight raw dereferences become
+    /// this one.
+    fn builtin(&mut self) -> Option<&mut HistoryTGen<C>> {
+        if !is_def_next(self.h_next) {
+            return None;
+        }
+        // SAFETY: the identity test proves `h_ref` is the store
+        // `history_def_init` allocated for this handle. `history_init_gen` and
+        // `history_set_fun` are its only writers, and neither leaves that
+        // function pointer beside a reference of any other type
+        // (ERR-history-17 notwithstanding — that defect keeps the *builtin*
+        // store installed under a caller's function set, so the test failing
+        // is the only way `h_ref` is not one of these).
+        Some(unsafe { &mut *self.h_ref.cast::<HistoryTGen<C>>() })
     }
-    // SAFETY: a non-NULL handle is one `history_init_gen` returned and
-    // `history_end_gen` has not yet freed — the same contract every other entry
-    // point in this file has with its caller.
-    is_def_next(unsafe { (*h).h_next })
 }
 
 // [spec:libedit:def:history.history-def-first-fn]
@@ -655,25 +678,22 @@ unsafe extern "C" fn history_def_first<C: HistChar>(
     p: *mut c_void,
     ev: *mut HistEventGen<C>,
 ) -> c_int {
-    // SAFETY: `ev` is the caller's out-parameter, per this function's own
-    // contract; nothing in the body aliases it.
-    let ev = unsafe { &mut *ev };
-    let h = p.cast::<HistoryTGen<C>>();
-    // SAFETY: `p` is the `h_ref` this module allocated in `history_def_init`
-    // and installed alongside these ten callbacks; the C's own precondition.
-    unsafe {
-        let list = &raw mut (*h).list;
-        // Unconditional, before any emptiness test: an empty list parks the
-        // cursor on the sentinel.
-        (*h).cursor = (*list).next;
-        if (*h).cursor == list {
-            he_seterrev(ev, _HE_FIRST_NOTFOUND);
-            return -1;
-        }
-        // "First" is the most recently entered event: insertion is at the
-        // head. `ev->str` borrows the entry's own buffer.
-        ev_copy(ev, &(*(*h).cursor).ev);
-    }
+    // SAFETY: `ev` is the caller's out-parameter and `p` the `h_ref` this
+    // module allocated in `history_def_init` and installed alongside these ten
+    // callbacks — this function's own contract. Nothing in the body aliases
+    // either. The same two lines open all six read callbacks below.
+    let (h, ev) = unsafe { (&mut *p.cast::<HistoryTGen<C>>(), &mut *ev) };
+
+    // Unconditional, before any emptiness test: an empty list parks the
+    // cursor on the sentinel.
+    h.cursor = (!h.entries.is_empty()).then_some(0);
+    let Some(entry) = h.current() else {
+        he_seterrev(ev, _HE_FIRST_NOTFOUND);
+        return -1;
+    };
+    // "First" is the most recently entered event: insertion is at the head.
+    // `ev->str` borrows the entry's own buffer.
+    entry.copy_into(ev);
     0
 }
 
@@ -690,21 +710,16 @@ unsafe extern "C" fn history_def_last<C: HistChar>(
     p: *mut c_void,
     ev: *mut HistEventGen<C>,
 ) -> c_int {
-    // SAFETY: `ev` is the caller's out-parameter, per this function's own
-    // contract; nothing in the body aliases it.
-    let ev = unsafe { &mut *ev };
-    let h = p.cast::<HistoryTGen<C>>();
     // SAFETY: as in `history_def_first`.
-    unsafe {
-        let list = &raw mut (*h).list;
-        (*h).cursor = (*list).prev;
-        if (*h).cursor == list {
-            he_seterrev(ev, _HE_LAST_NOTFOUND);
-            return -1;
-        }
-        // "Last" is the *oldest* event.
-        ev_copy(ev, &(*(*h).cursor).ev);
-    }
+    let (h, ev) = unsafe { (&mut *p.cast::<HistoryTGen<C>>(), &mut *ev) };
+
+    h.cursor = h.entries.len().checked_sub(1);
+    let Some(entry) = h.current() else {
+        he_seterrev(ev, _HE_LAST_NOTFOUND);
+        return -1;
+    };
+    // "Last" is the *oldest* event.
+    entry.copy_into(ev);
     0
 }
 
@@ -721,29 +736,24 @@ unsafe extern "C" fn history_def_next<C: HistChar>(
     p: *mut c_void,
     ev: *mut HistEventGen<C>,
 ) -> c_int {
-    // SAFETY: `ev` is the caller's out-parameter, per this function's own
-    // contract; nothing in the body aliases it.
-    let ev = unsafe { &mut *ev };
-    let h = p.cast::<HistoryTGen<C>>();
     // SAFETY: as in `history_def_first`.
-    unsafe {
-        let list = &raw mut (*h).list;
-        if (*h).cursor == list {
-            // ERR-history-35: "empty list" is also what a cursor merely
-            // parked on the sentinel of a *non-empty* list reports.
-            he_seterrev(ev, _HE_EMPTY_LIST);
-            return -1;
-        }
-        if (*(*h).cursor).next == list {
-            // Already on the oldest entry. The cursor is deliberately not
-            // moved, so a following `H_PREV` walks back correctly.
-            he_seterrev(ev, _HE_END_REACHED);
-            return -1;
-        }
-        // "Next" is toward *older* entries.
-        (*h).cursor = (*(*h).cursor).next;
-        ev_copy(ev, &(*(*h).cursor).ev);
-    }
+    let (h, ev) = unsafe { (&mut *p.cast::<HistoryTGen<C>>(), &mut *ev) };
+
+    let Some(at) = h.cursor else {
+        // ERR-history-35: "empty list" is also what a cursor merely parked on
+        // the sentinel of a *non-empty* list reports.
+        he_seterrev(ev, _HE_EMPTY_LIST);
+        return -1;
+    };
+    // "Next" is toward *older* entries.
+    let Some(entry) = h.entries.get(at + 1) else {
+        // Already on the oldest entry. The cursor is deliberately not moved,
+        // so a following `H_PREV` walks back correctly.
+        he_seterrev(ev, _HE_END_REACHED);
+        return -1;
+    };
+    entry.copy_into(ev);
+    h.cursor = Some(at + 1);
     0
 }
 
@@ -760,34 +770,29 @@ unsafe extern "C" fn history_def_prev<C: HistChar>(
     p: *mut c_void,
     ev: *mut HistEventGen<C>,
 ) -> c_int {
-    // SAFETY: `ev` is the caller's out-parameter, per this function's own
-    // contract; nothing in the body aliases it.
-    let ev = unsafe { &mut *ev };
-    let h = p.cast::<HistoryTGen<C>>();
     // SAFETY: as in `history_def_first`.
-    unsafe {
-        let list = &raw mut (*h).list;
-        if (*h).cursor == list {
-            // ERR-history-35: `_HE_END_REACHED` is "no next event", reported
-            // here by the *previous* function. Observable through `ev->str`.
-            he_seterrev(
-                ev,
-                if (*h).cur > 0 {
-                    _HE_END_REACHED
-                } else {
-                    _HE_EMPTY_LIST
-                },
-            );
-            return -1;
-        }
-        if (*(*h).cursor).prev == list {
-            he_seterrev(ev, _HE_START_REACHED);
-            return -1;
-        }
-        // "Previous" is toward *newer* entries.
-        (*h).cursor = (*(*h).cursor).prev;
-        ev_copy(ev, &(*(*h).cursor).ev);
-    }
+    let (h, ev) = unsafe { (&mut *p.cast::<HistoryTGen<C>>(), &mut *ev) };
+
+    let Some(at) = h.cursor else {
+        // ERR-history-35: `_HE_END_REACHED` is "no next event", reported here
+        // by the *previous* function. Observable through `ev->str`.
+        he_seterrev(
+            ev,
+            if h.entries.is_empty() {
+                _HE_EMPTY_LIST
+            } else {
+                _HE_END_REACHED
+            },
+        );
+        return -1;
+    };
+    // "Previous" is toward *newer* entries.
+    let Some(newer) = at.checked_sub(1) else {
+        he_seterrev(ev, _HE_START_REACHED);
+        return -1;
+    };
+    h.entries[newer].copy_into(ev);
+    h.cursor = Some(newer);
     0
 }
 
@@ -804,28 +809,23 @@ unsafe extern "C" fn history_def_curr<C: HistChar>(
     p: *mut c_void,
     ev: *mut HistEventGen<C>,
 ) -> c_int {
-    // SAFETY: `ev` is the caller's out-parameter, per this function's own
-    // contract; nothing in the body aliases it.
-    let ev = unsafe { &mut *ev };
-    let h = p.cast::<HistoryTGen<C>>();
     // SAFETY: as in `history_def_first`. The cursor never moves here.
-    unsafe {
-        let list = &raw mut (*h).list;
-        if (*h).cursor == list {
-            he_seterrev(
-                ev,
-                if (*h).cur > 0 {
-                    _HE_CURR_INVALID
-                } else {
-                    _HE_EMPTY_LIST
-                },
-            );
-            return -1;
-        }
-        // The only way to read the event a successful `H_SET` positioned on,
-        // because `history_def_set` never writes `*ev`.
-        ev_copy(ev, &(*(*h).cursor).ev);
-    }
+    let (h, ev) = unsafe { (&mut *p.cast::<HistoryTGen<C>>(), &mut *ev) };
+
+    let Some(entry) = h.current() else {
+        he_seterrev(
+            ev,
+            if h.entries.is_empty() {
+                _HE_EMPTY_LIST
+            } else {
+                _HE_CURR_INVALID
+            },
+        );
+        return -1;
+    };
+    // The only way to read the event a successful `H_SET` positioned on,
+    // because `history_def_set` never writes `*ev`.
+    entry.copy_into(ev);
     0
 }
 
@@ -843,34 +843,23 @@ unsafe extern "C" fn history_def_set<C: HistChar>(
     ev: *mut HistEventGen<C>,
     n: c_int,
 ) -> c_int {
-    // SAFETY: `ev` is the caller's out-parameter, per this function's own
-    // contract; nothing in the body aliases it.
-    let ev = unsafe { &mut *ev };
-    let h = p.cast::<HistoryTGen<C>>();
     // SAFETY: as in `history_def_first`.
-    unsafe {
-        let list = &raw mut (*h).list;
-        if (*h).cur == 0 {
-            he_seterrev(ev, _HE_EMPTY_LIST);
-            return -1;
-        }
-        // Fast path: the cursor is already on the wanted *id* (not index).
-        if (*h).cursor == list || (*(*h).cursor).ev.num != n {
-            // ERR-history-24: the scan assigns the cursor on every iteration,
-            // so a failed search leaves it parked on the sentinel — a failed
-            // `H_SET` invalidates the position rather than preserving it.
-            (*h).cursor = (*list).next;
-            while (*h).cursor != list {
-                if (*(*h).cursor).ev.num == n {
-                    break;
-                }
-                (*h).cursor = (*(*h).cursor).next;
-            }
-        }
-        if (*h).cursor == list {
-            he_seterrev(ev, _HE_NOT_FOUND);
-            return -1;
-        }
+    let (h, ev) = unsafe { (&mut *p.cast::<HistoryTGen<C>>(), &mut *ev) };
+
+    if h.entries.is_empty() {
+        he_seterrev(ev, _HE_EMPTY_LIST);
+        return -1;
+    }
+    // Fast path: the cursor is already on the wanted *id* (not index).
+    if !h.current().is_some_and(|e| e.num == n) {
+        // ERR-history-24: the scan assigns the cursor on every iteration, so a
+        // failed search leaves it parked on the sentinel — a failed `H_SET`
+        // invalidates the position rather than preserving it.
+        h.cursor = h.entries.iter().position(|e| e.num == n);
+    }
+    if h.cursor.is_none() {
+        he_seterrev(ev, _HE_NOT_FOUND);
+        return -1;
     }
     // `*ev` is deliberately not written on success.
     0
@@ -879,31 +868,23 @@ unsafe extern "C" fn history_def_set<C: HistChar>(
 // [spec:libedit:def:history.history-set-nth-fn]
 // [spec:libedit:sem:history.history-set-nth-fn]
 /// C: `static int history_set_nth(void *p, TYPE(HistEvent) *ev, int n)`
-fn history_set_nth<C: HistChar>(p: *mut c_void, ev: &mut HistEventGen<C>, n: i32) -> i32 {
-    let h = p.cast::<HistoryTGen<C>>();
-    let mut n = n;
-    // SAFETY: as in `history_def_first`.
-    unsafe {
-        let list = &raw mut (*h).list;
-        if (*h).cur == 0 {
-            he_seterrev(ev, _HE_EMPTY_LIST);
-            return -1;
-        }
-        // Index addressing from the *oldest* end, walking toward newer.
-        // C: `if (n-- <= 0) break;` — the test reads the pre-decrement value,
-        // so any negative `n` behaves exactly like 0 and selects the oldest.
-        (*h).cursor = (*list).prev;
-        while (*h).cursor != list {
-            if n <= 0 {
-                break;
-            }
-            n -= 1;
-            (*h).cursor = (*(*h).cursor).prev;
-        }
-        if (*h).cursor == list {
-            he_seterrev(ev, _HE_NOT_FOUND);
-            return -1;
-        }
+///
+/// `p` is a `void *` in the C only because it is reached through the same
+/// cookie the callbacks are; nothing installs this one, so it takes the store.
+fn history_set_nth<C: HistChar>(h: &mut HistoryTGen<C>, ev: &mut HistEventGen<C>, n: i32) -> i32 {
+    if h.entries.is_empty() {
+        he_seterrev(ev, _HE_EMPTY_LIST);
+        return -1;
+    }
+    // Index addressing from the *oldest* end, walking toward newer.
+    // C: `if (n-- <= 0) break;` — the test reads the pre-decrement value, so
+    // any negative `n` behaves exactly like 0 and selects the oldest. Running
+    // off the newest end leaves the cursor on the sentinel, as the walk does.
+    let back = usize::try_from(n).unwrap_or(0);
+    h.cursor = (h.entries.len() - 1).checked_sub(back);
+    if h.cursor.is_none() {
+        he_seterrev(ev, _HE_NOT_FOUND);
+        return -1;
     }
     // `*ev` is not written on success.
     0
@@ -923,46 +904,43 @@ unsafe extern "C" fn history_def_add<C: HistChar>(
     ev: *mut HistEventGen<C>,
     str: *const C,
 ) -> c_int {
-    // SAFETY: `ev` is the caller's out-parameter, per this function's own
-    // contract; nothing in the body aliases it.
-    let ev = unsafe { &mut *ev };
-    let h = p.cast::<HistoryTGen<C>>();
-    // SAFETY: as in `history_def_first`. `evp` in the C is the non-`const`
-    // alias of the same event, which a raw pointer already is here.
-    unsafe {
-        let list = &raw mut (*h).list;
-        if (*h).cursor == list {
-            // No current event: delegate entirely, so `H_ADD` on a fresh or
-            // invalidated history creates an event and returns 1, not 0. Its
-            // preconditions are this function's own three parameters,
-            // forwarded unchanged, so they are already met.
-            return history_def_enter(p, ev, str);
-        }
-        let cur = (*h).cursor;
-        let old = (*cur).ev.str;
-        let elen = s_len(old);
-        let slen = s_len(str);
-        let len = elen + slen + 1;
-        let Some(s) = s_alloc(len) else {
-            // The existing entry is left completely unchanged.
-            he_seterrev(ev, _HE_MALLOC_FAILED);
-            return -1;
-        };
-        if elen > 0 {
-            ptr::copy_nonoverlapping(old, s, elen);
-        }
-        if slen > 0 {
-            ptr::copy_nonoverlapping(str, s.add(elen), slen);
-        }
-        // The old string's own terminator is deliberately not copied.
-        *s.add(len - 1) = C::NUL;
-        s_free(old.cast_mut());
-        (*cur).ev.str = s;
-        // Neither the entry nor the cursor moves, and eviction is not re-run,
-        // so appending can never drop an entry. Any `HistEvent` the caller
-        // captured before this call now holds a freed pointer.
-        ev_copy(ev, &(*cur).ev);
+    // SAFETY: `p` is this file's own store, per this function's contract. Read
+    // through the pointer rather than through a borrow so the delegation below
+    // can hand all three parameters straight on.
+    if unsafe { (*p.cast::<HistoryTGen<C>>()).cursor }.is_none() {
+        // No current event: delegate entirely, so `H_ADD` on a fresh or
+        // invalidated history creates an event and returns 1, not 0.
+        // SAFETY: this function's own three parameters, forwarded unchanged,
+        // so `history_def_enter`'s preconditions are already met.
+        return unsafe { history_def_enter(p, ev, str) };
     }
+    // SAFETY: as in `history_def_first`.
+    let (h, ev) = unsafe { (&mut *p.cast::<HistoryTGen<C>>(), &mut *ev) };
+    // SAFETY: `str` is the caller's NUL-terminated string, borrowed for the
+    // length of this call and copied before it returns.
+    let str = unsafe { s_in(str) };
+
+    let at = h.cursor.expect("the cursor is on an entry, tested above");
+    let entry = &mut h.entries[at];
+    let mut s: Vec<C> = Vec::new();
+    // C: `len = elen + slen + 1`, counted in `Char`s. The old string's own
+    // terminator is deliberately not carried across.
+    if s.try_reserve_exact(entry.text().len() + str.len() + 1)
+        .is_err()
+    {
+        // The existing entry is left completely unchanged.
+        he_seterrev(ev, _HE_MALLOC_FAILED);
+        return -1;
+    }
+    s.extend_from_slice(entry.text());
+    s.extend_from_slice(str);
+    s.push(C::NUL);
+    // The old text is freed here, which is what leaves any `HistEvent` the
+    // caller captured before this call holding a dangling pointer.
+    entry.cstr = s;
+    // Neither the entry nor the cursor moves, and eviction is not re-run, so
+    // appending can never drop an entry.
+    entry.copy_into(ev);
     0
 }
 
@@ -980,8 +958,7 @@ fn history_deldata_nth<C: HistChar>(
     num: i32,
     data: *mut *mut c_void,
 ) -> i32 {
-    let h: *mut HistoryTGen<C> = ptr::from_mut(h);
-    if history_set_nth(h.cast::<c_void>(), ev, num) != 0 {
+    if history_set_nth(h, ev, num) != 0 {
         // `ev` carries `_HE_EMPTY_LIST` or `_HE_NOT_FOUND`, and the cursor
         // may have been left on the sentinel.
         return -1;
@@ -991,21 +968,21 @@ fn history_deldata_nth<C: HistChar>(
     if data.addr() == usize::MAX {
         return 0;
     }
-    // SAFETY: `history_set_nth` returned 0, so the cursor is on a real entry.
-    unsafe {
-        let cursor = (*h).cursor;
-        // ERR-history-15: an unchecked `Strdup` whose ownership passes to the
-        // caller and which the library never frees. A failed allocation
-        // stores NULL and the deletion still proceeds.
-        ev.str = s_dup((*cursor).ev.str).unwrap_or(ptr::null_mut());
-        ev.num = (*cursor).ev.num;
-        if !data.is_null() {
-            // The `void *` attached by `H_REPLACE`, borrowed straight out;
-            // ownership of whatever it points at passes to the caller.
-            *data = (*cursor).data;
-        }
-        history_def_delete_raw(h, cursor, true);
+    let at = h.cursor.expect("history_set_nth positioned the cursor");
+    let entry = &h.entries[at];
+    // ERR-history-15: a `Strdup` whose ownership passes to the caller and
+    // which the library never frees. A failed allocation stores NULL and the
+    // deletion still proceeds.
+    ev.str = s_hand_over(entry.text());
+    ev.num = entry.num;
+    if !data.is_null() {
+        // The `void *` attached by `H_REPLACE`, borrowed straight out;
+        // ownership of whatever it points at passes to the caller.
+        // SAFETY: `data` is the caller's out-parameter, non-NULL and not the
+        // magic value, both just checked.
+        unsafe { *data = entry.data };
     }
+    history_def_delete(h, ev, at);
     0
 }
 
@@ -1023,10 +1000,6 @@ unsafe extern "C" fn history_def_del<C: HistChar>(
     ev: *mut HistEventGen<C>,
     num: c_int,
 ) -> c_int {
-    // SAFETY: `ev` is the caller's out-parameter, per this function's own
-    // contract; nothing in the body aliases it.
-    let ev = unsafe { &mut *ev };
-    let h = p.cast::<HistoryTGen<C>>();
     // Position by event id. The C's `ev` parameter is annotated
     // `__attribute__((__unused__))` and the body uses it anyway.
     // SAFETY: `p` and `ev` are this function's own parameters, forwarded
@@ -1034,16 +1007,16 @@ unsafe extern "C" fn history_def_del<C: HistChar>(
     if unsafe { history_def_set(p, ev, num) } != 0 {
         return -1;
     }
-    // SAFETY: `history_def_set` returned 0, so the cursor is on a real entry.
-    unsafe {
-        let cursor = (*h).cursor;
-        // ERR-history-15, as in `history_deldata_nth`.
-        ev.str = s_dup((*cursor).ev.str).unwrap_or(ptr::null_mut());
-        ev.num = (*cursor).ev.num;
-        // The entry's `data` pointer is discarded without being returned or
-        // freed; `H_DELDATA` is the opcode that hands it back.
-        history_def_delete_raw(h, cursor, true);
-    }
+    // SAFETY: as in `history_def_first`.
+    let (h, ev) = unsafe { (&mut *p.cast::<HistoryTGen<C>>(), &mut *ev) };
+
+    let at = h.cursor.expect("history_def_set positioned the cursor");
+    // ERR-history-15, as in `history_deldata_nth`.
+    ev.str = s_hand_over(h.entries[at].text());
+    ev.num = h.entries[at].num;
+    // The entry's `data` pointer is discarded without being returned or
+    // freed; `H_DELDATA` is the opcode that hands it back.
+    history_def_delete(h, ev, at);
     0
 }
 
@@ -1051,142 +1024,63 @@ unsafe extern "C" fn history_def_del<C: HistChar>(
 // [spec:libedit:sem:history.history-def-delete-fn]
 /// C: `static void history_def_delete(history_t *h, TYPE(HistEvent) *ev,
 /// hentry_t *hp)`
-fn history_def_delete<C: HistChar>(
-    h: &mut HistoryTGen<C>,
-    ev: &mut HistEventGen<C>,
-    hp: *mut HentryGen<C>,
-) {
+///
+/// `hp` is an index rather than a node pointer, which is what the entry
+/// identifies as once the list is a deque. Every caller has one to hand: the
+/// cursor, or the tail.
+fn history_def_delete<C: HistChar>(h: &mut HistoryTGen<C>, ev: &mut HistEventGen<C>, hp: usize) {
     // `ev` is accepted and never touched, exactly as in the C.
     let _ = ev;
-    // SAFETY: `hp` is a node of `h`'s list, which is this function's C
-    // precondition; every caller passes `h->cursor` or `h->list.prev`.
-    unsafe { history_def_delete_raw(ptr::from_mut(h), hp, true) }
-}
-
-/// The body of [`history_def_delete`], with the one knob
-/// `sem:history.history-def-enter-fn` forces the port to grow.
-///
-/// `free_str` is false for exactly one caller: the eviction loop in
-/// [`history_def_enter`] when the entry being dropped is the one it just
-/// inserted and therefore the one `*ev` already points at. See ERR-history-01
-/// there. Everything else — the unlink, the node free, `cur--`, the cursor
-/// repair — is identical either way, so the list state the C leaves behind is
-/// reproduced exactly.
-///
-/// Works on a raw store rather than `&mut HistoryTGen<C>` because the list
-/// nodes hold raw pointers *into* that same object (the sentinel is
-/// `h->list`), and re-deriving a unique reference around them is precisely
-/// what a raw intrusive list cannot promise.
-///
-/// # Safety
-///
-/// `h` must be a live builtin store and `hp` one of its list nodes.
-unsafe fn history_def_delete_raw<C: HistChar>(
-    h: *mut HistoryTGen<C>,
-    hp: *mut HentryGen<C>,
-    free_str: bool,
-) {
-    // SAFETY: the caller's contract.
-    unsafe {
-        let list = &raw mut (*h).list;
-        if hp == list {
-            // C: `abort()`. Deleting the sentinel is a programming error the
-            // C terminates the process for; unreachable from every caller in
-            // this file, and a panic is the Rust equivalent of that contract.
-            panic!("history_def_delete: the list sentinel is not an entry");
-        }
-        // Cursor repair, before the unlink: deleting the newest entry moves
-        // the cursor to the second-newest, and deleting the sole entry leaves
-        // it on the sentinel.
-        if (*h).cursor == hp {
-            (*h).cursor = (*hp).prev;
-            if (*h).cursor == list {
-                (*h).cursor = (*hp).next;
-            }
-        }
-        // Two writes; the list is circular through the sentinel, so the ends
-        // need no special case.
-        (*(*hp).prev).next = (*hp).next;
-        (*(*hp).next).prev = (*hp).prev;
-        if free_str {
-            s_free((*hp).ev.str.cast_mut());
-        }
-        // `hp->data` is deliberately not freed: that pointer is the caller's
-        // property and is simply dropped.
-        free_alloc(hp);
-        // `h->eventid` is not adjusted, so ids of deleted events are never
-        // reused.
-        (*h).cur -= 1;
-    }
+    // Dropping the entry frees its text. `data` is deliberately not freed:
+    // that pointer is the caller's property and is simply forgotten. Nor is
+    // `h->eventid` adjusted, so ids of deleted events are never reused.
+    assert!(
+        h.remove(hp).is_some(),
+        // C: `abort()` when `hp` is the list sentinel. Naming something that
+        // is not an entry is a programming error the C terminates the process
+        // for; unreachable from every caller in this file, and a panic is the
+        // Rust equivalent of that contract.
+        "history_def_delete: {hp} is not an entry"
+    );
 }
 
 // [spec:libedit:def:history.history-def-insert-fn]
 // [spec:libedit:sem:history.history-def-insert-fn]
 /// C: `static int history_def_insert(history_t *h, TYPE(HistEvent) *ev,
 /// const Char *str)`
-///
-/// The four-pointer link order this performs is the reason `HentryGen::next`
-/// and `HentryGen::prev` are still raw.
 fn history_def_insert<C: HistChar>(
     h: &mut HistoryTGen<C>,
     ev: &mut HistEventGen<C>,
-    str: *const C,
-) -> i32 {
-    // SAFETY: `h` is the live builtin store; the nodes below are this
-    // module's own allocations.
-    unsafe { history_def_insert_raw(ptr::from_mut(h), ev, str) }
-}
-
-/// The body of [`history_def_insert`], on the raw store — see
-/// [`history_def_delete_raw`] for why.
-///
-/// # Safety
-///
-/// `h` must be a live builtin store.
-unsafe fn history_def_insert_raw<C: HistChar>(
-    h: *mut HistoryTGen<C>,
-    ev: &mut HistEventGen<C>,
-    str: *const C,
+    str: &[C],
 ) -> i32 {
     // The history takes ownership of this copy; the caller's `str` is not
-    // retained. A NULL `str` duplicates `L""` — see [`s_len`].
-    let Some(s) = s_dup(str) else {
+    // retained. A NULL `str` arrives here as `STR("")` — see [`s_in`].
+    let Some(cstr) = s_own(str) else {
         he_seterrev(ev, _HE_MALLOC_FAILED);
         return -1;
     };
-    let node = HentryGen {
-        ev: HistEventGen { num: 0, str: s },
-        data: ptr::null_mut(),
-        next: ptr::null_mut(),
-        prev: ptr::null_mut(),
-    };
-    let Some(c) = try_alloc(node) else {
-        // SAFETY: `s` was just allocated here and nothing else holds it.
-        unsafe { s_free(s) };
+    // C: `h_malloc(sizeof(hentry_t))`, which is the deque's slot here.
+    if h.entries.try_reserve(1).is_err() {
         he_seterrev(ev, _HE_MALLOC_FAILED);
         return -1;
-    };
-    // SAFETY: the caller's contract, plus `c` from `try_alloc`.
-    unsafe {
-        let list = &raw mut (*h).list;
-        // Ids start at 1, increase strictly monotonically and are never
-        // reused; only `history_def_clear` resets the counter. No event ever
-        // has id 0, which is what makes the `_HE_OK` prologue's `ev->num = 0`
-        // usable as an "invalid id" sentinel.
-        (*h).eventid += 1;
-        (*c).ev.num = (*h).eventid;
-        // Link at the head, four pointer writes in this order. Works
-        // unmodified on an empty list, where `list.next` is the sentinel.
-        (*c).next = (*list).next;
-        (*c).prev = list;
-        (*(*list).next).prev = c;
-        (*list).next = c;
-        (*h).cur += 1;
-        // Insertion always repositions the cursor onto the new entry.
-        (*h).cursor = c;
-        // `ev->str` borrows the entry's own buffer.
-        ev_copy(ev, &(*c).ev);
     }
+    // Ids start at 1, increase strictly monotonically and are never reused;
+    // only `history_def_clear` resets the counter. No event ever has id 0,
+    // which is what makes the `_HE_OK` prologue's `ev->num = 0` usable as an
+    // "invalid id" sentinel.
+    h.eventid += 1;
+    // C: the four-pointer link at the head. The new entry becomes the newest,
+    // which is what those four writes amount to.
+    h.entries.push_front(HentryGen {
+        num: h.eventid,
+        cstr,
+        data: ptr::null_mut(),
+    });
+    // Insertion always repositions the cursor onto the new entry, so no other
+    // index survives the shift the push just made.
+    h.cursor = Some(0);
+    // `ev->str` borrows the entry's own buffer.
+    h.entries[0].copy_into(ev);
     0
 }
 
@@ -1204,56 +1098,46 @@ unsafe extern "C" fn history_def_enter<C: HistChar>(
     ev: *mut HistEventGen<C>,
     str: *const C,
 ) -> c_int {
-    // SAFETY: `ev` is the caller's out-parameter, per this function's own
-    // contract; nothing in the body aliases it.
-    let ev = unsafe { &mut *ev };
-    let h = p.cast::<HistoryTGen<C>>();
     // SAFETY: as in `history_def_first`.
-    unsafe {
-        let list = &raw mut (*h).list;
-        // Deduplication against the single most recent entry only, so `a b a`
-        // stores all three. `*ev` is not written: the caller sees the
-        // dispatcher's 0/"OK", and ERR-history-25 is that `H_ENTER` then
-        // stores `h_ent = 0`, which matches no event.
-        if (*h).flags & H_UNIQUE != 0
-            && (*list).next != list
-            && s_cmp_eq((*(*list).next).ev.str, str)
-        {
-            return 0;
-        }
+    let (h, ev) = unsafe { (&mut *p.cast::<HistoryTGen<C>>(), &mut *ev) };
+    // SAFETY: as in `history_def_add`.
+    let str = unsafe { s_in(str) };
 
-        if history_def_insert_raw(h, ev, str) == -1 {
-            // Keep the `_HE_MALLOC_FAILED` message the insert set.
-            return -1;
-        }
-        let inserted = (*h).cursor;
+    // Deduplication against the single most recent entry only, so `a b a`
+    // stores all three. `*ev` is not written: the caller sees the dispatcher's
+    // 0/"OK", and ERR-history-25 is that `H_ENTER` then stores `h_ent = 0`,
+    // which matches no event.
+    if h.flags & H_UNIQUE != 0 && h.entries.front().is_some_and(|e| e.text() == str) {
+        return 0;
+    }
 
-        // Eviction, always from the tail — the oldest first. The source
-        // comment above this loop claims it "always keeps at least one
-        // entry"; the condition does not (ERR-history-37).
-        //
-        // Spelled `loop`/`break` rather than `while`: the counter it tests is
-        // decremented through a raw pointer inside the delete, which
-        // `clippy::while_immutable_condition` cannot see.
-        loop {
-            if (*h).cur <= (*h).max || (*h).cur <= 0 {
-                break;
-            }
-            let tail = (*list).prev;
-            // ERR-history-01, **defined here**. With `max == 0` — the state
-            // of every history until `H_SETSIZE` is issued — the entry just
-            // inserted *is* the tail, and the C frees the very string
+    if history_def_insert(h, ev, str) == -1 {
+        // Keep the `_HE_MALLOC_FAILED` message the insert set.
+        return -1;
+    }
+
+    // Eviction, always from the tail — the oldest first. The source comment
+    // above this loop claims it "always keeps at least one entry"; the
+    // condition does not (ERR-history-37).
+    while h.cur() > h.max && !h.entries.is_empty() {
+        let tail = h.entries.len() - 1;
+        let evicted = h.remove(tail).expect("the tail of a non-empty deque");
+        if tail == 0 {
+            // ERR-history-01, **defined here**. With `max == 0` — the state of
+            // every history until `H_SETSIZE` is issued — the entry just
+            // inserted is itself the tail, and the C frees the very string
             // `history_def_insert` has already published through `*ev`. That
             // is a use-after-free across the public API, so it is not
-            // reproducible: the port keeps the eviction (the list, `cur`,
-            // `cursor` and `eventid` all end where the C leaves them, and
-            // `ev->num` stays the stale id of an event that no longer
-            // exists) but *leaks* that one string instead of freeing it, so
-            // the caller's borrowed `ev->str` stays readable. The divergence
-            // is one unreachable allocation per evicted-on-insert entry.
-            history_def_delete_raw(h, tail, tail != inserted);
+            // reproducible: the port keeps the eviction (the list, the cursor
+            // and `eventid` all end where the C leaves them, and `ev->num`
+            // stays the stale id of an event that no longer exists) but
+            // *leaks* that one string instead of freeing it, so the caller's
+            // borrowed `ev->str` stays readable. The divergence is one
+            // unreachable allocation per evicted-on-insert entry.
+            Vec::leak(evicted.cstr);
         }
     }
+
     // 1 on a real insert, not 0.
     1
 }
@@ -1262,51 +1146,20 @@ unsafe extern "C" fn history_def_enter<C: HistChar>(
 // [spec:libedit:sem:history.history-def-init-fn]
 /// C: `static int history_def_init(void **p, TYPE(HistEvent) *ev, int n)`
 ///
-/// `p` is an out parameter — the only place a `void **` here is written rather
-/// than read — and is never installed as a callback, so it can be a reference.
-fn history_def_init<C: HistChar>(p: &mut *mut c_void, ev: &mut HistEventGen<C>, n: i32) -> i32 {
+/// The C's `void **` out-parameter and its 0/-1 return say one thing between
+/// them, so this returns the cookie and NULL is the failure. The store itself
+/// is [`HistoryTGen::new`]; what is left here is the allocation the callers
+/// need a `void *` for.
+fn history_def_init<C: HistChar>(ev: &mut HistEventGen<C>, n: i32) -> *mut c_void {
     // `ev` is declared unused and genuinely is: notably, the
     // allocation-failure path sets no error event.
     let _ = ev;
-    // Negative maxima are impossible from here on.
-    let n = if n <= 0 { 0 } else { n };
-    let store = HistoryTGen {
-        // The `list` member is an embedded sentinel, never a real entry and
-        // never separately allocated. `data` is uninitialised in the C and is
-        // never read, because `history_def_delete` aborts rather than process
-        // the sentinel.
-        list: HentryGen {
-            ev: HistEventGen {
-                num: 0,
-                str: ptr::null::<C>(),
-            },
-            data: ptr::null_mut(),
-            next: ptr::null_mut(),
-            prev: ptr::null_mut(),
-        },
-        cursor: ptr::null_mut(),
-        max: n,
-        cur: 0,
-        // So the first entry gets id 1.
-        eventid: 0,
-        // `H_UNIQUE` off.
-        flags: 0,
+    let Some(store) = try_alloc(HistoryTGen::<C>::new(n)) else {
+        // NULL leaves the caller's `h_ref` and `*ev` both untouched, which is
+        // what the C's early return does.
+        return ptr::null_mut();
     };
-    let Some(h) = try_alloc(store) else {
-        // `*p` and `*ev` are both left untouched.
-        return -1;
-    };
-    // SAFETY: `h` is the allocation just made; the self-links can only be
-    // written once it has its final address.
-    unsafe {
-        let list = &raw mut (*h).list;
-        // The empty circular list, and a cursor that starts invalid.
-        (*list).next = list;
-        (*list).prev = list;
-        (*h).cursor = list;
-    }
-    *p = h.cast::<c_void>();
-    0
+    store.cast::<c_void>()
 }
 
 // [spec:libedit:def:history.history-def-clear-fn]
@@ -1319,33 +1172,21 @@ fn history_def_init<C: HistChar>(p: &mut *mut c_void, ev: &mut HistEventGen<C>, 
 /// and `ev` a writable event; that is the pairing `history_init_gen` installs and
 /// the precondition every `H_*` dispatch through [`HistoryGen`] carries.
 unsafe extern "C" fn history_def_clear<C: HistChar>(p: *mut c_void, ev: *mut HistEventGen<C>) {
-    // SAFETY: `ev` is the caller's out-parameter, per this function's own
-    // contract; nothing in the body aliases it.
-    let ev = unsafe { &mut *ev };
+    // SAFETY: as in `history_def_first`.
+    let (h, ev) = unsafe { (&mut *p.cast::<HistoryTGen<C>>(), &mut *ev) };
     // Threaded through the deletes and never written by any of them.
     let _ = ev;
-    let h = p.cast::<HistoryTGen<C>>();
-    // SAFETY: as in `history_def_first`.
-    unsafe {
-        let list = &raw mut (*h).list;
-        // Repeatedly remove the tail — the oldest entry — freeing its string
-        // and its node. `loop`/`break` for the reason `history_def_enter`'s
-        // eviction gives: the delete relinks through raw pointers.
-        loop {
-            let tail = (*list).prev;
-            if tail == list {
-                break;
-            }
-            history_def_delete_raw(h, tail, true);
-        }
-        (*h).cursor = list;
-        // The id counter restarts, so events entered after a clear reuse
-        // numbers earlier events had.
-        (*h).eventid = 0;
-        (*h).cur = 0;
-        // `max` and `flags` are deliberately not reset, the `history_t`
-        // itself is not freed, and per-entry `data` pointers are not freed.
-    }
+
+    // C: repeatedly remove the tail, freeing its string and its node. Dropping
+    // the entries does both, and the cursor lands on the sentinel by the same
+    // repair the one-at-a-time walk would reach.
+    h.entries.clear();
+    h.cursor = None;
+    // The id counter restarts, so events entered after a clear reuse numbers
+    // earlier events had.
+    h.eventid = 0;
+    // `max` and `flags` are deliberately not reset, the `history_t` itself is
+    // not freed, and per-entry `data` pointers are not freed.
 }
 
 // [spec:libedit:def:history.fun-history-init-fn]
@@ -1378,15 +1219,17 @@ pub fn history_init_gen<C: HistChar>() -> *mut HistoryGen<C> {
     };
     // The C's uninitialised `ev`, passed only as a formal argument.
     let mut ev: HistEventGen<C> = scratch_ev();
+    // `n = 0`: the initial maximum size is **0**, not unlimited, so until the
+    // caller issues `H_SETSIZE` every `H_ENTER` inserts an entry and
+    // immediately evicts it (ERR-history-01).
+    let store = history_def_init::<C>(&mut ev, 0);
     // SAFETY: `h` is the allocation just made and nothing else refers to it.
     unsafe {
-        // `n = 0`: the initial maximum size is **0**, not unlimited, so until
-        // the caller issues `H_SETSIZE` every `H_ENTER` inserts an entry and
-        // immediately evicts it (ERR-history-01).
-        if history_def_init(&mut (*h).h_ref, &mut ev, 0) == -1 {
+        if store.is_null() {
             free_alloc(h);
             return ptr::null_mut();
         }
+        (*h).h_ref = store;
         // The "no event has been entered yet" marker `H_APPEND` keys off.
         (*h).h_ent = -1;
         // All ten slots. `h_next` doubles as the identity test the rest of
@@ -1448,10 +1291,10 @@ pub fn history_end_gen<C: HistChar>(h: *mut HistoryGen<C>) {
 // [spec:libedit:sem:history.history-setsize-fn]
 /// C: `static int history_setsize(TYPE(History) *h, TYPE(HistEvent) *ev, int num)`
 fn history_setsize<C: HistChar>(h: &mut HistoryGen<C>, ev: &mut HistEventGen<C>, num: i32) -> i32 {
-    if !is_def_next(h.h_next) {
+    let Some(store) = h.builtin() else {
         he_seterrev(ev, _HE_NOT_ALLOWED);
         return -1;
-    }
+    };
     if num < 0 {
         he_seterrev(ev, _HE_BAD_PARAM);
         return -1;
@@ -1460,8 +1303,7 @@ fn history_setsize<C: HistChar>(h: &mut HistoryGen<C>, ev: &mut HistEventGen<C>,
     // list is trimmed only on the next enter, so a history can sit above its
     // configured maximum indefinitely. `num == 0` is legal and means "retain
     // nothing".
-    // SAFETY: the identity test above proves `h_ref` is the builtin store.
-    unsafe { (*h.h_ref.cast::<HistoryTGen<C>>()).max = num };
+    store.max = num;
     // `*ev` is not written, so the caller still sees 0/"OK".
     0
 }
@@ -1470,14 +1312,13 @@ fn history_setsize<C: HistChar>(h: &mut HistoryGen<C>, ev: &mut HistEventGen<C>,
 // [spec:libedit:sem:history.history-getsize-fn]
 /// C: `static int history_getsize(TYPE(History) *h, TYPE(HistEvent) *ev)`
 fn history_getsize<C: HistChar>(h: &mut HistoryGen<C>, ev: &mut HistEventGen<C>) -> i32 {
-    if !is_def_next(h.h_next) {
+    let Some(store) = h.builtin() else {
         he_seterrev(ev, _HE_NOT_ALLOWED);
         return -1;
-    }
+    };
     // ERR-history-34: the **current number of stored events**, not the
     // maximum `H_SETSIZE` configured. There is no way to query the maximum.
-    // SAFETY: the identity test above proves `h_ref` is the builtin store.
-    ev.num = unsafe { (*h.h_ref.cast::<HistoryTGen<C>>()).cur };
+    ev.num = store.cur();
     // ERR-history-38: the C's `if (ev->num < -1)` `_HE_SIZE_NEGATIVE` branch
     // is unreachable, because `cur` is never negative. Not ported.
     // `ev->str` is left at the prologue's "OK".
@@ -1492,20 +1333,16 @@ fn history_setunique<C: HistChar>(
     ev: &mut HistEventGen<C>,
     uni: i32,
 ) -> i32 {
-    if !is_def_next(h.h_next) {
+    let Some(store) = h.builtin() else {
         he_seterrev(ev, _HE_NOT_ALLOWED);
         return -1;
-    }
+    };
     // Removes nothing already stored; it only affects future enters, and even
     // then only against the single newest entry.
-    // SAFETY: the identity test above proves `h_ref` is the builtin store.
-    unsafe {
-        let store = h.h_ref.cast::<HistoryTGen<C>>();
-        if uni != 0 {
-            (*store).flags |= H_UNIQUE;
-        } else {
-            (*store).flags &= !H_UNIQUE;
-        }
+    if uni != 0 {
+        store.flags |= H_UNIQUE;
+    } else {
+        store.flags &= !H_UNIQUE;
     }
     // Returns without writing `*ev`.
     0
@@ -1515,13 +1352,12 @@ fn history_setunique<C: HistChar>(
 // [spec:libedit:sem:history.history-getunique-fn]
 /// C: `static int history_getunique(TYPE(History) *h, TYPE(HistEvent) *ev)`
 fn history_getunique<C: HistChar>(h: &mut HistoryGen<C>, ev: &mut HistEventGen<C>) -> i32 {
-    if !is_def_next(h.h_next) {
+    let Some(store) = h.builtin() else {
         he_seterrev(ev, _HE_NOT_ALLOWED);
         return -1;
-    }
+    };
     // Normalised to exactly 1 or 0, not the raw flag word.
-    // SAFETY: the identity test above proves `h_ref` is the builtin store.
-    ev.num = i32::from(unsafe { (*h.h_ref.cast::<HistoryTGen<C>>()).flags } & H_UNIQUE != 0);
+    ev.num = i32::from(store.flags & H_UNIQUE != 0);
     // `ev->str` keeps the prologue's "OK".
     0
 }
@@ -1554,10 +1390,12 @@ fn history_set_fun<C: HistChar>(h: &mut HistoryGen<C>, nh: &HistoryGen<C>) -> i3
         if !is_def_next(h.h_next) {
             let old = h.h_ref;
             // A fresh, empty store with `max = 0`.
-            if history_def_init(&mut h.h_ref, &mut ev, 0) == -1 {
+            let store = history_def_init::<C>(&mut ev, 0);
+            if store.is_null() {
                 // `h` is left completely unchanged, `old` still installed.
                 return -1;
             }
+            h.h_ref = store;
             // ERR-history-14, half fixed: the C overwrites `h_ref` without
             // freeing what was there. Because ERR-history-17 is reproduced,
             // `old` is this module's own builtin store and nothing else
@@ -1625,7 +1463,23 @@ fn history_set_fun<C: HistChar>(h: &mut HistoryGen<C>, nh: &HistoryGen<C>) -> i3
 ///
 /// The path is narrow `char` in both builds. Nothing keeps it past the call,
 /// so it is borrowed rather than raw.
+///
+/// The whole of the reading is [`history_load_in`], as the whole of the
+/// writing is `history_save_out`: opening the file is the only part of the
+/// pair that needs a filesystem, and keeping it out here is what lets a round
+/// trip be tested in memory.
 fn history_load<C: HistChar>(h: &mut HistoryGen<C>, fname: &str) -> i32 {
+    let Ok(fp) = File::open(fname) else {
+        // The C's `getline` never runs, so the pre-initialised -1 stands.
+        return -1;
+    };
+    history_load_in(h, &mut BufReader::new(fp))
+}
+
+/// The whole of `sem:history.history-load-fn`, against a reader.
+///
+/// Returns the number of lines read — skipped ones included — or -1.
+fn history_load_in<C: HistChar>(h: &mut HistoryGen<C>, fp: &mut dyn BufRead) -> i32 {
     // The grammar this reads, and `history_save_fp` writes, is frozen by
     // `[dec:libedit:no-c-ffi]`:
     //
@@ -1640,11 +1494,6 @@ fn history_load<C: HistChar>(h: &mut HistoryGen<C>, fname: &str) -> i32 {
 
     // `i` is pre-initialised to -1, which is what every early return yields.
     let mut i: i32 = -1;
-
-    let Ok(fp) = File::open(fname) else {
-        return i;
-    };
-    let mut fp = BufReader::new(fp);
 
     // C: `getline(&line, &llen, fp)`, which keeps the LF and NUL-terminates.
     let mut line: Vec<u8> = Vec::new();
@@ -1897,13 +1746,11 @@ fn history_save_out<C: HistChar>(
     // `history_load`'s top-to-bottom enter restore the original ordering.
     i = 0;
     while retval != -1 {
+        // The NULL is kept distinct from the empty string: `encode` answering
+        // `None` for it is ERR-history-08 below.
         // SAFETY: `ev.str` is the store's own NUL-terminated entry text,
         // valid until that entry is deleted or replaced.
-        let str = if ev.str.is_null() {
-            None
-        } else {
-            Some(unsafe { core::slice::from_raw_parts(ev.str, s_len(ev.str)) })
-        };
+        let str = (!ev.str.is_null()).then(|| unsafe { s_in(ev.str) });
         // **The narrow/wide fork's other half.** Wide: `wcstombs` through the
         // conversion buffer, which can fail on an allocation or on a character
         // the locale cannot encode. Narrow: `ct_encode_string(s, b)` is `(s)`,
@@ -2081,16 +1928,16 @@ fn history_next_evdata<C: HistChar>(
                 // errata's disposition is to restrict the operation to the
                 // builtin backend, so a custom set gets the refusal the other
                 // builtin-only operations already return.
-                if !is_def_next(h.h_next) {
+                let Some(store) = h.builtin() else {
                     he_seterrev(ev, _HE_NOT_ALLOWED);
                     return -1;
-                }
+                };
                 // The `data` pointer is borrowed, not copied; ownership stays
-                // with whoever set it via `H_REPLACE`.
-                // SAFETY: the identity test proves `h_ref` is the builtin
-                // store, and `HCURR` succeeding proves the cursor is on a
-                // real entry.
-                unsafe { *d = (*(*h.h_ref.cast::<HistoryTGen<C>>()).cursor).data };
+                // with whoever set it via `H_REPLACE`. `HCURR` succeeding is
+                // what proves the cursor is on a real entry.
+                let data = store.current().map_or(ptr::null_mut(), |e| e.data);
+                // SAFETY: `d` is the caller's out-parameter, non-NULL here.
+                unsafe { *d = data };
             }
             return 0;
         }
@@ -2134,15 +1981,16 @@ fn history_prev_string<C: HistChar>(
     // Computed once, in `Char`s.
     // SAFETY: `str` is NULL or a NUL-terminated string; a NULL reads as
     // `L""`, which makes the prefix test match the current event at once.
-    let len = unsafe { s_len(str) };
+    let pat = unsafe { s_in(str) };
     let mut retval = hg(h.h_curr, h.h_ref, ev);
     while retval != -1 {
-        // A prefix test, not a substring or equality test. An empty `str`
-        // matches the very first candidate — the current event — and the scan
-        // includes the current event, so an already-selected event can match
-        // itself.
-        // SAFETY: as above, and `ev->str` is the store's own entry text.
-        if unsafe { s_ncmp_eq(str, ev.str, len) } {
+        // C: `Strncmp(str, ev->str, len) == 0`, read the other way round —
+        // does the candidate start with the pattern. A prefix test, not a
+        // substring or equality test. An empty `str` matches the very first
+        // candidate — the current event — and the scan includes the current
+        // event, so an already-selected event can match itself.
+        // SAFETY: `ev->str` is the store's own NUL-terminated entry text.
+        if unsafe { s_in(ev.str) }.starts_with(pat) {
             return 0;
         }
         // ERR-history-36: `history_prev_string` walks with `HNEXT` (toward
@@ -2165,11 +2013,11 @@ fn history_next_string<C: HistChar>(
     str: *const C,
 ) -> i32 {
     // SAFETY: as in `history_prev_string`.
-    let len = unsafe { s_len(str) };
+    let pat = unsafe { s_in(str) };
     let mut retval = hg(h.h_curr, h.h_ref, ev);
     while retval != -1 {
         // SAFETY: as in `history_prev_string`.
-        if unsafe { s_ncmp_eq(str, ev.str, len) } {
+        if unsafe { s_in(ev.str) }.starts_with(pat) {
             return 0;
         }
         // ERR-history-36: toward *newer* entries, the reverse of
@@ -2437,16 +2285,13 @@ pub fn history_gen<C: HistChar>(
                 // ERR-history-02, defined as in `history_next_evdata`: the
                 // whole operation needs the builtin store, so a custom
                 // function set is refused rather than type-confused.
-                if !is_def_next(h.h_next) {
+                let Some(store) = h.builtin() else {
                     he_seterrev(ev, _HE_NOT_ALLOWED);
                     return -1;
-                }
+                };
                 // `d == (void **)-1` is the documented magic value meaning
                 // "position only, do not delete"; `history_deldata_nth`
                 // handles it.
-                // SAFETY: the identity test proves `h_ref` is the builtin
-                // store, and nothing else borrows it here.
-                let store = unsafe { &mut *h.h_ref.cast::<HistoryTGen<C>>() };
                 history_deldata_nth(store, ev, num, d)
             }
             _ => bad_arg!(),
@@ -2456,41 +2301,36 @@ pub fn history_gen<C: HistChar>(
         H_REPLACE => match arg {
             HistoryArg::Replace(line, data) => {
                 // ERR-history-02 again.
-                if !is_def_next(h.h_next) {
+                let Some(store) = h.builtin() else {
                     he_seterrev(ev, _HE_NOT_ALLOWED);
                     return -1;
-                }
+                };
                 if line.is_null() {
                     // `ev` is left at 0/"OK", so a failed `H_REPLACE` reports
                     // no error string.
                     return -1;
                 }
-                let Some(s) = s_dup(line) else {
+                // SAFETY: `line` is the caller's NUL-terminated string,
+                // non-NULL here and copied before this arm returns.
+                let Some(cstr) = s_own(unsafe { s_in(line) }) else {
                     return -1;
                 };
-                // SAFETY: the identity test proves `h_ref` is the builtin
-                // store; `cursor` is either a live entry or the sentinel.
-                unsafe {
-                    let store = h.h_ref.cast::<HistoryTGen<C>>();
-                    let cursor = (*store).cursor;
-                    if cursor == &raw mut (*store).list {
-                        // ERR-history-13, second half: the C writes the
-                        // duplicate into the *sentinel's* `ev.str`, silently
-                        // corrupting the list header. The errata's
-                        // disposition is not to reproduce that, so the
-                        // request is refused and the duplicate released.
-                        s_free(s);
-                        return -1;
-                    }
-                    // ERR-history-13, first half, reproduced: the previous
-                    // string is overwritten **without being freed**. That
-                    // leak is the observable contract — an `he->line` a
-                    // caller took from an earlier operation stays valid
-                    // indefinitely — so the old pointer is deliberately
-                    // dropped on the floor rather than passed to `s_free`.
-                    (*cursor).ev.str = s;
-                    (*cursor).data = data;
-                }
+                let Some(at) = store.cursor else {
+                    // ERR-history-13, second half: the C writes the duplicate
+                    // into the *sentinel's* `ev.str`, silently corrupting the
+                    // list header. The errata's disposition is not to
+                    // reproduce that, so the request is refused and the
+                    // duplicate released.
+                    return -1;
+                };
+                let entry = &mut store.entries[at];
+                // ERR-history-13, first half, reproduced: the previous string
+                // is overwritten **without being freed**. That leak is the
+                // observable contract — an `he->line` a caller took from an
+                // earlier operation stays valid indefinitely — so the old
+                // buffer is deliberately leaked rather than dropped.
+                Vec::leak(core::mem::replace(&mut entry.cstr, cstr));
+                entry.data = data;
                 0
             }
             _ => bad_arg!(),

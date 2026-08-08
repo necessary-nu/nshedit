@@ -437,14 +437,19 @@ pub(crate) fn hist_command(el: &mut EditLine, argc: i32, argv: *const *const u32
     if argv.is_null() || argc < 0 {
         return -1;
     }
+    // The whole array, once, so the reads below are ordinary indexing and the
+    // two helpers that consume them need no pointers.
     // SAFETY: `argv` is the tokenizer's array, which has at least `argc`
-    // entries; every read below is guarded by the same `argc` the C tests.
-    let arg = |i: i32| -> *const u32 { unsafe { *argv.add(i as usize) } };
+    // entries each a NUL-terminated wide string; `argc` is the same bound the
+    // C indexes within, and the strings outlive this call.
+    let argv: Vec<&[u32]> = (0..argc)
+        .map(|i| unsafe { wcs_in(*argv.add(i as usize)) })
+        .collect();
 
     // List form. The C's test is `argc == 1 || wcscmp(argv[1], L"list") == 0`,
     // so `argc == 0` would read `argv[1]` off the end; defined here as the
     // list form, the same thing `argc == 1` gets.
-    if argc <= 1 || unsafe { wcs_eq_ascii(arg(1), "list") } {
+    if argc <= 1 || wcs_eq_ascii(argv[1], "list") {
         let mut hno: i32 = 1;
 
         // Oldest first: `HIST_LAST` then repeated `HIST_PREV`, stopping at the
@@ -511,11 +516,10 @@ pub(crate) fn hist_command(el: &mut EditLine, argc: i32, argv: *const *const u32
     // C: `num = (int)wcstol(argv[2], NULL, 0)`. No error checking at all: a
     // non-numeric argument yields 0 and a value outside `int` is truncated by
     // the cast.
-    let num = unsafe { wcstol_base0(arg(2)) };
+    let num = wcstol_base0(argv[2]);
 
-    // SAFETY: `arg(1)` is `argv[1]`, which `argc == 3` guarantees.
-    let size = unsafe { wcs_eq_ascii(arg(1), "size") };
-    let unique = unsafe { wcs_eq_ascii(arg(1), "unique") };
+    let size = wcs_eq_ascii(argv[1], "size");
+    let unique = wcs_eq_ascii(argv[1], "unique");
     if !size && !unique {
         return -1;
     }
@@ -795,7 +799,7 @@ fn hist_fun(el: &mut EditLine, r#fn: i32, arg: *mut c_void) -> Option<Vec<u32>> 
     }
     // SAFETY: the store's event string is NUL-terminated and stays valid
     // until the entry is deleted or replaced, which no operation here does.
-    Some(unsafe { wcs_to_vec(str) })
+    Some(unsafe { wcs_in(str) }.to_vec())
 }
 
 /// C: `HIST_FIRST(el)` — the most recent entry.
@@ -818,29 +822,37 @@ pub(crate) fn hist_prev(el: &mut EditLine) -> Option<Vec<u32>> {
     hist_fun(el, H_PREV, ptr::null_mut())
 }
 
-/// C: `wcscmp(s, L"…") == 0` against an ASCII literal.
+/// A NUL-terminated wide string, as the characters before its terminator.
 ///
-/// A NULL `s` compares unequal. The C would dereference it — `argv` entries
-/// are NULL-terminated by the tokenizer — and this is the same -1 the caller
-/// reaches for every other unrecognised subcommand.
+/// The C hands `wchar_t *` from the tokenizer's `argv` and from the history
+/// store straight to `wcslen`/`wcscmp`/`wcstol`; converting once here is what
+/// lets the three helpers below be ordinary slice code with no pointers in
+/// their signatures.
+///
+/// **A NULL is the empty string.** The C would dereference it, and every
+/// caller here already reads an empty string as "no match" or "no number",
+/// which is the -1 an unrecognised subcommand gets anyway.
 ///
 /// # Safety
 ///
-/// `s` must be NULL or point at a NUL-terminated wide string.
-unsafe fn wcs_eq_ascii(s: *const u32, lit: &str) -> bool {
+/// `s` must be NULL or point at a NUL-terminated wide string that outlives
+/// `'a`.
+unsafe fn wcs_in<'a>(s: *const u32) -> &'a [u32] {
     if s.is_null() {
-        return false;
+        return &[];
     }
-    for (i, b) in lit.bytes().enumerate() {
-        // SAFETY: the caller's string is NUL-terminated, and the loop stops
-        // at the first mismatch, so the NUL is never read past.
-        if unsafe { *s.add(i) } != u32::from(b) {
-            return false;
-        }
+    let mut len = 0usize;
+    // SAFETY: the caller guarantees a terminator.
+    while unsafe { *s.add(len) } != 0 {
+        len += 1;
     }
-    // SAFETY: every byte up to here matched, so this index is at most the
-    // terminator.
-    unsafe { *s.add(lit.len()) == 0 }
+    // SAFETY: `len` characters were just read, and the string is contiguous.
+    unsafe { core::slice::from_raw_parts(s, len) }
+}
+
+/// C: `wcscmp(s, L"…") == 0` against an ASCII literal.
+fn wcs_eq_ascii(s: &[u32], lit: &str) -> bool {
+    s.len() == lit.len() && s.iter().zip(lit.bytes()).all(|(&c, b)| c == u32::from(b))
 }
 
 /// C: `(int)wcstol(s, NULL, 0)`.
@@ -849,18 +861,11 @@ unsafe fn wcs_eq_ascii(s: *const u32, lit: &str) -> bool {
 /// the C at all: a non-numeric argument yields 0, `errno` is never consulted,
 /// and a value outside `int` is truncated by the cast — `long` is saturated
 /// by `wcstol` first, which is why the saturation happens here too.
-///
-/// # Safety
-///
-/// `s` must be NULL or point at a NUL-terminated wide string.
-unsafe fn wcstol_base0(s: *const u32) -> i32 {
-    if s.is_null() {
-        return 0;
-    }
+fn wcstol_base0(s: &[u32]) -> i32 {
     let mut i = 0usize;
-    // SAFETY: every read below stops at the terminator, which the caller
-    // guarantees is present.
-    let at = |i: usize| -> u32 { unsafe { *s.add(i) } };
+    // Reading past the end is the C reading its terminator, and stops every
+    // scan below for the same reason.
+    let at = |i: usize| -> u32 { s.get(i).copied().unwrap_or(0) };
 
     // Leading whitespace, as `iswspace` accepts it.
     while matches!(at(i), 0x20 | 0x09 | 0x0a | 0x0b | 0x0c | 0x0d) {
@@ -915,21 +920,6 @@ unsafe fn wcstol_base0(s: *const u32) -> i32 {
         acc = -acc;
     }
     acc as i32
-}
-
-/// C: `wcslen` followed by the copy the C does not need.
-///
-/// # Safety
-///
-/// `p` must be non-NULL and point at a NUL-terminated wide string.
-unsafe fn wcs_to_vec(p: *const u32) -> Vec<u32> {
-    let mut len = 0usize;
-    // SAFETY: the caller guarantees a terminator.
-    while unsafe { *p.add(len) } != 0 {
-        len += 1;
-    }
-    // SAFETY: `len` characters were just read, and the string is contiguous.
-    unsafe { core::slice::from_raw_parts(p, len) }.to_vec()
 }
 
 #[cfg(test)]

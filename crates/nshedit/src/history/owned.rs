@@ -85,6 +85,17 @@ impl OwnedHistoryW {
     pub fn set_unique(&mut self, on: bool) -> i32 {
         self.exec(H_SETUNIQUE, HistoryArg::Num(i32::from(on))).0
     }
+
+    /// The handle itself, for the sibling tests that call a body the opcode
+    /// table does not reach — `history_load_in`, whose opcode only takes a
+    /// path. Not offered to callers: [`OwnedHistoryW::exec`] is the escape
+    /// hatch, and it is the one that stays inside the C's own surface.
+    #[cfg(test)]
+    pub(super) fn handle(&mut self) -> &mut HistoryW {
+        // SAFETY: the handle is the one `history_winit` returned into this
+        // wrapper's field, which only `Drop` releases.
+        unsafe { &mut *self.0 }
+    }
 }
 
 impl Default for OwnedHistoryW {
