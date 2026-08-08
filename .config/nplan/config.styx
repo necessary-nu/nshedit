@@ -80,6 +80,24 @@ quality {
     // fired so far was a production count and still is; terminal.rs is still
     // held at its pre-image 76.
     function-density {exempt-test-scope true}
+
+    // Directory scope splits a module from its own tests. `file-size` and
+    // `function-density` both cap a file against its grandfathered pre-image,
+    // and a ported file that is already over the default has no room for the
+    // tests its own rules require — so those tests go in the conventional Rust
+    // sibling, `chared.rs` plus `chared/test.rs`. That is one directory down,
+    // and under directory scope the parent then reads as production with the
+    // tests deleted.
+    //
+    // Measured at the moment it fired: `crates/nshedit/src` reported 0.138
+    // against a 0.200 floor while holding 4,760 lines of test code in
+    // subdirectories against 15,992 of production — 0.298 counted together.
+    // The gate was not wrong about any file; it was measuring across a
+    // boundary the code does not have.
+    //
+    // Crate scope is the smallest unit where "this crate's tests" and "this
+    // crate's production code" are both whole. It does not lower the floor.
+    test-footprint {scope crate}
 }
 
 commit {

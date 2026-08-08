@@ -388,3 +388,6 @@ pub fn prompt_get(
     // Step 5.
     0
 }
+
+#[cfg(test)]
+mod test;
