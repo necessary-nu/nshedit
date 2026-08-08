@@ -40,10 +40,11 @@ enum FormatState {
 }
 
 /// Types of parameters a capability can use
-#[allow(missing_docs)]
 #[derive(Clone)]
 pub enum Param {
+    /// An integer terminfo parameter.
     Number(i32),
+    /// A string terminfo parameter.
     Words(String),
 }
 
@@ -554,8 +555,7 @@ enum FormatOp {
     Digit,
     Octal,
     Hex,
-    #[allow(clippy::upper_case_acronyms)]
-    HEX,
+    UpperHex,
     String,
 }
 
@@ -566,7 +566,7 @@ impl FormatOp {
             'd' => Digit,
             'o' => Octal,
             'x' => Hex,
-            'X' => HEX,
+            'X' => UpperHex,
             's' => String,
             _ => panic!("bad FormatOp char"),
         }
@@ -608,7 +608,7 @@ fn format(val: Param, op: FormatOp, flags: Flags) -> Result<Vec<u8>, Error> {
                         format!("{:01$x}", d, flags.precision)
                     }
                 }
-                HEX => {
+                UpperHex => {
                     if flags.alternate && d != 0 {
                         format!("0X{:01$X}", d, flags.precision)
                     } else {

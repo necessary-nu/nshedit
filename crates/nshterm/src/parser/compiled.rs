@@ -35,12 +35,10 @@ fn read_le_u32(r: &mut dyn io::Read) -> io::Result<u32> {
 }
 
 fn read_byte(r: &mut dyn io::Read) -> io::Result<u8> {
-    // We allow this because it's up to the caller to pass us a buffered reader when necessary
-    // (which is exactly what we do in this library).
-    #[allow(clippy::unbuffered_bytes)]
-    match r.bytes().next() {
-        Some(s) => s,
-        None => Err(io::Error::other("end of file")),
+    let mut byte = [0u8; 1];
+    match r.read(&mut byte)? {
+        0 => Err(io::Error::other("end of file")),
+        _ => Ok(byte[0]),
     }
 }
 
@@ -48,9 +46,9 @@ fn read_byte(r: &mut dyn io::Read) -> io::Result<u8> {
 /// is true
 pub fn parse(file: &mut dyn io::Read, longnames: bool) -> Result<TermInfo> {
     let (bnames, snames, nnames) = if longnames {
-        (boolfnames, stringfnames, numfnames)
+        (BOOL_LONG_NAMES, STRING_LONG_NAMES, NUMBER_LONG_NAMES)
     } else {
-        (boolnames, stringnames, numnames)
+        (BOOL_NAMES, STRING_NAMES, NUMBER_NAMES)
     };
 
     // Check magic number
@@ -88,15 +86,15 @@ pub fn parse(file: &mut dyn io::Read, longnames: bool) -> Result<TermInfo> {
         return Err(ShortNames);
     }
 
-    if bools_bytes > boolnames.len() {
+    if bools_bytes > BOOL_NAMES.len() {
         return Err(TooManyBools);
     }
 
-    if numbers_count > numnames.len() {
+    if numbers_count > NUMBER_NAMES.len() {
         return Err(TooManyNumbers);
     }
 
-    if string_offsets_count > stringnames.len() {
+    if string_offsets_count > STRING_NAMES.len() {
         return Err(TooManyStrings);
     }
 
@@ -163,7 +161,7 @@ pub fn parse(file: &mut dyn io::Read, longnames: bool) -> Result<TermInfo> {
                 let offset = offset as usize;
 
                 let name = if snames[i] == "_" {
-                    stringfnames[i]
+                    STRING_LONG_NAMES[i]
                 } else {
                     snames[i]
                 };
@@ -208,14 +206,17 @@ mod test {
 
     use std::path::PathBuf;
 
-    use super::{boolfnames, boolnames, numfnames, numnames, parse, stringfnames, stringnames};
+    use super::{
+        BOOL_LONG_NAMES, BOOL_NAMES, NUMBER_LONG_NAMES, NUMBER_NAMES, STRING_LONG_NAMES,
+        STRING_NAMES, parse,
+    };
     use crate::{Error, Result, TermInfo};
 
     #[test]
     fn test_veclens() {
-        assert_eq!(boolfnames.len(), boolnames.len());
-        assert_eq!(numfnames.len(), numnames.len());
-        assert_eq!(stringfnames.len(), stringnames.len());
+        assert_eq!(BOOL_LONG_NAMES.len(), BOOL_NAMES.len());
+        assert_eq!(NUMBER_LONG_NAMES.len(), NUMBER_NAMES.len());
+        assert_eq!(STRING_LONG_NAMES.len(), STRING_NAMES.len());
     }
 
     // -----------------------------------------------------------------
@@ -398,9 +399,9 @@ mod test {
     fn sections_longer_than_this_crate_understands_are_rejected() {
         let base = Entry::minimal().bytes();
         let too_many = [
-            (2, boolnames.len(), Error::TooManyBools),
-            (3, numnames.len(), Error::TooManyNumbers),
-            (4, stringnames.len(), Error::TooManyStrings),
+            (2, BOOL_NAMES.len(), Error::TooManyBools),
+            (3, NUMBER_NAMES.len(), Error::TooManyNumbers),
+            (4, STRING_NAMES.len(), Error::TooManyStrings),
         ];
         for (field, known, expected) in too_many {
             let bytes = with_header(&base, field, known as u16 + 1);

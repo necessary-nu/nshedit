@@ -9,11 +9,8 @@
 
 //! Helpers shared by the `parm_*` integration tests.
 //!
-//! Each test binary pulls this in with `mod common;`, so a helper used by
-//! only one of them is dead code in the others; the allow covers that rather
-//! than splitting the helpers three ways.
-
-#![allow(dead_code)]
+//! Each test binary exposes this shared module publicly so its full helper API
+//! remains reachable even when that binary uses only a subset.
 
 use std::path::PathBuf;
 

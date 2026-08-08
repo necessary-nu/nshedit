@@ -68,8 +68,8 @@ pub fn get_dbpath_for_term(term: &str) -> Option<PathBuf> {
     }
 
     // > Next, ncurses looks in $HOME/.terminfo for a compiled description.
-    #[allow(deprecated)]
-    if let Some(mut homedir) = trust_env.then(env::home_dir).flatten() {
+    if let Some(home) = trust_env.then(|| env::var_os("HOME")).flatten() {
+        let mut homedir = PathBuf::from(home);
         homedir.push(".terminfo");
         dirs_to_search.push(homedir)
     }

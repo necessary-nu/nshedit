@@ -74,7 +74,7 @@ fn borrow(fd: i32) -> Option<BorrowedFd<'static>> {
 // ---------------------------------------------------------------------------
 
 /// `O_NDELAY`. Linux gives it the same value as `O_NONBLOCK`, which is why
-/// `read__fixio`'s two sub-blocks are one condition there.
+/// `read_fixio`'s two sub-blocks are one condition there.
 pub const O_NDELAY: i32 = rustix::fs::OFlags::NONBLOCK.bits() as i32;
 
 /// `fcntl(fd, F_GETFL, 0)`. `None` is the C's -1.
@@ -356,7 +356,7 @@ pub(crate) mod cheader {
 mod tests {
     use super::*;
 
-    /// The `read__fixio` recovery treats `O_NDELAY` and `O_NONBLOCK` as one
+    /// The `read_fixio` recovery treats `O_NDELAY` and `O_NONBLOCK` as one
     /// condition, which is only sound because Linux gives them the same value.
     /// Checked against `asm-generic/fcntl.h`, where `O_NDELAY` is literally
     /// `#define`d to `O_NONBLOCK`.

@@ -31,7 +31,7 @@
 //! production under test. A comment names the fixture and capname so the
 //! claim can be checked with `infocmp`.
 
-mod common;
+pub mod common;
 
 use common::{cap, ex, ex_err, fixture, fixture_names, nums, s};
 use nshterm::parm::{Error, Param, Variables, expand};

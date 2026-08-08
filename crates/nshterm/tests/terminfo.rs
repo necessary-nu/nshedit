@@ -6,7 +6,7 @@
 //! one, applying a parameterized string, and the errors each of those can
 //! return.
 
-mod common;
+pub mod common;
 
 use common::{fixture, fixture_names};
 use nshterm::parm::Param;
@@ -41,7 +41,7 @@ fn every_fixture_loads_into_a_usable_entry() {
         // its own table.
         for key in term.strings.keys() {
             assert!(
-                nshterm::parser::names::stringnames.contains(key),
+                nshterm::parser::names::STRING_NAMES.contains(key),
                 "{name}: string capability {key:?} is not a known capname"
             );
         }

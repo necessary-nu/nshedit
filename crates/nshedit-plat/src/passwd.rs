@@ -37,30 +37,28 @@ const BUFLEN: usize = 1024;
 
 /// POSIX `struct passwd`, transcribed.
 ///
-/// Only `pw_name` and `pw_dir` are ever read; the rest hold their places so
-/// the layout the libc writes into is the one declared here, which is what
-/// the `dead_code` waiver below is for.
+/// Only `pw_name` and `pw_dir` are read; underscore-prefixed fields retain the
+/// remaining libc layout without pretending they carry application state.
 #[repr(C)]
-#[allow(dead_code)]
 struct Passwd {
     pw_name: *mut c_char,
-    pw_passwd: *mut c_char,
-    pw_uid: u32,
-    pw_gid: u32,
-    pw_gecos: *mut c_char,
+    _password: *mut c_char,
+    _uid: u32,
+    _gid: u32,
+    _gecos: *mut c_char,
     pw_dir: *mut c_char,
-    pw_shell: *mut c_char,
+    _shell: *mut c_char,
 }
 
 impl Passwd {
     const ZEROED: Self = Self {
         pw_name: core::ptr::null_mut(),
-        pw_passwd: core::ptr::null_mut(),
-        pw_uid: 0,
-        pw_gid: 0,
-        pw_gecos: core::ptr::null_mut(),
+        _password: core::ptr::null_mut(),
+        _uid: 0,
+        _gid: 0,
+        _gecos: core::ptr::null_mut(),
         pw_dir: core::ptr::null_mut(),
-        pw_shell: core::ptr::null_mut(),
+        _shell: core::ptr::null_mut(),
     };
 }
 
@@ -287,12 +285,12 @@ mod tests {
     fn the_struct_passwd_layout_is_the_one_gcc_lays_out() {
         assert_eq!(size_of::<Passwd>(), 48);
         assert_eq!(offset_of!(Passwd, pw_name), 0);
-        assert_eq!(offset_of!(Passwd, pw_passwd), 8);
-        assert_eq!(offset_of!(Passwd, pw_uid), 16);
-        assert_eq!(offset_of!(Passwd, pw_gid), 20);
-        assert_eq!(offset_of!(Passwd, pw_gecos), 24);
+        assert_eq!(offset_of!(Passwd, _password), 8);
+        assert_eq!(offset_of!(Passwd, _uid), 16);
+        assert_eq!(offset_of!(Passwd, _gid), 20);
+        assert_eq!(offset_of!(Passwd, _gecos), 24);
         assert_eq!(offset_of!(Passwd, pw_dir), 32);
-        assert_eq!(offset_of!(Passwd, pw_shell), 40);
+        assert_eq!(offset_of!(Passwd, _shell), 40);
     }
 
     /// `getpwnam_r` distinguishes "no such user" from "your buffer was too

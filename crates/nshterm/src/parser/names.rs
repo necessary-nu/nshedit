@@ -1,4 +1,3 @@
-#![allow(non_upper_case_globals, missing_docs)]
 #![cfg_attr(rustfmt, rustfmt_skip)]
 
 // Three columns, in ncurses' own order and generated from its `include/Caps`:
@@ -11,7 +10,8 @@
 // carry `-` in that column. The codes are not unique, though; see
 // `capname_for_termcap`.
 
-pub static boolfnames: &[&str] = &["auto_left_margin",
+/// Long boolean capability names in ncurses table order.
+pub static BOOL_LONG_NAMES: &[&str] = &["auto_left_margin",
                                    "auto_right_margin",
                                    "no_esc_ctlc",
                                    "ceol_standout_glitch",
@@ -56,13 +56,15 @@ pub static boolfnames: &[&str] = &["auto_left_margin",
                                    "has_hardware_tabs",
                                    "return_does_clr_eol"];
 
-pub static boolnames: &[&str] =
+/// Short terminfo boolean capability names in ncurses table order.
+pub static BOOL_NAMES: &[&str] =
     &["bw", "am", "xsb", "xhp", "xenl", "eo", "gn", "hc", "km", "hs", "in", "db", "da", "mir",
       "msgr", "os", "eslok", "xt", "hz", "ul", "xon", "nxon", "mc5i", "chts", "nrrmc", "npc",
       "ndscr", "ccc", "bce", "hls", "xhpa", "crxm", "daisy", "xvpa", "sam", "cpix", "lpix",
       "OTbs", "OTns", "OTnc", "OTMT", "OTNL", "OTpt", "OTxr"];
 
-pub static numfnames: &[&str] = &["columns",
+/// Long numeric capability names in ncurses table order.
+pub static NUMBER_LONG_NAMES: &[&str] = &["columns",
                                   "init_tabs",
                                   "lines",
                                   "lines_of_memory",
@@ -102,13 +104,15 @@ pub static numfnames: &[&str] = &["columns",
                                   "horizontal_tab_delay",
                                   "number_of_function_keys"];
 
-pub static numnames: &[&str] =
+/// Short terminfo numeric capability names in ncurses table order.
+pub static NUMBER_NAMES: &[&str] =
     &["cols", "it", "lines", "lm", "xmc", "pb", "vt", "wsl", "nlab", "lh", "lw", "ma", "wnum",
       "colors", "pairs", "ncv", "bufsz", "spinv", "spinh", "maddr", "mjump", "mcs", "mls",
       "npins", "orc", "orl", "orhi", "orvi", "cps", "widcs", "btns", "bitwin", "bitype", "OTug",
       "OTdC", "OTdN", "OTdB", "OTdT", "OTkn"];
 
-pub static stringfnames: &[&str] = &["back_tab",
+/// Long string capability names in ncurses table order.
+pub static STRING_LONG_NAMES: &[&str] = &["back_tab",
                                      "bell",
                                      "carriage_return",
                                      "change_scroll_region",
@@ -523,7 +527,8 @@ pub static stringfnames: &[&str] = &["back_tab",
                                      "memory_unlock",
                                      "box_chars_1"];
 
-pub static stringnames: &[&str] =
+/// Short terminfo string capability names in ncurses table order.
+pub static STRING_NAMES: &[&str] =
     &["cbt", "bel", "cr", "csr", "tbc", "clear", "el", "ed", "hpa", "cmdch", "cup", "cud1",
       "home", "civis", "cub1", "mrcup", "cnorm", "cuf1", "ll", "cuu1", "cvvis", "dch1", "dl1",
       "dsl", "hd", "smacs", "blink", "bold", "smcup", "smdc", "dim", "smir", "invis", "prot",
@@ -562,18 +567,21 @@ pub static stringnames: &[&str] =
       "OTbc", "OTko", "OTma", "OTG2", "OTG3", "OTG1", "OTG4", "OTGR", "OTGL", "OTGU", "OTGD",
       "OTGH", "OTGV", "OTGC", "meml", "memu", "box1"];
 
-pub static boolcodes: &[&str] =
+/// Two-character termcap boolean codes in ncurses table order.
+pub static BOOL_CODES: &[&str] =
     &["bw", "am", "xb", "xs", "xn", "eo", "gn", "hc", "km", "hs", "in", "da", "db", "mi",
       "ms", "os", "es", "xt", "hz", "ul", "xo", "nx", "5i", "HC", "NR", "NP", "ND", "cc",
       "ut", "hl", "YA", "YB", "YC", "YD", "YE", "YF", "YG", "bs", "ns", "nc", "MT", "NL",
       "pt", "xr"];
 
-pub static numcodes: &[&str] =
+/// Two-character termcap numeric codes in ncurses table order.
+pub static NUMBER_CODES: &[&str] =
     &["co", "it", "li", "lm", "sg", "pb", "vt", "ws", "Nl", "lh", "lw", "ma", "MW", "Co",
       "pa", "NC", "Ya", "Yb", "Yc", "Yd", "Ye", "Yf", "Yg", "Yh", "Yi", "Yj", "Yk", "Yl",
       "Ym", "Yn", "BT", "Yo", "Yp", "ug", "dC", "dN", "dB", "dT", "kn"];
 
-pub static stringcodes: &[&str] =
+/// Two-character termcap string codes in ncurses table order.
+pub static STRING_CODES: &[&str] =
     &["bt", "bl", "cr", "cs", "ct", "cl", "ce", "cd", "ch", "CC", "cm", "do", "ho", "vi",
       "le", "CM", "ve", "nd", "ll", "up", "vs", "dc", "dl", "ds", "hd", "as", "mb", "md",
       "ti", "dm", "mh", "im", "mk", "mp", "mr", "so", "us", "ec", "ae", "me", "te", "ed",
@@ -639,9 +647,9 @@ pub fn capname_for_termcap(code: &str) -> Option<&'static str> {
         return None;
     }
     for (codes, names) in [
-        (boolcodes, boolnames),
-        (numcodes, numnames),
-        (stringcodes, stringnames),
+        (BOOL_CODES, BOOL_NAMES),
+        (NUMBER_CODES, NUMBER_NAMES),
+        (STRING_CODES, STRING_NAMES),
     ] {
         if let Some(i) = codes.iter().position(|&c| c == code) {
             return Some(names[i]);
@@ -657,9 +665,9 @@ pub fn capname_for_termcap(code: &str) -> Option<&'static str> {
 #[must_use]
 pub fn termcap_for_capname(name: &str) -> Option<&'static str> {
     for (names, codes) in [
-        (boolnames, boolcodes),
-        (numnames, numcodes),
-        (stringnames, stringcodes),
+        (BOOL_NAMES, BOOL_CODES),
+        (NUMBER_NAMES, NUMBER_CODES),
+        (STRING_NAMES, STRING_CODES),
     ] {
         if let Some(i) = names.iter().position(|&n| n == name) {
             return (!codes[i].is_empty()).then_some(codes[i]);
@@ -673,19 +681,19 @@ mod test {
     use super::*;
 
     /// The three columns are one table in ncurses' `Caps` and must stay one
-    /// here: an index into `stringnames` is an index into the compiled
+    /// here: an index into `STRING_NAMES` is an index into the compiled
     /// terminfo file's string table, so a length that drifts silently
     /// mislabels every capability after the drift.
     #[test]
     fn the_columns_are_the_same_length() {
-        assert_eq!(boolnames.len(), boolfnames.len());
-        assert_eq!(boolnames.len(), boolcodes.len());
-        assert_eq!(numnames.len(), numfnames.len());
-        assert_eq!(numnames.len(), numcodes.len());
-        assert_eq!(stringnames.len(), stringfnames.len());
-        assert_eq!(stringnames.len(), stringcodes.len());
+        assert_eq!(BOOL_NAMES.len(), BOOL_LONG_NAMES.len());
+        assert_eq!(BOOL_NAMES.len(), BOOL_CODES.len());
+        assert_eq!(NUMBER_NAMES.len(), NUMBER_LONG_NAMES.len());
+        assert_eq!(NUMBER_NAMES.len(), NUMBER_CODES.len());
+        assert_eq!(STRING_NAMES.len(), STRING_LONG_NAMES.len());
+        assert_eq!(STRING_NAMES.len(), STRING_CODES.len());
         // ncurses 6.5's own counts.
-        assert_eq!((boolnames.len(), numnames.len(), stringnames.len()), (44, 39, 414));
+        assert_eq!((BOOL_NAMES.len(), NUMBER_NAMES.len(), STRING_NAMES.len()), (44, 39, 414));
     }
 
     /// The codes libedit's own `settc`/`echotc` documentation names, and the
@@ -742,7 +750,7 @@ mod test {
         assert_eq!(termcap_for_capname("no_such_capability"), None);
         assert_eq!(termcap_for_capname("setaf"), Some("AF"));
         assert!(
-            [boolcodes, numcodes, stringcodes]
+            [BOOL_CODES, NUMBER_CODES, STRING_CODES]
                 .iter()
                 .all(|t| t.iter().all(|c| !c.is_empty())),
             "a generated code is empty, so the empty-string guard now matters"
@@ -760,7 +768,7 @@ mod test {
 
         let mut seen = std::collections::HashMap::new();
         let mut clashes = Vec::new();
-        for table in [boolcodes, numcodes, stringcodes] {
+        for table in [BOOL_CODES, NUMBER_CODES, STRING_CODES] {
             for &code in table {
                 if seen.insert(code, ()).is_some() {
                     clashes.push(code);
@@ -777,15 +785,15 @@ mod test {
     #[test]
     fn the_two_misspelled_capnames_are_correct() {
         // Caps: magic_cookie_glitch_ul  OTug  num  ug  — was `UTug`.
-        assert!(numnames.contains(&"OTug"));
-        assert!(!numnames.contains(&"UTug"));
+        assert!(NUMBER_NAMES.contains(&"OTug"));
+        assert!(!NUMBER_NAMES.contains(&"UTug"));
         assert_eq!(capname_for_termcap("ug"), Some("OTug"));
 
         // Caps: backspace_if_not_bs  OTbc  str  bc  — was `OTbs`, which is a
         // real capname, but a BOOLEAN one, so the string table carried a
         // duplicate of a different capability's name.
-        assert_eq!(stringnames[397], "OTbc");
+        assert_eq!(STRING_NAMES[397], "OTbc");
         assert_eq!(capname_for_termcap("bc"), Some("OTbc"));
-        assert!(boolnames.contains(&"OTbs"));
+        assert!(BOOL_NAMES.contains(&"OTbs"));
     }
 }
