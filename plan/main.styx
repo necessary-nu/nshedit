@@ -2325,6 +2325,21 @@ children (
                     native-impl ([spec:nshedit:req:core.effect-hooks])
                 }
                 deps (greenfield-editor-shell)
+                log (
+                    {
+                        at 2026-08-08T17:01:56.141694345Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T17:07:44.05336088Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "The runtime is a closed Effect trait with an associated Response, not a catch-all opcode/response enum. Every built-in request owns its data; Suspension<E> owns that request and no Editor borrow. A private Arc allocation identifies the issuing editor and a checked sequence identifies the live request, so cross-editor and stale resumes are typed errors that do not clear current state. Prompt, read/EOF, history navigation/recording, alias, resize, completion, environment, and user command each have a distinct request/response pair; cancellation, interruption, unavailability, and host failure are HostFailure values. Returning an error response still clears the suspension and leaves the editor resumable."
+                    }
+                )
             }
 
             {

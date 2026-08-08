@@ -30,6 +30,8 @@ consequences {
     accepted (
         "The editor advances until it completes or yields a typed effect such as prompt, input, history, alias, resize, completion, environment, or user command."
         "An effect owns or explicitly borrows all request data needed by the host and names the typed response accepted on resume."
+        "The closed Effect trait associates each owned request type with exactly one response type; Suspension<E> owns the request and carries a private editor identity and sequence."
+        "Resuming through a different editor or a stale suspension is a typed error and cannot clear the live suspension."
         "The driver releases the editor borrow before handling an effect. The ABI may therefore invoke foreign code and service permitted reentrant operations without aliasing Rust references."
         "Built-in operations remain ordinary typed core code; only host-controlled boundaries suspend."
         "Cancellation, EOF, interruption, and callback failure are typed responses and leave the editor resumable or safely finishable."

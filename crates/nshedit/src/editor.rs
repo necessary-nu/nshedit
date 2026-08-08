@@ -10,6 +10,9 @@ use std::os::fd::BorrowedFd;
 
 use crate::domain::{EditorConfig, Text, TextIndex};
 
+// [spec:nshedit:req:core.effect-hooks]
+pub mod effect;
+
 /// Safe terminal lifecycle operations owned by one editor session.
 ///
 /// `activate` may partially change terminal state before it returns an error.
@@ -111,6 +114,7 @@ pub struct Editor<T: TerminalControl> {
     config: EditorConfig,
     state: EditorState,
     terminal: Option<T>,
+    effects: effect::Runtime,
 }
 
 impl<T: TerminalControl> Editor<T> {
@@ -134,6 +138,7 @@ impl<T: TerminalControl> Editor<T> {
                 cursor: TextIndex::START,
             },
             terminal: Some(terminal),
+            effects: effect::Runtime::default(),
         })
     }
 

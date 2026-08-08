@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-08T17:01:28.31681564Z
+last_sync_at 2026-08-08T17:09:22.282970782Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -201,6 +201,16 @@ impl_evidence (
         {id core.text-screen-model, version 0}
         {id core.typed-domain, version 1}
     )}
+    {id greenfield-editor-shell, covered_rules (
+        core.raii-lifecycle
+        core.rust-io
+    ), covered_claims (
+        {impl_name native-impl, rule core.raii-lifecycle}
+        {impl_name native-impl, rule core.rust-io}
+    ), rule_versions_seen (
+        {id core.raii-lifecycle, version 0}
+        {id core.rust-io, version 1}
+    )}
     {id greenfield-lint-baseline, covered_rules (
         workspace.no-legacy-allows
     ), covered_claims (
@@ -208,11 +218,9 @@ impl_evidence (
     ), rule_versions_seen (
         {id workspace.no-legacy-allows, version 0}
     )}
-    {id greenfield-editor-shell, covered_rules (
-        core.raii-lifecycle
-        core.rust-io
+    {id greenfield-effect-runtime, covered_rules (
+        core.effect-hooks
     ), covered_claims (
-        {impl_name native-impl, rule core.raii-lifecycle}
-        {impl_name native-impl, rule core.rust-io}
+        {impl_name native-impl, rule core.effect-hooks}
     )}
 )

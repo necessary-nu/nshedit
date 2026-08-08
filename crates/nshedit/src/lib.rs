@@ -100,6 +100,7 @@ pub mod domain;
 
 // [spec:nshedit:req:core.raii-lifecycle]
 // [spec:nshedit:req:core.rust-io+1]
+// [spec:nshedit:req:core.effect-hooks]
 /// Safe native editor sessions and their borrowed I/O capabilities.
 pub mod editor;
 
