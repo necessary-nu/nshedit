@@ -1135,4 +1135,5 @@ pub(crate) fn ed_command(el: &mut EditLine, c: u32) -> ElActionT {
 }
 
 #[cfg(test)]
+#[path = "common/test.rs"]
 mod test;

@@ -917,4 +917,5 @@ fn wcstol_base0(s: &[u32]) -> i32 {
 }
 
 #[cfg(test)]
+#[path = "hist/test.rs"]
 mod test;

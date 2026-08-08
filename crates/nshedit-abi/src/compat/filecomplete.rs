@@ -1390,4 +1390,5 @@ pub fn _el_fn_sh_complete(el: &mut EditLine, ch: i32) -> u8 {
 }
 
 #[cfg(test)]
+#[path = "filecomplete/test.rs"]
 mod test;

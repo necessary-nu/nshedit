@@ -1415,4 +1415,5 @@ pub fn ch_aliasfun(el: &mut EditLine, f: Option<ElAfuncT>, a: *mut c_void) -> i3
 }
 
 #[cfg(test)]
+#[path = "chared/test.rs"]
 mod test;

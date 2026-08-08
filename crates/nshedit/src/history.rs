@@ -2,6 +2,7 @@
 
 // [spec:nshedit:req:core.history+1]
 mod native;
+#[path = "../../nshedit-abi/src/compat/history/session.rs"]
 mod session;
 
 pub use native::{

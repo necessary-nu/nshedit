@@ -1452,4 +1452,5 @@ fn wcs_eq_ascii(s: &[u32], lit: &str) -> bool {
 }
 
 #[cfg(test)]
+#[path = "el/tests.rs"]
 mod tests;

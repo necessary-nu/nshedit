@@ -177,6 +177,7 @@ pub mod terminal;
 pub mod tty;
 
 // Line buffer and screen refresh.
+#[path = "../../nshedit-abi/src/compat/chared.rs"]
 pub mod chared;
 #[path = "../../nshedit-abi/src/compat/prompt.rs"]
 pub mod prompt;
@@ -184,13 +185,16 @@ pub mod prompt;
 pub mod refresh;
 
 // Input dispatch and key binding.
+#[path = "../../nshedit-abi/src/compat/keymacro.rs"]
 pub mod keymacro;
+#[path = "../../nshedit-abi/src/compat/map.rs"]
 pub mod map;
 pub mod parse;
 pub mod read;
 pub mod sig;
 
 // History storage and search.
+#[path = "../../nshedit-abi/src/compat/hist.rs"]
 pub mod hist;
 pub mod histfile;
 // [spec:nshedit:req:core.history+1]
@@ -199,16 +203,21 @@ pub mod search;
 
 // Editor command sets, and the command table `src/makelist` generates from
 // their doc comments.
+#[path = "../../nshedit-abi/src/compat/common.rs"]
 pub mod common;
+#[path = "../../nshedit-abi/src/compat/emacs.rs"]
 pub mod emacs;
+#[path = "../../nshedit-abi/src/compat/fcns.rs"]
 pub(crate) mod fcns;
 pub mod vi;
 
 // Completion and tokenization.
+#[path = "../../nshedit-abi/src/compat/filecomplete.rs"]
 pub mod filecomplete;
 pub mod tokenizer;
 
 // EditLine lifecycle.
+#[path = "../../nshedit-abi/src/compat/el.rs"]
 pub mod el;
 
 // The one editor the concern tests are built on. Here rather than in any one

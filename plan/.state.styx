@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-08T19:57:02.840904986Z
+last_sync_at 2026-08-08T22:30:08.239178257Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -190,6 +190,10 @@ impl_evidence (
         {impl_name native-impl, rule abi.behavioural-conformance}
         {impl_name native-impl, rule abi.opaque-owner}
         {impl_name native-impl, rule abi.surface-stability}
+    ), rule_versions_seen (
+        {id abi.behavioural-conformance, version 0}
+        {id abi.opaque-owner, version 0}
+        {id abi.surface-stability, version 0}
     )}
     {id greenfield-abi-baseline, covered_rules (
         abi.complete-surface
@@ -244,6 +248,7 @@ impl_evidence (
     ), rule_versions_seen (
         {id workspace.no-legacy-allows, version 0}
     )}
+    {id greenfield-public-firewall}
     {id greenfield-read-driver, covered_rules (
         core.read-driver
     ), covered_claims (

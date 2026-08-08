@@ -547,4 +547,5 @@ pub(crate) fn em_delete_prev_char(el: &mut EditLine, c: u32) -> ElActionT {
 }
 
 #[cfg(test)]
+#[path = "emacs/test.rs"]
 mod test;
