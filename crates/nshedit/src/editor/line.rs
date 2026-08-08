@@ -61,6 +61,14 @@ impl State {
         self.redo.clear();
     }
 
+    pub(super) fn select_editing_mode(&mut self, mode: EditingMode) {
+        self.input_mode = InputMode::Insert;
+        self.keymap_mode = match mode {
+            EditingMode::Emacs => KeymapMode::Emacs,
+            EditingMode::Vi => KeymapMode::ViInsert,
+        };
+    }
+
     pub(super) const fn input_mode(&self) -> InputMode {
         self.input_mode
     }

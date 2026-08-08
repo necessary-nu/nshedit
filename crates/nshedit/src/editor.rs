@@ -183,10 +183,23 @@ impl<T: TerminalControl> Editor<T> {
         })
     }
 
-    /// The immutable policy selected when this session was created.
+    /// The policy currently governing this session.
     #[must_use]
     pub const fn config(&self) -> EditorConfig {
         self.config
+    }
+
+    /// Change the session policy without rebuilding its line state.
+    ///
+    /// Switching editing families selects that family's insertion keymap.
+    /// The line, cursor, registers, undo history, and custom bindings remain
+    /// owned by this editor. Signal and buffering policy are observed by the
+    /// read driver on its next step.
+    pub fn reconfigure(&mut self, config: EditorConfig) {
+        if self.config.editing_mode() != config.editing_mode() {
+            self.state.select_editing_mode(config.editing_mode());
+        }
+        self.config = config;
     }
 
     /// The current logical line.
@@ -550,6 +563,29 @@ mod tests {
         let mut failed = Editor::new(EditorConfig::default(), terminal).unwrap();
         assert!(failed.set_terminal_mode(TerminalMode::Cooked).is_err());
         assert_eq!(failed.terminal_mode(), TerminalMode::Editing);
+    }
+
+    #[test]
+    fn reconfiguration_preserves_session_state() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut editor =
+            Editor::new(EditorConfig::default(), MockTerminal::recording(&events)).unwrap();
+        editor.execute(Action::Insert(Text::from("line"))).unwrap();
+        editor.execute(Action::SetMark).unwrap();
+
+        let config = EditorConfig::default()
+            .with_editing_mode(EditingMode::Vi)
+            .with_buffering(Buffering::Character);
+        editor.reconfigure(config);
+
+        assert_eq!(editor.config(), config);
+        assert_eq!(editor.line(), &Text::from("line"));
+        let end = editor.line().index(4).unwrap();
+        assert_eq!(editor.cursor(), end);
+        assert_eq!(editor.mark(), Some(end));
+        assert_eq!(editor.input_mode(), InputMode::Insert);
+        assert_eq!(editor.keymap_mode(), KeymapMode::ViInsert);
+        assert!(editor.can_undo());
     }
 
     // [spec:nshedit:req:core.terminal-render+1/test]
