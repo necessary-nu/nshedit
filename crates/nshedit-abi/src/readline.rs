@@ -41,15 +41,15 @@ use nshedit::chartype::{CtBufferT, ct_decode_string};
 use nshedit::editline::readline::{HistEntry, HistdataT, HistoryState, Keymap, KeymapEntry};
 use nshedit::el::CFile;
 use nshedit::filecomplete::{self, FilenameCompletionState};
-use nshedit::histedit::{
-    CC_EOF, CC_ERROR, CC_NORM, CC_REFRESH, H_CLEAR, H_CURR, H_DELDATA, H_ENTER, H_FIRST, H_GETSIZE,
-    H_LAST, H_LOAD, H_NEXT, H_NEXT_EVDATA, H_NEXT_EVENT, H_NEXT_STR, H_PREV, H_PREV_EVENT,
-    H_PREV_STR, H_REPLACE, H_SAVE, H_SET, H_SETSIZE, HistEvent,
-};
 use nshedit::tty::{C_EOF, C_REPRINT, TS_IO};
 use std::os::fd::AsRawFd;
 
 use crate::adapter::{EditLine, History};
+use crate::cdecl::histedit::{
+    CC_EOF, CC_ERROR, CC_NORM, CC_REFRESH, H_CLEAR, H_CURR, H_DELDATA, H_ENTER, H_FIRST, H_GETSIZE,
+    H_LAST, H_LOAD, H_NEXT, H_NEXT_EVDATA, H_NEXT_EVENT, H_NEXT_STR, H_PREV, H_PREV_EVENT,
+    H_PREV_STR, H_REPLACE, H_SAVE, H_SET, H_SETSIZE, HistEvent,
+};
 use crate::{cenv, clocale, cstdio};
 use bridge::{
     NO_TTY, em_kill_line, passwd_home_dir, re_putc, tty_end, tty_get_signal_character, tty_init,

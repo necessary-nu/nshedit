@@ -16,8 +16,9 @@ use std::io;
 use nshedit::chartype::CtBufferT;
 use nshedit::domain::{EditorConfig, TerminalMode, Text, TextUnit};
 use nshedit::editor::{Editor, TerminalControl, Tokenizer as NativeTokenizer};
-use nshedit::histedit::{LineInfo, LineInfoW};
 use nshedit::history::HistoryStore;
+
+use crate::cdecl::histedit::{LineInfo, LineInfoWide as LineInfoW};
 
 /// Terminal ownership remains with the translated engine during the bounded
 /// ABI cutover. This controller lets the native editor own an explicit RAII

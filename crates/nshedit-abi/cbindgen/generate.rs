@@ -41,13 +41,10 @@ const HEADERS: &[Header] = &[
         out: "histedit.h",
         config: "cbindgen/histedit.toml",
         srcs: &[
-            // The public types `histedit.h` completes, plus the `CC_*` and
-            // `H_*` opcodes. This file *is* the header's type surface; its
-            // own module doc says so.
-            "crates/nshedit/src/histedit.rs",
-            // The incomplete types, and the C spellings that the core's Rust
-            // spelling would otherwise render as a different C type.
+            // The incomplete handle tags.
             "crates/nshedit-abi/src/cdecl/handles.rs",
+            // Every completed record, callback spelling, and `CC_*`/`H_*`
+            // value. Header generation deliberately reads no core source.
             "crates/nshedit-abi/src/cdecl/histedit.rs",
             // The exported functions, and the `EL_*` opcodes.
             "crates/nshedit-abi/src/histedit.rs",

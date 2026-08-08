@@ -72,7 +72,7 @@ use std::os::unix::ffi::OsStringExt;
 use nshedit::chared::{ElAfuncT, ElZfuncT};
 use nshedit::el::{CFile, FuncT};
 use nshedit::hist::HistFunT;
-use nshedit::histedit::{ElRfuncT, HistEvent, LineInfo};
+use nshedit::histedit::ElRfuncT;
 use nshedit::history::{
     HistoryArg, HistoryEfunT, HistoryGfunT, HistorySfunT, HistoryVfunT, SaveStream,
 };
@@ -82,7 +82,10 @@ use nshedit::prompt::ElPfuncT;
 // Renamed on import so the signatures below read as `histedit.h` writes
 // them; see the note on `LineInfoWide`.
 use crate::adapter::{EditLine, History, HistoryHandle, HistoryW, Tokenizer, TokenizerW};
-use crate::cdecl::histedit::{HistEventWide as HistEventW, LineInfoWide as LineInfoW, WcharT};
+use crate::cdecl::histedit::{
+    HistEvent, HistEventGen, HistEventWide as HistEventW, LineInfo, LineInfoWide as LineInfoW,
+    WcharT,
+};
 use crate::cstdio::{self, CFileWriter};
 
 // ---------------------------------------------------------------------------
@@ -749,7 +752,7 @@ pub unsafe extern "C" fn tok_line(
     // consults the locale to decide.
     // SAFETY: both are the caller's live objects.
     let tok = unsafe { &mut *tok };
-    let line = unsafe { &*line };
+    let line = unsafe { &*line.cast::<nshedit::histedit::LineInfo>() };
     let mut n: c_int = 0;
     // `cursorc` and `cursoro` are NULL-checked in the C, so they are optional
     // here; `argc` is written unconditionally on success.
@@ -1618,11 +1621,11 @@ pub unsafe extern "C" fn history_wend(h: *mut HistoryW) {
 /// instantiation, and the tail must carry what the op code says.
 unsafe fn history_dispatch<C: nshedit::history::HistChar>(
     h: *mut HistoryHandle<C>,
-    ev: *mut nshedit::histedit::HistEventGen<C>,
+    ev: *mut HistEventGen<C>,
     op: c_int,
     mut ap: VaList<'_>,
 ) -> c_int {
-    use nshedit::histedit::{
+    use crate::cdecl::histedit::{
         H_ADD, H_APPEND, H_CLEAR, H_CURR, H_DEL, H_DELDATA, H_END, H_ENTER, H_FIRST, H_FUNC,
         H_GETSIZE, H_GETUNIQUE, H_LAST, H_LOAD, H_NEXT, H_NEXT_EVDATA, H_NEXT_EVENT, H_NEXT_STR,
         H_NSAVE_FP, H_PREV, H_PREV_EVENT, H_PREV_STR, H_REPLACE, H_SAVE, H_SAVE_FP, H_SET,
@@ -1632,7 +1635,7 @@ unsafe fn history_dispatch<C: nshedit::history::HistChar>(
     // Neither `h` nor `ev` may be NULL; both are dereferenced unchecked, as
     // in the C.
     // SAFETY: `ev` is the caller's out-parameter.
-    let ev = unsafe { &mut *ev };
+    let ev = unsafe { &mut *ev.cast::<nshedit::histedit::HistEventGen<C>>() };
 
     // `H_FUNC`'s assembled vtable. C: `TYPE(History) hf`, a stack local in
     // `FUNW(history)`; hoisted out of the arm below only so the borrow the
@@ -1880,7 +1883,7 @@ pub unsafe extern "C" fn tok_wline(
     // how multi-line continuation works.
     // SAFETY: both are the caller's live objects.
     let tok = unsafe { &mut *tok };
-    let line = unsafe { &*line };
+    let line = unsafe { &*line.cast::<nshedit::histedit::LineInfoW>() };
     let mut n: c_int = 0;
     // `cursorc` and `cursoro` are NULL-checked in the C, so they are optional
     // here; `argc` is written unconditionally on success.

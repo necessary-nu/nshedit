@@ -16,18 +16,11 @@
 //! `struct editline;`, a forward declaration and nothing more, which is
 //! exactly the C's meaning.
 //!
-//! These are the only declarations in [`crate::cdecl`] with no counterpart
-//! in the core, and they need none: an incomplete type has no body to agree
-//! about. The bodies live in `nshedit`, are never named by a header, and
-//! the C's are equally private (`src/el.h`, `src/hist.h`,
-//! `src/tokenizer.c`). Nothing constructs one of these; they exist to be
-//! spelled.
-//!
-//! Deliberately *not* here: `struct lineinfo`, `struct lineinfow`,
-//! `struct HistEvent` and `struct histeventW`. Those four the C completes,
-//! so a consumer reads their fields, so their layout is the contract and
-//! they are generated from the core's real types rather than restated. That
-//! is the whole point of `conformance-header-diff`.
+//! An incomplete type has no body to agree about. The ABI allocations and
+//! the C's own definitions (`src/el.h`, `src/hist.h`, `src/tokenizer.c`) stay
+//! private; these declaration-only tags exist solely to be spelled in the
+//! installed header. Completed records live beside them in
+//! [`super::histedit`], never in the core's header input.
 
 // Rust owns the source-level names; cbindgen's checked rename table owns the
 // C tag spellings. `conformance/header-diff.sh` proves that the latter remain
@@ -35,25 +28,30 @@
 
 /// C: `struct editline` — the editor, `def:el.editline`.
 pub struct EditlineTag;
+// [spec:libedit:def:histedit.edit-line]
 /// C: `typedef struct editline EditLine;` — `def:histedit.edit-line`.
 pub type EditLine = EditlineTag;
 
 /// C: `struct history` — the narrow history, `historyn.c`.
 pub struct HistoryTag;
+// [spec:libedit:def:histedit.history]
 /// C: `typedef struct history History;` — `def:histedit.history`.
 pub type History = HistoryTag;
 
 /// C: `struct historyW` — the wide history, `history.c`.
 pub struct HistoryWideTag;
+// [spec:libedit:def:histedit.history-w]
 /// C: `typedef struct historyW HistoryW;` — `def:histedit.history-w`.
 pub type HistoryW = HistoryWideTag;
 
 /// C: `struct tokenizer` — the narrow tokenizer, `tokenizern.c`.
 pub struct TokenizerTag;
+// [spec:libedit:def:histedit.tokenizer]
 /// C: `typedef struct tokenizer Tokenizer;` — `def:histedit.tokenizer`.
 pub type Tokenizer = TokenizerTag;
 
 /// C: `struct tokenizerW` — the wide tokenizer, `tokenizer.c`.
 pub struct TokenizerWideTag;
+// [spec:libedit:def:histedit.tokenizer-w]
 /// C: `typedef struct tokenizerW TokenizerW;` — `def:histedit.tokenizer-w`.
 pub type TokenizerW = TokenizerWideTag;

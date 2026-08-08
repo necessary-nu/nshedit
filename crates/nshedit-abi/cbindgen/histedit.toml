@@ -23,13 +23,10 @@ include_guard = "_HISTEDIT_H_"
 # enough that the original carries it.
 cpp_compat = true
 
-# The C's own includes, plus `stdint.h`. That last one is ours: the core
-# spells `HistEventGen::num` as `i32`, which renders `int32_t` — the same
-# type as `int` on every target this library supports, and the same type in
-# Rust as `c_int`, so it is a spelling and not a difference. Spelling the
-# field `c_int` in the core would let this include go.
+# The C's own includes. ABI records use `c_int`, so cbindgen now prints the
+# original `int` directly and needs no Rust-specific integer header.
 no_includes = true
-sys_includes = ["sys/types.h", "stdio.h", "wchar.h", "wctype.h", "stdint.h"]
+sys_includes = ["sys/types.h", "stdio.h", "wchar.h", "wctype.h"]
 
 # One line per item, from the Rust doc comment. `histedit.h` documents the
 # argument list of every `EL_*` and `H_*` opcode in a trailing comment, and a
@@ -67,23 +64,11 @@ after_includes = """
 # only through the varargs of `el_set(EL_GETCFN, ...)`. The C declares it; so
 # do we.
 #
-# The two wide records are reached under the names the core gave them, which
-# are excluded below, so nothing refers to these two by the name they carry
-# here; they are named explicitly instead. Emitting them is also what
-# monomorphises `LineInfoGen`/`HistEventGen` over `wchar_t`.
-include = ["ElReadCallback", "LineInfoWide", "HistEventWide"]
+# The records are named explicitly so both generic instantiations are emitted
+# even if a later signature stops referring to one of them.
+include = ["ElReadCallback", "LineInfo", "LineInfoWide", "HistEvent", "HistEventWide"]
 
 exclude = [
-    # The core's wide aliases are `LineInfoGen<u32>`, `HistEventGen<u32>` and
-    # a `*mut u32` callback, which render as `uint32_t`. That is a DIFFERENT C
-    # type from `wchar_t`, which is signed on every target here, so a consumer
-    # passing a `wchar_t *` would get a diagnostic.
-    # `crates/nshedit-abi/src/cdecl/histedit.rs` restates all three over a
-    # `wchar_t` alias — the identical Rust type, checked by the compiler —
-    # and those are what get emitted.
-    "LineInfoW",
-    "HistEventW",
-    "ElRfuncT",
     # Spelling-only aliases that exist for the generator to rename or for the
     # header to reference, and that the C declares elsewhere or not at all.
     # `WcharT` maps to `wchar_t`, which comes from `<wchar.h>`; `CFile` is
@@ -101,9 +86,8 @@ exclude = [
 "HistEventGen_c_char" = "HistEvent"
 "HistEventGen_WcharT" = "histeventW"
 
-# See the note on `LineInfoWide` in `crates/nshedit-abi/src/cdecl/histedit.rs`:
-# these carry a distinct Rust name only because `exclude` above is keyed on
-# names and would otherwise take the core's alias and this one together.
+# These aliases carry distinct Rust names so cbindgen can monomorphise the
+# generic body over `WcharT`, then map the public typedefs back to C's names.
 "LineInfoWide" = "LineInfoW"
 "HistEventWide" = "HistEventW"
 
@@ -117,8 +101,8 @@ exclude = [
 "WcharT" = "wchar_t"
 "ElReadCallback" = "el_rfunc_t"
 
-# The core's `CFile` is `*mut c_void`, because no Rust can look inside a
-# `FILE`. `void *` and `FILE *` are not the same C type, and `el_init`'s
+# Rust cannot look inside a `FILE`, so the implementation stores `*mut c_void`.
+# `void *` and `FILE *` are not the same C type, and `el_init`'s
 # three streams and `EL_GETFP`/`EL_SETFP` are all declared `FILE *`. The
 # alias exists in `cdecl` so there is an item here to rename; the
 # declaration itself is excluded above, because `<stdio.h>` has the real one.

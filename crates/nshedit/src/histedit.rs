@@ -1,30 +1,14 @@
-//! The `histedit.h` public types; rules live in
-//! `docs/spec/port/src/histedit.md`.
+//! Record and opcode shapes used by the translated compatibility engine.
 //!
-//! The C header is the ABI surface, so the structs it defines are frozen in
-//! layout and are marked `#[repr(C)]` (`plan/decisions/no-c-ffi.md`). Their
-//! character pointers stay raw pointers for the same reason: they are
-//! documented as borrowed views into libedit's own storage, invalidated by
-//! the next operation, and a C caller reads them as `const char *` /
-//! `const wchar_t *`.
+//! `nshedit-abi::cdecl::histedit` owns the installed C declarations. These
+//! temporary twins remain `#[repr(C)]` only while the translated history and
+//! tokenizer payloads consume them; the ABI crate checks their layout before
+//! casting at that migration seam.
 //!
-//! The header also forward-declares five handles as incomplete types. Rust
-//! has no incomplete types, so each is named here and resolved to the module
-//! that defines its body in C. `EditLine` is a re-export. The other four come
-//! in wide/narrow pairs — `HistoryW`/`History` and `TokenizerW`/`Tokenizer` —
-//! which the C produces by compiling `history.c` and `tokenizer.c` twice, once
-//! with `Char = wchar_t` and once with `Char = char`. The port compiles the
-//! same source twice too, by making it generic over the character type, so all
-//! four are re-exports naming the two instantiations; see
-//! [`crate::history::HistChar`].
-//!
-//! The header's four *complete* character-typed structs come in the same two
-//! pairs: `HistEvent`/`HistEventW` and `LineInfo`/`LineInfoW`. The C spells
-//! each pair as two struct definitions with one member's type changed, so each
-//! keeps its own `def` rule here, but both members of a pair are the same
-//! generic body at two arguments. They remain distinct Rust types, which is
-//! what makes "mixing the wide and narrow forms is undefined behaviour" a
-//! compile error rather than a convention.
+//! The wide and narrow translated modules share generic record bodies over
+//! `u32` and `c_char`. Their handle re-exports and integer opcodes exist only
+//! so the remaining file-for-file implementation can compile; they are not a
+//! native Rust API or a source for the public headers.
 
 use core::ffi::{c_char, c_int};
 
@@ -91,30 +75,25 @@ pub const H_REPLACE: i32 = 25;
 pub const H_SAVE_FP: i32 = 26;
 pub const H_NSAVE_FP: i32 = 27;
 
-// [spec:libedit:def:histedit.edit-line]
 /// C: `typedef struct editline EditLine;` — the editor handle. Its body is
 /// `def:el.editline`, in [`crate::el`].
 pub use crate::el::EditLine;
-// [spec:libedit:def:histedit.history-w]
-/// C: `typedef struct historyW HistoryW;` — the wide history handle. Its
-/// body is `history.c`'s `struct TYPE(history)`, which the C defines without
-/// a rule of its own; see [`crate::history::HistoryW`].
-pub use crate::history::HistoryW;
-// [spec:libedit:def:histedit.tokenizer-w]
-/// C: `typedef struct tokenizerW TokenizerW;` — the wide tokenizer handle.
-/// Its body is `tokenizer.c`'s `struct TYPE(tokenizer)`, which the C defines
-/// without a rule of its own; see [`crate::tokenizer::TokenizerW`].
-pub use crate::tokenizer::TokenizerW;
-// [spec:libedit:def:histedit.history]
 /// C: `typedef struct history History;` — the narrow history handle. Its body
 /// is `historyn.c`'s `struct TYPE(history)`, i.e. `history.c` compiled with
 /// `Char = char`; see [`crate::history::History`].
 pub use crate::history::History;
-// [spec:libedit:def:histedit.tokenizer]
+/// C: `typedef struct historyW HistoryW;` — the wide history handle. Its
+/// body is `history.c`'s `struct TYPE(history)`, which the C defines without
+/// a rule of its own; see [`crate::history::HistoryW`].
+pub use crate::history::HistoryW;
 /// C: `typedef struct tokenizer Tokenizer;` — the narrow tokenizer handle.
 /// Its body is `tokenizern.c`'s `struct TYPE(tokenizer)`, i.e. `tokenizer.c`
 /// compiled with `Char = char`; see [`crate::tokenizer::Tokenizer`].
 pub use crate::tokenizer::Tokenizer;
+/// C: `typedef struct tokenizerW TokenizerW;` — the wide tokenizer handle.
+/// Its body is `tokenizer.c`'s `struct TYPE(tokenizer)`, which the C defines
+/// without a rule of its own; see [`crate::tokenizer::TokenizerW`].
+pub use crate::tokenizer::TokenizerW;
 
 /// C: `struct lineinfo` and `struct lineinfow`, which differ only in their
 /// three members' character type.
@@ -130,8 +109,6 @@ pub struct LineInfoGen<C> {
     pub lastchar: *const C,
 }
 
-// [spec:libedit:def:histedit.lineinfo]
-// [spec:libedit:def:histedit.line-info]
 /// The narrow user-function line view. The C carries both rules on the one
 /// declaration (`typedef struct lineinfo { ... } LineInfo;`), so both sit
 /// here.
@@ -154,7 +131,6 @@ pub struct HistEventGen<C> {
     pub str: *const C,
 }
 
-// [spec:libedit:def:histedit.hist-event]
 /// A narrow history event.
 ///
 /// `str` is borrowed from the history entry that produced it and is
@@ -162,8 +138,6 @@ pub struct HistEventGen<C> {
 /// `sem:histedit.history-fn`.
 pub type HistEvent = HistEventGen<c_char>;
 
-// [spec:libedit:def:histedit.lineinfow]
-// [spec:libedit:def:histedit.line-info-w]
 /// The wide user-function line view — both rules sit on the one C
 /// declaration.
 ///
@@ -175,7 +149,6 @@ pub type HistEvent = HistEventGen<c_char>;
 /// why `def:el.el-line-t`'s field order is frozen.
 pub type LineInfoW = LineInfoGen<u32>;
 
-// [spec:libedit:def:histedit.el-rfunc-t-edit-line-wchar-t]
 /// C: `typedef int (*el_rfunc_t)(EditLine *, wchar_t *);`
 ///
 /// The character-reading hook installed by `EL_GETCFN`, and part of the ABI:
@@ -188,8 +161,6 @@ pub type LineInfoW = LineInfoGen<u32>;
 /// Returns 1 for a character read, 0 for end of input, -1 for an error.
 pub type ElRfuncT = unsafe extern "C" fn(*mut EditLine, *mut u32) -> c_int;
 
-// [spec:libedit:def:histedit.histevent-w]
-// [spec:libedit:def:histedit.hist-event-w]
 /// A wide history event — both rules sit on the one C declaration.
 ///
 /// Embedded in `el_history_t` as the event cookie, and filled in by every

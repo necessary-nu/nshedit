@@ -37,10 +37,10 @@ use core::ptr;
 use nshedit::chartype::{ct_decode_string, ct_enc_width, ct_encode_char, ct_encode_string};
 use nshedit::el::NARROW_HISTORY;
 use nshedit::hist::HistFunT;
-use nshedit::histedit::LineInfo;
 use nshedit::prompt::ElPfuncT;
 
 use crate::adapter::EditLine;
+use crate::cdecl::histedit::LineInfo;
 use crate::histedit::{
     EL_BIND, EL_CLIENTDATA, EL_ECHOTC, EL_EDITMODE, EL_EDITOR, EL_GETCFN, EL_GETFP, EL_GETTC,
     EL_HIST, EL_PREP_TERM, EL_PROMPT, EL_PROMPT_ESC, EL_RPROMPT, EL_RPROMPT_ESC, EL_SAFEREAD,

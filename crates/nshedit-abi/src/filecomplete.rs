@@ -37,9 +37,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 
 use nshedit::filecomplete::{self, FilenameCompletionState};
-use nshedit::histedit::CC_ERROR;
 
 use crate::adapter::EditLine;
+use crate::cdecl::histedit::CC_ERROR;
 use crate::readline::{c_bytes, c_bytes_opt, c_dup, c_free_array, c_free_str};
 
 /// C: `char *(*)(const char *, int)` — the match generator `fn_complete2`

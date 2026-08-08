@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <wchar.h>
 #include <wctype.h>
-#include <stdint.h>
 
 /* Restore the built-in character reader after `EL_GETCFN`. */
 #define EL_BUILTIN_GETCFN (NULL)
@@ -15,6 +14,43 @@
 #define el_wdeletestr el_deletestr
 
 
+// C: `#define LIBEDIT_MAJOR 2`.
+#define LIBEDIT_MAJOR 2
+
+// C: `#define LIBEDIT_MINOR 11`.
+#define LIBEDIT_MINOR 11
+
+// C: `#define CC_NORM 0` — command completed, no redraw needed.
+#define CC_NORM 0
+
+// C: `#define CC_NEWLINE 1` — the line is complete.
+#define CC_NEWLINE 1
+
+// C: `#define CC_EOF 2` — end of input.
+#define CC_EOF 2
+
+// C: `#define CC_ARGHACK 3` — preserve the pending argument or vi action.
+#define CC_ARGHACK 3
+
+// C: `#define CC_REFRESH 4` — redraw the line.
+#define CC_REFRESH 4
+
+// C: `#define CC_CURSOR 5` — move the cursor only.
+#define CC_CURSOR 5
+
+// C: `#define CC_ERROR 6` — beep, no redraw.
+#define CC_ERROR 6
+
+// C: `#define CC_FATAL 7` — unrecoverable; the editor resets.
+#define CC_FATAL 7
+
+// C: `#define CC_REDISPLAY 8` — full redisplay.
+#define CC_REDISPLAY 8
+
+// C: `#define CC_REFRESH_BEEP 9` — redraw and beep.
+#define CC_REFRESH_BEEP 9
+
+// C: `history()` operation codes.
 #define H_FUNC 0
 
 #define H_SETSIZE 1
@@ -70,12 +106,6 @@
 #define H_SAVE_FP 26
 
 #define H_NSAVE_FP 27
-
-// C: `#define LIBEDIT_MAJOR 2`.
-#define LIBEDIT_MAJOR 2
-
-// C: `#define LIBEDIT_MINOR 11`.
-#define LIBEDIT_MINOR 11
 
 // `, prompt_func);` — set/get. The prompt callback.
 #define EL_PROMPT 0
@@ -182,26 +212,26 @@ typedef struct editline EditLine;
 // C: `typedef struct history History;` — `def:histedit.history`.
 typedef struct history History;
 
-// C: `struct histevent` and `struct histeventW`, which differ only in
+// C: `struct HistEvent` and `struct histeventW`, differing only in character
 struct HistEvent {
-  int32_t num;
+  int num;
   const char *str;
 };
 
-// A narrow history event.
+// C: `typedef struct HistEvent { ... } HistEvent;`.
 typedef struct HistEvent HistEvent;
 
 // C: `typedef struct tokenizer Tokenizer;` — `def:histedit.tokenizer`.
 typedef struct tokenizer Tokenizer;
 
-// C: `struct lineinfo` and `struct lineinfow`, which differ only in their
+// C: `struct lineinfo` and `struct lineinfow`, differing only in character
 struct lineinfo {
   const char *buffer;
   const char *cursor;
   const char *lastchar;
 };
 
-// The narrow user-function line view. The C carries both rules on the one
+// C: `typedef struct lineinfo { ... } LineInfo;`.
 typedef struct lineinfo LineInfo;
 
 // C: `typedef struct historyW HistoryW;` — `def:histedit.history-w`.
@@ -213,7 +243,7 @@ typedef struct tokenizerW TokenizerW;
 // C: `typedef int (*el_rfunc_t)(EditLine *, wchar_t *);` —
 typedef int (*el_rfunc_t)(EditLine*, wchar_t*);
 
-// C: `struct lineinfo` and `struct lineinfow`, which differ only in their
+// C: `struct lineinfo` and `struct lineinfow`, differing only in character
 struct lineinfow {
   const wchar_t *buffer;
   const wchar_t *cursor;
@@ -223,44 +253,14 @@ struct lineinfow {
 // C: `typedef struct lineinfow { ... } LineInfoW;` — `def:histedit.lineinfow`.
 typedef struct lineinfow LineInfoW;
 
-// C: `struct histevent` and `struct histeventW`, which differ only in
+// C: `struct HistEvent` and `struct histeventW`, differing only in character
 struct histeventW {
-  int32_t num;
+  int num;
   const wchar_t *str;
 };
 
 // C: `typedef struct histeventW { ... } HistEventW;` — `def:histedit.hist-event-w`.
 typedef struct histeventW HistEventW;
-
-// C: `#define CC_NORM 0` — command completed, no redraw needed.
-#define CC_NORM 0
-
-// C: `#define CC_NEWLINE 1` — the line is complete.
-#define CC_NEWLINE 1
-
-// C: `#define CC_EOF 2` — end of input.
-#define CC_EOF 2
-
-// C: `#define CC_ARGHACK 3` — do not reset the pending argument or vi
-#define CC_ARGHACK 3
-
-// C: `#define CC_REFRESH 4` — redraw the line.
-#define CC_REFRESH 4
-
-// C: `#define CC_CURSOR 5` — move the cursor only.
-#define CC_CURSOR 5
-
-// C: `#define CC_ERROR 6` — beep, no redraw.
-#define CC_ERROR 6
-
-// C: `#define CC_FATAL 7` — unrecoverable; the editor resets.
-#define CC_FATAL 7
-
-// C: `#define CC_REDISPLAY 8` — full redisplay.
-#define CC_REDISPLAY 8
-
-// C: `#define CC_REFRESH_BEEP 9` — redraw and beep.
-#define CC_REFRESH_BEEP 9
 
 #ifdef __cplusplus
 extern "C" {
