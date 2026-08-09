@@ -283,4 +283,9 @@ impl_evidence (
         {impl_name native-impl, rule core.unsafe-free}
         {impl_name native-impl, rule workspace.lint-policy}
     )}
+    {id greenfield-rust-consumer, covered_rules (
+        core.native-consumer
+    ), covered_claims (
+        {impl_name native-impl, rule core.native-consumer}
+    )}
 )

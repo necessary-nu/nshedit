@@ -29,6 +29,7 @@ mod line;
 // [spec:nshedit:req:core.terminal-render+1]
 mod render;
 
+mod system_terminal;
 mod token;
 
 pub use completion::{
@@ -36,6 +37,7 @@ pub use completion::{
 };
 pub use driver::{Display, DriverError, Pending, ReadDriver, ReadInterrupt, ReadResult, ReadStep};
 pub use render::{BaudRate, CapabilityKind, RenderError, RenderSummary, TerminalProfile};
+pub use system_terminal::SystemTerminal;
 pub use token::{
     Continuation, QuoteStyle, Token, TokenCursor, TokenIndex, TokenOffset, Tokenization,
     TokenizedLine, Tokenizer,

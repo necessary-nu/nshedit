@@ -2538,6 +2538,14 @@ children (
                     native-impl ([spec:nshedit:req:core.native-consumer])
                 }
                 deps (greenfield-read-driver)
+                log (
+                    {
+                        at 2026-08-09T00:37:07.531764708Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

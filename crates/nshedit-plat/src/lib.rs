@@ -45,6 +45,7 @@
 
 pub mod passwd;
 pub mod signal;
+pub mod terminal;
 pub mod termios;
 
 use std::os::fd::BorrowedFd;
