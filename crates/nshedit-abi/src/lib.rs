@@ -191,6 +191,8 @@ pub(crate) mod cstdio {
         /// C: `int fputs(const char *s, FILE *stream)` — non-negative on
         /// success, `EOF` on failure.
         fn fputs(s: *const c_char, stream: *mut c_void) -> c_int;
+        /// C: `size_t fwrite(const void *, size_t, size_t, FILE *)`.
+        fn fwrite(bytes: *const c_void, size: usize, count: usize, stream: *mut c_void) -> usize;
         /// C: `int vsnprintf(char *, size_t, const char *, va_list)` — the
         /// formatter required by `rl_message`'s arbitrary C varargs tail.
         fn vsnprintf(
@@ -263,6 +265,28 @@ pub(crate) mod cstdio {
         // SAFETY: a non-NULL `CFile` is a live `FILE *` supplied by the
         // caller. `fflush` does not retain it.
         if unsafe { fflush(stream) } == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    /// Write arbitrary bytes into a caller-owned stream without flushing it.
+    ///
+    /// Terminal capabilities can contain NUL padding bytes, so `fputs` is not
+    /// a valid transport. Keeping this on the `FILE *` also preserves ordering
+    /// with bytes the caller has already buffered on the same stream.
+    pub(crate) fn write(stream: CFile, bytes: &[u8]) -> io::Result<()> {
+        if stream.is_null() {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        // SAFETY: `bytes` is readable for `bytes.len()` bytes and `stream` is
+        // the caller's live FILE. `fwrite` retains neither pointer.
+        let written = unsafe { fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) };
+        if written == bytes.len() {
             Ok(())
         } else {
             Err(io::Error::last_os_error())

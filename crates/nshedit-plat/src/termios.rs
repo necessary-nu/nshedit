@@ -209,6 +209,55 @@ impl Default for Termios {
     }
 }
 
+/// The Linux `speed_t` encoding carried by these attributes.
+#[must_use]
+pub const fn encoded_baud_rate(attributes: &Termios) -> u32 {
+    attributes.c_cflag & CBAUD
+}
+
+/// Translate Linux's `speed_t` encoding into transmitted bits per second.
+///
+/// `BOTHER` is intentionally absent: this compact compatibility structure
+/// carries the encoding bits but not the separate arbitrary-speed fields of
+/// `termios2`, so no truthful semantic rate can be recovered for it.
+#[must_use]
+pub const fn baud_rate(attributes: &Termios) -> Option<u32> {
+    match encoded_baud_rate(attributes) {
+        0o0000000 => Some(0),
+        0o0000001 => Some(50),
+        0o0000002 => Some(75),
+        0o0000003 => Some(110),
+        0o0000004 => Some(134),
+        0o0000005 => Some(150),
+        0o0000006 => Some(200),
+        0o0000007 => Some(300),
+        0o0000010 => Some(600),
+        0o0000011 => Some(1_200),
+        0o0000012 => Some(1_800),
+        0o0000013 => Some(2_400),
+        0o0000014 => Some(4_800),
+        0o0000015 => Some(9_600),
+        0o0000016 => Some(19_200),
+        0o0000017 => Some(38_400),
+        0o0010001 => Some(57_600),
+        0o0010002 => Some(115_200),
+        0o0010003 => Some(230_400),
+        0o0010004 => Some(460_800),
+        0o0010005 => Some(500_000),
+        0o0010006 => Some(576_000),
+        0o0010007 => Some(921_600),
+        0o0010010 => Some(1_000_000),
+        0o0010011 => Some(1_152_000),
+        0o0010012 => Some(1_500_000),
+        0o0010013 => Some(2_000_000),
+        0o0010014 => Some(2_500_000),
+        0o0010015 => Some(3_000_000),
+        0o0010016 => Some(3_500_000),
+        0o0010017 => Some(4_000_000),
+        _ => None,
+    }
+}
+
 /// Every `V*` subscript Linux names, paired with rustix's index token.
 ///
 /// rustix's `SpecialCodeIndex` has a private field and only named constants,

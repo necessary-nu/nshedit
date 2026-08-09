@@ -7,10 +7,10 @@
 use core::ffi::{c_char, c_int, c_void};
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::mem::ManuallyDrop;
 use std::os::fd::FromRawFd;
 use std::rc::Rc;
@@ -21,8 +21,8 @@ use nshedit::domain::{
     TextUnit, WordKind,
 };
 use nshedit::editor::{
-    Continuation, Editor, QuoteStyle, ReadDriver, TerminalControl, TerminalProfile, Tokenization,
-    Tokenizer as NativeTokenizer,
+    BaudRate, Continuation, Editor, QuoteStyle, ReadDriver, TerminalControl, TerminalProfile,
+    Tokenization, Tokenizer as NativeTokenizer,
 };
 use nshedit_plat::termios::{self, Termios};
 
@@ -86,6 +86,23 @@ struct HostCallbacks {
 struct HostCommand {
     callback: CommandCallback,
     _help: Text,
+}
+
+/// ABI-owned capability values addressed by terminfo capnames.
+///
+/// The C surface accepts two-character termcap names, but those names are
+/// translated before reaching this state. CString storage preserves the
+/// borrowed pointers returned by `EL_GETTC` without putting C strings in the
+/// native editor.
+struct TerminalCapabilities {
+    name: String,
+    bools: HashMap<&'static str, bool>,
+    numbers: HashMap<&'static str, c_int>,
+    strings: HashMap<&'static str, CString>,
+    derived_destructive_tabs: bool,
+    derived_meta_extension: bool,
+    rows: usize,
+    columns: usize,
 }
 
 struct TerminalState {
@@ -217,6 +234,7 @@ struct EditLineBoundary {
     commands: HashMap<CommandName, HostCommand>,
     pushback: VecDeque<VecDeque<TextUnit>>,
     terminal: Rc<RefCell<TerminalState>>,
+    terminal_capabilities: TerminalCapabilities,
     narrow_conversion: ConversionBuffer,
     narrow_line: Box<LineInfo>,
     wide_storage: Vec<u32>,
@@ -234,6 +252,7 @@ impl EditLineBoundary {
         streams: Streams,
         terminal: Rc<RefCell<TerminalState>>,
         terminal_name: CString,
+        terminal_capabilities: TerminalCapabilities,
     ) -> Self {
         Self {
             program,
@@ -266,6 +285,7 @@ impl EditLineBoundary {
             commands: HashMap::new(),
             pushback: VecDeque::new(),
             terminal,
+            terminal_capabilities,
             narrow_conversion: ConversionBuffer::default(),
             narrow_line: Box::new(LineInfo {
                 buffer: core::ptr::null(),
@@ -387,11 +407,11 @@ pub(crate) fn secure_environment(name: &str) -> Option<Vec<u8>> {
     }
 }
 
-pub(crate) struct DescriptorIo {
+pub(crate) struct DescriptorInput {
     descriptor: c_int,
 }
 
-impl DescriptorIo {
+impl DescriptorInput {
     pub(crate) const fn new(descriptor: c_int) -> Self {
         Self { descriptor }
     }
@@ -408,18 +428,8 @@ impl DescriptorIo {
     }
 }
 
-impl Read for DescriptorIo {
+impl Read for DescriptorInput {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         self.file()?.read(buffer)
-    }
-}
-
-impl Write for DescriptorIo {
-    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        self.file()?.write(buffer)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.file()?.flush()
     }
 }

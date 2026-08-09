@@ -20,18 +20,21 @@ impl EditLine {
         let config = EditorConfig::default().with_signal_policy(SignalPolicy::Ignore);
         let mut native = Editor::new(config, terminal).ok()?;
         let _ = native.set_terminal_mode(TerminalMode::Cooked);
-        let profile = nshterm::TermInfo::from_name(terminal_name.to_str().unwrap_or("dumb"))
-            .map_or_else(
-                |_| TerminalProfile::plain(),
-                |entry| TerminalProfile::from_terminfo(&entry),
-            );
-        let (rows, columns) = termios::window_size(input_descriptor)
+        let lookup = nshterm::TermInfo::from_name(terminal_name.to_str().unwrap_or("dumb"));
+        let window_size = termios::window_size(input_descriptor)
             .map(|(rows, columns)| (usize::from(rows), usize::from(columns)))
-            .filter(|(rows, columns)| *rows != 0 && *columns != 0)
-            .unwrap_or((24, 80));
+            .filter(|(rows, columns)| *rows != 0 && *columns != 0);
+        let terminal_capabilities = TerminalCapabilities::new(
+            terminal_name.to_str().unwrap_or("dumb"),
+            lookup.as_ref().ok(),
+            window_size,
+        );
+        let rows = terminal_capabilities.rows;
+        let columns = terminal_capabilities.columns;
+        let profile = terminal_capabilities.profile(None);
         let size = ScreenSize::new(rows, columns).ok()?;
         native.configure_display(profile, size);
-        Some(Box::new(Self {
+        let editor = Box::new(Self {
             native,
             driver: ReadDriver::default(),
             boundary: EditLineBoundary::new(
@@ -41,9 +44,14 @@ impl EditLine {
                     descriptors: [input_descriptor, output_descriptor, diagnostics_descriptor],
                 },
                 terminal_state,
-                terminal_name,
+                terminal_name.clone(),
+                terminal_capabilities,
             ),
-        }))
+        });
+        if let Err(error) = &lookup {
+            editor.report_terminal_lookup_failure(terminal_name.as_c_str(), error);
+        }
+        Some(editor)
     }
 
     pub(crate) fn native(&self) -> &Editor<AbiTerminal> {

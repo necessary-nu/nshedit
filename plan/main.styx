@@ -2701,6 +2701,21 @@ children (
                     native-impl ([spec:nshedit:req:abi.terminal-session])
                 }
                 deps (greenfield-termcap-view greenfield-incremental-render greenfield-abi-adapter)
+                log (
+                    {
+                        at 2026-08-09T02:34:41.715334336Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T02:34:41.715334336Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "single-flight overridden: started while greenfield-terminal-compat had uncommitted WIP"
+                    }
+                )
             }
 
             {

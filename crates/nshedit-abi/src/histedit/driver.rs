@@ -1,6 +1,29 @@
 //! Typed host-effect execution for the native read driver.
 
 use super::*;
+use std::io::{self, Write};
+
+/// A safe writer over the caller-owned output stream for one driver step.
+struct CompatibilityOutput {
+    stream: CFile,
+}
+
+impl CompatibilityOutput {
+    const fn new(stream: CFile) -> Self {
+        Self { stream }
+    }
+}
+
+impl Write for CompatibilityOutput {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        crate::cstdio::write(self.stream, buffer)?;
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        crate::cstdio::flush(self.stream)
+    }
+}
 
 fn terminal_bytes(units: &[TextUnit]) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -320,8 +343,8 @@ pub(super) unsafe fn drive_read(el: *mut EditLine) -> Result<ReadResult, ()> {
                     .map_err(|_| ())?
             }
             ReadStep::Display(display) => {
-                let descriptor = unsafe { (&*el).descriptor(1) }.unwrap_or(-1);
-                let mut output = crate::adapter::DescriptorIo::new(descriptor);
+                let stream = unsafe { (&*el).stream(1) }.unwrap_or(core::ptr::null_mut());
+                let mut output = CompatibilityOutput::new(stream);
                 let (editor, driver) = unsafe { (&mut *el).split_driver() };
                 driver
                     .display(editor, &display, &mut output)

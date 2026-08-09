@@ -40,9 +40,9 @@ fn wcs(s: &str) -> Vec<u32> {
         .collect()
 }
 
-/// A scratch file to point a descriptor at. The bell and the read path
-/// have no return value and no state between them, so a real file is the
-/// only place their bytes can be seen.
+/// A scratch file to back a real C stream. The bell has no return value and
+/// no state between calls, so the stream is the only place its bytes can be
+/// seen.
 fn scratch_path(tag: &str) -> std::path::PathBuf {
     static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -53,16 +53,27 @@ fn scratch_path(tag: &str) -> std::path::PathBuf {
 
 /// What `body` wrote through `el`'s output descriptor.
 fn output_of(el: *mut EditLine, tag: &str, body: impl FnOnce(*mut EditLine)) -> Vec<u8> {
-    use std::os::fd::AsRawFd;
+    unsafe extern "C" {
+        fn fopen(path: *const c_char, mode: *const c_char) -> CFile;
+        fn fclose(stream: CFile) -> c_int;
+    }
+
     let path = scratch_path(tag);
-    let file = std::fs::File::create(&path).unwrap();
+    let encoded = CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: both strings are NUL-terminated and the returned stream stays
+    // live until the matching `fclose` below.
+    let stream = unsafe { fopen(encoded.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+    let descriptor = crate::cstdio::fileno_of(stream);
     // SAFETY: `el` is live for the whole of this function.
     let saved_stream = unsafe { (&*el).stream(1).unwrap() };
     let saved_descriptor = unsafe { (&*el).descriptor(1).unwrap() };
-    unsafe { (&mut *el).set_stream(1, core::ptr::null_mut(), file.as_raw_fd()) };
+    unsafe { (&mut *el).set_stream(1, stream, descriptor) };
     body(el);
+    crate::cstdio::flush(stream).unwrap();
     unsafe { (&mut *el).set_stream(1, saved_stream, saved_descriptor) };
-    drop(file);
+    // SAFETY: `stream` came from `fopen` and is no longer installed in `el`.
+    assert_eq!(unsafe { fclose(stream) }, 0);
     let bytes = std::fs::read(&path).unwrap();
     let _ = std::fs::remove_file(&path);
     bytes
@@ -106,15 +117,16 @@ fn resetting_empties_the_line_but_keeps_the_pushed_back_input() {
 }
 
 // [spec:libedit:sem:histedit.el-beep-fn/test]
-/// The bell reaches the handle's *output* descriptor and nothing else
-/// moves — in particular the cursor record and the line are untouched, and
-/// there is no flush to wait for.
+/// The bell reaches the handle's output stream and nothing else moves — in
+/// particular the cursor record and the line are untouched. The helper
+/// flushes after the call so it can observe bytes the C intentionally leaves
+/// in the caller-owned stdio buffer.
 ///
 /// `t_str[T_BL]` is cleared first so the outcome does not depend on
 /// whatever `bel` the host's terminfo happens to carry; that is the
 /// "no bell capability" branch, which writes the literal 0x07.
 #[test]
-fn the_bell_goes_to_the_output_descriptor() {
+fn bell_uses_output_stream() {
     let el = editline();
     let out = output_of(el, "beep", |el| unsafe { el_beep(el) });
     assert_eq!(out, [0x07]);

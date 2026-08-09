@@ -137,3 +137,19 @@ fn inert_descriptors_report_errors() {
     assert!(editor.write_output(b"x").is_err());
     assert!(editor.read_input(&mut [0]).is_err());
 }
+
+// [spec:nshedit:req:abi.terminal-session/test]
+#[test]
+fn geometry_prefers_kernel_size() {
+    let entry = nshterm::TermInfo {
+        names: vec!["sized".to_owned()],
+        bools: HashMap::new(),
+        numbers: HashMap::from([("lines", 17), ("cols", 63)]),
+        strings: HashMap::new(),
+    };
+    let database = TerminalCapabilities::new("sized", Some(&entry), None);
+    let kernel = TerminalCapabilities::new("sized", Some(&entry), Some((41, 109)));
+
+    assert_eq!((database.rows, database.columns), (17, 63));
+    assert_eq!((kernel.rows, kernel.columns), (41, 109));
+}

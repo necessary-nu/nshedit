@@ -2,26 +2,11 @@
 
 use super::*;
 
+mod profile;
+
 impl EditLine {
-    pub(crate) fn set_terminal_name(&mut self, name: &str) -> c_int {
-        let Ok(name) = CString::new(name) else {
-            return -1;
-        };
-        let result = nshterm::TermInfo::from_name(name.to_str().unwrap_or("dumb"));
-        let profile = result
-            .as_ref()
-            .map_or_else(|_| TerminalProfile::plain(), TerminalProfile::from_terminfo);
-        let (rows, columns) = self
-            .descriptor(0)
-            .and_then(termios::window_size)
-            .map(|(rows, columns)| (usize::from(rows), usize::from(columns)))
-            .filter(|(rows, columns)| *rows != 0 && *columns != 0)
-            .unwrap_or((24, 80));
-        if let Ok(size) = ScreenSize::new(rows, columns) {
-            self.native.configure_display(profile, size);
-        }
-        self.boundary.terminal_name = name;
-        if result.is_ok() { 0 } else { -1 }
+    pub(crate) fn set_terminal_mode(&mut self, mode: TerminalMode) -> io::Result<()> {
+        self.native.set_terminal_mode(mode)
     }
 
     pub(crate) fn resize_display(&mut self) {
@@ -31,21 +16,21 @@ impl EditLine {
         let Ok(size) = ScreenSize::new(usize::from(rows), usize::from(columns)) else {
             return;
         };
+        self.boundary
+            .terminal_capabilities
+            .set_size(size.rows(), size.columns());
         let _ = self.native.resize_display(size);
     }
 
-    pub(crate) fn set_terminal_mode(&mut self, mode: TerminalMode) -> io::Result<()> {
-        self.native.set_terminal_mode(mode)
-    }
-
     pub(crate) fn beep(&mut self) {
-        let descriptor = self.descriptor(1).unwrap_or(-1);
-        let mut output = DescriptorIo::new(descriptor);
-        let _ = self.native.beep(&mut output);
+        let mut bytes = Vec::new();
+        if self.native.beep(&mut bytes).is_ok() {
+            let _ = crate::cstdio::write(self.stream(1).unwrap_or(core::ptr::null_mut()), &bytes);
+        }
     }
 
     pub(crate) fn write_output(&self, bytes: &[u8]) -> io::Result<()> {
-        DescriptorIo::new(self.descriptor(1).unwrap_or(-1)).write_all(bytes)
+        crate::cstdio::write(self.stream(1).unwrap_or(core::ptr::null_mut()), bytes)
     }
 
     pub(crate) fn flush_output(&self) -> io::Result<()> {
@@ -63,17 +48,12 @@ impl EditLine {
     }
 
     pub(crate) fn read_input(&self, output: &mut [u8]) -> io::Result<usize> {
-        DescriptorIo::new(self.descriptor(0).unwrap_or(-1)).read(output)
+        DescriptorInput::new(self.descriptor(0).unwrap_or(-1)).read(output)
     }
 
     pub(crate) fn screen_size(&self) -> Option<ScreenSize> {
-        let (rows, columns) = self
-            .descriptor(0)
-            .and_then(termios::window_size)
-            .map(|(rows, columns)| (usize::from(rows), usize::from(columns)))
-            .filter(|(rows, columns)| *rows != 0 && *columns != 0)
-            .unwrap_or((24, 80));
-        ScreenSize::new(rows, columns).ok()
+        let capabilities = &self.boundary.terminal_capabilities;
+        ScreenSize::new(capabilities.rows, capabilities.columns).ok()
     }
 
     pub(crate) fn move_cursor(&mut self, delta: c_int) -> c_int {
