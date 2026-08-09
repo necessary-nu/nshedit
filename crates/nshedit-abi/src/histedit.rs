@@ -86,9 +86,9 @@ use crate::adapter::{
 };
 use crate::cdecl::handles::{History, HistoryW};
 use crate::cdecl::histedit::{
-    CC_EOF, CC_NEWLINE, CC_REDISPLAY, CC_REFRESH_BEEP, CFile, H_FIRST, H_NEXT, HistEvent,
-    HistEventGen, HistEventWide as HistEventW, LineInfo, LineInfoGen, LineInfoWide as LineInfoW,
-    WcharT,
+    CC_EOF, CC_ERROR, CC_NEWLINE, CC_NORM, CC_REDISPLAY, CC_REFRESH, CC_REFRESH_BEEP, CFile,
+    H_FIRST, H_NEXT, HistEvent, HistEventGen, HistEventWide as HistEventW, LineInfo, LineInfoGen,
+    LineInfoWide as LineInfoW, WcharT,
 };
 use crate::cstdio::{self, CFileWriter};
 use crate::history::{
@@ -610,7 +610,13 @@ pub use crate::eln::el_get;
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn _el_fn_complete(el: *mut EditLine, ch: c_int) -> c_uchar {
     // SAFETY: `el` must be non-NULL. `ch` is ignored, as in the C.
-    crate::filecomplete::complete_builtin(unsafe { &mut *el }, ch)
+    let _ = ch;
+    match crate::filecomplete::complete_filename(unsafe { &mut *el }) {
+        crate::filecomplete::CompletionCommand::Normal => CC_NORM,
+        crate::filecomplete::CompletionCommand::Refresh => CC_REFRESH,
+        crate::filecomplete::CompletionCommand::Redisplay => CC_REDISPLAY,
+        crate::filecomplete::CompletionCommand::Error => CC_ERROR,
+    }
 }
 
 /// C: `unsigned char _el_fn_sh_complete(EditLine *, int);` — the
@@ -623,8 +629,8 @@ pub unsafe extern "C" fn _el_fn_complete(el: *mut EditLine, ch: c_int) -> c_ucha
 pub unsafe extern "C" fn _el_fn_sh_complete(el: *mut EditLine, ch: c_int) -> c_uchar {
     // A distinct exported symbol that forwards both arguments unchanged; the
     // two are behaviourally identical and must stay separate symbols.
-    // SAFETY: `el` must be non-NULL.
-    crate::filecomplete::complete_builtin(unsafe { &mut *el }, ch)
+    // SAFETY: the two exported commands intentionally share one behavior.
+    unsafe { _el_fn_complete(el, ch) }
 }
 
 // [spec:libedit:def:histedit.el-source-fn]

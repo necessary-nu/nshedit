@@ -296,7 +296,7 @@ impl EditLine {
         &self.boundary.history_live_line
     }
 
-    pub(crate) fn take_completion_pending_listing(&mut self) -> bool {
+    pub(crate) fn begin_completion(&mut self) -> bool {
         std::mem::replace(&mut self.boundary.completion_pending_listing, true)
     }
 

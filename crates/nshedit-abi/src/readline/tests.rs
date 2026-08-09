@@ -476,19 +476,19 @@ fn append_character_projects_into_core_text() {
         let saved = rl_completion_append_character;
 
         rl_completion_append_character = c_int::from(b' ');
-        assert_eq!(append_char_str(""), " ");
+        assert_eq!(readline_completion_suffix(""), " ");
 
         // 0 is readline's "append nothing". It gives the empty string
         // rather than a NULL, which is the input that makes the core's
         // filename escaping produce an embedded NUL (ERR-completion-10).
         rl_completion_append_character = 0;
-        assert_eq!(append_char_str(""), "");
+        assert_eq!(readline_completion_suffix(""), "");
 
         // U+03BB would truncate to the invalid lone byte 0xBB in the C
         // helper. The core accepts only valid text, so the ABI adapter drops
         // that unrepresentable append value.
         rl_completion_append_character = 0x3bb;
-        assert_eq!(append_char_str(""), "");
+        assert_eq!(readline_completion_suffix(""), "");
 
         rl_completion_append_character = saved;
     }

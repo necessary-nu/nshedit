@@ -406,4 +406,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule platform.typed-boundary}
     )}
+    {id rust-idiom-completion, covered_rules (
+        abi.typed-completion
+    ), covered_claims (
+        {impl_name native-impl, rule abi.typed-completion}
+    )}
 )

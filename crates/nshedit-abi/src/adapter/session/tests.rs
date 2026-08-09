@@ -161,10 +161,10 @@ fn commands_validate_before_binding() {
 #[test]
 fn completion_listing_is_two_step() {
     let mut editor = editor();
-    assert!(!editor.take_completion_pending_listing());
-    assert!(editor.take_completion_pending_listing());
+    assert!(!editor.begin_completion());
+    assert!(editor.begin_completion());
     editor.clear_completion_pending_listing();
-    assert!(!editor.take_completion_pending_listing());
+    assert!(!editor.begin_completion());
 }
 
 #[test]

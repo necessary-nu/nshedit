@@ -54,8 +54,12 @@ use crate::cdecl::readline::{
 use crate::conversion::{ConversionBuffer, decode_bytes};
 use crate::{cenv, clocale, cstdio};
 use bridge::{em_kill_line, passwd_home_dir, re_putc, tty_end, tty_get_signal_character, tty_init};
+use completion::_el_rl_complete;
+#[cfg(test)]
+use completion::readline_completion_suffix;
 
 mod bridge;
+mod completion;
 
 // ---------------------------------------------------------------------------
 // Constants `readline.c` gets from its public and private C headers.
@@ -956,72 +960,6 @@ unsafe fn lazy_init() {
         if H.is_null() || E.is_null() {
             rl_initialize();
         }
-    }
-}
-
-/// The `_rl_completion_append_character_function` result in the shape the
-/// core's `AppFunc` wants.
-///
-/// The C hands `fn_complete2` a pointer to a shared `char[2]`. The core takes
-/// a `fn(&str) -> &'static str`, so the byte is served out of a static ASCII
-/// table instead. `rl_completion_append_character == 0` gives the empty
-/// string, which is the readline idiom for "append nothing" and the input
-/// that makes `escape_filename` produce an embedded NUL (ERR-completion-10).
-/// A value outside ASCII cannot be a `&'static str` on its own and also gives
-/// the empty string; the C would append one invalid byte.
-// [spec:libedit:def:readline.rl-completion-append-character-function-fn]
-// [spec:libedit:sem:readline.rl-completion-append-character-function-fn]
-fn append_char_str(_name: &str) -> &'static str {
-    /// Every ASCII byte, one per index, so a single byte can be handed back
-    /// as a `&'static str` without allocating.
-    static ASCII: [u8; 128] = const {
-        let mut a = [0u8; 128];
-        let mut i = 0;
-        while i < 128 {
-            a[i] = i as u8;
-            i += 1;
-        }
-        a
-    };
-    // SAFETY: a plain read of a module static.
-    let c = unsafe { rl_completion_append_character };
-    if (1..128).contains(&c) {
-        let i = c as usize;
-        std::str::from_utf8(&ASCII[i..=i]).unwrap_or("")
-    } else {
-        ""
-    }
-}
-
-/// The `rl_attempted_completion_function` hook in the shape the core's
-/// `AttemptedCompletionFunc` wants.
-///
-/// A plain `fn`, not a closure, because the core's type is a bare function
-/// pointer — which works here only because the hook itself lives in a global.
-/// Ownership follows the C: `fn_complete2` takes the returned array, so the
-/// array and its strings are released here once copied.
-fn attempted_completion_adapter(text: &str, start: i32, end: i32) -> Option<Vec<String>> {
-    // SAFETY: single-threaded module state; the hook is called exactly as the
-    // C calls it, with a borrowed NUL-terminated copy of `text`.
-    unsafe {
-        let hook = rl_attempted_completion_function?;
-        let ctext = c_dup(text.as_bytes());
-        if ctext.is_null() {
-            return None;
-        }
-        let matches = hook(ctext, start, end);
-        c_free_str(ctext);
-        if matches.is_null() {
-            return None;
-        }
-        let n = c_array_len(matches);
-        let mut out = Vec::with_capacity(n);
-        for &m in core::slice::from_raw_parts(matches, n) {
-            out.push(String::from_utf8_lossy(c_bytes(m)).into_owned());
-            c_free_str(m);
-        }
-        c_free_array(matches, n + 1);
-        Some(out)
     }
 }
 
@@ -3151,6 +3089,26 @@ pub unsafe extern "C" fn username_completion_function(
     }
 }
 
+// [spec:libedit:def:readline.rl-display-match-list-fn]
+// [spec:libedit:sem:readline.rl-display-match-list-fn]
+#[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
+pub unsafe extern "C" fn rl_display_match_list(matches: *mut *mut c_char, len: c_int, max: c_int) {
+    // SAFETY: this wrapper preserves the public C contract; the completion
+    // boundary validates what it can before copying the caller-owned array.
+    unsafe { completion::display_match_list(matches, len, max) }
+}
+
+// [spec:libedit:def:readline.rl-complete-fn]
+// [spec:libedit:sem:readline.rl-complete-fn]
+#[unsafe(no_mangle)]
+#[doc = include_str!("ffi_safety.md")]
+pub unsafe extern "C" fn rl_complete(ignore: c_int, invoking_key: c_int) -> c_int {
+    // SAFETY: this wrapper preserves the public C contract; callback pointers
+    // and global compatibility state are adapted inside the boundary module.
+    unsafe { completion::complete(ignore, invoking_key) }
+}
+
 /// C: `static unsigned char _el_rl_tstp(EditLine *el, int ch);` — the
 /// `ED_TTY_SIGTSTP`-alike bound to `^Z`.
 // [spec:libedit:def:readline.el-rl-tstp-fn]
@@ -3164,191 +3122,6 @@ fn _el_rl_tstp(el: *mut EditLine, ch: c_int) -> c_uchar {
     // too. The result is discarded, as the C discards `raise`'s.
     let _ = nshedit_plat::signal::raise(nshedit_plat::signal::Signal::Suspend);
     CC_NORM
-}
-
-// [spec:libedit:def:readline.rl-display-match-list-fn]
-// [spec:libedit:sem:readline.rl-display-match-list-fn]
-#[unsafe(no_mangle)]
-#[doc = include_str!("ffi_safety.md")]
-pub unsafe extern "C" fn rl_display_match_list(matches: *mut *mut c_char, len: c_int, max: c_int) {
-    // SAFETY: `matches` is the caller's readline-shaped array: index 0 is the
-    // common prefix and 1..=len are the entries shown. Nothing here is freed
-    // and ownership stays with the caller.
-    unsafe {
-        // No lazy-initialization guard in the C, so `e` must already exist.
-        if E.is_null() || matches.is_null() {
-            return;
-        }
-        // The C widens both counts to `size_t` with no range check, so a
-        // negative argument becomes an enormous count and the display walks
-        // off the array (UB). Defined here as doing nothing.
-        if len < 0 || max < 0 {
-            return;
-        }
-        // ERR-completion-02's disposition is "treat it as a caller error and
-        // reject it", and `len` is the caller's claim about an array only the
-        // caller can measure. What actually bounds it is the NULL terminator
-        // the readline contract puts there — `rl_completion_matches` and
-        // `completion_matches` both produce one — so the walk stops at the
-        // first NULL rather than trusting the count.
-        //
-        // Without this, `rl_display_match_list(matches, 99, 6)` over a
-        // two-element array read 100 pointers and died. Measured by
-        // `conformance/ub.sh`, where the C dies on it too; this is the half
-        // the erratum says must not.
-        //
-        // The core takes owned strings and sorts them in place, so the
-        // caller's array is permuted afterwards to match — which is what the
-        // C's in-place `qsort` leaves behind.
-        let claimed = len as usize;
-        let mut owned: Vec<String> = Vec::with_capacity(claimed + 1);
-        for i in 0..=claimed {
-            let p = *matches.add(i);
-            if p.is_null() {
-                // Index 0 is the common prefix and may legitimately be empty;
-                // a NULL past it ends the list.
-                if i == 0 {
-                    owned.push(String::new());
-                    continue;
-                }
-                break;
-            }
-            owned.push(String::from_utf8_lossy(c_bytes(p)).into_owned());
-        }
-        // `owned[0]` is the prefix, so the count of entries is what follows.
-        let num = owned.len().saturating_sub(1);
-
-        filecomplete::display_match_list(
-            &mut *E,
-            &mut owned,
-            num,
-            max as usize,
-            Some(append_char_str),
-        );
-
-        crate::filecomplete::permute_to_match(matches, &owned);
-    }
-}
-
-// [spec:libedit:def:readline.rl-complete-fn]
-// [spec:libedit:sem:readline.rl-complete-fn]
-#[unsafe(no_mangle)]
-#[doc = include_str!("ffi_safety.md")]
-pub unsafe extern "C" fn rl_complete(ignore: c_int, invoking_key: c_int) -> c_int {
-    let _ = ignore;
-    // SAFETY: single-threaded module state.
-    unsafe {
-        lazy_init();
-
-        if rl_inhibit_completion != 0 {
-            // A disabled Tab inserts a literal Tab.
-            let arr = [invoking_key as c_char, 0];
-            crate::eln::el_insertstr(E, arr.as_ptr());
-            return c_int::from(CC_REFRESH);
-        }
-
-        // Read fresh on every completion; nothing is cached, the returned
-        // pointer is used directly and never freed, and the hook runs
-        // *before* `_rl_update_pos`, so `rl_point`/`rl_end` are stale inside
-        // it (ERR-readline-50).
-        let breakchars = match rl_completion_word_break_hook {
-            Some(hook) => hook().cast_const(),
-            None => rl_basic_word_break_characters,
-        };
-
-        _rl_update_pos();
-
-        if E.is_null() {
-            return c_int::from(CC_ERROR);
-        }
-
-        // Out-parameters `fn_complete2` writes; the C hands it the globals
-        // directly.
-        let mut completion_type = rl_completion_type;
-        let mut over = rl_attempted_completion_over;
-        let mut point = rl_point;
-        let mut end = rl_end;
-
-        let mut generator = |text: &str, state: i32| -> Option<String> {
-            let f = rl_completion_entry_function?;
-            let ctext = c_dup(text.as_bytes());
-            if ctext.is_null() {
-                return None;
-            }
-            let m = f(ctext, state);
-            c_free_str(ctext);
-            if m.is_null() {
-                return None;
-            }
-            let out = String::from_utf8_lossy(c_bytes(m)).into_owned();
-            // The C's `fn_complete2` takes ownership of what the generator
-            // returns, so the block is released once copied.
-            c_free_str(m);
-            Some(out)
-        };
-        let has_generator = { rl_completion_entry_function }.is_some();
-        let attempted = if { rl_attempted_completion_function }.is_some() {
-            Some(attempted_completion_adapter as filecomplete::AttemptedCompletionFunc)
-        } else {
-            None
-        };
-
-        /* Just look at how many global variables modify this operation! */
-        let rc = WBREAK_CONV.with_borrow_mut(|wconv| {
-            SPREFIX_CONV.with_borrow_mut(|sconv| {
-                // The *word-break* argument is always
-                // `rl_basic_word_break_characters`; the hook's result goes
-                // into the *special-prefixes* slot, so it can only ever add
-                // break characters, never replace them — and
-                // `rl_completer_word_break_characters` and
-                // `rl_special_prefixes` are not consulted at all
-                // (ERR-readline-50, reproduced).
-                let word_break =
-                    decode_bytes(c_bytes_opt(rl_basic_word_break_characters), wconv).unwrap_or(&[]);
-                let special = decode_bytes(c_bytes_opt(breakchars), sconv);
-                let generator: Option<&mut filecomplete::CompleteFunc> = if has_generator {
-                    Some(&mut generator)
-                } else {
-                    None
-                };
-                filecomplete::complete_native(
-                    &mut *E,
-                    generator,
-                    attempted,
-                    word_break,
-                    special,
-                    Some(append_char_str),
-                    rl_completion_query_items as usize,
-                    Some(&mut completion_type),
-                    Some(&mut over),
-                    Some(&mut point),
-                    Some(&mut end),
-                    0, /* no FN_QUOTE_MATCH: matches are not re-quoted */
-                )
-            })
-        });
-
-        rl_completion_type = completion_type;
-        rl_attempted_completion_over = over;
-        rl_point = point;
-        rl_end = end;
-
-        // A libedit CC_* code, not readline's 0/non-zero status, because the
-        // function doubles as an EditLine command through `_el_rl_complete`.
-        rc
-    }
-}
-
-/// C: `static unsigned char _el_rl_complete(EditLine *el, int ch);` — the
-/// editor command bound to TAB, which calls `rl_complete`.
-// [spec:libedit:def:readline.el-rl-complete-fn]
-// [spec:libedit:sem:readline.el-rl-complete-fn]
-fn _el_rl_complete(el: *mut EditLine, ch: c_int) -> c_uchar {
-    let _ = el;
-    // The first argument, readline's ignored `count`, is hardcoded to 0. Every
-    // CC_* value is small, so the narrowing is lossless in practice.
-    // SAFETY: `rl_complete` reaches the module statics.
-    unsafe { rl_complete(0, ch) as c_uchar }
 }
 
 // [spec:libedit:def:readline.rl-bind-key-fn]
@@ -4588,11 +4361,12 @@ pub unsafe extern "C" fn completion_matches(
         let t = c_bytes_opt(text).unwrap_or(b"");
         let t = String::from_utf8_lossy(t).into_owned();
 
-        let mut make_match = move |text: &str, state: i32| -> Option<String> {
+        let mut make_match = move |text: &str, state: usize| -> Option<String> {
             let ctext = c_dup(text.as_bytes());
             if ctext.is_null() {
                 return None;
             }
+            let state = c_int::try_from(state).unwrap_or(c_int::MAX);
             let m = genfunc(ctext, state);
             c_free_str(ctext);
             if m.is_null() {
@@ -4605,7 +4379,8 @@ pub unsafe extern "C" fn completion_matches(
 
         // No sorting, generation order preserved, and an empty element 0 stays
         // empty — none of `rl_completion_matches`' behaviour (ERR-completion-22).
-        let Some(matches) = filecomplete::completion_matches(&t, &mut make_match) else {
+        let candidates = filecomplete::collect_candidates(&t, &mut make_match);
+        let Some(matches) = filecomplete::compatibility_matches(candidates) else {
             return ptr::null_mut();
         };
         let mut list: Vec<*mut c_char> = Vec::with_capacity(matches.len() + 1);

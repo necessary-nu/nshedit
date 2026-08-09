@@ -16,33 +16,18 @@
 //!
 //! # Callbacks the caller supplies
 //!
-//! Three of these parameters are C function pointers, and
-//! `plan/decisions/idiomatic-core.md` gives the core Rust-shaped ones
-//! instead: a `&mut dyn FnMut` generator, and bare `fn` pointers for the
-//! attempted-completion and append-character hooks. A generator becomes a
-//! closure and needs nothing further. The other two are `fn` pointers with
-//! nowhere to carry a captured value, so the caller's pointer is parked in a
-//! thread-local for the duration of the call and a fixed adapter reads it
-//! back — [`HookGuard`], which saves and restores so a callback that
-//! re-enters `fn_complete2` does not lose its own hooks.
-//!
-//! That is the same shape [`crate::readline`] already uses for
-//! `rl_attempted_completion_function` and `rl_completion_append_character`,
-//! except that there the hooks are exported globals and the parking is the C's
-//! own.
+//! Each exported wrapper copies its C callbacks into scoped Rust closures.
+//! Completion snapshots the editor before invoking them and applies their
+//! owned response afterwards, so re-entry never overlaps an editor borrow.
 
-use core::ffi::{CStr, c_char, c_int, c_uint};
+use core::ffi::{c_char, c_int, c_uint};
 use core::ptr;
-use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::cell::RefCell;
 use std::fs::ReadDir;
 use std::os::unix::ffi::OsStrExt;
 
 use nshedit::domain::{Text, TextUnit};
-use nshedit::editor::{
-    CompletionCandidate, CompletionCandidates, CompletionOutcome, CompletionQuery,
-    Tokenizer as NativeTokenizer,
-};
+use nshedit::editor::{CompletionCandidate, CompletionCandidates, CompletionQuery};
 
 use crate::adapter::EditLine;
 use crate::cdecl::histedit::{CC_ERROR, CC_NORM, CC_REDISPLAY, CC_REFRESH};
@@ -64,10 +49,6 @@ pub type AttemptedCompletionFuncC =
 pub type AppFuncC = unsafe extern "C" fn(*const c_char) -> *const c_char;
 
 pub(crate) const FN_QUOTE_MATCH: c_uint = 1;
-
-pub(crate) type CompleteFunc = dyn FnMut(&str, c_int) -> Option<String>;
-pub(crate) type AttemptedCompletionFunc = fn(&str, c_int, c_int) -> Option<Vec<String>>;
-pub(crate) type AppFunc = fn(&str) -> &'static str;
 
 const BREAK_CHARACTERS: &[u32] = &[
     b' ' as u32,
@@ -97,25 +78,6 @@ pub(crate) struct FilenameCompletionState {
 }
 
 thread_local! {
-    /// The `app_func` argument of the call in progress, for [`app_func_adapter`].
-    static APP_FUNC: Cell<Option<AppFuncC>> = const { Cell::new(None) };
-
-    /// The `attempted_completion_function` argument of the call in progress,
-    /// for [`attempted_adapter`].
-    static ATTEMPTED: Cell<Option<AttemptedCompletionFuncC>> = const { Cell::new(None) };
-
-    /// Every distinct string an `app_func` has returned, leaked so the core's
-    /// `&'static str` is honest.
-    ///
-    /// The C's contract for that return is *a literal the caller must not
-    /// free*, which is a `&'static str` in all but the type; the copy is what
-    /// makes it one, since the hook may hand back a shared buffer it
-    /// overwrites on the next call — `readline.c`'s own
-    /// `_rl_completion_append_character_function` does exactly that. Distinct
-    /// values are interned rather than copied per call, so a well-behaved hook
-    /// leaks its handful of literals once and no more.
-    static INTERNED: RefCell<HashSet<&'static str>> = RefCell::new(HashSet::new());
-
     /// The file-statics inside `fn_filename_completion_function`, which the
     /// core made an explicit state object.
     ///
@@ -123,107 +85,6 @@ thread_local! {
     /// function-level `static DIR *` there, so two interleaved scans corrupt
     /// each other. See `sem:filecomplete.fn-filename-completion-function-fn`.
     static FILENAME_SCAN: RefCell<Option<FilenameCompletionState>> = const { RefCell::new(None) };
-}
-
-/// Installs the caller's two `fn`-pointer hooks for the duration of one call
-/// and puts back whatever was there.
-///
-/// Restoring rather than clearing is what makes re-entry safe: an
-/// `attempted_completion_function` is free to call `fn_complete2` again, and
-/// the C's arguments are per-call, so the inner call's hooks must not outlive
-/// it.
-struct HookGuard(Option<AppFuncC>, Option<AttemptedCompletionFuncC>);
-
-impl HookGuard {
-    fn install(app: Option<AppFuncC>, attempted: Option<AttemptedCompletionFuncC>) -> Self {
-        Self(APP_FUNC.replace(app), ATTEMPTED.replace(attempted))
-    }
-}
-
-impl Drop for HookGuard {
-    fn drop(&mut self) {
-        APP_FUNC.set(self.0);
-        ATTEMPTED.set(self.1);
-    }
-}
-
-/// A `&'static str` with the same bytes as `b`, allocated at most once per
-/// distinct value.
-///
-/// Invalid UTF-8 is replaced rather than rejected: the core's `AppFunc`
-/// returns `&'static str` and there is no error channel, and the C would have
-/// appended the bytes unexamined. `sem:filecomplete.escape-filename-fn`
-/// already records what a non-ASCII append byte does there.
-fn intern(b: &[u8]) -> &'static str {
-    INTERNED.with_borrow_mut(|set| {
-        let s = String::from_utf8_lossy(b);
-        if let Some(&hit) = set.get(&*s) {
-            return hit;
-        }
-        let leaked: &'static str = Box::leak(s.into_owned().into_boxed_str());
-        set.insert(leaked);
-        leaked
-    })
-}
-
-/// The caller's `app_func` in the shape the native adapter's [`AppFunc`]
-/// wants.
-///
-/// A NULL return is the C's undefined case — `escape_filename` indexes
-/// `append_char[0]` and `fn_display_match_list` hands it to `fprintf("%s")` —
-/// and is defined here as appending nothing.
-fn app_func_adapter(name: &str) -> &'static str {
-    let Some(f) = APP_FUNC.get() else {
-        return "";
-    };
-    let mut arg = Vec::with_capacity(name.len() + 1);
-    arg.extend_from_slice(name.as_bytes());
-    arg.push(0);
-    // SAFETY: `arg` is NUL-terminated and outlives the call; the C hands this
-    // hook a pointer into its own buffer the same way, and the hook must not
-    // free it. What comes back is borrowed, never freed here, as the C's
-    // contract for it says.
-    let p = unsafe { f(arg.as_ptr().cast::<c_char>()) };
-    if p.is_null() {
-        return "";
-    }
-    // SAFETY: a non-NULL return is a NUL-terminated string.
-    intern(unsafe { CStr::from_ptr(p) }.to_bytes())
-}
-
-/// The caller's `attempted_completion_function` in the shape the core's
-/// [`AttemptedCompletionFunc`] wants.
-///
-/// Ownership follows the C: `fn_complete2` takes the returned array, so the
-/// array and its strings are released here once copied into the `Vec`.
-fn attempted_adapter(text: &str, start: i32, end: i32) -> Option<Vec<String>> {
-    let hook = ATTEMPTED.get()?;
-    // SAFETY: the hook is the caller's own function pointer, called with a
-    // NUL-terminated copy of `text` exactly as the C calls it.
-    unsafe {
-        let ctext = c_dup(text.as_bytes());
-        if ctext.is_null() {
-            return None;
-        }
-        let matches = hook(ctext, start, end);
-        c_free_str(ctext);
-        if matches.is_null() {
-            return None;
-        }
-        let mut out = Vec::new();
-        let mut i = 0;
-        loop {
-            let m = *matches.add(i);
-            if m.is_null() {
-                break;
-            }
-            out.push(String::from_utf8_lossy(c_bytes(m)).into_owned());
-            c_free_str(m);
-            i += 1;
-        }
-        c_free_array(matches, i + 1);
-        Some(out)
-    }
 }
 
 fn text_bytes(text: &Text) -> Vec<u8> {
@@ -260,23 +121,23 @@ fn tilde_expand_string(text: &str) -> Option<String> {
     Some(format!("{home}/{rest}"))
 }
 
-fn append_character(name: &str) -> &'static str {
+fn completion_suffix(name: &str) -> String {
     let path = if name.starts_with('~') {
         tilde_expand_string(name).unwrap_or_else(|| name.to_owned())
     } else {
         name.to_owned()
     };
     if std::fs::metadata(path).is_ok_and(|metadata| metadata.is_dir()) {
-        "/"
+        "/".to_owned()
     } else {
-        " "
+        " ".to_owned()
     }
 }
 
 pub(crate) fn filename_completion(
     scan: &mut FilenameCompletionState,
     text: &str,
-    state: c_int,
+    state: usize,
 ) -> Option<String> {
     if state == 0 || scan.directory.is_none() {
         let (dirname, filename) = text.rsplit_once('/').map_or_else(
@@ -311,16 +172,23 @@ pub(crate) fn filename_completion(
     None
 }
 
-pub(crate) fn completion_matches(text: &str, generator: &mut CompleteFunc) -> Option<Vec<String>> {
+pub(crate) fn collect_candidates(
+    text: &str,
+    generator: &mut CandidateGenerator<'_>,
+) -> Vec<String> {
     let mut matches = Vec::new();
     let mut state = 0;
     while let Some(candidate) = generator(text, state) {
         matches.push(candidate);
         state = state.saturating_add(1);
     }
-    let first = matches.first()?;
+    matches
+}
+
+pub(crate) fn compatibility_matches(mut candidates: Vec<String>) -> Option<Vec<String>> {
+    let first = candidates.first()?;
     let mut prefix_length = first.len();
-    for candidate in matches.iter().skip(1) {
+    for candidate in candidates.iter().skip(1) {
         prefix_length = first
             .as_bytes()
             .iter()
@@ -332,9 +200,9 @@ pub(crate) fn completion_matches(text: &str, generator: &mut CompleteFunc) -> Op
     while !first.is_char_boundary(prefix_length) {
         prefix_length -= 1;
     }
-    let mut result = Vec::with_capacity(matches.len() + 1);
+    let mut result = Vec::with_capacity(candidates.len() + 1);
     result.push(first[..prefix_length].to_owned());
-    result.extend(matches);
+    result.append(&mut candidates);
     Some(result)
 }
 
@@ -346,341 +214,152 @@ pub(crate) fn builtin_candidates(query: &CompletionQuery) -> CompletionCandidate
     let mut state = 0;
     let mut candidates = Vec::new();
     while let Some(candidate) = filename_completion(&mut scan, &stem, state) {
-        let suffix = append_character(&candidate);
+        let suffix = completion_suffix(&candidate);
         candidates.push(CompletionCandidate::new(candidate).with_suffix(suffix));
         state = state.saturating_add(1);
     }
     candidates.into()
 }
 
-pub(crate) fn display_match_list(
-    el: &mut EditLine,
+pub(crate) fn format_match_list(
     matches: &mut [String],
-    num: usize,
     width: usize,
-    app_func: Option<AppFunc>,
-) {
-    if num == 0 || matches.len() < 2 {
-        return;
+    columns: usize,
+    suffix: &mut SuffixProvider<'_>,
+) -> Vec<u8> {
+    if matches.is_empty() {
+        return Vec::new();
     }
-    let entries = &mut matches[1..];
-    let count = (num - 1).min(entries.len());
-    entries[..count].sort_by_key(|entry| entry.to_ascii_lowercase());
-    let columns = el.screen_size().map_or(80, |size| size.columns());
+    matches.sort_by_key(|entry| entry.to_ascii_lowercase());
     let per_line = (columns / width.saturating_add(2)).max(1);
-    let lines = count.div_ceil(per_line);
-    let append = app_func.unwrap_or(append_character);
+    let lines = matches.len().div_ceil(per_line);
     let mut output = Vec::new();
     for line in 0..lines {
         for column in 0..per_line {
             let index = line + column * lines;
-            if index >= count {
+            if index >= matches.len() {
                 break;
             }
-            let entry = &entries[index];
+            let entry = &matches[index];
             if column != 0 {
                 output.push(b' ');
             }
             output.extend_from_slice(entry.as_bytes());
-            output.extend_from_slice(append(entry).as_bytes());
+            output.extend_from_slice(suffix(entry).as_bytes());
             output.resize(output.len() + width.saturating_sub(entry.len()), b' ');
         }
         output.push(b'\n');
     }
-    let _ = el.write_output(&output);
+    output
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the C completion boundary has independently optional hooks and result slots"
-)]
-pub(crate) fn complete_native(
-    el: &mut EditLine,
-    complete_func: Option<&mut CompleteFunc>,
-    attempted_completion_function: Option<AttemptedCompletionFunc>,
-    word_break: &[u32],
-    special_prefixes: Option<&[u32]>,
-    app_func: Option<AppFunc>,
-    query_items: usize,
-    completion_type: Option<&mut c_int>,
-    over: Option<&mut c_int>,
-    point: Option<&mut c_int>,
-    end: Option<&mut c_int>,
-    flags: c_uint,
-) -> c_int {
-    let list = el.take_completion_pending_listing();
-    if let Some(completion_type) = completion_type {
-        *completion_type = if list { b'?' } else { b'\t' }.into();
-    }
-    let line_end = el.native().line().len();
-    let cursor = el.native().cursor().get();
-    if let Some(point) = point {
-        *point = c_int::try_from(cursor).unwrap_or(c_int::MAX);
-    }
-    if let Some(end) = end {
-        *end = c_int::try_from(line_end).unwrap_or(c_int::MAX);
-    }
+mod completion;
 
-    let separators: Text = word_break
-        .iter()
-        .chain(special_prefixes.into_iter().flatten())
-        .copied()
-        .map(TextUnit::from_code_point)
-        .collect();
-    let tokenizer = NativeTokenizer::new(separators);
-    let Ok(query) = el.native().completion_query(&tokenizer) else {
-        return c_int::from(CC_ERROR);
-    };
-    let stem = String::from_utf8_lossy(&text_bytes(query.stem())).into_owned();
-    let start = c_int::try_from(query.replacement().start().get()).unwrap_or(c_int::MAX);
-    let finish = c_int::try_from(query.cursor().get()).unwrap_or(c_int::MAX);
+pub(crate) use completion::{
+    AttemptedCompletion, AttemptedFallback, AttemptedProvider, AttemptedState, CandidateGenerator,
+    CompletionCommand, CompletionInvocation, CompletionPolicy, CompletionProviders,
+    CompletionRequest, SuffixProvider, UniqueSuffix, complete_filename, observe_completion,
+    resolve_completion,
+};
+#[cfg(test)]
+use completion::{CompletionListing, CompletionPositions};
 
-    let mut matches =
-        attempted_completion_function.and_then(|function| function(&stem, start, finish));
-    let fallback = attempted_completion_function.is_none()
-        || (over.as_deref().is_some_and(|value| *value == 0) && matches.is_none());
-    if fallback {
-        matches = if let Some(generator) = complete_func {
-            completion_matches(&stem, generator)
-        } else {
-            let mut scan = FilenameCompletionState::default();
-            completion_matches(&stem, &mut move |text, state| {
-                filename_completion(&mut scan, text, state)
-            })
-        };
-    }
-    if let Some(over) = over {
-        *over = 0;
-    }
-    let Some(matches) = matches else {
-        el.beep();
-        el.clear_completion_pending_listing();
-        return c_int::from(CC_NORM);
-    };
-    let actual = if matches.len() > 1 {
-        &matches[1..]
-    } else {
-        &matches[..]
-    };
-    let append = app_func.unwrap_or(append_character);
-    let candidates: Vec<_> = actual
-        .iter()
-        .map(|candidate| {
-            let mut value = CompletionCandidate::new(candidate.clone());
-            if actual.len() == 1
-                && (flags & FN_QUOTE_MATCH != 0 || attempted_completion_function.is_some())
-            {
-                value = value.with_suffix(append(candidate));
-            }
-            value
-        })
-        .collect();
-    let Ok(outcome) = el.native_mut().apply_completion(&query, candidates.into()) else {
-        return c_int::from(CC_ERROR);
-    };
-    match outcome {
-        CompletionOutcome::Unique { .. } => {
-            el.clear_completion_pending_listing();
-            c_int::from(CC_REFRESH)
-        }
-        CompletionOutcome::NoMatch => {
-            el.beep();
-            el.clear_completion_pending_listing();
-            c_int::from(CC_NORM)
-        }
-        CompletionOutcome::Ambiguous { candidates, .. } if list => {
-            let mut display = Vec::with_capacity(candidates.len() + 1);
-            display.push(String::new());
-            display.extend(candidates.iter().map(|candidate| {
-                String::from_utf8_lossy(&text_bytes(candidate.display())).into_owned()
-            }));
-            let width = display.iter().skip(1).map(String::len).max().unwrap_or(0);
-            let count = display.len();
-            let _ = el.write_output(b"\n");
-            if count.saturating_sub(1) <= query_items {
-                display_match_list(el, &mut display, count, width, Some(append));
-            }
-            c_int::from(CC_REDISPLAY)
-        }
-        CompletionOutcome::Ambiguous { .. } => {
-            el.beep();
-            c_int::from(CC_REFRESH)
-        }
-    }
-}
-
-pub(crate) fn complete_builtin(el: &mut EditLine, _character: c_int) -> u8 {
-    complete_native(
-        el,
-        None,
-        None,
-        BREAK_CHARACTERS,
-        None,
-        None,
-        100,
-        None,
-        None,
-        None,
-        None,
-        FN_QUOTE_MATCH,
-    ) as u8
-}
-
-/// The C's `const wchar_t *` as a slice, up to but not including the
-/// terminating `L'\0'`; `None` for its NULL.
+/// Copy a C `const wchar_t *` into the native text model.
 ///
 /// # Safety
 ///
-/// `p` must be NULL or point at a `L'\0'`-terminated wide string that
-/// outlives the slice.
-unsafe fn wide_upto_nul<'a>(p: *const u32) -> Option<&'a [u32]> {
+/// `p` must be NULL or point at a `L'\0'`-terminated wide string.
+unsafe fn copy_wide_text(p: *const u32) -> Text {
     if p.is_null() {
-        return None;
+        return Text::default();
     }
     let mut n = 0usize;
     // SAFETY: the caller guarantees a terminated string.
     while unsafe { *p.add(n) } != 0 {
         n += 1;
     }
-    // SAFETY: as above.
-    Some(unsafe { core::slice::from_raw_parts(p, n) })
+    // SAFETY: as above. The copy ends the foreign pointer's participation in
+    // completion before any callback can re-enter.
+    unsafe { core::slice::from_raw_parts(p, n) }
+        .iter()
+        .copied()
+        .map(TextUnit::from_code_point)
+        .collect()
 }
 
-/// The C's `int *` out-parameter as the core's `Option<&mut i32>`.
-///
-/// # Safety
-///
-/// `p` must be NULL or writable for the life of the borrow.
-unsafe fn out<'a>(p: *mut c_int) -> Option<&'a mut c_int> {
-    if p.is_null() {
-        None
-    } else {
-        // SAFETY: the caller guarantees a writable location.
-        Some(unsafe { &mut *p })
-    }
-}
-
-/// One call adapted from either exported C completion entry point.
-struct CompletionCall {
-    el: *mut EditLine,
-    complete_func: Option<CompleteFuncC>,
-    attempted_completion_function: Option<AttemptedCompletionFuncC>,
-    word_break: *const u32,
-    special_prefixes: *const u32,
-    app_func: Option<AppFuncC>,
-    query_items: usize,
-    completion_type: *mut c_int,
-    over: *mut c_int,
-    point: *mut c_int,
-    end: *mut c_int,
-    flags: Option<c_uint>,
-}
-
-/// The body [`fn_complete`] and [`fn_complete2`] share.
-///
-/// `flags` is `None` for `fn_complete`, which derives it from whether an
-/// attempted-completion hook was supplied, and `Some` for `fn_complete2`,
-/// which is handed it. The call is owned as one boundary value so this private
-/// implementation does not inherit the exported C signature's shape.
-///
-/// # Safety
-///
-/// As the two entry points.
-unsafe fn complete(call: CompletionCall) -> c_int {
-    let CompletionCall {
-        el,
-        complete_func,
-        attempted_completion_function,
-        word_break,
-        special_prefixes,
-        app_func,
-        query_items,
-        completion_type,
-        over,
-        point,
-        end,
-        flags,
-    } = call;
-    // The C dereferences `el` at once, through `el_wline`. Defined here as
-    // the caller error it is; every other argument has a documented NULL.
-    if el.is_null() {
-        return c_int::from(CC_ERROR);
-    }
-
-    let _hooks = HookGuard::install(app_func, attempted_completion_function);
-
-    // `word_break` reaches `wcschr` unchecked in the C, so a NULL one faults;
-    // the core takes a slice and an empty one is the same "no character
-    // breaks a word" answer without the fault. `special_prefixes` is NULL-
-    // checked in the C and stays an `Option`.
-    // SAFETY: both are NULL or terminated wide strings, per the C's contract.
-    let word_break = unsafe { wide_upto_nul(word_break) }.unwrap_or(&[]);
-    // SAFETY: as above.
-    let special = unsafe { wide_upto_nul(special_prefixes) };
-
-    // `move` so the closure captures the function pointer by copy and borrows
-    // nothing: the core's `CompleteFunc` is a `dyn` object with the default
-    // `'static` bound, which a closure holding a reference to this frame could
-    // not satisfy.
-    let mut generator = move |text: &str, state: i32| -> Option<String> {
-        let f = complete_func?;
-        // SAFETY: the hook is the caller's own pointer, called with a
-        // NUL-terminated copy exactly as the C calls it. The C's
-        // `completion_matches` frees what comes back, so this does too.
-        unsafe {
-            let ctext = c_dup(text.as_bytes());
-            if ctext.is_null() {
-                return None;
-            }
-            let m = f(ctext, state);
-            c_free_str(ctext);
-            if m.is_null() {
-                return None;
-            }
-            let owned = String::from_utf8_lossy(c_bytes(m)).into_owned();
-            c_free_str(m);
-            Some(owned)
-        }
-    };
-    // A NULL `complete_func` is not "a generator that answers nothing": the C
-    // substitutes `fn_filename_completion_function`, which the core does for
-    // itself when handed `None`.
-    let generator: Option<&mut CompleteFunc> = if complete_func.is_some() {
-        Some(&mut generator)
-    } else {
-        None
-    };
-    let attempted =
-        attempted_completion_function.map(|_| attempted_adapter as AttemptedCompletionFunc);
-    let app = app_func.map(|_| app_func_adapter as AppFunc);
-
-    // SAFETY: `el` is non-NULL, and the four out-parameters are NULL or
-    // writable, which is the C's own contract for them.
+unsafe fn call_generator(hook: CompleteFuncC, text: &str, state: usize) -> Option<String> {
+    // SAFETY: the hook receives a NUL-terminated owned copy exactly as in C.
     unsafe {
-        let el = &mut *el;
-        let (ct, ov, po, en) = (out(completion_type), out(over), out(point), out(end));
-        let flags = flags.unwrap_or_else(|| {
-            if attempted.is_some() {
-                0
-            } else {
-                FN_QUOTE_MATCH
-            }
-        });
-        complete_native(
-            el,
-            generator,
-            attempted,
-            word_break,
-            special,
-            app,
-            query_items,
-            ct,
-            ov,
-            po,
-            en,
-            flags,
-        )
+        let ctext = c_dup(text.as_bytes());
+        if ctext.is_null() {
+            return None;
+        }
+        let state = c_int::try_from(state).unwrap_or(c_int::MAX);
+        let candidate = hook(ctext, state);
+        c_free_str(ctext);
+        if candidate.is_null() {
+            return None;
+        }
+        let owned = String::from_utf8_lossy(c_bytes(candidate)).into_owned();
+        c_free_str(candidate);
+        Some(owned)
     }
+}
+
+unsafe fn call_attempted(
+    hook: AttemptedCompletionFuncC,
+    text: &str,
+    start: usize,
+    end: usize,
+) -> Option<Vec<String>> {
+    // SAFETY: the hook receives the same owned text and saturated positions as
+    // the C boundary. Its returned array and strings transfer ownership here.
+    unsafe {
+        let ctext = c_dup(text.as_bytes());
+        if ctext.is_null() {
+            return None;
+        }
+        let start = c_int::try_from(start).unwrap_or(c_int::MAX);
+        let end = c_int::try_from(end).unwrap_or(c_int::MAX);
+        let matches = hook(ctext, start, end);
+        c_free_str(ctext);
+        if matches.is_null() {
+            return None;
+        }
+        let mut owned = Vec::new();
+        let mut index = 0;
+        loop {
+            let candidate = *matches.add(index);
+            if candidate.is_null() {
+                break;
+            }
+            owned.push(String::from_utf8_lossy(c_bytes(candidate)).into_owned());
+            c_free_str(candidate);
+            index += 1;
+        }
+        c_free_array(matches, index + 1);
+        if owned.len() > 1 {
+            owned.remove(0);
+        }
+        Some(owned)
+    }
+}
+
+unsafe fn call_suffix(hook: AppFuncC, candidate: &str) -> String {
+    // SAFETY: this creates the NUL-terminated argument owned below.
+    let argument = unsafe { c_dup(candidate.as_bytes()) };
+    if argument.is_null() {
+        return String::new();
+    }
+    // SAFETY: the hook borrows the NUL-terminated argument for this call. Its
+    // return remains hook-owned and is copied before re-entry can overwrite it.
+    let suffix = unsafe { hook(argument) };
+    // SAFETY: ownership of the argument copy remains here.
+    unsafe { c_free_str(argument) };
+    // SAFETY: a non-NULL hook result is NUL-terminated by the C contract.
+    unsafe { c_bytes_opt(suffix) }
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default()
 }
 
 // [spec:libedit:def:filecomplete.fn-complete2-fn]
@@ -714,22 +393,127 @@ pub unsafe extern "C" fn fn_complete2(
     end: *mut c_int,
     flags: c_uint,
 ) -> c_int {
-    // SAFETY: as documented above.
+    if el.is_null() {
+        return c_int::from(CC_ERROR);
+    }
+
+    // SAFETY: the two pointers are NULL or terminated wide strings. Both are
+    // copied before a callback can re-enter this wrapper.
+    let mut separators = unsafe { copy_wide_text(word_break) };
+    // SAFETY: as above.
+    let special = unsafe { copy_wide_text(special_prefixes) };
+    separators.extend(special.as_units().iter().copied());
+
+    // SAFETY: `el` is non-NULL. This borrow ends with the snapshot, before any
+    // foreign function can run.
+    let snapshot = unsafe { observe_completion(&mut *el, separators) };
+    let invocation = snapshot.invocation();
+    let positions = snapshot.positions();
+    // SAFETY: each non-NULL out pointer is writable by the C contract. These
+    // are individual stores, never Rust references held across callbacks.
     unsafe {
-        complete(CompletionCall {
-            el,
-            complete_func,
-            attempted_completion_function,
-            word_break,
-            special_prefixes,
-            app_func,
-            query_items,
-            completion_type,
-            over,
-            point,
-            end,
-            flags: Some(flags),
+        if !completion_type.is_null() {
+            *completion_type = match invocation {
+                CompletionInvocation::Insert => b'\t'.into(),
+                CompletionInvocation::List => b'?'.into(),
+            };
+        }
+        if !point.is_null() {
+            *point = c_int::try_from(positions.cursor).unwrap_or(c_int::MAX);
+        }
+        if !end.is_null() {
+            *end = c_int::try_from(positions.line_end).unwrap_or(c_int::MAX);
+        }
+    }
+
+    let mut generator_adapter = |text: &str, state: usize| {
+        complete_func.and_then(|hook| {
+            // SAFETY: the exported callback contract is documented above.
+            unsafe { call_generator(hook, text, state) }
         })
+    };
+    let generator = complete_func.map(|_| &mut generator_adapter as &mut CandidateGenerator<'_>);
+
+    let mut attempted_adapter = |text: &str, start: usize, finish: usize| {
+        let candidates = attempted_completion_function.and_then(|hook| {
+            // SAFETY: the exported callback contract is documented above.
+            unsafe { call_attempted(hook, text, start, finish) }
+        });
+        let fallback = if over.is_null() {
+            AttemptedFallback::Suppress
+        } else {
+            // SAFETY: the caller keeps this output slot writable throughout
+            // the call, and no Rust reference to it exists.
+            if unsafe { *over } == 0 {
+                AttemptedFallback::Allow
+            } else {
+                AttemptedFallback::Suppress
+            }
+        };
+        AttemptedCompletion::new(candidates, fallback)
+    };
+    let attempted =
+        attempted_completion_function.map(|_| &mut attempted_adapter as &mut AttemptedProvider<'_>);
+
+    let mut suffix_adapter = |candidate: &str| {
+        app_func.map_or_else(String::new, |hook| {
+            // SAFETY: the exported callback contract is documented above.
+            unsafe { call_suffix(hook, candidate) }
+        })
+    };
+    let suffix = app_func.map(|_| &mut suffix_adapter as &mut SuffixProvider<'_>);
+
+    let target = el;
+    let mut apply = move |query: &CompletionQuery, candidates: CompletionCandidates| {
+        // SAFETY: the typed engine calls this only after all candidate-provider
+        // callbacks have returned. The borrow lasts only for the core apply.
+        unsafe {
+            (&mut *target)
+                .native_mut()
+                .apply_completion(query, candidates)
+        }
+    };
+    let providers = CompletionProviders::new(generator)
+        .with_attempted(attempted)
+        .with_suffix(suffix);
+    let unique_suffix = if flags & FN_QUOTE_MATCH != 0 {
+        UniqueSuffix::Append
+    } else {
+        UniqueSuffix::Omit
+    };
+    let report = resolve_completion(CompletionRequest::new(
+        snapshot,
+        providers,
+        CompletionPolicy::new(query_items, unique_suffix),
+        &mut apply,
+    ));
+
+    // SAFETY: as for the earlier stores; provider callbacks are now finished.
+    unsafe {
+        let invocation = report.invocation();
+        let positions = report.positions();
+        if !completion_type.is_null() {
+            *completion_type = match invocation {
+                CompletionInvocation::Insert => b'\t'.into(),
+                CompletionInvocation::List => b'?'.into(),
+            };
+        }
+        if !point.is_null() {
+            *point = c_int::try_from(positions.cursor).unwrap_or(c_int::MAX);
+        }
+        if !end.is_null() {
+            *end = c_int::try_from(positions.line_end).unwrap_or(c_int::MAX);
+        }
+        if report.attempted_state() == AttemptedState::Reset && !over.is_null() {
+            *over = 0;
+        }
+        report.apply_effects(&mut *el);
+    }
+    match report.command() {
+        CompletionCommand::Normal => c_int::from(CC_NORM),
+        CompletionCommand::Refresh => c_int::from(CC_REFRESH),
+        CompletionCommand::Redisplay => c_int::from(CC_REDISPLAY),
+        CompletionCommand::Error => c_int::from(CC_ERROR),
     }
 }
 
@@ -754,9 +538,14 @@ pub unsafe extern "C" fn fn_complete(
     point: *mut c_int,
     end: *mut c_int,
 ) -> c_int {
-    // SAFETY: as [`fn_complete2`].
+    let flags = if attempted_completion_function.is_some() {
+        0
+    } else {
+        FN_QUOTE_MATCH
+    };
+    // SAFETY: this wrapper has the same argument contracts as `fn_complete2`.
     unsafe {
-        complete(CompletionCall {
+        fn_complete2(
             el,
             complete_func,
             attempted_completion_function,
@@ -768,8 +557,8 @@ pub unsafe extern "C" fn fn_complete(
             over,
             point,
             end,
-            flags: None,
-        })
+            flags,
+        )
     }
 }
 
@@ -798,8 +587,6 @@ pub unsafe extern "C" fn fn_display_match_list(
     if el.is_null() || matches.is_null() || num == 0 {
         return;
     }
-    let _hooks = HookGuard::install(app_func, None);
-    let app = app_func.map(|_| app_func_adapter as AppFunc);
 
     // SAFETY: `matches` holds `num` pointers, each NULL or NUL-terminated,
     // which is what the C reads through the same indices.
@@ -816,7 +603,15 @@ pub unsafe extern "C" fn fn_display_match_list(
             });
         }
 
-        display_match_list(&mut *el, &mut owned, num, width, app);
+        let columns = (&*el).screen_size().map_or(80, |size| size.columns());
+        let mut suffix = |candidate: &str| {
+            app_func.map_or_else(
+                || completion_suffix(candidate),
+                |hook| call_suffix(hook, candidate),
+            )
+        };
+        let output = format_match_list(&mut owned[1..], width, columns, &mut suffix);
+        let _ = (&*el).write_output(&output);
 
         permute_to_match(matches, &owned);
     }
@@ -945,6 +740,11 @@ pub unsafe extern "C" fn fn_filename_completion_function(
     // SAFETY: `text` is NULL or a NUL-terminated string.
     let bytes = unsafe { c_bytes_opt(text) }.unwrap_or(b"");
     let text = String::from_utf8_lossy(bytes).into_owned();
+    let state = if state == 0 {
+        0
+    } else {
+        usize::try_from(state).unwrap_or(1)
+    };
     FILENAME_SCAN.with_borrow_mut(|scan| {
         let scan = scan.get_or_insert_with(FilenameCompletionState::default);
         match filename_completion(scan, &text, state) {
@@ -957,42 +757,107 @@ pub unsafe extern "C" fn fn_filename_completion_function(
 
 #[cfg(test)]
 mod tests {
-    use super::{HookGuard, app_func_adapter, c_free_str, fn_tilde_expand, intern};
-    use core::ffi::{CStr, c_char};
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
-    /// Interning is per distinct value, so a hook that returns a shared
-    /// buffer does not leak once per call.
+    use super::*;
+    use core::ffi::CStr;
+    use nshedit::editor::CompletionOutcome;
+
+    fn editor() -> EditLine {
+        *EditLine::new(
+            "completion-test",
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            -1,
+            -1,
+            -1,
+        )
+        .expect("construct an editor over inert descriptors")
+    }
+
+    fn text(value: &str) -> Text {
+        value.chars().map(TextUnit::Scalar).collect()
+    }
+
+    // [spec:nshedit:req:abi.typed-completion/test]
     #[test]
-    fn interning_is_per_value() {
-        let a = intern(b"/");
-        let b = intern(b"/");
-        assert_eq!(a, "/");
-        assert!(std::ptr::eq(a, b));
-    }
+    fn reentry_yields_a_stale_report() {
+        let editor = Rc::new(RefCell::new(editor()));
+        assert!(editor.borrow_mut().replace_line(text("fo")));
+        let snapshot = observe_completion(&mut editor.borrow_mut(), Text::default());
 
-    unsafe extern "C" fn slash(_name: *const c_char) -> *const c_char {
-        c"/".as_ptr()
-    }
-
-    unsafe extern "C" fn nothing(_name: *const c_char) -> *const c_char {
-        core::ptr::null()
-    }
-
-    /// The adapter reads the hook parked by the guard, and the guard puts the
-    /// previous one back — which is what lets a callback re-enter.
-    #[test]
-    fn the_guard_nests() {
-        assert_eq!(app_func_adapter("x"), "", "no hook appends nothing");
-        {
-            let _outer = HookGuard::install(Some(slash), None);
-            assert_eq!(app_func_adapter("x"), "/");
-            {
-                let _inner = HookGuard::install(Some(nothing), None);
-                assert_eq!(app_func_adapter("x"), "", "a NULL return appends nothing");
+        let provider_editor = Rc::clone(&editor);
+        let mut generator = move |_stem: &str, state: usize| {
+            if state != 0 {
+                return None;
             }
-            assert_eq!(app_func_adapter("x"), "/", "the outer hook is restored");
-        }
-        assert_eq!(app_func_adapter("x"), "");
+            assert!(provider_editor.borrow_mut().replace_line(text("changed")));
+            Some("food".to_owned())
+        };
+        let apply_editor = Rc::clone(&editor);
+        let mut apply = move |query: &CompletionQuery, candidates: CompletionCandidates| {
+            apply_editor
+                .borrow_mut()
+                .native_mut()
+                .apply_completion(query, candidates)
+        };
+        let report = resolve_completion(CompletionRequest::new(
+            snapshot,
+            CompletionProviders::new(Some(&mut generator)),
+            CompletionPolicy::new(100, UniqueSuffix::Omit),
+            &mut apply,
+        ));
+
+        assert_eq!(report.command(), CompletionCommand::Error);
+        assert_eq!(report.listing(), CompletionListing::Pending);
+        assert!(report.outcome().is_none());
+        assert_eq!(editor.borrow().native().line(), &text("changed"));
+    }
+
+    #[test]
+    fn report_owns_suffix_and_positions() {
+        let editor = Rc::new(RefCell::new(editor()));
+        assert!(editor.borrow_mut().replace_line(text("fo")));
+        let snapshot = observe_completion(&mut editor.borrow_mut(), Text::default());
+
+        let mut generator = |_stem: &str, state: usize| (state == 0).then(|| "folder".to_owned());
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let suffix_observed = Rc::clone(&observed);
+        let mut suffix = move |candidate: &str| {
+            suffix_observed.borrow_mut().push(candidate.to_owned());
+            "/".to_owned()
+        };
+        let apply_editor = Rc::clone(&editor);
+        let mut apply = move |query: &CompletionQuery, candidates: CompletionCandidates| {
+            apply_editor
+                .borrow_mut()
+                .native_mut()
+                .apply_completion(query, candidates)
+        };
+        let report = resolve_completion(CompletionRequest::new(
+            snapshot,
+            CompletionProviders::new(Some(&mut generator)).with_suffix(Some(&mut suffix)),
+            CompletionPolicy::new(100, UniqueSuffix::Append),
+            &mut apply,
+        ));
+
+        assert_eq!(report.command(), CompletionCommand::Refresh);
+        assert_eq!(
+            report.positions(),
+            CompletionPositions {
+                cursor: 2,
+                line_end: 2
+            }
+        );
+        assert_eq!(report.listing(), CompletionListing::Cleared);
+        let Some(CompletionOutcome::Unique { candidate, .. }) = report.outcome() else {
+            panic!("one candidate must produce a unique report");
+        };
+        assert_eq!(candidate.suffix(), Some(&text("/")));
+        assert_eq!(&*observed.borrow(), &["folder"]);
+        assert_eq!(editor.borrow().native().line(), &text("folder/"));
     }
 
     /// A POSIX path is bytes, so the ABI's copy-through route must not insert
