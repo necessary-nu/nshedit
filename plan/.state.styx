@@ -401,4 +401,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule core.text-screen-model}
     )}
+    {id rust-idiom-platform, covered_rules (
+        platform.typed-boundary
+    ), covered_claims (
+        {impl_name native-impl, rule platform.typed-boundary}
+    )}
 )

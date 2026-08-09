@@ -1,9 +1,9 @@
 //! The syscalls, in one crate.
 //!
 //! `plan/decisions/platform-layer.md` makes this the only place in the
-//! workspace that issues one. Both `nshedit` — the core, which is what nsh
-//! links — and `nshedit-abi` depend on it; nothing else does. Keeping the
-//! surface here rather than in a `pub` module of the core is what keeps
+//! workspace that issues one. The editor, terminal-capability discovery, and
+//! C adapter consume its safe operations. Keeping the surface here rather
+//! than in a `pub` module of the core is what keeps
 //! `tcsetattr` and `sigaction` out of the namespace
 //! `plan/decisions/idiomatic-core.md` makes a deliverable in its own right.
 //!
@@ -12,8 +12,8 @@
 //! `rustix` wherever `rustix` reaches, and the platform's libc for the two
 //! families it declines.
 //!
-//! rustix covers `tcgetattr`, `tcsetattr`, `tcgetwinsize` (`TIOCGWINSZ`),
-//! `fcntl` with `F_GETFL`/`F_SETFL`, `isatty` and the four uid/gid queries.
+//! rustix covers terminal attributes, window size, pending input, and process
+//! credentials.
 //! On x86_64 and aarch64 Linux it selects its `linux_raw` backend and issues
 //! those syscalls directly, so that part of this crate goes nowhere near a C
 //! library.
@@ -43,105 +43,33 @@
 //! transcribed. A non-Linux build is not supported — rustix would fall back
 //! to its libc backend and the transcribed numbers would be wrong anyway.
 
+// [spec:nshedit:req:platform.typed-boundary]
 pub mod passwd;
 pub mod signal;
 pub mod terminal;
-pub mod termios;
-
-use std::os::fd::BorrowedFd;
-
-/// Borrow a raw descriptor for the duration of one call.
-///
-/// `None` for a negative descriptor, which the C's own calls would answer
-/// `EBADF` for and which every caller here already treats as failure. The
-/// port hands out -1 for a stream with no descriptor, so this is a live
-/// path rather than a defensive one.
-///
-/// # Safety
-///
-/// The descriptor must be open for the duration of the call. Every caller in
-/// the workspace passes one the application owns and libedit never closes.
-fn borrow(fd: i32) -> Option<BorrowedFd<'static>> {
-    if fd < 0 {
-        return None;
-    }
-    // SAFETY: as documented above — the descriptor is the application's and
-    // outlives the call; `BorrowedFd` neither owns nor closes it.
-    Some(unsafe { BorrowedFd::borrow_raw(fd) })
-}
-
-// ---------------------------------------------------------------------------
-// Descriptor flags
-// ---------------------------------------------------------------------------
-
-/// `O_NDELAY`. Linux gives it the same value as `O_NONBLOCK`, which is why
-/// `read_fixio`'s two sub-blocks are one condition there.
-pub const O_NDELAY: i32 = rustix::fs::OFlags::NONBLOCK.bits() as i32;
-
-/// `fcntl(fd, F_GETFL, 0)`. `None` is the C's -1.
-#[must_use]
-pub fn fcntl_getfl(fd: i32) -> Option<i32> {
-    let fd = borrow(fd)?;
-    rustix::fs::fcntl_getfl(fd).ok().map(|f| f.bits() as i32)
-}
-
-/// `fcntl(fd, F_SETFL, flags)`. `false` is the C's -1.
-///
-/// `sem:read.read-fixio-fn`'s headline side effect goes through here: the
-/// recovery **permanently** clears `O_NONBLOCK`/`O_NDELAY` on the caller's
-/// input descriptor — normally the process's shared standard input — saving
-/// and restoring nothing (ERR-input-21). Nothing in this crate compensates
-/// for that; reproducing it is the point.
-#[must_use]
-pub fn fcntl_setfl(fd: i32, flags: i32) -> bool {
-    let Some(fd) = borrow(fd) else {
-        return false;
-    };
-    let flags = rustix::fs::OFlags::from_bits_retain(flags as u32);
-    rustix::fs::fcntl_setfl(fd, flags).is_ok()
-}
-
-// ---------------------------------------------------------------------------
-// Pending input
-// ---------------------------------------------------------------------------
-
-/// Number of bytes a read can consume without blocking (`FIONREAD`).
-///
-/// `None` is the ioctl's `-1`. A zero count is a successful observation and
-/// is deliberately distinct: readline's event-hook reader busy-spins and
-/// calls the application hook again when no byte is ready.
-#[must_use]
-pub fn bytes_ready_to_read(fd: i32) -> Option<u64> {
-    let fd = borrow(fd)?;
-    rustix::io::ioctl_fionread(fd).ok()
-}
+mod termios;
 
 // ---------------------------------------------------------------------------
 // Process credentials
 // ---------------------------------------------------------------------------
 
-/// `getuid()` — the real user id.
-#[must_use]
-pub fn getuid() -> u32 {
-    rustix::process::getuid().as_raw()
+/// A platform user identifier, kept distinct from group identifiers and raw
+/// ABI integers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UserId(u32);
+
+impl UserId {
+    /// Project the identifier for the private NSS call.
+    #[must_use]
+    pub(crate) const fn as_raw(self) -> u32 {
+        self.0
+    }
 }
 
-/// `geteuid()` — the effective user id.
+/// The real user that invoked this process.
 #[must_use]
-pub fn geteuid() -> u32 {
-    rustix::process::geteuid().as_raw()
-}
-
-/// `getgid()` — the real group id.
-#[must_use]
-pub fn getgid() -> u32 {
-    rustix::process::getgid().as_raw()
-}
-
-/// `getegid()` — the effective group id.
-#[must_use]
-pub fn getegid() -> u32 {
-    rustix::process::getegid().as_raw()
+pub fn current_user() -> UserId {
+    UserId(rustix::process::getuid().as_raw())
 }
 
 /// Whether this process is running with privileges its invoker did not have —
@@ -174,7 +102,8 @@ pub fn getegid() -> u32 {
 /// installed beats matching a build nobody ships.
 #[must_use]
 pub fn is_elevated() -> bool {
-    getuid() != geteuid() || getgid() != getegid()
+    rustix::process::getuid() != rustix::process::geteuid()
+        || rustix::process::getgid() != rustix::process::getegid()
 }
 
 /// Reading the C's own headers, so that a number transcribed into this crate
@@ -357,69 +286,6 @@ pub(crate) mod cheader {
 mod tests {
     use super::*;
 
-    /// The `read_fixio` recovery treats `O_NDELAY` and `O_NONBLOCK` as one
-    /// condition, which is only sound because Linux gives them the same value.
-    /// Checked against `asm-generic/fcntl.h`, where `O_NDELAY` is literally
-    /// `#define`d to `O_NONBLOCK`.
-    #[test]
-    fn o_ndelay_is_the_kernels_o_nonblock() {
-        let h = cheader::defines(&["asm-generic/fcntl.h"]);
-        assert_eq!(h["O_NDELAY"], i64::from(O_NDELAY));
-        assert_eq!(h["O_NONBLOCK"], i64::from(O_NDELAY));
-    }
-
-    /// The port hands out -1 for a stream with no descriptor, so every
-    /// descriptor call has to answer the C's failure rather than reach a
-    /// syscall with a bad argument.
-    #[test]
-    fn a_negative_descriptor_fails_the_way_the_c_does() {
-        assert!(fcntl_getfl(-1).is_none());
-        assert!(!fcntl_setfl(-1, 0));
-        assert!(bytes_ready_to_read(-1).is_none());
-    }
-
-    /// The safe FIONREAD seam distinguishes an empty descriptor from one with
-    /// pending bytes and tracks consumption without taking ownership.
-    #[test]
-    fn pending_input_reports_the_kernel_queue() {
-        use std::io::{Read, Write};
-        use std::os::fd::AsRawFd;
-        use std::os::unix::net::UnixStream;
-
-        let (mut reader, mut writer) = UnixStream::pair().expect("socket pair");
-        assert_eq!(bytes_ready_to_read(reader.as_raw_fd()), Some(0));
-
-        writer.write_all(b"abc").expect("write test bytes");
-        assert_eq!(bytes_ready_to_read(reader.as_raw_fd()), Some(3));
-
-        let mut byte = [0u8; 1];
-        reader.read_exact(&mut byte).expect("read one byte");
-        assert_eq!(byte, [b'a']);
-        assert_eq!(bytes_ready_to_read(reader.as_raw_fd()), Some(2));
-    }
-
-    /// `sem:read.read-fixio-fn`'s side effect is a permanent clear of
-    /// `O_NONBLOCK` on the caller's descriptor, so the bit has to survive the
-    /// round trip through `F_GETFL`/`F_SETFL` unchanged — and the flag word
-    /// read back has to be the one the kernel holds, not a re-encoding of it.
-    ///
-    /// `/dev/null` rather than the process's own standard input, which a test
-    /// runner may have pointed anywhere and which nothing here should modify.
-    #[test]
-    fn the_nonblocking_bit_survives_a_get_set_round_trip() {
-        let f = std::fs::File::open("/dev/null").expect("/dev/null");
-        let fd = std::os::fd::AsRawFd::as_raw_fd(&f);
-
-        let before = fcntl_getfl(fd).expect("F_GETFL");
-        assert_eq!(before & O_NDELAY, 0, "a fresh open is not non-blocking");
-
-        assert!(fcntl_setfl(fd, before | O_NDELAY));
-        assert_eq!(fcntl_getfl(fd).expect("F_GETFL"), before | O_NDELAY);
-
-        assert!(fcntl_setfl(fd, before));
-        assert_eq!(fcntl_getfl(fd).expect("F_GETFL"), before);
-    }
-
     /// The four credential queries and the elevation test they feed, against
     /// the kernel's own report of this process rather than against rustix.
     ///
@@ -443,8 +309,7 @@ mod tests {
 
         let (uid, euid) = field("Uid:");
         let (gid, egid) = field("Gid:");
-        assert_eq!((getuid(), geteuid()), (uid, euid));
-        assert_eq!((getgid(), getegid()), (gid, egid));
+        assert_eq!(current_user().as_raw(), uid);
         assert_eq!(is_elevated(), uid != euid || gid != egid);
     }
 }

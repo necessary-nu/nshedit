@@ -36,6 +36,7 @@ use core::ptr;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::{Cell, RefCell};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::os::unix::ffi::OsStrExt;
 
 use crate::filecomplete::{self, FilenameCompletionState};
 use std::os::fd::AsRawFd;
@@ -659,11 +660,9 @@ thread_local! {
     /// process-wide scan is this crate's job.
     static FILENAME_SCAN: RefCell<Option<FilenameCompletionState>> = const { RefCell::new(None) };
 
-    /// Whether `username_completion_function` has a `<pwd.h>` enumeration
-    /// open. The cursor itself is the libc's, process-global, exactly as the
-    /// C's is; this only records whether `setpwent` has been issued, so that
-    /// a `state` of 0 rewinds and anything else continues.
-    static PASSWD_SCAN_OPEN: Cell<bool> = const { Cell::new(false) };
+    /// The scoped platform user-name scan used by the compatibility generator.
+    static PASSWD_SCAN: RefCell<Option<nshedit_plat::passwd::UserNames>> =
+        const { RefCell::new(None) };
 
     /// C: `static ct_buffer_t wbreak_conv, sprefix_conv;` inside
     /// `rl_complete` — the wide forms of the two break-character strings,
@@ -1279,8 +1278,15 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
         // declines to edit on it. A failing `tcgetattr` leaves `editmode` at
         // 1, which is what the C does with its uninitialised `t`: the branch
         // is only entered on success.
-        let editmode = match nshedit_plat::termios::tcgetattr(fdin) {
-            Some(t) => c_int::from(t.c_lflag & nshedit_plat::termios::ECHO != 0),
+        let editmode = match crate::adapter::with_borrowed_descriptor(
+            fdin,
+            nshedit_plat::terminal::read_attributes,
+        )
+        .and_then(Result::ok)
+        {
+            Some(attributes) => {
+                c_int::from(attributes.flag(nshedit_plat::terminal::TerminalFlag::EchoInput))
+            }
             None => 1,
         };
 
@@ -3114,35 +3120,33 @@ pub unsafe extern "C" fn username_completion_function(
         // `state == 0` rewinds the database, as the generator protocol
         // requires; a scan started without it continues from wherever the
         // previous one stopped.
-        if state == 0 || !PASSWD_SCAN_OPEN.get() {
-            nshedit_plat::passwd::setpwent();
-            PASSWD_SCAN_OPEN.set(true);
-        }
-
         // The loop condition is inverted: it *continues* while the entry is
         // exactly equal to `text` and stops at the first entry that differs,
         // so it exits after a single `getpwent()` and returns the next
         // database entry regardless of whether it starts with `text`. No
         // prefix matching happens at all (ERR-readline-24, reproduced).
-        let mut found = None;
-        while let Some(name) = nshedit_plat::passwd::getpwent_name() {
-            if name.first() == t.first() && name == t {
-                continue;
+        let found = PASSWD_SCAN.with(|scan| {
+            let mut scan = scan.borrow_mut();
+            if state == 0 || scan.is_none() {
+                drop(scan.take());
+                *scan = Some(nshedit_plat::passwd::UserNames::open());
             }
-            found = Some(name);
-            break;
-        }
+            loop {
+                let Some(name) = scan.as_mut().and_then(Iterator::next) else {
+                    *scan = None;
+                    return None;
+                };
+                let name = name.as_bytes();
+                if name.first() == t.first() && name == t {
+                    continue;
+                }
+                return Some(name.to_vec());
+            }
+        });
         match found {
             // Unchecked in the C, so NULL is also an allocation failure.
             Some(name) => c_dup(&name),
-            None => {
-                // `endpwent()` is only reached when the database is
-                // exhausted, so an abandoned scan leaks the handle in the C;
-                // the port inherits that, since the cursor is the libc's.
-                nshedit_plat::passwd::endpwent();
-                PASSWD_SCAN_OPEN.set(false);
-                ptr::null_mut()
-            }
+            None => ptr::null_mut(),
         }
     }
 }
@@ -3819,7 +3823,10 @@ fn _rl_event_read_char(el: *mut EditLine, wc: *mut u32) -> c_int {
             // The successful zero result is not EOF: it means no byte can be
             // read without blocking, so the busy loop invokes the hook again.
             let descriptor = (&*el).descriptor(0).unwrap_or(-1);
-            let Some(ready) = nshedit_plat::bytes_ready_to_read(descriptor) else {
+            let Some(Ok(ready)) = crate::adapter::with_borrowed_descriptor(
+                descriptor,
+                nshedit_plat::terminal::bytes_ready,
+            ) else {
                 return -1;
             };
             if ready == 0 {

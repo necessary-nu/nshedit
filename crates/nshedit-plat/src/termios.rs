@@ -15,6 +15,9 @@
 //! [`VDISABLE`], because `sem:tty.tty-bind-char-fn` requires it: the disable
 //! byte reaches the key map, and it is 0 on glibc and 0xff on the BSDs.
 
+use std::io;
+use std::os::fd::BorrowedFd;
+
 use rustix::termios::{OptionalActions, SpecialCodeIndex};
 
 /// `_POSIX_VDISABLE`. POSIX defines the constant but not its value;
@@ -22,9 +25,9 @@ use rustix::termios::{OptionalActions, SpecialCodeIndex};
 /// `(unsigned char)-1` where the platform defines neither `_POSIX_VDISABLE`
 /// nor `VDISABLE`, which is the 0xff arm.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-pub const VDISABLE: u8 = 0;
+pub(crate) const VDISABLE: u8 = 0;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
-pub const VDISABLE: u8 = 0xff;
+pub(crate) const VDISABLE: u8 = 0xff;
 
 /// `NCCS` — the length of a `struct termios`'s `c_cc`.
 ///
@@ -33,115 +36,98 @@ pub const VDISABLE: u8 = 0xff;
 /// `struct termios` is 19 long, and glibc's `tcgetattr` copies those 19 and
 /// fills the tail with `_POSIX_VDISABLE`; [`tcgetattr`] below does the same,
 /// which on Linux means leaving it zero.
-pub const NCCS: usize = 32;
-
-/// `TCSANOW` — apply immediately.
-pub const TCSANOW: i32 = 0;
-/// `TCSADRAIN` — apply after queued output has drained, keeping queued
-/// input.
-pub const TCSADRAIN: i32 = 1;
-/// `TCSAFLUSH` — drain output, then discard unread input.
-pub const TCSAFLUSH: i32 = 2;
+pub(crate) const NCCS: usize = 32;
 
 // `c_iflag` bits.
-pub const IGNBRK: u32 = 0o0000001;
-pub const BRKINT: u32 = 0o0000002;
-pub const IGNPAR: u32 = 0o0000004;
-pub const PARMRK: u32 = 0o0000010;
-pub const INPCK: u32 = 0o0000020;
-pub const ISTRIP: u32 = 0o0000040;
-pub const INLCR: u32 = 0o0000100;
-pub const IGNCR: u32 = 0o0000200;
-pub const ICRNL: u32 = 0o0000400;
+pub(crate) const IGNBRK: u32 = 0o0000001;
+pub(crate) const BRKINT: u32 = 0o0000002;
+pub(crate) const IGNPAR: u32 = 0o0000004;
+pub(crate) const PARMRK: u32 = 0o0000010;
+pub(crate) const INPCK: u32 = 0o0000020;
+pub(crate) const ISTRIP: u32 = 0o0000040;
+pub(crate) const INLCR: u32 = 0o0000100;
+pub(crate) const IGNCR: u32 = 0o0000200;
+pub(crate) const ICRNL: u32 = 0o0000400;
 /// Legacy SysV, Linux only. Note it is the *same bit* as [`ECHOCTL`], which
 /// is what makes ERR-terminal-36 the silent no-op it is.
-pub const IUCLC: u32 = 0o0001000;
-pub const IXON: u32 = 0o0002000;
-pub const IXANY: u32 = 0o0004000;
-pub const IXOFF: u32 = 0o0010000;
-pub const IMAXBEL: u32 = 0o0020000;
+pub(crate) const IUCLC: u32 = 0o0001000;
+pub(crate) const IXON: u32 = 0o0002000;
+pub(crate) const IXANY: u32 = 0o0004000;
+pub(crate) const IXOFF: u32 = 0o0010000;
+pub(crate) const IMAXBEL: u32 = 0o0020000;
 
 // `c_oflag` bits.
-pub const OPOST: u32 = 0o0000001;
-pub const OLCUC: u32 = 0o0000002;
-pub const ONLCR: u32 = 0o0000004;
-pub const OCRNL: u32 = 0o0000010;
-pub const ONOCR: u32 = 0o0000020;
-pub const ONLRET: u32 = 0o0000040;
-pub const OFILL: u32 = 0o0000100;
-pub const OFDEL: u32 = 0o0000200;
-pub const NLDLY: u32 = 0o0000400;
-pub const CRDLY: u32 = 0o0003000;
-pub const TABDLY: u32 = 0o0014000;
-/// The XSI `TABDLY` value meaning "expand tabs to spaces". `tty.h` aliases it
-/// to `OXTABS` on the BSDs and to 0 where neither exists — the degenerate
-/// case `sem:tty.tty-rawmode-fn` warns about, in which `(x & 0) == 0` is
-/// always true and `t_tabs` is forced to 0. It is **not** degenerate here:
-/// glibc defines `TAB3`, so the `EL_CAN_TAB` branch of `tty_rawmode` is live.
-pub const TAB3: u32 = 0o0014000;
-/// `XTABS`, which glibc gives the same value as [`TAB3`]. `ttymodes[]`
-/// carries both names, so `+xtabs` and `+tabdly` interact.
-pub const XTABS: u32 = 0o0014000;
-pub const BSDLY: u32 = 0o0020000;
-pub const VTDLY: u32 = 0o0040000;
-pub const FFDLY: u32 = 0o0100000;
+pub(crate) const OPOST: u32 = 0o0000001;
+pub(crate) const OLCUC: u32 = 0o0000002;
+pub(crate) const ONLCR: u32 = 0o0000004;
+pub(crate) const OCRNL: u32 = 0o0000010;
+pub(crate) const ONOCR: u32 = 0o0000020;
+pub(crate) const ONLRET: u32 = 0o0000040;
+pub(crate) const OFILL: u32 = 0o0000100;
+pub(crate) const OFDEL: u32 = 0o0000200;
+pub(crate) const NLDLY: u32 = 0o0000400;
+pub(crate) const CRDLY: u32 = 0o0003000;
+pub(crate) const TABDLY: u32 = 0o0014000;
+/// Expand tabs to spaces. Linux gives `XTABS`, `TAB3`, and `TABDLY` the same
+/// mask, so the compatibility names interact.
+pub(crate) const XTABS: u32 = 0o0014000;
+pub(crate) const BSDLY: u32 = 0o0020000;
+pub(crate) const VTDLY: u32 = 0o0040000;
+pub(crate) const FFDLY: u32 = 0o0100000;
 
 // `c_cflag` bits.
-pub const CBAUD: u32 = 0o0010017;
-pub const CBAUDEX: u32 = 0o0010000;
-pub const CSIZE: u32 = 0o0000060;
-pub const CS8: u32 = 0o0000060;
-pub const CSTOPB: u32 = 0o0000100;
-pub const CREAD: u32 = 0o0000200;
-pub const PARENB: u32 = 0o0000400;
-pub const PARODD: u32 = 0o0001000;
-pub const HUPCL: u32 = 0o0002000;
-pub const CLOCAL: u32 = 0o0004000;
-pub const CIBAUD: u32 = 0o02003600000;
-pub const CRTSCTS: u32 = 0o020000000000;
+pub(crate) const CBAUD: u32 = 0o0010017;
+pub(crate) const CSTOPB: u32 = 0o0000100;
+pub(crate) const CREAD: u32 = 0o0000200;
+pub(crate) const PARENB: u32 = 0o0000400;
+pub(crate) const PARODD: u32 = 0o0001000;
+pub(crate) const HUPCL: u32 = 0o0002000;
+pub(crate) const CLOCAL: u32 = 0o0004000;
+pub(crate) const CIBAUD: u32 = 0o02003600000;
+pub(crate) const CRTSCTS: u32 = 0o020000000000;
 
 // `c_lflag` bits.
-pub const ISIG: u32 = 0o0000001;
-pub const ICANON: u32 = 0o0000002;
-pub const XCASE: u32 = 0o0000004;
-pub const ECHO: u32 = 0o0000010;
-pub const ECHOE: u32 = 0o0000020;
-pub const ECHOK: u32 = 0o0000040;
-pub const ECHONL: u32 = 0o0000100;
-pub const NOFLSH: u32 = 0o0000200;
-pub const TOSTOP: u32 = 0o0000400;
+pub(crate) const ISIG: u32 = 0o0000001;
+pub(crate) const ICANON: u32 = 0o0000002;
+pub(crate) const XCASE: u32 = 0o0000004;
+pub(crate) const ECHO: u32 = 0o0000010;
+pub(crate) const ECHOE: u32 = 0o0000020;
+pub(crate) const ECHOK: u32 = 0o0000040;
+pub(crate) const ECHONL: u32 = 0o0000100;
+pub(crate) const NOFLSH: u32 = 0o0000200;
+pub(crate) const TOSTOP: u32 = 0o0000400;
 /// Echo control characters as `^X`. A `c_lflag` bit, and on glibc the same
 /// value as the `c_iflag` bit [`IUCLC`] — the coincidence ERR-terminal-36
 /// turns into a permanent -1.
-pub const ECHOCTL: u32 = 0o0001000;
-pub const ECHOPRT: u32 = 0o0002000;
-pub const ECHOKE: u32 = 0o0004000;
-pub const FLUSHO: u32 = 0o0010000;
-pub const PENDIN: u32 = 0o0040000;
-pub const IEXTEN: u32 = 0o0100000;
-pub const EXTPROC: u32 = 0o0200000;
+pub(crate) const ECHOCTL: u32 = 0o0001000;
+pub(crate) const ECHOPRT: u32 = 0o0002000;
+pub(crate) const ECHOKE: u32 = 0o0004000;
+pub(crate) const FLUSHO: u32 = 0o0010000;
+pub(crate) const PENDIN: u32 = 0o0040000;
+pub(crate) const IEXTEN: u32 = 0o0100000;
+pub(crate) const EXTPROC: u32 = 0o0200000;
 
 // The termios `V*` subscripts this platform defines, as the C sees them after
 // `tty.h`'s aliasing. glibc has no `VSWTCH` (only `VSWTC`, which `tty.c`
 // never names), no `VDSWTCH`, `VERASE2`, `VDSUSP`, `VSTATUS`, `VPAGE`,
 // `VPGOFF`, `VKILL2` or `VBRK`, so those rows of every table in `tty.rs` are
 // simply absent — which is what `#ifdef`ing them out means.
-pub const VINTR: usize = 0;
-pub const VQUIT: usize = 1;
-pub const VERASE: usize = 2;
-pub const VKILL: usize = 3;
-pub const VEOF: usize = 4;
-pub const VTIME: usize = 5;
-pub const VMIN: usize = 6;
-pub const VSTART: usize = 8;
-pub const VSTOP: usize = 9;
-pub const VSUSP: usize = 10;
-pub const VEOL: usize = 11;
-pub const VREPRINT: usize = 12;
-pub const VDISCARD: usize = 13;
-pub const VWERASE: usize = 14;
-pub const VLNEXT: usize = 15;
-pub const VEOL2: usize = 16;
+pub(crate) const VINTR: usize = 0;
+pub(crate) const VQUIT: usize = 1;
+pub(crate) const VERASE: usize = 2;
+pub(crate) const VKILL: usize = 3;
+pub(crate) const VEOF: usize = 4;
+pub(crate) const VTIME: usize = 5;
+pub(crate) const VMIN: usize = 6;
+pub(crate) const VSTART: usize = 8;
+pub(crate) const VSTOP: usize = 9;
+pub(crate) const VSUSP: usize = 10;
+pub(crate) const VEOL: usize = 11;
+pub(crate) const VREPRINT: usize = 12;
+pub(crate) const VDISCARD: usize = 13;
+pub(crate) const VWERASE: usize = 14;
+pub(crate) const VLNEXT: usize = 15;
+pub(crate) const VEOL2: usize = 16;
 
 // The `C_*` control-character defaults, in `C_*` order. These come from
 // `<sys/ttydefaults.h>`, which glibc copied verbatim from BSD, so unlike the
@@ -153,31 +139,22 @@ pub const VEOL2: usize = 16;
 const fn ctrl(c: u8) -> u8 {
     c & 0o37
 }
-pub const CINTR: u8 = ctrl(b'c');
-pub const CQUIT: u8 = 0o34;
-pub const CERASE: u8 = 0o177;
-pub const CKILL: u8 = ctrl(b'u');
-pub const CEOF: u8 = ctrl(b'd');
-pub const CEOL: u8 = VDISABLE;
-pub const CEOL2: u8 = VDISABLE;
-pub const CSWTCH: u8 = VDISABLE;
-pub const CDSWTCH: u8 = VDISABLE;
-pub const CERASE2: u8 = VDISABLE;
-pub const CSTART: u8 = ctrl(b'q');
-pub const CSTOP: u8 = ctrl(b's');
-pub const CWERASE: u8 = ctrl(b'w');
-pub const CSUSP: u8 = ctrl(b'z');
-pub const CDSUSP: u8 = ctrl(b'y');
-pub const CREPRINT: u8 = ctrl(b'r');
-pub const CDISCARD: u8 = ctrl(b'o');
-pub const CLNEXT: u8 = ctrl(b'v');
-pub const CSTATUS: u8 = VDISABLE;
-pub const CPAGE: u8 = b' ';
-pub const CPGOFF: u8 = ctrl(b'm');
-pub const CKILL2: u8 = VDISABLE;
-pub const CBRK: u8 = VDISABLE;
-pub const CMIN: u8 = 1;
-pub const CTIME: u8 = 0;
+pub(crate) const CINTR: u8 = ctrl(b'c');
+pub(crate) const CQUIT: u8 = 0o34;
+pub(crate) const CERASE: u8 = 0o177;
+pub(crate) const CKILL: u8 = ctrl(b'u');
+pub(crate) const CEOF: u8 = ctrl(b'd');
+pub(crate) const CEOL: u8 = VDISABLE;
+pub(crate) const CEOL2: u8 = VDISABLE;
+pub(crate) const CSTART: u8 = ctrl(b'q');
+pub(crate) const CSTOP: u8 = ctrl(b's');
+pub(crate) const CWERASE: u8 = ctrl(b'w');
+pub(crate) const CSUSP: u8 = ctrl(b'z');
+pub(crate) const CREPRINT: u8 = ctrl(b'r');
+pub(crate) const CDISCARD: u8 = ctrl(b'o');
+pub(crate) const CLNEXT: u8 = ctrl(b'v');
+pub(crate) const CMIN: u8 = 1;
+pub(crate) const CTIME: u8 = 0;
 
 /// The kernel's `struct termios`, as libedit's four flag words and `c_cc`.
 ///
@@ -187,14 +164,14 @@ pub const CTIME: u8 = 0;
 /// of `c_cflag` and its `tcsetattr` sends the kernel a struct with no speed
 /// fields at all. Only `CBAUD` is load-bearing, which is exactly what this
 /// carries.
-#[derive(Clone, Copy)]
-pub struct Termios {
-    pub c_iflag: u32,
-    pub c_oflag: u32,
-    pub c_cflag: u32,
-    pub c_lflag: u32,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Termios {
+    pub(crate) c_iflag: u32,
+    pub(crate) c_oflag: u32,
+    pub(crate) c_cflag: u32,
+    pub(crate) c_lflag: u32,
     /// Indexed by the `V*` subscripts above, not by libedit's `C_*` ones.
-    pub c_cc: [u8; NCCS],
+    pub(crate) c_cc: [u8; NCCS],
 }
 
 impl Default for Termios {
@@ -211,7 +188,7 @@ impl Default for Termios {
 
 /// The Linux `speed_t` encoding carried by these attributes.
 #[must_use]
-pub const fn encoded_baud_rate(attributes: &Termios) -> u32 {
+pub(crate) const fn encoded_baud_rate(attributes: &Termios) -> u32 {
     attributes.c_cflag & CBAUD
 }
 
@@ -221,7 +198,7 @@ pub const fn encoded_baud_rate(attributes: &Termios) -> u32 {
 /// carries the encoding bits but not the separate arbitrary-speed fields of
 /// `termios2`, so no truthful semantic rate can be recovered for it.
 #[must_use]
-pub const fn baud_rate(attributes: &Termios) -> Option<u32> {
+pub(crate) const fn baud_rate(attributes: &Termios) -> Option<u32> {
     match encoded_baud_rate(attributes) {
         0o0000000 => Some(0),
         0o0000001 => Some(50),
@@ -286,17 +263,22 @@ const CC_INDICES: [(usize, SpecialCodeIndex); 17] = [
     (VEOL2, SpecialCodeIndex::VEOL2),
 ];
 
-/// `isatty(fd)`.
-#[must_use]
-pub fn isatty(fd: i32) -> bool {
-    crate::borrow(fd).is_some_and(rustix::termios::isatty)
+/// Whether a borrowed descriptor names a terminal, preserving failures other
+/// than the ordinary `NOTTY` answer.
+pub(crate) fn is_terminal(fd: BorrowedFd<'_>) -> io::Result<bool> {
+    loop {
+        match rustix::termios::tcgetattr(fd) {
+            Ok(_) => return Ok(true),
+            Err(rustix::io::Errno::NOTTY) => return Ok(false),
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
 }
 
-/// `tcgetattr(fd, t)`, retried on `EINTR` as `tty_getty` does. `None` is the
-/// C's -1.
-#[must_use]
-pub fn tcgetattr(fd: i32) -> Option<Termios> {
-    let raw = tcgetattr_raw(fd)?;
+/// Read terminal attributes, retrying interrupted calls.
+pub(crate) fn read(fd: BorrowedFd<'_>) -> io::Result<Termios> {
+    let raw = read_raw(fd)?;
     let mut t = Termios {
         c_iflag: raw.input_modes.bits(),
         c_oflag: raw.output_modes.bits(),
@@ -307,14 +289,10 @@ pub fn tcgetattr(fd: i32) -> Option<Termios> {
     for (v, index) in CC_INDICES {
         t.c_cc[v] = raw.special_codes[index];
     }
-    Some(t)
+    Ok(t)
 }
 
-/// `tcsetattr(fd, action, t)`, retried on `EINTR` as `tty_setty` does.
-/// `false` is the C's -1.
-///
-/// `action` is [`TCSANOW`], [`TCSADRAIN`] or [`TCSAFLUSH`]; anything else
-/// fails, where the C would pass it to the kernel and be given `EINVAL`.
+/// Apply terminal attributes, retrying interrupted calls.
 ///
 /// The current settings are read first and the four flag words and `c_cc`
 /// written over them. That is not belt-and-braces: rustix uses `TCSETS2`,
@@ -323,20 +301,8 @@ pub fn tcgetattr(fd: i32) -> Option<Termios> {
 /// for glibc's `TCSETS` (`tmp_termios = tty->termios` before the copy in),
 /// so an arbitrary `BOTHER` line speed survives a call that does not change
 /// `CBAUD` — where a zeroed seed would hang the line up.
-#[must_use]
-pub fn tcsetattr(fd: i32, action: i32, t: &Termios) -> bool {
-    let actions = match action {
-        TCSANOW => OptionalActions::Now,
-        TCSADRAIN => OptionalActions::Drain,
-        TCSAFLUSH => OptionalActions::Flush,
-        _ => return false,
-    };
-    let Some(borrowed) = crate::borrow(fd) else {
-        return false;
-    };
-    let Some(mut raw) = tcgetattr_raw(fd) else {
-        return false;
-    };
+pub(crate) fn apply(fd: BorrowedFd<'_>, action: OptionalActions, t: &Termios) -> io::Result<()> {
+    let mut raw = read_raw(fd)?;
     raw.input_modes = rustix::termios::InputModes::from_bits_retain(t.c_iflag);
     raw.output_modes = rustix::termios::OutputModes::from_bits_retain(t.c_oflag);
     raw.control_modes = rustix::termios::ControlModes::from_bits_retain(t.c_cflag);
@@ -345,10 +311,10 @@ pub fn tcsetattr(fd: i32, action: i32, t: &Termios) -> bool {
         raw.special_codes[index] = t.c_cc[v];
     }
     loop {
-        match rustix::termios::tcsetattr(borrowed, actions, &raw) {
-            Ok(()) => return true,
+        match rustix::termios::tcsetattr(fd, action, &raw) {
+            Ok(()) => return Ok(()),
             Err(rustix::io::Errno::INTR) => continue,
-            Err(_) => return false,
+            Err(error) => return Err(error.into()),
         }
     }
 }
@@ -360,22 +326,19 @@ pub fn tcsetattr(fd: i32, action: i32, t: &Termios) -> bool {
 /// does not define it — `plan/decisions/posix-only-scope.md` makes Linux the
 /// whole target — so that block does not compile there and has no
 /// counterpart here.
-#[must_use]
-pub fn window_size(fd: i32) -> Option<(u16, u16)> {
-    let fd = crate::borrow(fd)?;
-    let ws = rustix::termios::tcgetwinsize(fd).ok()?;
-    Some((ws.ws_row, ws.ws_col))
+pub(crate) fn screen_size(fd: BorrowedFd<'_>) -> io::Result<(u16, u16)> {
+    let ws = rustix::termios::tcgetwinsize(fd)?;
+    Ok((ws.ws_row, ws.ws_col))
 }
 
 /// The `EINTR` retry loop `sem:tty.tty-getty-fn` specifies, around rustix's
 /// typed `tcgetattr`.
-fn tcgetattr_raw(fd: i32) -> Option<rustix::termios::Termios> {
-    let fd = crate::borrow(fd)?;
+fn read_raw(fd: BorrowedFd<'_>) -> io::Result<rustix::termios::Termios> {
     loop {
         match rustix::termios::tcgetattr(fd) {
-            Ok(t) => return Some(t),
+            Ok(t) => return Ok(t),
             Err(rustix::io::Errno::INTR) => continue,
-            Err(_) => return None,
+            Err(error) => return Err(error.into()),
         }
     }
 }
@@ -383,7 +346,7 @@ fn tcgetattr_raw(fd: i32) -> Option<rustix::termios::Termios> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::os::fd::{AsRawFd, OwnedFd};
+    use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 
     use super::*;
     use crate::cheader;
@@ -445,8 +408,8 @@ mod tests {
             }
         }
 
-        fn fd(&self) -> i32 {
-            self.terminal.as_raw_fd()
+        fn fd(&self) -> BorrowedFd<'_> {
+            self.terminal.as_fd()
         }
 
         /// The kernel's `struct termios`, reached without going through
@@ -520,7 +483,7 @@ mod tests {
         }
         pty.set_raw(&raw);
 
-        let got = tcgetattr(pty.fd()).expect("tcgetattr");
+        let got = read(pty.fd()).expect("read terminal attributes");
         for (i, (name, _)) in V_TOKENS.iter().enumerate() {
             let subscript = usize::try_from(h[*name]).expect("a subscript");
             assert_eq!(
@@ -544,12 +507,12 @@ mod tests {
         let h = v_defines();
         let pty = Pty::open();
 
-        let mut t = tcgetattr(pty.fd()).expect("tcgetattr");
+        let mut t = read(pty.fd()).expect("read terminal attributes");
         for (i, (name, _)) in V_TOKENS.iter().enumerate() {
             let subscript = usize::try_from(h[*name]).expect("a subscript");
             t.c_cc[subscript] = marker(i);
         }
-        assert!(tcsetattr(pty.fd(), TCSANOW, &t));
+        apply(pty.fd(), OptionalActions::Now, &t).expect("apply terminal attributes");
 
         let raw = pty.raw();
         for (i, (name, token)) in V_TOKENS.iter().enumerate() {
@@ -592,15 +555,11 @@ mod tests {
             ("NLDLY", NLDLY),
             ("CRDLY", CRDLY),
             ("TABDLY", TABDLY),
-            ("TAB3", TAB3),
             ("XTABS", XTABS),
             ("BSDLY", BSDLY),
             ("VTDLY", VTDLY),
             ("FFDLY", FFDLY),
             ("CBAUD", CBAUD),
-            ("CBAUDEX", CBAUDEX),
-            ("CSIZE", CSIZE),
-            ("CS8", CS8),
             ("CSTOPB", CSTOPB),
             ("CREAD", CREAD),
             ("PARENB", PARENB),
@@ -630,9 +589,6 @@ mod tests {
         }
 
         assert_eq!(h["NCCS"], NCCS as i64);
-        assert_eq!(h["TCSANOW"], i64::from(TCSANOW));
-        assert_eq!(h["TCSADRAIN"], i64::from(TCSADRAIN));
-        assert_eq!(h["TCSAFLUSH"], i64::from(TCSAFLUSH));
         assert_eq!(h["_POSIX_VDISABLE"], i64::from(VDISABLE));
     }
 
@@ -648,9 +604,6 @@ mod tests {
         assert_eq!(h["IUCLC"], h["ECHOCTL"]);
         // `ttymodes[]` carries both names, so `+xtabs` and `+tabdly` interact.
         assert_eq!(h["TAB3"], h["XTABS"]);
-        // `CS8` is the whole of `CSIZE`, which is why setting the character
-        // size to 8 bits is a plain assignment rather than a masked one.
-        assert_eq!(h["CS8"], h["CSIZE"]);
         // And `TAB3` is not zero, so the `EL_CAN_TAB` branch of `tty_rawmode`
         // is live here — the degenerate case `sem:tty.tty-rawmode-fn` warns
         // about, where `(x & 0) == 0` is always true, does not arise.
@@ -672,22 +625,13 @@ mod tests {
             ("CEOF", CEOF),
             ("CEOL", CEOL),
             ("CEOL2", CEOL2),
-            ("CSWTCH", CSWTCH),
-            ("CDSWTCH", CDSWTCH),
-            ("CERASE2", CERASE2),
             ("CSTART", CSTART),
             ("CSTOP", CSTOP),
             ("CWERASE", CWERASE),
             ("CSUSP", CSUSP),
-            ("CDSUSP", CDSUSP),
             ("CREPRINT", CREPRINT),
             ("CDISCARD", CDISCARD),
             ("CLNEXT", CLNEXT),
-            ("CSTATUS", CSTATUS),
-            ("CPAGE", CPAGE),
-            ("CPGOFF", CPGOFF),
-            ("CKILL2", CKILL2),
-            ("CBRK", CBRK),
             ("CMIN", CMIN),
             ("CTIME", CTIME),
         ] {
@@ -727,15 +671,15 @@ mod tests {
 
         // A change to something else entirely, of the shape `tty_rawmode`
         // makes: one bit of `c_lflag`, nothing about the line.
-        let mut t = tcgetattr(pty.fd()).expect("tcgetattr");
+        let mut t = read(pty.fd()).expect("read terminal attributes");
         t.c_lflag &= !ECHO;
-        assert!(tcsetattr(pty.fd(), TCSANOW, &t));
+        apply(pty.fd(), OptionalActions::Now, &t).expect("apply terminal attributes");
 
         let after = pty.raw();
         assert_eq!(after.output_speed(), ODD_SPEED);
         assert_eq!(after.input_speed(), ODD_SPEED);
         assert_eq!(
-            tcgetattr(pty.fd()).expect("tcgetattr").c_lflag & ECHO,
+            read(pty.fd()).expect("read terminal attributes").c_lflag & ECHO,
             0,
             "the change we did ask for did not happen"
         );
@@ -757,7 +701,7 @@ mod tests {
             ws_ypixel: 0,
         };
         rustix::termios::tcsetwinsize(&pty.terminal, want).expect("TIOCSWINSZ");
-        assert_eq!(window_size(pty.fd()), Some((37, 113)));
+        assert_eq!(screen_size(pty.fd()).expect("read screen size"), (37, 113));
     }
 
     /// `isatty` answers for what the descriptor is, not for whether it is a
@@ -765,40 +709,21 @@ mod tests {
     #[test]
     fn isatty_distinguishes_a_terminal_from_another_character_device() {
         let pty = Pty::open();
-        assert!(isatty(pty.fd()));
+        assert!(is_terminal(pty.fd()).expect("terminal query"));
 
         let null = std::fs::File::open("/dev/null").expect("/dev/null");
-        assert!(!isatty(null.as_raw_fd()));
+        assert!(!is_terminal(null.as_fd()).expect("terminal query"));
     }
 
-    /// The port hands out -1 for a stream with no descriptor
-    /// (`sem:el.el-init-fn`, ERR-core-api-06), so this is a live path rather
-    /// than a defensive one, and every one of these must answer the C's
-    /// failure rather than reach a syscall with a bad argument.
-    #[test]
-    fn a_negative_descriptor_fails_the_way_the_c_does() {
-        assert!(!isatty(-1));
-        assert!(tcgetattr(-1).is_none());
-        assert!(!tcsetattr(-1, TCSADRAIN, &Termios::default()));
-        assert!(window_size(-1).is_none());
-    }
-
-    /// `tcsetattr` maps libedit's `action` onto rustix's enum by value, and
-    /// anything outside the three is the C's `EINVAL`.
-    #[test]
-    fn an_unknown_tcsetattr_action_is_rejected() {
-        assert!(!tcsetattr(0, 99, &Termios::default()));
-    }
-
-    /// A `tcsetattr` action the C would accept still fails on a descriptor
-    /// that is not a terminal, rather than being reported as applied.
+    /// A borrowed non-terminal descriptor cannot be read or configured as a
+    /// terminal.
     #[test]
     fn a_non_terminal_descriptor_cannot_be_configured() {
         let null = std::fs::File::open("/dev/null").expect("/dev/null");
-        let fd = null.as_raw_fd();
-        assert!(tcgetattr(fd).is_none());
-        assert!(!tcsetattr(fd, TCSAFLUSH, &Termios::default()));
-        assert!(window_size(fd).is_none());
+        let fd = null.as_fd();
+        assert!(read(fd).is_err());
+        assert!(apply(fd, OptionalActions::Flush, &Termios::default()).is_err());
+        assert!(screen_size(fd).is_err());
     }
 
     /// A distinct, printable, non-zero byte per table position, so that a

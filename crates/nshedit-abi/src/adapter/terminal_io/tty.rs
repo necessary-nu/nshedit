@@ -6,102 +6,101 @@ use super::*;
 struct TtyFlag {
     name: &'static str,
     group: usize,
-    bit: u32,
+    flag: TerminalFlag,
 }
 
 impl TtyFlag {
-    const fn new(name: &'static str, group: usize, bit: u32) -> Self {
-        Self { name, group, bit }
+    const fn new(name: &'static str, group: usize, flag: TerminalFlag) -> Self {
+        Self { name, group, flag }
     }
 }
 
 const TTY_FLAGS: &[TtyFlag] = &[
-    TtyFlag::new("ignbrk", 0, termios::IGNBRK),
-    TtyFlag::new("brkint", 0, termios::BRKINT),
-    TtyFlag::new("ignpar", 0, termios::IGNPAR),
-    TtyFlag::new("parmrk", 0, termios::PARMRK),
-    TtyFlag::new("inpck", 0, termios::INPCK),
-    TtyFlag::new("istrip", 0, termios::ISTRIP),
-    TtyFlag::new("inlcr", 0, termios::INLCR),
-    TtyFlag::new("igncr", 0, termios::IGNCR),
-    TtyFlag::new("icrnl", 0, termios::ICRNL),
-    TtyFlag::new("iuclc", 0, termios::IUCLC),
-    TtyFlag::new("ixon", 0, termios::IXON),
-    TtyFlag::new("ixany", 0, termios::IXANY),
-    TtyFlag::new("ixoff", 0, termios::IXOFF),
-    TtyFlag::new("imaxbel", 0, termios::IMAXBEL),
-    TtyFlag::new("opost", 1, termios::OPOST),
-    TtyFlag::new("olcuc", 1, termios::OLCUC),
-    TtyFlag::new("onlcr", 1, termios::ONLCR),
-    TtyFlag::new("ocrnl", 1, termios::OCRNL),
-    TtyFlag::new("onocr", 1, termios::ONOCR),
-    TtyFlag::new("onlret", 1, termios::ONLRET),
-    TtyFlag::new("ofill", 1, termios::OFILL),
-    TtyFlag::new("ofdel", 1, termios::OFDEL),
-    TtyFlag::new("nldly", 1, termios::NLDLY),
-    TtyFlag::new("crdly", 1, termios::CRDLY),
-    TtyFlag::new("tabdly", 1, termios::TABDLY),
-    TtyFlag::new("xtabs", 1, termios::XTABS),
-    TtyFlag::new("bsdly", 1, termios::BSDLY),
-    TtyFlag::new("vtdly", 1, termios::VTDLY),
-    TtyFlag::new("ffdly", 1, termios::FFDLY),
-    TtyFlag::new("cbaud", 2, termios::CBAUD),
-    TtyFlag::new("cstopb", 2, termios::CSTOPB),
-    TtyFlag::new("cread", 2, termios::CREAD),
-    TtyFlag::new("parenb", 2, termios::PARENB),
-    TtyFlag::new("parodd", 2, termios::PARODD),
-    TtyFlag::new("hupcl", 2, termios::HUPCL),
-    TtyFlag::new("clocal", 2, termios::CLOCAL),
-    TtyFlag::new("cibaud", 2, termios::CIBAUD),
-    TtyFlag::new("crtscts", 2, termios::CRTSCTS),
-    TtyFlag::new("isig", 3, termios::ISIG),
-    TtyFlag::new("icanon", 3, termios::ICANON),
-    TtyFlag::new("xcase", 3, termios::XCASE),
-    TtyFlag::new("echo", 3, termios::ECHO),
-    TtyFlag::new("echoe", 3, termios::ECHOE),
-    TtyFlag::new("echok", 3, termios::ECHOK),
-    TtyFlag::new("echonl", 3, termios::ECHONL),
-    TtyFlag::new("noflsh", 3, termios::NOFLSH),
-    TtyFlag::new("tostop", 3, termios::TOSTOP),
-    TtyFlag::new("echoctl", 3, termios::ECHOCTL),
-    TtyFlag::new("echoprt", 3, termios::ECHOPRT),
-    TtyFlag::new("echoke", 3, termios::ECHOKE),
-    TtyFlag::new("flusho", 3, termios::FLUSHO),
-    TtyFlag::new("pendin", 3, termios::PENDIN),
-    TtyFlag::new("iexten", 3, termios::IEXTEN),
-    TtyFlag::new("extproc", 3, termios::EXTPROC),
+    TtyFlag::new("ignbrk", 0, TerminalFlag::IgnoreBreak),
+    TtyFlag::new("brkint", 0, TerminalFlag::SignalBreak),
+    TtyFlag::new("ignpar", 0, TerminalFlag::IgnoreParityErrors),
+    TtyFlag::new("parmrk", 0, TerminalFlag::MarkParityErrors),
+    TtyFlag::new("inpck", 0, TerminalFlag::CheckInputParity),
+    TtyFlag::new("istrip", 0, TerminalFlag::StripInputHighBit),
+    TtyFlag::new("inlcr", 0, TerminalFlag::MapNewlineToCarriageReturn),
+    TtyFlag::new("igncr", 0, TerminalFlag::IgnoreCarriageReturn),
+    TtyFlag::new("icrnl", 0, TerminalFlag::MapCarriageReturnToNewline),
+    TtyFlag::new("iuclc", 0, TerminalFlag::MapUppercaseInputToLowercase),
+    TtyFlag::new("ixon", 0, TerminalFlag::EnableOutputFlowControl),
+    TtyFlag::new("ixany", 0, TerminalFlag::AllowAnyCharacterToRestartOutput),
+    TtyFlag::new("ixoff", 0, TerminalFlag::EnableInputFlowControl),
+    TtyFlag::new("imaxbel", 0, TerminalFlag::RingBellOnInputOverflow),
+    TtyFlag::new("opost", 1, TerminalFlag::PostProcessOutput),
+    TtyFlag::new("olcuc", 1, TerminalFlag::MapLowercaseOutputToUppercase),
+    TtyFlag::new("onlcr", 1, TerminalFlag::MapNewlineToCarriageReturnNewline),
+    TtyFlag::new("ocrnl", 1, TerminalFlag::MapCarriageReturnToNewlineOnOutput),
+    TtyFlag::new("onocr", 1, TerminalFlag::DiscardCarriageReturnAtColumnZero),
+    TtyFlag::new("onlret", 1, TerminalFlag::NewlinePerformsCarriageReturn),
+    TtyFlag::new("ofill", 1, TerminalFlag::UseFillCharacters),
+    TtyFlag::new("ofdel", 1, TerminalFlag::UseDeleteForFill),
+    TtyFlag::new("nldly", 1, TerminalFlag::NewlineDelay),
+    TtyFlag::new("crdly", 1, TerminalFlag::CarriageReturnDelay),
+    TtyFlag::new("tabdly", 1, TerminalFlag::TabDelay),
+    TtyFlag::new("xtabs", 1, TerminalFlag::ExpandTabs),
+    TtyFlag::new("bsdly", 1, TerminalFlag::BackspaceDelay),
+    TtyFlag::new("vtdly", 1, TerminalFlag::VerticalTabDelay),
+    TtyFlag::new("ffdly", 1, TerminalFlag::FormFeedDelay),
+    TtyFlag::new("cbaud", 2, TerminalFlag::OutputSpeedBits),
+    TtyFlag::new("cstopb", 2, TerminalFlag::TwoStopBits),
+    TtyFlag::new("cread", 2, TerminalFlag::EnableReceiver),
+    TtyFlag::new("parenb", 2, TerminalFlag::EnableParity),
+    TtyFlag::new("parodd", 2, TerminalFlag::OddParity),
+    TtyFlag::new("hupcl", 2, TerminalFlag::HangUpOnClose),
+    TtyFlag::new("clocal", 2, TerminalFlag::IgnoreModemControl),
+    TtyFlag::new("cibaud", 2, TerminalFlag::InputSpeedBits),
+    TtyFlag::new("crtscts", 2, TerminalFlag::HardwareFlowControl),
+    TtyFlag::new("isig", 3, TerminalFlag::GenerateSignals),
+    TtyFlag::new("icanon", 3, TerminalFlag::CanonicalInput),
+    TtyFlag::new("xcase", 3, TerminalFlag::CanonicalUppercase),
+    TtyFlag::new("echo", 3, TerminalFlag::EchoInput),
+    TtyFlag::new("echoe", 3, TerminalFlag::EchoErase),
+    TtyFlag::new("echok", 3, TerminalFlag::EchoKill),
+    TtyFlag::new("echonl", 3, TerminalFlag::EchoNewline),
+    TtyFlag::new("noflsh", 3, TerminalFlag::DisableFlush),
+    TtyFlag::new("tostop", 3, TerminalFlag::StopBackgroundOutput),
+    TtyFlag::new("echoctl", 3, TerminalFlag::EchoControlCharacters),
+    TtyFlag::new("echoprt", 3, TerminalFlag::EchoErasedCharacters),
+    TtyFlag::new("echoke", 3, TerminalFlag::VisuallyEraseKilledLine),
+    TtyFlag::new("flusho", 3, TerminalFlag::OutputBeingFlushed),
+    TtyFlag::new("pendin", 3, TerminalFlag::PendingInput),
+    TtyFlag::new("iexten", 3, TerminalFlag::ExtendedProcessing),
+    TtyFlag::new("extproc", 3, TerminalFlag::ExternalProcessing),
 ];
 
 #[derive(Clone, Copy)]
 struct TtyCharacter {
     name: &'static str,
-    mask: u32,
-    index: usize,
+    character: ControlCharacter,
 }
 
 impl TtyCharacter {
-    const fn new(name: &'static str, mask: u32, index: usize) -> Self {
-        Self { name, mask, index }
+    const fn new(name: &'static str, character: ControlCharacter) -> Self {
+        Self { name, character }
     }
 }
 
 const TTY_CHARACTERS: &[TtyCharacter] = &[
-    TtyCharacter::new("intr", 1 << 0, termios::VINTR),
-    TtyCharacter::new("quit", 1 << 1, termios::VQUIT),
-    TtyCharacter::new("erase", 1 << 2, termios::VERASE),
-    TtyCharacter::new("kill", 1 << 3, termios::VKILL),
-    TtyCharacter::new("eof", 1 << 4, termios::VEOF),
-    TtyCharacter::new("eol", 1 << 5, termios::VEOL),
-    TtyCharacter::new("eol2", 1 << 6, termios::VEOL2),
-    TtyCharacter::new("start", 1 << 10, termios::VSTART),
-    TtyCharacter::new("stop", 1 << 11, termios::VSTOP),
-    TtyCharacter::new("werase", 1 << 12, termios::VWERASE),
-    TtyCharacter::new("susp", 1 << 13, termios::VSUSP),
-    TtyCharacter::new("reprint", 1 << 15, termios::VREPRINT),
-    TtyCharacter::new("discard", 1 << 16, termios::VDISCARD),
-    TtyCharacter::new("lnext", 1 << 17, termios::VLNEXT),
-    TtyCharacter::new("min", 1 << 23, termios::VMIN),
-    TtyCharacter::new("time", 1 << 24, termios::VTIME),
+    TtyCharacter::new("intr", ControlCharacter::Interrupt),
+    TtyCharacter::new("quit", ControlCharacter::Quit),
+    TtyCharacter::new("erase", ControlCharacter::Erase),
+    TtyCharacter::new("kill", ControlCharacter::Kill),
+    TtyCharacter::new("eof", ControlCharacter::EndOfFile),
+    TtyCharacter::new("eol", ControlCharacter::EndOfLine),
+    TtyCharacter::new("eol2", ControlCharacter::AlternateEndOfLine),
+    TtyCharacter::new("start", ControlCharacter::Start),
+    TtyCharacter::new("stop", ControlCharacter::Stop),
+    TtyCharacter::new("werase", ControlCharacter::WordErase),
+    TtyCharacter::new("susp", ControlCharacter::Suspend),
+    TtyCharacter::new("reprint", ControlCharacter::Reprint),
+    TtyCharacter::new("discard", ControlCharacter::Discard),
+    TtyCharacter::new("lnext", ControlCharacter::LiteralNext),
+    TtyCharacter::new("min", ControlCharacter::MinimumBytes),
+    TtyCharacter::new("time", ControlCharacter::Timeout),
 ];
 
 pub(super) fn tty_mode_index(mode: TerminalMode) -> usize {
@@ -112,7 +111,7 @@ pub(super) fn tty_mode_index(mode: TerminalMode) -> usize {
     }
 }
 
-fn tty_attributes(state: &TerminalState, mode: usize) -> Option<&Termios> {
+fn tty_attributes(state: &TerminalState, mode: usize) -> Option<&TerminalAttributes> {
     match mode {
         0 => state.original.as_ref(),
         1 => state.editing.as_ref(),
@@ -120,7 +119,7 @@ fn tty_attributes(state: &TerminalState, mode: usize) -> Option<&Termios> {
     }
 }
 
-fn tty_attributes_mut(state: &mut TerminalState, mode: usize) -> Option<&mut Termios> {
+fn tty_attributes_mut(state: &mut TerminalState, mode: usize) -> Option<&mut TerminalAttributes> {
     match mode {
         0 => state.original.as_mut(),
         1 => state.editing.as_mut(),
@@ -128,22 +127,16 @@ fn tty_attributes_mut(state: &mut TerminalState, mode: usize) -> Option<&mut Ter
     }
 }
 
-fn apply_tty_overrides(attributes: &mut Termios, overrides: TtyFlagOverrides) {
-    for (value, group) in [
-        (&mut attributes.c_iflag, 0),
-        (&mut attributes.c_oflag, 1),
-        (&mut attributes.c_cflag, 2),
-        (&mut attributes.c_lflag, 3),
-    ] {
-        *value &= !overrides.clear[group];
-        *value |= overrides.set[group];
+fn apply_tty_overrides(attributes: &mut TerminalAttributes, overrides: &TtyFlagOverrides) {
+    for (&flag, &state) in &overrides.flags {
+        attributes.set_flag(flag, state == TtyOverride::Enable);
     }
 }
 
 pub(super) fn parse_tty_character(value: &str) -> u8 {
     let bytes = value.as_bytes();
     let Some(&first) = bytes.first() else {
-        return termios::VDISABLE;
+        return ControlCharacter::EndOfLine.default_value();
     };
     if bytes.len() == 1 {
         return u8::MAX;
@@ -270,7 +263,7 @@ impl EditLine {
 
         if index == words.len() {
             let state = self.boundary.terminal.borrow();
-            let overrides = state.overrides[mode];
+            let overrides = &state.overrides[mode];
             let columns = self.boundary.terminal_capabilities.columns;
             let mut output = Vec::new();
             for (group, header) in ["iflag:", "oflag:", "cflag:", "lflag:"]
@@ -281,24 +274,20 @@ impl EditLine {
                     .iter()
                     .filter(move |flag| flag.group == group)
                     .filter_map(|flag| {
-                        let sign = if overrides.clear[group] & flag.bit != 0 {
-                            Some('-')
-                        } else if overrides.set[group] & flag.bit != 0 {
-                            Some('+')
-                        } else {
-                            None
+                        let sign = match overrides.flags.get(&flag.flag) {
+                            Some(TtyOverride::Disable) => Some('-'),
+                            Some(TtyOverride::Enable) => Some('+'),
+                            None => None,
                         };
                         (sign.is_some() || show_all).then_some((sign, flag.name))
                     });
                 append_tty_listing_group(&mut output, header, entries, columns, group == 0);
             }
             let characters = TTY_CHARACTERS.iter().filter_map(|character| {
-                let sign = if overrides.char_clear & character.mask != 0 {
-                    Some('-')
-                } else if overrides.char_set & character.mask != 0 {
-                    Some('+')
-                } else {
-                    None
+                let sign = match overrides.characters.get(&character.character) {
+                    Some(TtyOverride::Disable) => Some('-'),
+                    Some(TtyOverride::Enable) => Some('+'),
+                    None => None,
                 };
                 (sign.is_some() || show_all).then_some((sign, character.name))
             });
@@ -326,7 +315,7 @@ impl EditLine {
                 let byte = parse_tty_character(value);
                 let mut state = self.boundary.terminal.borrow_mut();
                 if let Some(attributes) = tty_attributes_mut(&mut state, mode) {
-                    attributes.c_cc[character.index] = byte;
+                    attributes.set_control_character(character.character, byte);
                 }
                 continue;
             }
@@ -335,16 +324,13 @@ impl EditLine {
                 let overrides = &mut self.boundary.terminal.borrow_mut().overrides[mode];
                 match sign {
                     Some(true) => {
-                        overrides.set[flag.group] |= flag.bit;
-                        overrides.clear[flag.group] &= !flag.bit;
+                        overrides.flags.insert(flag.flag, TtyOverride::Enable);
                     }
                     Some(false) => {
-                        overrides.set[flag.group] &= !flag.bit;
-                        overrides.clear[flag.group] |= flag.bit;
+                        overrides.flags.insert(flag.flag, TtyOverride::Disable);
                     }
                     None => {
-                        overrides.set[flag.group] &= !flag.bit;
-                        overrides.clear[flag.group] &= !flag.bit;
+                        overrides.flags.remove(&flag.flag);
                     }
                 }
                 continue;
@@ -356,16 +342,17 @@ impl EditLine {
                 let overrides = &mut self.boundary.terminal.borrow_mut().overrides[mode];
                 match sign {
                     Some(true) => {
-                        overrides.char_set |= character.mask;
-                        overrides.char_clear &= !character.mask;
+                        overrides
+                            .characters
+                            .insert(character.character, TtyOverride::Enable);
                     }
                     Some(false) => {
-                        overrides.char_set &= !character.mask;
-                        overrides.char_clear |= character.mask;
+                        overrides
+                            .characters
+                            .insert(character.character, TtyOverride::Disable);
                     }
                     None => {
-                        overrides.char_set &= !character.mask;
-                        overrides.char_clear &= !character.mask;
+                        overrides.characters.remove(&character.character);
                     }
                 }
                 continue;
@@ -375,9 +362,9 @@ impl EditLine {
         }
 
         let mut state = self.boundary.terminal.borrow_mut();
-        let overrides = state.overrides[mode];
+        let overrides = state.overrides[mode].clone();
         if let Some(attributes) = tty_attributes_mut(&mut state, mode) {
-            apply_tty_overrides(attributes, overrides);
+            apply_tty_overrides(attributes, &overrides);
         }
         if tty_mode_index(state.active_mode) != mode {
             return 0;
@@ -386,11 +373,9 @@ impl EditLine {
         let Some(attributes) = tty_attributes(&state, mode) else {
             return -1;
         };
-        if termios::tcsetattr(descriptor, termios::TCSADRAIN, attributes) {
-            0
-        } else {
-            -1
-        }
+        -c_int::from(
+            apply_terminal_attributes(descriptor, ApplyWhen::AfterOutput, attributes).is_err(),
+        )
     }
 
     fn invalid_tty_argument(&self, command: &str, argument: &str) {

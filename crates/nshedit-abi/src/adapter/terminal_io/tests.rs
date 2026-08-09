@@ -26,6 +26,179 @@ fn terminal_command(editor: &mut EditLine, words: &[&str]) -> c_int {
     editor.terminal_command(&arguments)
 }
 
+const TTY_FLAG_CASES: &[(&str, TerminalFlag)] = &[
+    ("ignbrk", TerminalFlag::IgnoreBreak),
+    ("brkint", TerminalFlag::SignalBreak),
+    ("ignpar", TerminalFlag::IgnoreParityErrors),
+    ("parmrk", TerminalFlag::MarkParityErrors),
+    ("inpck", TerminalFlag::CheckInputParity),
+    ("istrip", TerminalFlag::StripInputHighBit),
+    ("inlcr", TerminalFlag::MapNewlineToCarriageReturn),
+    ("igncr", TerminalFlag::IgnoreCarriageReturn),
+    ("icrnl", TerminalFlag::MapCarriageReturnToNewline),
+    ("iuclc", TerminalFlag::MapUppercaseInputToLowercase),
+    ("ixon", TerminalFlag::EnableOutputFlowControl),
+    ("ixany", TerminalFlag::AllowAnyCharacterToRestartOutput),
+    ("ixoff", TerminalFlag::EnableInputFlowControl),
+    ("imaxbel", TerminalFlag::RingBellOnInputOverflow),
+    ("opost", TerminalFlag::PostProcessOutput),
+    ("olcuc", TerminalFlag::MapLowercaseOutputToUppercase),
+    ("onlcr", TerminalFlag::MapNewlineToCarriageReturnNewline),
+    ("ocrnl", TerminalFlag::MapCarriageReturnToNewlineOnOutput),
+    ("onocr", TerminalFlag::DiscardCarriageReturnAtColumnZero),
+    ("onlret", TerminalFlag::NewlinePerformsCarriageReturn),
+    ("ofill", TerminalFlag::UseFillCharacters),
+    ("ofdel", TerminalFlag::UseDeleteForFill),
+    ("nldly", TerminalFlag::NewlineDelay),
+    ("crdly", TerminalFlag::CarriageReturnDelay),
+    ("tabdly", TerminalFlag::TabDelay),
+    ("xtabs", TerminalFlag::ExpandTabs),
+    ("bsdly", TerminalFlag::BackspaceDelay),
+    ("vtdly", TerminalFlag::VerticalTabDelay),
+    ("ffdly", TerminalFlag::FormFeedDelay),
+    ("cbaud", TerminalFlag::OutputSpeedBits),
+    ("cstopb", TerminalFlag::TwoStopBits),
+    ("cread", TerminalFlag::EnableReceiver),
+    ("parenb", TerminalFlag::EnableParity),
+    ("parodd", TerminalFlag::OddParity),
+    ("hupcl", TerminalFlag::HangUpOnClose),
+    ("clocal", TerminalFlag::IgnoreModemControl),
+    ("cibaud", TerminalFlag::InputSpeedBits),
+    ("crtscts", TerminalFlag::HardwareFlowControl),
+    ("isig", TerminalFlag::GenerateSignals),
+    ("icanon", TerminalFlag::CanonicalInput),
+    ("xcase", TerminalFlag::CanonicalUppercase),
+    ("echo", TerminalFlag::EchoInput),
+    ("echoe", TerminalFlag::EchoErase),
+    ("echok", TerminalFlag::EchoKill),
+    ("echonl", TerminalFlag::EchoNewline),
+    ("noflsh", TerminalFlag::DisableFlush),
+    ("tostop", TerminalFlag::StopBackgroundOutput),
+    ("echoctl", TerminalFlag::EchoControlCharacters),
+    ("echoprt", TerminalFlag::EchoErasedCharacters),
+    ("echoke", TerminalFlag::VisuallyEraseKilledLine),
+    ("flusho", TerminalFlag::OutputBeingFlushed),
+    ("pendin", TerminalFlag::PendingInput),
+    ("iexten", TerminalFlag::ExtendedProcessing),
+    ("extproc", TerminalFlag::ExternalProcessing),
+];
+
+const TTY_CHARACTER_CASES: &[(&str, ControlCharacter)] = &[
+    ("intr", ControlCharacter::Interrupt),
+    ("quit", ControlCharacter::Quit),
+    ("erase", ControlCharacter::Erase),
+    ("kill", ControlCharacter::Kill),
+    ("eof", ControlCharacter::EndOfFile),
+    ("eol", ControlCharacter::EndOfLine),
+    ("eol2", ControlCharacter::AlternateEndOfLine),
+    ("start", ControlCharacter::Start),
+    ("stop", ControlCharacter::Stop),
+    ("werase", ControlCharacter::WordErase),
+    ("susp", ControlCharacter::Suspend),
+    ("reprint", ControlCharacter::Reprint),
+    ("discard", ControlCharacter::Discard),
+    ("lnext", ControlCharacter::LiteralNext),
+    ("min", ControlCharacter::MinimumBytes),
+    ("time", ControlCharacter::Timeout),
+];
+
+#[test]
+fn tty_flag_projection() {
+    for &(name, flag) in TTY_FLAG_CASES {
+        let mut editor = editor();
+        let enabled = format!("+{name}");
+        let disabled = format!("-{name}");
+
+        assert_eq!(terminal_command(&mut editor, &["setty", "-d", &enabled]), 0);
+        assert_eq!(
+            editor.boundary.terminal.borrow().overrides[1]
+                .flags
+                .get(&flag),
+            Some(&TtyOverride::Enable),
+            "{name}"
+        );
+
+        assert_eq!(
+            terminal_command(&mut editor, &["setty", "-d", &disabled]),
+            0
+        );
+        assert_eq!(
+            editor.boundary.terminal.borrow().overrides[1]
+                .flags
+                .get(&flag),
+            Some(&TtyOverride::Disable),
+            "{name}"
+        );
+
+        assert_eq!(terminal_command(&mut editor, &["setty", "-d", name]), 0);
+        assert_eq!(
+            editor.boundary.terminal.borrow().overrides[1]
+                .flags
+                .get(&flag),
+            None,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn tty_character_projection() {
+    for &(name, character) in TTY_CHARACTER_CASES {
+        let mut editor = editor();
+        let enabled = format!("+{name}");
+        let disabled = format!("-{name}");
+
+        assert_eq!(terminal_command(&mut editor, &["setty", "-q", &enabled]), 0);
+        assert_eq!(
+            editor.boundary.terminal.borrow().overrides[2]
+                .characters
+                .get(&character),
+            Some(&TtyOverride::Enable),
+            "{name}"
+        );
+
+        assert_eq!(
+            terminal_command(&mut editor, &["setty", "-q", &disabled]),
+            0
+        );
+        assert_eq!(
+            editor.boundary.terminal.borrow().overrides[2]
+                .characters
+                .get(&character),
+            Some(&TtyOverride::Disable),
+            "{name}"
+        );
+
+        assert_eq!(terminal_command(&mut editor, &["setty", "-q", name]), 0);
+        assert_eq!(
+            editor.boundary.terminal.borrow().overrides[2]
+                .characters
+                .get(&character),
+            None,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn tty_modes_keep_independent_overrides() {
+    let mut editor = editor();
+    for (selector, mode, status) in [("-x", 0, -1), ("-d", 1, 0), ("-q", 2, 0)] {
+        assert_eq!(
+            terminal_command(&mut editor, &["setty", selector, "+echoctl"]),
+            status
+        );
+        let state = editor.boundary.terminal.borrow();
+        assert_eq!(
+            state.overrides[mode]
+                .flags
+                .get(&TerminalFlag::EchoControlCharacters),
+            Some(&TtyOverride::Enable),
+            "{selector}"
+        );
+    }
+}
+
 #[test]
 fn line_and_cursor_share_native_state() {
     let mut editor = editor();
@@ -141,8 +314,14 @@ fn wide_view_tracks_native_line() {
 fn inert_descriptors_report_errors() {
     let editor = editor();
     assert!(!editor.is_tty());
-    assert_eq!(editor.control_eof(), termios::CEOF);
-    assert_eq!(editor.control_reprint(), termios::CREPRINT);
+    assert_eq!(
+        editor.control_eof(),
+        ControlCharacter::EndOfFile.default_value()
+    );
+    assert_eq!(
+        editor.control_reprint(),
+        ControlCharacter::Reprint.default_value()
+    );
     assert!(editor.write_output(b"x").is_err());
     assert!(editor.read_input(&mut [0]).is_err());
 }
@@ -292,11 +471,15 @@ fn tty_commands_change_selected_masks() {
     );
 
     let state = editor.boundary.terminal.borrow();
-    let editing = state.overrides[tty::tty_mode_index(TerminalMode::Editing)];
-    assert_ne!(editing.set[3] & termios::ECHO, 0);
-    assert_eq!(editing.clear[3] & termios::ECHO, 0);
-    assert_ne!(editing.clear[3] & termios::ISIG, 0);
-    assert_eq!(editing.set[3] & termios::ISIG, 0);
+    let editing = &state.overrides[tty::tty_mode_index(TerminalMode::Editing)];
+    assert_eq!(
+        editing.flags.get(&TerminalFlag::EchoInput),
+        Some(&TtyOverride::Enable)
+    );
+    assert_eq!(
+        editing.flags.get(&TerminalFlag::GenerateSignals),
+        Some(&TtyOverride::Disable)
+    );
 }
 
 #[test]
@@ -314,7 +497,10 @@ fn expands_legacy_coordinates() {
 
 #[test]
 fn parses_legacy_tty_characters() {
-    assert_eq!(tty::parse_tty_character(""), termios::VDISABLE);
+    assert_eq!(
+        tty::parse_tty_character(""),
+        ControlCharacter::EndOfLine.default_value()
+    );
     assert_eq!(tty::parse_tty_character("X"), u8::MAX);
     assert_eq!(tty::parse_tty_character("XY"), b'X');
     assert_eq!(tty::parse_tty_character("^H"), 0x08);

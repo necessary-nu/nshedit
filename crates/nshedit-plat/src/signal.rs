@@ -15,11 +15,11 @@
 //! libc, under the second site on `plan/decisions/no-c-ffi.md`'s enumeration
 //! and the widening `plan/decisions/platform-layer.md` argues for. Everything
 //! *around* them is ordinary Rust: `sigemptyset` and `sigaddset` are bit
-//! operations on the transcribed [`SigSet`] and are not linked.
+//! operations on the private transcribed `SigSet` and are not linked.
 //!
 //! # Handler ownership
 //!
-//! [`sig_trampoline`] is what `sigaction` installs, and it is the whole of
+//! `sig_trampoline` is what `sigaction` installs, and it is the whole of
 //! the async-signal-safe work: two atomic operations, no allocation, no lock,
 //! no buffered write. It records the signal number into the stable atomic
 //! owned by one [`SignalHandlers`] value. The read loop observes that value
@@ -369,10 +369,12 @@ fn sigmask_set(oset: &SigSet) -> bool {
 ///
 /// POSIX defines `raise` as `pthread_kill(pthread_self(), signo)`, so the
 /// signal is delivered to the calling thread.
-/// `false` is the C's non-zero return.
-#[must_use]
-pub fn raise(signal: Signal) -> bool {
-    raise_default(signal.number())
+pub fn raise(signal: Signal) -> Result<(), SignalError> {
+    if raise_default(signal.number()) {
+        Ok(())
+    } else {
+        Err(SignalError::RaiseFailed(signal))
+    }
 }
 
 fn install_handler_default(signo: i32, mask: &SigSet) -> Installed {
@@ -605,7 +607,7 @@ mod tests {
         APPLICATION_RAN.store(0, Ordering::Relaxed);
 
         let blocked = BlockedSignals::block(&[Signal::Resize]).unwrap();
-        assert!(raise(Signal::Resize));
+        assert!(raise(Signal::Resize).is_ok());
         assert_eq!(APPLICATION_RAN.load(Ordering::Relaxed), 0);
 
         blocked.restore().unwrap();
@@ -634,7 +636,7 @@ mod tests {
 
         // `raise` is `pthread_kill(pthread_self(), …)`, so this lands on this
         // thread and the store is visible by the time it returns.
-        assert!(raise(Signal::Resize));
+        assert!(raise(Signal::Resize).is_ok());
         assert_eq!(handlers.take_pending(), Some(Signal::Resize));
 
         // The idempotence guard `sem:sig.sig-set-fn` step 4 depends on.
@@ -696,7 +698,7 @@ mod tests {
 
         APPLICATION_RAN.store(0, Ordering::Relaxed);
         assert!(restore_handler(signo::SIGWINCH, osa));
-        assert!(raise(Signal::Resize));
+        assert!(raise(Signal::Resize).is_ok());
         assert_eq!(
             APPLICATION_RAN.load(Ordering::Relaxed),
             signo::SIGWINCH,
@@ -754,7 +756,7 @@ mod tests {
         let _disposition = Disposition::take(signo::SIGWINCH);
         let handlers = SignalHandlers::with_signals(&[Signal::Resize]).unwrap();
 
-        std::thread::spawn(|| assert!(raise(Signal::Resize)))
+        std::thread::spawn(|| assert!(raise(Signal::Resize).is_ok()))
             .join()
             .expect("the raising thread");
         assert_eq!(handlers.take_pending(), Some(Signal::Resize));
@@ -781,7 +783,7 @@ mod tests {
         APPLICATION_RAN.store(0, Ordering::Relaxed);
 
         let mut handlers = SignalHandlers::with_signals(&[Signal::Resize]).unwrap();
-        assert!(raise(Signal::Resize));
+        assert!(raise(Signal::Resize).is_ok());
         assert_eq!(handlers.take_pending(), Some(Signal::Resize));
         assert_eq!(APPLICATION_RAN.load(Ordering::Relaxed), 0);
 
@@ -790,11 +792,11 @@ mod tests {
         handlers.rearm().unwrap();
 
         APPLICATION_RAN.store(0, Ordering::Relaxed);
-        assert!(raise(Signal::Resize));
+        assert!(raise(Signal::Resize).is_ok());
         assert_eq!(handlers.take_pending(), Some(Signal::Resize));
         drop(handlers);
 
-        assert!(raise(Signal::Resize));
+        assert!(raise(Signal::Resize).is_ok());
         assert_eq!(APPLICATION_RAN.load(Ordering::Relaxed), signo::SIGWINCH);
     }
 
@@ -825,8 +827,8 @@ mod tests {
         let _disposition = Disposition::take(signo::SIGWINCH);
         let handlers = SignalHandlers::with_signals(&[Signal::Resize, Signal::Continue]).unwrap();
 
-        assert!(raise(Signal::Resize));
-        assert!(raise(Signal::Continue));
+        assert!(raise(Signal::Resize).is_ok());
+        assert!(raise(Signal::Continue).is_ok());
         assert_eq!(handlers.take_pending(), Some(Signal::Continue));
         assert_eq!(handlers.take_pending(), None);
         handlers.restore().unwrap();

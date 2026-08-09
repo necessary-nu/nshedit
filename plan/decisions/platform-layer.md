@@ -95,7 +95,7 @@ consequences {
         "nshedit-plat is the only crate that owns syscall and platform-ABI implementation details. nshedit and nshedit-abi consume its safe interfaces."
         "rustix 1.1.x supplies termios, window-size ioctl, fcntl, uid/gid queries, and FIONREAD. The event-hook poll and any supported typeahead check use its safe ioctl_fionread interface."
         "Signals use the platform libc because raw signal syscalls are unsound in a process containing libc. NSS passwd lookup and enumeration use libc because the configured name-service backends are C modules."
-        "Unsafe declarations, raw integer descriptor adapters, transcribed structs, constants, and conversions are private to nshedit-plat and covered by focused platform tests."
+        "Platform ABI declarations, transcribed structs, constants, and syscall conversions are private to nshedit-plat and covered by focused platform tests. A C-provided integer descriptor is scoped into BorrowedFd only by nshedit-abi's handle adapter; nshedit-plat never accepts the raw integer."
         "Public safe operations take BorrowedFd or typed platform values and return io::Result or a descriptive typed error. They never fabricate a 'static descriptor lifetime or flatten syscall failure into bool or Option."
         "The core receives safe typed results and never exposes termios, sigaction, passwd, ioctl, or raw ownership mechanics in its public API."
         "There are no public process-global override hooks. Scoped disposition ownership follows [dec:libedit:signal-lifecycle], while editor-level customization suspends through [dec:libedit:effect-driven-hooks]."
@@ -132,9 +132,11 @@ likewise a libc boundary because NSS dynamically loads configured providers.
 Those two families remain the enumerated platform exception.
 
 The platform crate provides typed operations and defaults, not a C-shaped
-public syscall facade or process-global injection points. Raw layouts,
-constants, descriptors, and callback tables exist only inside the operation
-that validates and converts them. If an embedder must supply history, input,
-aliases, completion, or related host behaviour, that customization belongs to
-the editor's effect protocol, where ownership and reentrancy can be expressed
-per session.
+public syscall facade or process-global injection points. Platform layouts,
+constants, and callback tables remain inside the operation that validates and
+converts them. The ABI adapter necessarily receives C integer descriptors, but
+confines each conversion to the duration of one typed platform call rather
+than fabricating or storing a Rust borrow. If an embedder must supply history,
+input, aliases, completion, or related host behaviour, that customization
+belongs to the editor's effect protocol, where ownership and reentrancy can be
+expressed per session.

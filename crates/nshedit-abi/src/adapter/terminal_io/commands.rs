@@ -5,6 +5,49 @@ use super::*;
 use nshterm::parser::names::BOOL_NAMES;
 use std::io::Write;
 
+/// Linux `speed_t` projection required by the `telltc baud` compatibility
+/// command. The platform API intentionally exposes semantic rates instead of
+/// this encoding.
+const fn compatibility_baud_encoding(speed: OutputSpeed) -> u32 {
+    let OutputSpeed::BitsPerSecond(rate) = speed else {
+        return 0o0010000;
+    };
+    match rate {
+        0 => 0o0000000,
+        50 => 0o0000001,
+        75 => 0o0000002,
+        110 => 0o0000003,
+        134 => 0o0000004,
+        150 => 0o0000005,
+        200 => 0o0000006,
+        300 => 0o0000007,
+        600 => 0o0000010,
+        1_200 => 0o0000011,
+        1_800 => 0o0000012,
+        2_400 => 0o0000013,
+        4_800 => 0o0000014,
+        9_600 => 0o0000015,
+        19_200 => 0o0000016,
+        38_400 => 0o0000017,
+        57_600 => 0o0010001,
+        115_200 => 0o0010002,
+        230_400 => 0o0010003,
+        460_800 => 0o0010004,
+        500_000 => 0o0010005,
+        576_000 => 0o0010006,
+        921_600 => 0o0010007,
+        1_000_000 => 0o0010010,
+        1_152_000 => 0o0010011,
+        1_500_000 => 0o0010012,
+        2_000_000 => 0o0010013,
+        2_500_000 => 0o0010014,
+        3_000_000 => 0o0010015,
+        3_500_000 => 0o0010016,
+        4_000_000 => 0o0010017,
+        _ => 0o0010000,
+    }
+}
+
 const LOCAL_STRING_CAPABILITIES: &[(&str, &str)] = &[
     ("al", "add new blank line"),
     ("bl", "audible bell"),
@@ -200,7 +243,7 @@ impl EditLine {
             .borrow()
             .original
             .as_ref()
-            .is_some_and(|attributes| attributes.c_oflag & termios::TAB3 != termios::TAB3);
+            .is_some_and(|attributes| !attributes.flag(TerminalFlag::ExpandTabs));
         let tabs =
             physical_tabs && capabilities.boolean("pt") && !capabilities.derived_destructive_tabs;
         let meta = capabilities.boolean("km") || capabilities.derived_meta_extension;
@@ -465,7 +508,9 @@ impl EditLine {
                     .borrow()
                     .original
                     .as_ref()
-                    .map_or(0, termios::encoded_baud_rate);
+                    .map_or(0, |attributes| {
+                        compatibility_baud_encoding(attributes.output_speed())
+                    });
                 Some(format!("{speed}\n"))
             }
             "rows" | "lines" => Some(format!("{}\n", capabilities.rows)),

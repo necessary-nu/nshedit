@@ -12,7 +12,7 @@ use std::fs::File;
 use std::io;
 use std::io::Read;
 use std::mem::ManuallyDrop;
-use std::os::fd::FromRawFd;
+use std::os::fd::{BorrowedFd, FromRawFd};
 use std::rc::Rc;
 
 use nshedit::domain::{
@@ -24,7 +24,9 @@ use nshedit::editor::{
     Tokenization, Tokenizer as NativeTokenizer,
 };
 use nshedit_plat::signal::SignalHandlers;
-use nshedit_plat::termios::{self, Termios};
+use nshedit_plat::terminal::{
+    self, ApplyWhen, ControlCharacter, OutputSpeed, TerminalAttributes, TerminalFlag,
+};
 
 use crate::cdecl::histedit::{CFile, HistEventWide, LineInfo, LineInfoWide as LineInfoW};
 use crate::conversion::ConversionBuffer;
@@ -107,20 +109,24 @@ struct TerminalCapabilities {
     columns: usize,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TtyOverride {
+    Enable,
+    Disable,
+}
+
+#[derive(Clone, Default)]
 struct TtyFlagOverrides {
-    set: [u32; 4],
-    clear: [u32; 4],
-    char_set: u32,
-    char_clear: u32,
+    flags: HashMap<TerminalFlag, TtyOverride>,
+    characters: HashMap<ControlCharacter, TtyOverride>,
 }
 
 struct TerminalState {
     input: c_int,
     output: c_int,
-    original: Option<Termios>,
-    editing: Option<Termios>,
-    quoted: Option<Termios>,
+    original: Option<TerminalAttributes>,
+    editing: Option<TerminalAttributes>,
+    quoted: Option<TerminalAttributes>,
     active_mode: TerminalMode,
     overrides: [TtyFlagOverrides; 3],
     restoration_due: bool,
@@ -148,20 +154,24 @@ impl AbiTerminal {
 impl TerminalControl for AbiTerminal {
     fn activate(&mut self, _config: EditorConfig) -> io::Result<()> {
         let mut state = self.0.borrow_mut();
-        if !termios::isatty(state.output) {
+        if !matches!(
+            with_borrowed_descriptor(state.output, terminal::is_terminal),
+            Some(Ok(true))
+        ) {
             return Ok(());
         }
-        let Some(original) = termios::tcgetattr(state.input) else {
+        let Some(Ok(original)) = with_borrowed_descriptor(state.input, terminal::read_attributes)
+        else {
             return Ok(());
         };
-        let editing = editing_termios(original);
-        let quoted = quoted_termios(editing);
+        let editing = original.for_editing();
+        let quoted = editing.for_quoted_input();
         state.original = Some(original);
         state.editing = Some(editing);
         state.quoted = Some(quoted);
         state.active_mode = TerminalMode::Cooked;
         state.restoration_due = true;
-        apply_termios(state.input, termios::TCSADRAIN, &editing)
+        apply_terminal_attributes(state.input, ApplyWhen::AfterOutput, &editing)
     }
 
     fn set_mode(&mut self, mode: TerminalMode) -> io::Result<()> {
@@ -172,7 +182,9 @@ impl TerminalControl for AbiTerminal {
             TerminalMode::Quoted => state.quoted.as_ref(),
         };
         let result = match selected {
-            Some(attributes) => apply_termios(state.input, termios::TCSADRAIN, attributes),
+            Some(attributes) => {
+                apply_terminal_attributes(state.input, ApplyWhen::AfterOutput, attributes)
+            }
             None => Ok(()),
         };
         if result.is_ok() {
@@ -188,84 +200,136 @@ impl TerminalControl for AbiTerminal {
         }
         state.restoration_due = false;
         match state.original.as_ref() {
-            Some(original) => apply_termios(state.input, termios::TCSAFLUSH, original),
+            Some(original) => apply_terminal_attributes(
+                state.input,
+                ApplyWhen::AfterOutputAndDiscardInput,
+                original,
+            ),
             None => Ok(()),
         }
     }
 }
 
 fn initial_tty_overrides() -> [TtyFlagOverrides; 3] {
-    let mut modes = [TtyFlagOverrides::default(); 3];
+    let mut modes = std::array::from_fn(|_| TtyFlagOverrides::default());
+    fn configure(
+        modes: &mut [TtyFlagOverrides; 3],
+        mode: usize,
+        state: TtyOverride,
+        flags: &[TerminalFlag],
+    ) {
+        modes[mode]
+            .flags
+            .extend(flags.iter().copied().map(|flag| (flag, state)));
+    }
 
-    modes[0].set[0] = termios::ICRNL;
-    modes[0].clear[0] = termios::INLCR | termios::IGNCR;
-    modes[0].set[1] = termios::OPOST | termios::ONLCR;
-    modes[0].clear[1] = termios::ONLRET;
-    modes[0].set[3] = termios::ISIG
-        | termios::ICANON
-        | termios::ECHO
-        | termios::ECHOE
-        | termios::ECHOCTL
-        | termios::IEXTEN;
-    modes[0].clear[3] = termios::NOFLSH | termios::ECHONL | termios::EXTPROC | termios::FLUSHO;
-
-    modes[1].set[0] = termios::INLCR | termios::ICRNL;
-    modes[1].clear[0] = termios::IGNCR;
-    modes[1].set[1] = termios::OPOST | termios::ONLCR;
-    modes[1].clear[1] = termios::ONLRET;
-    modes[1].set[3] = termios::ISIG;
-    modes[1].clear[3] = termios::NOFLSH
-        | termios::ICANON
-        | termios::ECHO
-        | termios::ECHOK
-        | termios::ECHONL
-        | termios::EXTPROC
-        | termios::IEXTEN
-        | termios::FLUSHO;
-    modes[1].char_set = (1 << 5) | (1 << 13) | (1 << 16) | (1 << 23) | (1 << 24);
-
-    modes[2].clear[0] = termios::IXON | termios::IXOFF | termios::INLCR | termios::ICRNL;
-    modes[2].clear[3] = termios::ISIG | termios::IEXTEN;
+    configure(
+        &mut modes,
+        0,
+        TtyOverride::Enable,
+        &[
+            TerminalFlag::MapCarriageReturnToNewline,
+            TerminalFlag::PostProcessOutput,
+            TerminalFlag::MapNewlineToCarriageReturnNewline,
+            TerminalFlag::GenerateSignals,
+            TerminalFlag::CanonicalInput,
+            TerminalFlag::EchoInput,
+            TerminalFlag::EchoErase,
+            TerminalFlag::EchoControlCharacters,
+            TerminalFlag::ExtendedProcessing,
+        ],
+    );
+    configure(
+        &mut modes,
+        0,
+        TtyOverride::Disable,
+        &[
+            TerminalFlag::MapNewlineToCarriageReturn,
+            TerminalFlag::IgnoreCarriageReturn,
+            TerminalFlag::NewlinePerformsCarriageReturn,
+            TerminalFlag::DisableFlush,
+            TerminalFlag::EchoNewline,
+            TerminalFlag::ExternalProcessing,
+            TerminalFlag::OutputBeingFlushed,
+        ],
+    );
+    configure(
+        &mut modes,
+        1,
+        TtyOverride::Enable,
+        &[
+            TerminalFlag::MapNewlineToCarriageReturn,
+            TerminalFlag::MapCarriageReturnToNewline,
+            TerminalFlag::PostProcessOutput,
+            TerminalFlag::MapNewlineToCarriageReturnNewline,
+            TerminalFlag::GenerateSignals,
+        ],
+    );
+    configure(
+        &mut modes,
+        1,
+        TtyOverride::Disable,
+        &[
+            TerminalFlag::IgnoreCarriageReturn,
+            TerminalFlag::NewlinePerformsCarriageReturn,
+            TerminalFlag::DisableFlush,
+            TerminalFlag::CanonicalInput,
+            TerminalFlag::EchoInput,
+            TerminalFlag::EchoKill,
+            TerminalFlag::EchoNewline,
+            TerminalFlag::ExternalProcessing,
+            TerminalFlag::ExtendedProcessing,
+            TerminalFlag::OutputBeingFlushed,
+        ],
+    );
+    modes[1].characters.extend(
+        [
+            ControlCharacter::EndOfLine,
+            ControlCharacter::Suspend,
+            ControlCharacter::Discard,
+            ControlCharacter::MinimumBytes,
+            ControlCharacter::Timeout,
+        ]
+        .map(|character| (character, TtyOverride::Enable)),
+    );
+    configure(
+        &mut modes,
+        2,
+        TtyOverride::Disable,
+        &[
+            TerminalFlag::EnableOutputFlowControl,
+            TerminalFlag::EnableInputFlowControl,
+            TerminalFlag::MapNewlineToCarriageReturn,
+            TerminalFlag::MapCarriageReturnToNewline,
+            TerminalFlag::GenerateSignals,
+            TerminalFlag::ExtendedProcessing,
+        ],
+    );
     modes
 }
 
-fn apply_termios(descriptor: c_int, action: c_int, attributes: &Termios) -> io::Result<()> {
-    if termios::tcsetattr(descriptor, action, attributes) {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
+pub(crate) fn with_borrowed_descriptor<T>(
+    descriptor: c_int,
+    operation: impl FnOnce(BorrowedFd<'_>) -> T,
+) -> Option<T> {
+    if descriptor < 0 {
+        return None;
     }
+    // SAFETY: the ABI handle borrows its C streams for every operation on the
+    // handle. The borrow is confined to this callback and is never stored.
+    let descriptor = unsafe { BorrowedFd::borrow_raw(descriptor) };
+    Some(operation(descriptor))
 }
 
-fn editing_termios(mut attributes: Termios) -> Termios {
-    attributes.c_iflag |= termios::INLCR | termios::ICRNL;
-    attributes.c_iflag &= !termios::IGNCR;
-    attributes.c_oflag |= termios::OPOST | termios::ONLCR;
-    attributes.c_oflag &= !termios::ONLRET;
-    attributes.c_lflag |= termios::ISIG;
-    attributes.c_lflag &= !(termios::NOFLSH
-        | termios::ICANON
-        | termios::ECHO
-        | termios::ECHOK
-        | termios::ECHONL
-        | termios::EXTPROC
-        | termios::IEXTEN
-        | termios::FLUSHO);
-    attributes.c_cc[termios::VEOF] = termios::VDISABLE;
-    attributes.c_cc[termios::VEOL] = termios::VDISABLE;
-    attributes.c_cc[termios::VEOL2] = termios::VDISABLE;
-    attributes.c_cc[termios::VWERASE] = termios::VDISABLE;
-    attributes.c_cc[termios::VREPRINT] = termios::VDISABLE;
-    attributes.c_cc[termios::VLNEXT] = termios::VDISABLE;
-    attributes.c_cc[termios::VMIN] = 1;
-    attributes.c_cc[termios::VTIME] = 0;
-    attributes
-}
-
-fn quoted_termios(mut attributes: Termios) -> Termios {
-    attributes.c_iflag &= !(termios::IXON | termios::IXOFF | termios::INLCR | termios::ICRNL);
-    attributes.c_lflag &= !(termios::ISIG | termios::IEXTEN);
-    attributes
+fn apply_terminal_attributes(
+    descriptor: c_int,
+    when: ApplyWhen,
+    attributes: &TerminalAttributes,
+) -> io::Result<()> {
+    with_borrowed_descriptor(descriptor, |descriptor| {
+        terminal::apply_attributes(descriptor, when, attributes)
+    })
+    .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?
 }
 
 static DEFAULT_LEFT_WIDE: [u32; 3] = [b'?' as u32, b' ' as u32, 0];

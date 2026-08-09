@@ -1,6 +1,7 @@
 //! Narrow bridge from readline's C-shaped state to safe core/platform calls.
 
 use core::ffi::c_int;
+use std::os::unix::ffi::OsStrExt;
 
 use nshedit::domain::TerminalMode;
 
@@ -42,5 +43,8 @@ pub(super) fn tty_get_signal_character(_el: *mut EditLine, _sig: c_int) -> c_int
 
 /// C: `getpwuid(getuid())->pw_dir` through the safe NSS boundary.
 pub(super) fn passwd_home_dir() -> Option<Vec<u8>> {
-    nshedit_plat::passwd::home_dir_by_uid(nshedit_plat::getuid())
+    nshedit_plat::passwd::home_directory(nshedit_plat::current_user())
+        .ok()
+        .flatten()
+        .map(|path| path.as_os_str().as_bytes().to_vec())
 }

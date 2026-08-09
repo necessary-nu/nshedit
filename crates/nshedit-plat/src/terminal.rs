@@ -1,9 +1,408 @@
 //! Safe interactive-terminal control without exposing termios representation.
 
 use std::io;
-use std::os::fd::{AsRawFd, BorrowedFd};
+use std::os::fd::BorrowedFd;
 
 use crate::termios::{self, Termios};
+
+/// When a terminal attribute change takes effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyWhen {
+    /// Apply without waiting for queued output.
+    Immediately,
+    /// Wait for queued output to drain.
+    AfterOutput,
+    /// Drain output and discard unread input.
+    AfterOutputAndDiscardInput,
+}
+
+impl ApplyWhen {
+    const fn rustix(self) -> rustix::termios::OptionalActions {
+        match self {
+            Self::Immediately => rustix::termios::OptionalActions::Now,
+            Self::AfterOutput => rustix::termios::OptionalActions::Drain,
+            Self::AfterOutputAndDiscardInput => rustix::termios::OptionalActions::Flush,
+        }
+    }
+}
+
+/// A configurable terminal behavior.
+///
+/// The enum is the public vocabulary; platform bit positions remain private.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TerminalFlag {
+    IgnoreBreak,
+    SignalBreak,
+    IgnoreParityErrors,
+    MarkParityErrors,
+    CheckInputParity,
+    StripInputHighBit,
+    MapNewlineToCarriageReturn,
+    IgnoreCarriageReturn,
+    MapCarriageReturnToNewline,
+    MapUppercaseInputToLowercase,
+    EnableOutputFlowControl,
+    AllowAnyCharacterToRestartOutput,
+    EnableInputFlowControl,
+    RingBellOnInputOverflow,
+    PostProcessOutput,
+    MapLowercaseOutputToUppercase,
+    MapNewlineToCarriageReturnNewline,
+    MapCarriageReturnToNewlineOnOutput,
+    DiscardCarriageReturnAtColumnZero,
+    NewlinePerformsCarriageReturn,
+    UseFillCharacters,
+    UseDeleteForFill,
+    NewlineDelay,
+    CarriageReturnDelay,
+    TabDelay,
+    ExpandTabs,
+    BackspaceDelay,
+    VerticalTabDelay,
+    FormFeedDelay,
+    OutputSpeedBits,
+    TwoStopBits,
+    EnableReceiver,
+    EnableParity,
+    OddParity,
+    HangUpOnClose,
+    IgnoreModemControl,
+    InputSpeedBits,
+    HardwareFlowControl,
+    GenerateSignals,
+    CanonicalInput,
+    CanonicalUppercase,
+    EchoInput,
+    EchoErase,
+    EchoKill,
+    EchoNewline,
+    DisableFlush,
+    StopBackgroundOutput,
+    EchoControlCharacters,
+    EchoErasedCharacters,
+    VisuallyEraseKilledLine,
+    OutputBeingFlushed,
+    PendingInput,
+    ExtendedProcessing,
+    ExternalProcessing,
+}
+
+#[derive(Clone, Copy)]
+enum FlagWord {
+    Input,
+    Output,
+    Control,
+    Local,
+}
+
+use TerminalFlag::*;
+
+const FLAG_REPRESENTATIONS: &[(TerminalFlag, FlagWord, u32)] = &[
+    (IgnoreBreak, FlagWord::Input, termios::IGNBRK),
+    (SignalBreak, FlagWord::Input, termios::BRKINT),
+    (IgnoreParityErrors, FlagWord::Input, termios::IGNPAR),
+    (MarkParityErrors, FlagWord::Input, termios::PARMRK),
+    (CheckInputParity, FlagWord::Input, termios::INPCK),
+    (StripInputHighBit, FlagWord::Input, termios::ISTRIP),
+    (MapNewlineToCarriageReturn, FlagWord::Input, termios::INLCR),
+    (IgnoreCarriageReturn, FlagWord::Input, termios::IGNCR),
+    (MapCarriageReturnToNewline, FlagWord::Input, termios::ICRNL),
+    (
+        MapUppercaseInputToLowercase,
+        FlagWord::Input,
+        termios::IUCLC,
+    ),
+    (EnableOutputFlowControl, FlagWord::Input, termios::IXON),
+    (
+        AllowAnyCharacterToRestartOutput,
+        FlagWord::Input,
+        termios::IXANY,
+    ),
+    (EnableInputFlowControl, FlagWord::Input, termios::IXOFF),
+    (RingBellOnInputOverflow, FlagWord::Input, termios::IMAXBEL),
+    (PostProcessOutput, FlagWord::Output, termios::OPOST),
+    (
+        MapLowercaseOutputToUppercase,
+        FlagWord::Output,
+        termios::OLCUC,
+    ),
+    (
+        MapNewlineToCarriageReturnNewline,
+        FlagWord::Output,
+        termios::ONLCR,
+    ),
+    (
+        MapCarriageReturnToNewlineOnOutput,
+        FlagWord::Output,
+        termios::OCRNL,
+    ),
+    (
+        DiscardCarriageReturnAtColumnZero,
+        FlagWord::Output,
+        termios::ONOCR,
+    ),
+    (
+        NewlinePerformsCarriageReturn,
+        FlagWord::Output,
+        termios::ONLRET,
+    ),
+    (UseFillCharacters, FlagWord::Output, termios::OFILL),
+    (UseDeleteForFill, FlagWord::Output, termios::OFDEL),
+    (NewlineDelay, FlagWord::Output, termios::NLDLY),
+    (CarriageReturnDelay, FlagWord::Output, termios::CRDLY),
+    (TabDelay, FlagWord::Output, termios::TABDLY),
+    (ExpandTabs, FlagWord::Output, termios::XTABS),
+    (BackspaceDelay, FlagWord::Output, termios::BSDLY),
+    (VerticalTabDelay, FlagWord::Output, termios::VTDLY),
+    (FormFeedDelay, FlagWord::Output, termios::FFDLY),
+    (OutputSpeedBits, FlagWord::Control, termios::CBAUD),
+    (TwoStopBits, FlagWord::Control, termios::CSTOPB),
+    (EnableReceiver, FlagWord::Control, termios::CREAD),
+    (EnableParity, FlagWord::Control, termios::PARENB),
+    (OddParity, FlagWord::Control, termios::PARODD),
+    (HangUpOnClose, FlagWord::Control, termios::HUPCL),
+    (IgnoreModemControl, FlagWord::Control, termios::CLOCAL),
+    (InputSpeedBits, FlagWord::Control, termios::CIBAUD),
+    (HardwareFlowControl, FlagWord::Control, termios::CRTSCTS),
+    (GenerateSignals, FlagWord::Local, termios::ISIG),
+    (CanonicalInput, FlagWord::Local, termios::ICANON),
+    (CanonicalUppercase, FlagWord::Local, termios::XCASE),
+    (EchoInput, FlagWord::Local, termios::ECHO),
+    (EchoErase, FlagWord::Local, termios::ECHOE),
+    (EchoKill, FlagWord::Local, termios::ECHOK),
+    (EchoNewline, FlagWord::Local, termios::ECHONL),
+    (DisableFlush, FlagWord::Local, termios::NOFLSH),
+    (StopBackgroundOutput, FlagWord::Local, termios::TOSTOP),
+    (EchoControlCharacters, FlagWord::Local, termios::ECHOCTL),
+    (EchoErasedCharacters, FlagWord::Local, termios::ECHOPRT),
+    (VisuallyEraseKilledLine, FlagWord::Local, termios::ECHOKE),
+    (OutputBeingFlushed, FlagWord::Local, termios::FLUSHO),
+    (PendingInput, FlagWord::Local, termios::PENDIN),
+    (ExtendedProcessing, FlagWord::Local, termios::IEXTEN),
+    (ExternalProcessing, FlagWord::Local, termios::EXTPROC),
+];
+
+impl TerminalFlag {
+    fn representation(self) -> (FlagWord, u32) {
+        let (_, word, mask) = FLAG_REPRESENTATIONS
+            .iter()
+            .find(|(flag, _, _)| *flag == self)
+            .expect("every terminal flag has a private platform representation");
+        (*word, *mask)
+    }
+}
+
+/// A terminal control character slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ControlCharacter {
+    Interrupt,
+    Quit,
+    Erase,
+    Kill,
+    EndOfFile,
+    Timeout,
+    MinimumBytes,
+    Start,
+    Stop,
+    Suspend,
+    EndOfLine,
+    Reprint,
+    Discard,
+    WordErase,
+    LiteralNext,
+    AlternateEndOfLine,
+}
+
+impl ControlCharacter {
+    const fn index(self) -> usize {
+        match self {
+            Self::Interrupt => termios::VINTR,
+            Self::Quit => termios::VQUIT,
+            Self::Erase => termios::VERASE,
+            Self::Kill => termios::VKILL,
+            Self::EndOfFile => termios::VEOF,
+            Self::Timeout => termios::VTIME,
+            Self::MinimumBytes => termios::VMIN,
+            Self::Start => termios::VSTART,
+            Self::Stop => termios::VSTOP,
+            Self::Suspend => termios::VSUSP,
+            Self::EndOfLine => termios::VEOL,
+            Self::Reprint => termios::VREPRINT,
+            Self::Discard => termios::VDISCARD,
+            Self::WordErase => termios::VWERASE,
+            Self::LiteralNext => termios::VLNEXT,
+            Self::AlternateEndOfLine => termios::VEOL2,
+        }
+    }
+
+    /// The platform's default value for this role.
+    #[must_use]
+    pub const fn default_value(self) -> u8 {
+        match self {
+            Self::Interrupt => termios::CINTR,
+            Self::Quit => termios::CQUIT,
+            Self::Erase => termios::CERASE,
+            Self::Kill => termios::CKILL,
+            Self::EndOfFile => termios::CEOF,
+            Self::Timeout => termios::CTIME,
+            Self::MinimumBytes => termios::CMIN,
+            Self::Start => termios::CSTART,
+            Self::Stop => termios::CSTOP,
+            Self::Suspend => termios::CSUSP,
+            Self::EndOfLine => termios::CEOL,
+            Self::Reprint => termios::CREPRINT,
+            Self::Discard => termios::CDISCARD,
+            Self::WordErase => termios::CWERASE,
+            Self::LiteralNext => termios::CLNEXT,
+            Self::AlternateEndOfLine => termios::CEOL2,
+        }
+    }
+}
+
+/// A baud-rate observation that does not expose the platform's encoded bits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputSpeed {
+    BitsPerSecond(u32),
+    Custom,
+}
+
+/// An opaque snapshot of terminal attributes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalAttributes(Termios);
+
+impl TerminalAttributes {
+    /// Test a semantic terminal behavior.
+    #[must_use]
+    pub fn flag(&self, flag: TerminalFlag) -> bool {
+        let (word, mask) = flag.representation();
+        self.word(word) & mask == mask
+    }
+
+    /// Enable or disable a semantic terminal behavior.
+    pub fn set_flag(&mut self, flag: TerminalFlag, enabled: bool) {
+        let (word, mask) = flag.representation();
+        let value = self.word_mut(word);
+        if enabled {
+            *value |= mask;
+        } else {
+            *value &= !mask;
+        }
+    }
+
+    /// Read a terminal control character.
+    #[must_use]
+    pub const fn control_character(&self, character: ControlCharacter) -> u8 {
+        self.0.c_cc[character.index()]
+    }
+
+    /// Set a terminal control character.
+    pub fn set_control_character(&mut self, character: ControlCharacter, value: u8) {
+        self.0.c_cc[character.index()] = value;
+    }
+
+    /// The configured output speed, without exposing the platform encoding.
+    #[must_use]
+    pub const fn output_speed(&self) -> OutputSpeed {
+        match termios::baud_rate(&self.0) {
+            Some(rate) => OutputSpeed::BitsPerSecond(rate),
+            None => OutputSpeed::Custom,
+        }
+    }
+
+    /// Derive the ordinary interactive editing attributes.
+    #[must_use]
+    pub fn for_editing(mut self) -> Self {
+        for flag in [
+            TerminalFlag::MapNewlineToCarriageReturn,
+            TerminalFlag::MapCarriageReturnToNewline,
+            TerminalFlag::PostProcessOutput,
+            TerminalFlag::MapNewlineToCarriageReturnNewline,
+            TerminalFlag::GenerateSignals,
+        ] {
+            self.set_flag(flag, true);
+        }
+        for flag in [
+            TerminalFlag::IgnoreCarriageReturn,
+            TerminalFlag::NewlinePerformsCarriageReturn,
+            TerminalFlag::DisableFlush,
+            TerminalFlag::CanonicalInput,
+            TerminalFlag::EchoInput,
+            TerminalFlag::EchoKill,
+            TerminalFlag::EchoNewline,
+            TerminalFlag::ExternalProcessing,
+            TerminalFlag::ExtendedProcessing,
+            TerminalFlag::OutputBeingFlushed,
+        ] {
+            self.set_flag(flag, false);
+        }
+        for character in [
+            ControlCharacter::EndOfFile,
+            ControlCharacter::EndOfLine,
+            ControlCharacter::AlternateEndOfLine,
+            ControlCharacter::WordErase,
+            ControlCharacter::Reprint,
+            ControlCharacter::LiteralNext,
+        ] {
+            self.set_control_character(character, termios::VDISABLE);
+        }
+        self.set_control_character(ControlCharacter::MinimumBytes, 1);
+        self.set_control_character(ControlCharacter::Timeout, 0);
+        self
+    }
+
+    /// Derive attributes for reading the next input literally.
+    #[must_use]
+    pub fn for_quoted_input(mut self) -> Self {
+        for flag in [
+            TerminalFlag::EnableOutputFlowControl,
+            TerminalFlag::EnableInputFlowControl,
+            TerminalFlag::MapNewlineToCarriageReturn,
+            TerminalFlag::MapCarriageReturnToNewline,
+            TerminalFlag::GenerateSignals,
+            TerminalFlag::ExtendedProcessing,
+        ] {
+            self.set_flag(flag, false);
+        }
+        self
+    }
+
+    fn word(&self, word: FlagWord) -> u32 {
+        match word {
+            FlagWord::Input => self.0.c_iflag,
+            FlagWord::Output => self.0.c_oflag,
+            FlagWord::Control => self.0.c_cflag,
+            FlagWord::Local => self.0.c_lflag,
+        }
+    }
+
+    fn word_mut(&mut self, word: FlagWord) -> &mut u32 {
+        match word {
+            FlagWord::Input => &mut self.0.c_iflag,
+            FlagWord::Output => &mut self.0.c_oflag,
+            FlagWord::Control => &mut self.0.c_cflag,
+            FlagWord::Local => &mut self.0.c_lflag,
+        }
+    }
+}
+
+/// Read an opaque terminal attribute snapshot.
+pub fn read_attributes(input: BorrowedFd<'_>) -> io::Result<TerminalAttributes> {
+    termios::read(input).map(TerminalAttributes)
+}
+
+/// Apply an opaque terminal attribute snapshot.
+pub fn apply_attributes(
+    input: BorrowedFd<'_>,
+    when: ApplyWhen,
+    attributes: &TerminalAttributes,
+) -> io::Result<()> {
+    termios::apply(input, when.rustix(), &attributes.0)
+}
+
+/// Whether a descriptor refers to a terminal.
+pub fn is_terminal(descriptor: BorrowedFd<'_>) -> io::Result<bool> {
+    termios::is_terminal(descriptor)
+}
 
 /// An activated terminal's exactly-once restoration state.
 ///
@@ -14,9 +413,9 @@ use crate::termios::{self, Termios};
 pub struct TerminalController<'fd> {
     input: BorrowedFd<'fd>,
     output: BorrowedFd<'fd>,
-    original: Option<Termios>,
-    editing: Option<Termios>,
-    quoted: Option<Termios>,
+    original: Option<TerminalAttributes>,
+    editing: Option<TerminalAttributes>,
+    quoted: Option<TerminalAttributes>,
     restoration_due: bool,
 }
 
@@ -36,40 +435,40 @@ impl<'fd> TerminalController<'fd> {
 
     /// Capture the current state and enter interactive editing mode.
     pub fn activate(&mut self) -> io::Result<()> {
-        if !termios::isatty(self.output.as_raw_fd()) {
+        if !is_terminal(self.output)? {
             return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "editor output is not a terminal",
             ));
         }
-        let original = termios::tcgetattr(self.input.as_raw_fd()).ok_or_else(|| {
+        let original = read_attributes(self.input).map_err(|error| {
             io::Error::new(
                 io::ErrorKind::NotConnected,
-                "editor input is not a terminal",
+                format!("editor input: {error}"),
             )
         })?;
-        let editing = editing_attributes(original);
-        let quoted = quoted_attributes(editing);
+        let editing = original.for_editing();
+        let quoted = editing.for_quoted_input();
         self.original = Some(original);
         self.editing = Some(editing);
         self.quoted = Some(quoted);
         self.restoration_due = true;
-        apply(self.input, termios::TCSADRAIN, &editing)
+        apply_attributes(self.input, ApplyWhen::AfterOutput, &editing)
     }
 
     /// Restore normal terminal processing without consuming the obligation.
     pub fn enter_cooked_mode(&mut self) -> io::Result<()> {
-        apply_optional(self.input, termios::TCSADRAIN, self.original.as_ref())
+        apply_optional(self.input, ApplyWhen::AfterOutput, self.original.as_ref())
     }
 
     /// Re-enter interactive editing mode.
     pub fn enter_editing_mode(&mut self) -> io::Result<()> {
-        apply_optional(self.input, termios::TCSADRAIN, self.editing.as_ref())
+        apply_optional(self.input, ApplyWhen::AfterOutput, self.editing.as_ref())
     }
 
     /// Temporarily read the next input unit without signal or flow handling.
     pub fn enter_quoted_mode(&mut self) -> io::Result<()> {
-        apply_optional(self.input, termios::TCSADRAIN, self.quoted.as_ref())
+        apply_optional(self.input, ApplyWhen::AfterOutput, self.quoted.as_ref())
     }
 
     /// Consume and restore the state captured by [`Self::activate`].
@@ -78,73 +477,37 @@ impl<'fd> TerminalController<'fd> {
             return Ok(());
         }
         self.restoration_due = false;
-        apply_optional(self.input, termios::TCSAFLUSH, self.original.as_ref())
+        apply_optional(
+            self.input,
+            ApplyWhen::AfterOutputAndDiscardInput,
+            self.original.as_ref(),
+        )
     }
 }
 
 /// Read a terminal's current `(rows, columns)` dimensions.
 pub fn screen_size(output: BorrowedFd<'_>) -> io::Result<(usize, usize)> {
-    termios::window_size(output.as_raw_fd())
-        .map(|(rows, columns)| (usize::from(rows), usize::from(columns)))
-        .ok_or_else(|| io::Error::other("could not read terminal dimensions"))
+    termios::screen_size(output).map(|(rows, columns)| (usize::from(rows), usize::from(columns)))
 }
 
 /// Count bytes that can be read immediately without blocking.
 pub fn bytes_ready(input: BorrowedFd<'_>) -> io::Result<u64> {
-    crate::bytes_ready_to_read(input.as_raw_fd())
-        .ok_or_else(|| io::Error::other("could not inspect pending terminal input"))
+    rustix::io::ioctl_fionread(input).map_err(Into::into)
 }
 
 fn apply_optional(
     descriptor: BorrowedFd<'_>,
-    action: i32,
-    attributes: Option<&Termios>,
+    when: ApplyWhen,
+    attributes: Option<&TerminalAttributes>,
 ) -> io::Result<()> {
-    attributes.map_or(Ok(()), |attributes| apply(descriptor, action, attributes))
-}
-
-fn apply(descriptor: BorrowedFd<'_>, action: i32, attributes: &Termios) -> io::Result<()> {
-    if termios::tcsetattr(descriptor.as_raw_fd(), action, attributes) {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
-fn editing_attributes(mut attributes: Termios) -> Termios {
-    attributes.c_iflag |= termios::INLCR | termios::ICRNL;
-    attributes.c_iflag &= !termios::IGNCR;
-    attributes.c_oflag |= termios::OPOST | termios::ONLCR;
-    attributes.c_oflag &= !termios::ONLRET;
-    attributes.c_lflag |= termios::ISIG;
-    attributes.c_lflag &= !(termios::NOFLSH
-        | termios::ICANON
-        | termios::ECHO
-        | termios::ECHOK
-        | termios::ECHONL
-        | termios::EXTPROC
-        | termios::IEXTEN
-        | termios::FLUSHO);
-    attributes.c_cc[termios::VEOF] = termios::VDISABLE;
-    attributes.c_cc[termios::VEOL] = termios::VDISABLE;
-    attributes.c_cc[termios::VEOL2] = termios::VDISABLE;
-    attributes.c_cc[termios::VWERASE] = termios::VDISABLE;
-    attributes.c_cc[termios::VREPRINT] = termios::VDISABLE;
-    attributes.c_cc[termios::VLNEXT] = termios::VDISABLE;
-    attributes.c_cc[termios::VMIN] = 1;
-    attributes.c_cc[termios::VTIME] = 0;
-    attributes
-}
-
-fn quoted_attributes(mut attributes: Termios) -> Termios {
-    attributes.c_iflag &= !(termios::IXON | termios::IXOFF | termios::INLCR | termios::ICRNL);
-    attributes.c_lflag &= !(termios::ISIG | termios::IEXTEN);
-    attributes
+    attributes.map_or(Ok(()), |attributes| {
+        apply_attributes(descriptor, when, attributes)
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::os::fd::{AsFd, AsRawFd, OwnedFd};
+    use std::os::fd::{AsFd, OwnedFd};
 
     use super::*;
 
@@ -173,12 +536,13 @@ mod tests {
             }
         }
 
-        fn attributes(&self) -> Termios {
-            termios::tcgetattr(self.terminal.as_raw_fd()).expect("tcgetattr")
+        fn attributes(&self) -> TerminalAttributes {
+            read_attributes(self.terminal.as_fd()).expect("read terminal attributes")
         }
     }
 
     #[test]
+    // [spec:nshedit:req:platform.typed-boundary/test]
     fn modes_restore_original_once() {
         let pty = Pty::open();
         let original = pty.attributes();
@@ -186,18 +550,20 @@ mod tests {
 
         controller.activate().expect("activate");
         let editing = pty.attributes();
-        assert_eq!(editing.c_lflag & (termios::ICANON | termios::ECHO), 0);
-        assert_ne!(editing.c_lflag & termios::ISIG, 0);
-        assert_eq!(editing.c_cc[termios::VMIN], 1);
-        assert_eq!(editing.c_cc[termios::VTIME], 0);
+        assert!(!editing.flag(TerminalFlag::CanonicalInput));
+        assert!(!editing.flag(TerminalFlag::EchoInput));
+        assert!(editing.flag(TerminalFlag::GenerateSignals));
+        assert_eq!(editing.control_character(ControlCharacter::MinimumBytes), 1);
+        assert_eq!(editing.control_character(ControlCharacter::Timeout), 0);
 
         controller.enter_quoted_mode().expect("quoted mode");
         let quoted = pty.attributes();
-        assert_eq!(quoted.c_lflag & (termios::ISIG | termios::IEXTEN), 0);
-        assert_eq!(
-            quoted.c_iflag & (termios::IXON | termios::IXOFF | termios::INLCR | termios::ICRNL),
-            0
-        );
+        assert!(!quoted.flag(TerminalFlag::GenerateSignals));
+        assert!(!quoted.flag(TerminalFlag::ExtendedProcessing));
+        assert!(!quoted.flag(TerminalFlag::EnableOutputFlowControl));
+        assert!(!quoted.flag(TerminalFlag::EnableInputFlowControl));
+        assert!(!quoted.flag(TerminalFlag::MapNewlineToCarriageReturn));
+        assert!(!quoted.flag(TerminalFlag::MapCarriageReturnToNewline));
 
         controller.enter_cooked_mode().expect("cooked mode");
         assert_same_attributes(pty.attributes(), original);
@@ -222,11 +588,7 @@ mod tests {
         controller.restore().expect("nothing to restore");
     }
 
-    fn assert_same_attributes(actual: Termios, expected: Termios) {
-        assert_eq!(actual.c_iflag, expected.c_iflag);
-        assert_eq!(actual.c_oflag, expected.c_oflag);
-        assert_eq!(actual.c_cflag, expected.c_cflag);
-        assert_eq!(actual.c_lflag, expected.c_lflag);
-        assert_eq!(actual.c_cc, expected.c_cc);
+    fn assert_same_attributes(actual: TerminalAttributes, expected: TerminalAttributes) {
+        assert_eq!(actual, expected);
     }
 }

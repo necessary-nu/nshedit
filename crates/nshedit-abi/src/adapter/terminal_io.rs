@@ -12,10 +12,14 @@ impl EditLine {
     }
 
     pub(crate) fn resize_display(&mut self) {
-        let Some((rows, columns)) = self.descriptor(0).and_then(termios::window_size) else {
+        let Some((rows, columns)) = self
+            .descriptor(0)
+            .and_then(|descriptor| with_borrowed_descriptor(descriptor, terminal::screen_size))
+            .and_then(Result::ok)
+        else {
             return;
         };
-        let Ok(size) = ScreenSize::new(usize::from(rows), usize::from(columns)) else {
+        let Ok(size) = ScreenSize::new(rows, columns) else {
             return;
         };
         self.boundary
@@ -291,7 +295,10 @@ impl EditLine {
             .borrow()
             .original
             .as_ref()
-            .map_or(termios::CEOF, |attributes| attributes.c_cc[termios::VEOF])
+            .map_or_else(
+                || ControlCharacter::EndOfFile.default_value(),
+                |attributes| attributes.control_character(ControlCharacter::EndOfFile),
+            )
     }
 
     pub(crate) fn control_reprint(&self) -> u8 {
@@ -300,9 +307,10 @@ impl EditLine {
             .borrow()
             .original
             .as_ref()
-            .map_or(termios::CREPRINT, |attributes| {
-                attributes.c_cc[termios::VREPRINT]
-            })
+            .map_or_else(
+                || ControlCharacter::Reprint.default_value(),
+                |attributes| attributes.control_character(ControlCharacter::Reprint),
+            )
     }
 }
 

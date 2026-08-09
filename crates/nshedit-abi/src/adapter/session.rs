@@ -24,8 +24,8 @@ impl EditLine {
         let _ = native.execute(Action::SetMark);
         let _ = native.set_terminal_mode(TerminalMode::Cooked);
         let lookup = nshterm::TermInfo::from_name(terminal_name.to_str().unwrap_or("dumb"));
-        let window_size = termios::window_size(input_descriptor)
-            .map(|(rows, columns)| (usize::from(rows), usize::from(columns)))
+        let window_size = with_borrowed_descriptor(input_descriptor, terminal::screen_size)
+            .and_then(Result::ok)
             .filter(|(rows, columns)| *rows != 0 && *columns != 0);
         let terminal_capabilities = TerminalCapabilities::new(
             terminal_name.to_str().unwrap_or("dumb"),

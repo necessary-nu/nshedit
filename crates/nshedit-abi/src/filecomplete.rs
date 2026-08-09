@@ -36,6 +36,7 @@ use core::ptr;
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::fs::ReadDir;
+use std::os::unix::ffi::OsStrExt;
 
 use nshedit::domain::{Text, TextUnit};
 use nshedit::editor::{
@@ -249,11 +250,13 @@ fn tilde_expand_string(text: &str) -> Option<String> {
         None => (&text[1..], text),
     };
     let home = if name.is_empty() {
-        nshedit_plat::passwd::home_dir_by_uid(nshedit_plat::getuid())
+        nshedit_plat::passwd::home_directory(nshedit_plat::current_user())
     } else {
-        nshedit_plat::passwd::home_dir_by_name(name)
-    }?;
-    let home = String::from_utf8(home).ok()?;
+        nshedit_plat::passwd::home_directory_named(name)
+    }
+    .ok()
+    .flatten()?;
+    let home = home.into_os_string().into_string().ok()?;
     Some(format!("{home}/{rest}"))
 }
 
@@ -891,17 +894,22 @@ pub unsafe extern "C" fn fn_tilde_expand(txt: *const c_char) -> *mut c_char {
         Some(relative) => (&bytes[1..relative + 1], relative + 2),
     };
     let home = if name.is_empty() {
-        nshedit_plat::passwd::home_dir_by_uid(nshedit_plat::getuid())
-    } else {
-        core::str::from_utf8(name)
+        nshedit_plat::passwd::home_directory(nshedit_plat::current_user())
             .ok()
-            .and_then(nshedit_plat::passwd::home_dir_by_name)
+            .flatten()
+    } else {
+        core::str::from_utf8(name).ok().and_then(|name| {
+            nshedit_plat::passwd::home_directory_named(name)
+                .ok()
+                .flatten()
+        })
     };
     let Some(home) = home else {
         // Unknown (including non-UTF-8) account names are copied unchanged.
         return unsafe { c_dup(bytes) };
     };
 
+    let home = home.as_os_str().as_bytes();
     let rest = &bytes[rest_at..];
     let mut expanded = Vec::new();
     if expanded
@@ -910,7 +918,7 @@ pub unsafe extern "C" fn fn_tilde_expand(txt: *const c_char) -> *mut c_char {
     {
         return ptr::null_mut();
     }
-    expanded.extend_from_slice(&home);
+    expanded.extend_from_slice(home);
     expanded.push(b'/');
     expanded.extend_from_slice(rest);
     // SAFETY: the block is handed to the caller, who frees it.

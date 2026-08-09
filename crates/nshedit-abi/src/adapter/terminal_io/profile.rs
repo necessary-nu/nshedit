@@ -186,8 +186,8 @@ impl EditLine {
         let result = nshterm::TermInfo::from_name(name.to_str().unwrap_or("dumb"));
         let window_size = self
             .descriptor(0)
-            .and_then(termios::window_size)
-            .map(|(rows, columns)| (usize::from(rows), usize::from(columns)))
+            .and_then(|descriptor| with_borrowed_descriptor(descriptor, terminal::screen_size))
+            .and_then(Result::ok)
             .filter(|(rows, columns)| *rows != 0 && *columns != 0);
         let mut capabilities = TerminalCapabilities::new(
             name.to_str().unwrap_or("dumb"),
@@ -228,7 +228,10 @@ impl EditLine {
             .borrow()
             .original
             .as_ref()
-            .and_then(termios::baud_rate)
+            .and_then(|attributes| match attributes.output_speed() {
+                OutputSpeed::BitsPerSecond(rate) => Some(rate),
+                OutputSpeed::Custom => None,
+            })
             .and_then(BaudRate::new)
     }
 
