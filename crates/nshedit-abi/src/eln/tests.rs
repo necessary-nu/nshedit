@@ -524,3 +524,115 @@ fn the_narrow_getter_forwards_what_needs_no_conversion() {
     }
     done(el);
 }
+
+// -----------------------------------------------------------------
+// The typed operations behind the byte-string entry points
+// -----------------------------------------------------------------
+
+/// The private layer names the operation it wants; the exported entry point
+/// parses an operation code and a variadic tail and then names the same one.
+/// Both routes reach the same editor state, which is what lets the port keep
+/// the codes at the ABI boundary instead of carrying them inwards.
+// [spec:nshedit:req:abi.rust-internals/test]
+#[test]
+fn typed_and_coded_operations_agree() {
+    unsafe extern "C" fn command(_: *mut EditLine, _: u32) -> u8 {
+        0
+    }
+
+    let el = editline();
+    // SAFETY: `el` is live and used through one reference at a time.
+    let editor = unsafe { &mut *el };
+
+    assert_eq!(
+        operations::add_function(editor, b"a-typed-command", b"help", command),
+        Ok(())
+    );
+    assert_eq!(
+        operations::run_list_command(
+            editor,
+            ListCommand::Bind,
+            &[b"^A".as_slice(), b"a-typed-command"],
+        ),
+        Ok(())
+    );
+    // A command that was never registered is the operation's one refusal.
+    assert_eq!(
+        operations::run_list_command(
+            editor,
+            ListCommand::Bind,
+            &[b"^B".as_slice(), b"no-such-editor-command"],
+        ),
+        Err(operations::Refused)
+    );
+
+    // The same two operations through the exported entry point and its codes.
+    let name = CString::new("a-coded-command").unwrap();
+    let help = CString::new("help").unwrap();
+    let key = CString::new("^C").unwrap();
+    let missing = CString::new("no-such-editor-command").unwrap();
+    let other_key = CString::new("^D").unwrap();
+    // SAFETY: each op is called with exactly the arguments its rule defines.
+    unsafe {
+        assert_eq!(
+            el_set(
+                el,
+                crate::histedit::EL_ADDFN,
+                name.as_ptr(),
+                help.as_ptr(),
+                command as *const c_void,
+            ),
+            0
+        );
+        assert_eq!(
+            el_set(
+                el,
+                crate::histedit::EL_BIND,
+                key.as_ptr(),
+                name.as_ptr(),
+                ptr::null::<c_char>(),
+            ),
+            0
+        );
+        assert_eq!(
+            el_set(
+                el,
+                crate::histedit::EL_BIND,
+                other_key.as_ptr(),
+                missing.as_ptr(),
+                ptr::null::<c_char>(),
+            ),
+            -1
+        );
+    }
+    done(el);
+}
+
+/// The capability store is reached by name and answers a typed number, so
+/// nothing has to hand it a capability-dependent out-pointer to find the
+/// screen size.
+// [spec:nshedit:req:abi.rust-internals/test]
+#[test]
+fn numeric_capability_answers_a_value() {
+    let el = editline();
+    // SAFETY: `el` is live.
+    let editor = unsafe { &mut *el };
+
+    assert_eq!(
+        operations::run_list_command(
+            editor,
+            ListCommand::SetCapability,
+            &[b"li".as_slice(), b"42"],
+        ),
+        Ok(())
+    );
+    assert_eq!(editor.terminal_capability_number(b"li"), Some(42));
+    // A string capability has no numeric value, and neither has a name the
+    // terminal database does not define.
+    assert_eq!(editor.terminal_capability_number(b"cl"), None);
+    assert_eq!(
+        editor.terminal_capability_number(b"no-such-capability"),
+        None
+    );
+    done(el);
+}

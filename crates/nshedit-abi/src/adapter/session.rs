@@ -124,6 +124,33 @@ impl EditLine {
         self.reconfigure();
     }
 
+    /// Enter or leave unbuffered reading, running the transition the mode
+    /// change implies.
+    ///
+    /// A 0 -> non-zero transition arms the persistent signal handlers, resets
+    /// the line and takes the terminal into editing mode; the reverse returns
+    /// it to cooked mode and disarms them. Setting the mode it already holds
+    /// does nothing. The flag is written *before* either sequence runs, and
+    /// both sequences read it.
+    // [spec:nshedit:req:abi.rust-internals]
+    pub(crate) fn set_unbuffered_reading(&mut self, enabled: bool) {
+        let was = self.unbuffered();
+        if enabled && !was {
+            self.set_unbuffered(true);
+            if self.handle_signals() {
+                let _ = self.arm_persistent_signal_handlers();
+            }
+            self.reset_line();
+            if self.editing_enabled() {
+                let _ = self.set_terminal_mode(TerminalMode::Editing);
+            }
+        } else if !enabled && was {
+            self.set_unbuffered(false);
+            let _ = self.set_terminal_mode(TerminalMode::Cooked);
+            let _ = self.disarm_persistent_signal_handlers();
+        }
+    }
+
     pub(crate) fn safe_read(&self) -> bool {
         self.boundary.policy.interrupted_read == InterruptedRead::Retry
     }

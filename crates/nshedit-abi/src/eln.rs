@@ -45,6 +45,7 @@ use crate::adapter::{
 };
 use crate::cdecl::histedit::LineInfo;
 use crate::conversion::{decode_bytes, encode_one, encode_wide, encoded_width};
+use crate::eln::operations::ListCommand;
 use crate::histedit::{
     EL_ALIAS_TEXT, EL_BIND, EL_CLIENTDATA, EL_ECHOTC, EL_EDITMODE, EL_EDITOR, EL_GETCFN, EL_GETFP,
     EL_GETTC, EL_HIST, EL_PREP_TERM, EL_PROMPT, EL_PROMPT_ESC, EL_REFRESH, EL_RESIZE, EL_RPROMPT,
@@ -426,20 +427,14 @@ const FORWARDED_TO_WSET: &[c_int] = &[
 /// the two differ; both are reproduced rather than reconciled.
 const MAX_LIST_ARGS: usize = 19;
 
-/// The command word the C writes into `wargv[0]` for each list op, or `None`
-/// when `op` is not one of them.
-fn list_op_command(op: c_int) -> Option<&'static [u32]> {
-    const BIND: &[u32] = &[0x62, 0x69, 0x6e, 0x64];
-    const TELLTC: &[u32] = &[0x74, 0x65, 0x6c, 0x6c, 0x74, 0x63];
-    const SETTC: &[u32] = &[0x73, 0x65, 0x74, 0x74, 0x63];
-    const ECHOTC: &[u32] = &[0x65, 0x63, 0x68, 0x6f, 0x74, 0x63];
-    const SETTY: &[u32] = &[0x73, 0x65, 0x74, 0x74, 0x79];
+/// The list operation `op` selects, or `None` when it selects none of them.
+fn list_op_command(op: c_int) -> Option<ListCommand> {
     Some(match op {
-        EL_BIND => BIND,
-        EL_TELLTC => TELLTC,
-        EL_SETTC => SETTC,
-        EL_ECHOTC => ECHOTC,
-        EL_SETTY => SETTY,
+        EL_BIND => ListCommand::Bind,
+        EL_TELLTC => ListCommand::ReportCapabilities,
+        EL_SETTC => ListCommand::SetCapability,
+        EL_ECHOTC => ListCommand::EchoCapability,
+        EL_SETTY => ListCommand::SetTtyModes,
         _ => return None,
     })
 }
@@ -486,43 +481,26 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
     // read, and `el_wset`'s own cap is nineteen. Both are reproduced. A
     // caller that passes no NULL sentinel is the undefined half of that
     // entry, and the cap is what bounds it.
-    if let Some(cmd) = list_op_command(op) {
-        let mut owned: Vec<Vec<u32>> = Vec::new();
+    if let Some(command) = list_op_command(op) {
+        let mut arguments: Vec<&[u8]> = Vec::new();
         for _ in 1..MAX_LIST_ARGS {
             // SAFETY: the op's tail is a NULL-terminated run of byte strings.
             let p = unsafe { ap.next_arg::<*const c_char>() };
             if p.is_null() {
                 break;
             }
-            // SAFETY: `p` is non-null and NUL-terminated.
+            // SAFETY: `p` is non-null and NUL-terminated, and the string
+            // outlives the call.
             let Some(bytes) = (unsafe { bytes_upto_nul(p) }) else {
                 return -1;
             };
-            let el_ptr: *mut EditLine = el;
-            // SAFETY: `el_ptr` is live for the call.
-            let conv = unsafe { (&mut *el_ptr).narrow_conversion_mut() };
-            // C: `ct_decode_argv`, whose NULL return is -1 without calling
-            // the handler.
-            let Some(w) = decode_bytes(Some(bytes), conv) else {
-                return -1;
-            };
-            let mut v = Vec::with_capacity(w.len() + 1);
-            v.extend_from_slice(w);
-            v.push(0);
-            owned.push(v);
+            arguments.push(bytes);
         }
 
         // C: `wargv[0] = L"bind"` and friends, overwriting the NULL the
         // collection loop left at index 0. `argc` is `i`, the number of
-        // arguments read plus the command word.
-        let mut argv: Vec<&[u32]> = Vec::with_capacity(owned.len() + 1);
-        argv.push(cmd);
-        argv.extend(owned.iter().map(|v| &v[..v.len() - 1]));
-        return match op {
-            EL_BIND => el.bind_command(&argv),
-            EL_SETTY => el.set_tty_modes(&argv),
-            _ => el.terminal_command(&argv),
-        };
+        // arguments read plus the command word, and every handler ignores it.
+        return operations::status(operations::run_list_command(el, command, &arguments));
     }
 
     // C: decode, then hand the wide string to the same core item the wide arm
@@ -561,29 +539,16 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         let name = unsafe { ap.next_arg::<*const c_char>() };
         let help = unsafe { ap.next_arg::<*const c_char>() };
         let callback = unsafe { crate::histedit::fn_arg::<ElFuncT>(&mut ap) };
-        if name.is_null() || help.is_null() || callback.is_none() {
-            return -1;
-        }
-        // SAFETY: both pointers are non-null and follow the op's string
-        // contract. Own each conversion before the shared buffer is reused.
-        let Some(name_bytes) = (unsafe { bytes_upto_nul(name) }) else {
-            return -1;
-        };
-        let Some(help_bytes) = (unsafe { bytes_upto_nul(help) }) else {
+        let (Some(name), Some(help), Some(callback)) = (
+            // SAFETY: both pointers follow the op's string contract when they
+            // are non-null.
+            unsafe { bytes_upto_nul(name) },
+            unsafe { bytes_upto_nul(help) },
+            callback,
+        ) else {
             return -1;
         };
-        let Some(name) =
-            decode_bytes(Some(name_bytes), el.narrow_conversion_mut()).map(<[u32]>::to_vec)
-        else {
-            return -1;
-        };
-        let Some(help) =
-            decode_bytes(Some(help_bytes), el.narrow_conversion_mut()).map(<[u32]>::to_vec)
-        else {
-            return -1;
-        };
-        return c_int::from(!el.add_command(&name, &help, callback.expect("checked above")))
-            .wrapping_neg();
+        return operations::status(operations::add_function(el, name, help, callback));
     }
 
     // The prompt ops. Not forwardable, and the reason is one argument: the
@@ -917,6 +882,8 @@ pub unsafe extern "C" fn el_replacestr(el: *mut EditLine, str_: *const c_char) -
     let w = unsafe { decode_through_lgcyconv(el, str_) };
     unsafe { el_wreplacestr(el, w) }
 }
+
+pub(crate) mod operations;
 
 #[cfg(test)]
 mod tests;

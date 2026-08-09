@@ -254,10 +254,10 @@ pub(super) unsafe fn complete(ignore: c_int, invoking_key: c_int) -> c_int {
 /// editor command bound to TAB, which calls `rl_complete`.
 // [spec:libedit:def:readline.el-rl-complete-fn]
 // [spec:libedit:sem:readline.el-rl-complete-fn]
-pub(super) fn _el_rl_complete(el: *mut EditLine, ch: c_int) -> c_uchar {
+pub(super) unsafe extern "C" fn _el_rl_complete(el: *mut EditLine, ch: u32) -> c_uchar {
     let _ = el;
     // The first argument, readline's ignored `count`, is hardcoded to 0. Every
     // CC_* value is small, so the narrowing is lossless in practice.
     // SAFETY: `complete` reaches the module statics.
-    unsafe { complete(0, ch) as c_uchar }
+    unsafe { complete(0, ch as c_int) as c_uchar }
 }

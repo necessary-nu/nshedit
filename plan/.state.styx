@@ -426,4 +426,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule abi.typed-session}
     )}
+    {id rust-idiom-readline, covered_rules (
+        abi.rust-internals
+    ), covered_claims (
+        {impl_name native-impl, rule abi.rust-internals}
+    )}
 )

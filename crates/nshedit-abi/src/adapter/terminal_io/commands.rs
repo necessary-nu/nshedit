@@ -430,6 +430,19 @@ impl EditLine {
         -1
     }
 
+    /// The value of the numeric capability `name`, or `None` when the
+    /// terminal has no numeric capability by that name.
+    // [spec:nshedit:req:abi.rust-internals]
+    pub(crate) fn terminal_capability_number(&self, name: &[u8]) -> Option<c_int> {
+        let name = core::str::from_utf8(name).ok()?;
+        match local_value_capability(name) {
+            Some((CapabilityValueKind::Number, _)) => {
+                Some(self.boundary.terminal.capabilities.number(name))
+            }
+            _ => None,
+        }
+    }
+
     /// Query one capability through `EL_GETTC`'s capability-dependent out pointer.
     ///
     /// # Safety

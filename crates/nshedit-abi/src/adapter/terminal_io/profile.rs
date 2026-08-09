@@ -175,7 +175,43 @@ impl TerminalCapabilities {
     }
 }
 
+/// The terminal type was installed but its capability entry could not be
+/// loaded, so the hardcoded dumb terminal stands in for it.
+///
+/// C: `EL_TERMINAL`'s -1, which reports the failed lookup however usable the
+/// fallback it installed is (ERR-terminal-22).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CapabilityLookupFailed;
+
 impl EditLine {
+    /// Load the terminal type `name` selects, resolving an absent name
+    /// through `$TERM` and then the dumb terminal.
+    ///
+    /// The name is only ever a lookup key, so bytes that are not UTF-8 are
+    /// passed on lossily rather than refused — unlike `el_init`'s program
+    /// name and `H_LOAD`'s filename, which fail the call. The C's own outcome
+    /// for a name the terminfo database has no entry for is the diagnostic,
+    /// the hardcoded dumb terminal and -1, and running that path is closer
+    /// than refusing to configure anything.
+    // [spec:nshedit:req:abi.rust-internals]
+    pub(crate) fn set_terminal_type(
+        &mut self,
+        name: Option<&[u8]>,
+    ) -> Result<(), CapabilityLookupFailed> {
+        let name = name
+            .map(String::from_utf8_lossy)
+            .map(std::borrow::Cow::into_owned)
+            .or_else(|| {
+                secure_environment("TERM").map(|name| String::from_utf8_lossy(&name).into_owned())
+            })
+            .unwrap_or_else(|| "dumb".to_owned());
+        if self.set_terminal_name(&name) == 0 {
+            Ok(())
+        } else {
+            Err(CapabilityLookupFailed)
+        }
+    }
+
     pub(crate) fn set_terminal_name(&mut self, name: &str) -> c_int {
         let Ok(name) = CString::new(name) else {
             return -1;

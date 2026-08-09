@@ -5,7 +5,10 @@ use core::ptr::{self, NonNull};
 use std::cell::UnsafeCell;
 use std::sync::atomic::AtomicBool;
 
-use crate::adapter::{EditLine, SessionInit, SessionStreams, StreamEndpoint};
+use nshedit::domain::EditingMode;
+use nshedit::editor::effect::PromptSide;
+
+use crate::adapter::{EditLine, HistoryEncoding, SessionInit, SessionStreams, StreamEndpoint};
 use crate::cdecl::handles::History;
 use crate::cdecl::readline::{HistEntry, KEYMAP_SIZE, RlCommandFuncT};
 use crate::conversion::ConversionBuffer;
@@ -145,6 +148,21 @@ pub(super) unsafe fn runtime_editor() -> *mut EditLine {
     unsafe { READLINE_RUNTIME.session().editor() }
 }
 
+/// Run `operation` on the installed editor, or answer `None` when this layer
+/// has none.
+///
+/// C: every call site reached here hands `el_set`/`el_get` whatever `e` holds,
+/// and a NULL editor is rejected without touching any state
+/// (ERR-readline-11) — so an uninitialized layer runs no operation.
+// [spec:nshedit:req:abi.rust-internals]
+pub(super) unsafe fn with_runtime_editor<R>(
+    operation: impl FnOnce(&mut EditLine) -> R,
+) -> Option<R> {
+    // SAFETY: the session owns the editor and hands out no other reference
+    // for the duration of the call.
+    unsafe { runtime_editor().as_mut() }.map(operation)
+}
+
 pub(super) unsafe fn runtime_history() -> *mut History {
     unsafe { READLINE_RUNTIME.session().history() }
 }
@@ -179,6 +197,48 @@ impl std::fmt::Display for ReadlineInitError {
             Self::Prompt => formatter.write_str("could not initialize the readline prompt"),
         }
     }
+}
+
+/// `history` under the callback signature the editor's history slot is typed
+/// with.
+///
+/// The slot is declared by the wide API. `readline.c` installs the byte store
+/// into it and marks the store narrow, so the record this receives has the
+/// narrow layout that mark selects, and the handle is the `History` this
+/// layer allocated.
+///
+/// # Safety
+///
+/// `handle` must be the live narrow history, and the tail must carry what
+/// `op` defines.
+// [spec:nshedit:req:abi.rust-internals]
+unsafe extern "C" fn narrow_history(
+    handle: *mut c_void,
+    event: *mut crate::cdecl::histedit::HistEventWide,
+    op: c_int,
+    ap: ...
+) -> c_int {
+    // SAFETY: this function's own contract, forwarded unchanged.
+    unsafe {
+        crate::histedit::history_dispatch::<c_char>(
+            handle.cast(),
+            event.cast::<crate::cdecl::histedit::HistEvent>(),
+            op,
+            ap,
+        )
+    }
+}
+
+/// Bind one key sequence to one editor command, discarding the refusal the
+/// C's `el_set(EL_BIND, ...)` also discards.
+///
+/// # Safety
+///
+/// `editor` must be the live editor this layer owns.
+unsafe fn bind_key(editor: *mut EditLine, key_sequence: &[u8], command: &[u8]) {
+    // SAFETY: the caller guarantees the editor is live.
+    let editor = unsafe { &mut *editor };
+    let _ = operations::run_list_command(editor, ListCommand::Bind, &[key_sequence, command]);
 }
 
 pub(super) unsafe fn initialize_readline() -> Result<(), ReadlineInitError> {
@@ -238,10 +298,9 @@ pub(super) unsafe fn initialize_readline() -> Result<(), ReadlineInitError> {
             },
         })
         .map_err(ReadlineInitError::Editor)?;
-        let editor = NonNull::from(editor_owner.as_mut());
 
         if editmode == 0 {
-            el_set_va(editor.as_ptr().cast(), EL_EDITMODE, 0);
+            editor_owner.set_editing_enabled(false);
         }
 
         let history =
@@ -254,108 +313,75 @@ pub(super) unsafe fn initialize_readline() -> Result<(), ReadlineInitError> {
         let _ = history::execute(HistoryRequest::SetSize(c_int::MAX as usize));
         history_length = 0;
         max_input_history = c_int::MAX;
-        el_set_va(
-            editor.cast(),
-            EL_HIST,
-            crate::histedit::history as *const c_void,
-            history,
+        let _ = (&mut *editor).set_history_callback(
+            Some(narrow_history),
+            history.cast(),
+            HistoryEncoding::Narrow,
         );
-        el_set_va(
-            editor.cast(),
-            EL_RESIZE,
-            _resize_fun as *const c_void,
-            &raw mut rl_line_buffer,
-        );
+        (&mut *editor).set_resize_callback(Some(_resize_fun), (&raw mut rl_line_buffer).cast());
 
-        // Sampled once for non-NULL-ness, exactly as the compatibility layer
-        // does; later assignments take effect only after reinitialization.
+        // Sampled once for non-NULL-ness, exactly as `readline.c` does; later
+        // assignments take effect only after reinitialization.
         let getc_hook = rl_getc_function;
         if getc_hook.is_some() {
-            el_set_va(editor.cast(), EL_GETCFN, _getc_function as *const c_void);
+            (&mut *editor).set_read_callback(Some(_getc_function));
         }
 
         if rl_set_prompt(c"".as_ptr()) == -1 {
             release_runtime_session();
             return Err(ReadlineInitError::Prompt);
         }
-        el_set_va(
-            editor.cast(),
-            EL_PROMPT_ESC,
-            _get_prompt as *const c_void,
-            RL_PROMPT_START_IGNORE as c_int,
+        (&mut *editor).set_prompt_narrow(
+            PromptSide::Left,
+            Some(_get_prompt),
+            RL_PROMPT_START_IGNORE.into(),
         );
-        el_set_va(editor.cast(), EL_SIGNAL, rl_catch_signals);
-        el_set_va(editor.cast(), EL_EDITOR, c"emacs".as_ptr());
-        if !rl_terminal_name.is_null() {
-            el_set_va(editor.cast(), EL_TERMINAL, rl_terminal_name);
-        } else {
+        (&mut *editor).set_handle_signals(rl_catch_signals != 0);
+        (&mut *editor).set_editor(EditingMode::Emacs);
+        if rl_terminal_name.is_null() {
             let term = cenv::get(c"TERM");
             rl_terminal_name = if term.is_null() || *term == 0 {
                 c"dumb".as_ptr().cast_mut()
             } else {
                 term
             };
+        } else {
+            let _ = (&mut *editor).set_terminal_type(c_bytes_opt(rl_terminal_name));
         }
 
-        el_set_va(
-            editor.cast(),
-            EL_ADDFN,
-            c"rl_complete".as_ptr(),
-            c"ReadLine compatible completion function".as_ptr(),
-            _el_rl_complete as *const c_void,
+        let _ = operations::add_function(
+            &mut *editor,
+            b"rl_complete",
+            b"ReadLine compatible completion function",
+            _el_rl_complete,
         );
-        el_set_va(
-            editor.cast(),
-            EL_BIND,
-            c"^I".as_ptr(),
-            c"rl_complete".as_ptr(),
-            ptr::null::<c_char>(),
+        bind_key(editor, b"^I", b"rl_complete");
+        let _ = operations::add_function(
+            &mut *editor,
+            b"rl_tstp",
+            b"ReadLine compatible suspend function",
+            _el_rl_tstp,
         );
-        el_set_va(
-            editor.cast(),
-            EL_ADDFN,
-            c"rl_tstp".as_ptr(),
-            c"ReadLine compatible suspend function".as_ptr(),
-            _el_rl_tstp as *const c_void,
-        );
-        el_set_va(
-            editor.cast(),
-            EL_BIND,
-            c"^Z".as_ptr(),
-            c"rl_tstp".as_ptr(),
-            ptr::null::<c_char>(),
-        );
-        el_set_va(
-            editor.cast(),
-            EL_BIND,
-            c"^R".as_ptr(),
-            c"em-inc-search-prev".as_ptr(),
-            ptr::null::<c_char>(),
-        );
+        bind_key(editor, b"^Z", b"rl_tstp");
+        bind_key(editor, b"^R", b"em-inc-search-prev");
 
         for (key_sequence, command) in [
-            (c"\\e[1~", c"ed-move-to-beg"),
-            (c"\\e[4~", c"ed-move-to-end"),
-            (c"\\e[7~", c"ed-move-to-beg"),
-            (c"\\e[8~", c"ed-move-to-end"),
-            (c"\\e[H", c"ed-move-to-beg"),
-            (c"\\e[F", c"ed-move-to-end"),
-            (c"\\e[3~", c"ed-delete-next-char"),
-            (c"\\e[2~", c"em-toggle-overwrite"),
-            (c"\\e[1;5C", c"em-next-word"),
-            (c"\\e[1;5D", c"ed-prev-word"),
-            (c"\\e[5C", c"em-next-word"),
-            (c"\\e[5D", c"ed-prev-word"),
-            (c"\\e\\e[C", c"em-next-word"),
-            (c"\\e\\e[D", c"ed-prev-word"),
+            (b"\\e[1~".as_slice(), b"ed-move-to-beg".as_slice()),
+            (b"\\e[4~", b"ed-move-to-end"),
+            (b"\\e[7~", b"ed-move-to-beg"),
+            (b"\\e[8~", b"ed-move-to-end"),
+            (b"\\e[H", b"ed-move-to-beg"),
+            (b"\\e[F", b"ed-move-to-end"),
+            (b"\\e[3~", b"ed-delete-next-char"),
+            (b"\\e[2~", b"em-toggle-overwrite"),
+            (b"\\e[1;5C", b"em-next-word"),
+            (b"\\e[1;5D", b"ed-prev-word"),
+            (b"\\e[5C", b"em-next-word"),
+            (b"\\e[5D", b"ed-prev-word"),
+            (b"\\e\\e[C", b"em-next-word"),
+            (b"\\e\\e[D", b"ed-prev-word"),
         ] {
-            el_set_va(
-                editor.cast(),
-                EL_BIND,
-                key_sequence.as_ptr(),
-                command.as_ptr(),
-                ptr::null::<c_char>(),
-            );
+            bind_key(editor, key_sequence, command);
         }
 
         // readline reads editline's configuration, not GNU's inputrc.

@@ -62,52 +62,23 @@ mod completion;
 mod history;
 mod runtime;
 
-use runtime::{READLINE_RUNTIME, runtime_editor, runtime_history};
+use crate::eln::operations::{self, ListCommand};
+use nshedit::domain::TerminalMode;
+use runtime::{READLINE_RUNTIME, runtime_editor, runtime_history, with_runtime_editor};
 #[cfg(test)]
 use runtime::{RuntimeSession, release_runtime_session};
 
 // ---------------------------------------------------------------------------
 // Constants `readline.c` gets from its public and private C headers.
 //
-// `histedit.h`'s `EL_*` and `H_*`, `editline/readline.h`'s `RL_*`, `tty.h`'s
-// control-character indices, `fcns.h`'s action numbers and `vis.h`'s flags are
-// all frozen compatibility values. Public `H_*` and `CC_*` values come from
-// the ABI declarations above; implementation-only values remain local here
-// instead of creating another public compatibility module in the core.
+// `editline/readline.h`'s `RL_*`, `tty.h`'s control-character indices,
+// `fcns.h`'s action numbers and `vis.h`'s flags are all frozen values a
+// caller can observe. Public `H_*` and `CC_*` values come from the ABI
+// declarations above; implementation-only values remain local here instead of
+// creating another public module in the core. The `histedit.h` `EL_*` codes
+// are absent: they select an operation for a variadic caller, and this file
+// names the operation it wants directly.
 // ---------------------------------------------------------------------------
-
-/// C: `#define EL_TERMINAL 1`.
-const EL_TERMINAL: c_int = 1;
-/// C: `#define EL_EDITOR 2`.
-const EL_EDITOR: c_int = 2;
-/// C: `#define EL_SIGNAL 3`.
-const EL_SIGNAL: c_int = 3;
-/// C: `#define EL_BIND 4`.
-const EL_BIND: c_int = 4;
-/// C: `#define EL_SETTC 6`.
-const EL_SETTC: c_int = 6;
-/// C: `#define EL_ADDFN 9`.
-const EL_ADDFN: c_int = 9;
-/// C: `#define EL_HIST 10`.
-const EL_HIST: c_int = 10;
-/// C: `#define EL_EDITMODE 11`.
-const EL_EDITMODE: c_int = 11;
-/// C: `#define EL_GETCFN 13`.
-const EL_GETCFN: c_int = 13;
-/// C: `#define EL_UNBUFFERED 15`.
-const EL_UNBUFFERED: c_int = 15;
-/// C: `#define EL_PREP_TERM 16`.
-const EL_PREP_TERM: c_int = 16;
-/// C: `#define EL_GETTC 17`.
-const EL_GETTC: c_int = 17;
-/// C: `#define EL_REFRESH 20`.
-const EL_REFRESH: c_int = 20;
-/// C: `#define EL_PROMPT_ESC 21`.
-const EL_PROMPT_ESC: c_int = 21;
-/// C: `#define EL_RESIZE 23`.
-const EL_RESIZE: c_int = 23;
-/// C: `#define EL_BUILTIN_GETCFN (NULL)`.
-const EL_BUILTIN_GETCFN: *const c_void = ptr::null();
 
 /// C: `#define RL_READLINE_VERSION 0x0402`.
 pub const RL_READLINE_VERSION: c_int = 0x0402;
@@ -620,30 +591,18 @@ pub static mut rl_completion_append_character: c_int = b' ' as c_int;
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// The variadic C entry points this file drives the editor and history with.
+// How this file drives the editor and history.
 //
 // `readline.c` reaches `el_set`, `el_get` and `history` through the same
-// public symbols an application would, so the port does too rather than
-// reaching around them into the core. Declaring them variadic is what lets a
-// Rust call site pass the tail; *reading* that tail is the callee's problem,
-// and all three of them read it.
+// variadic public symbols an application would, naming an operation code and
+// packing its arguments into a tail the callee unpacks again. The port names
+// the operation instead: every one of those calls is a typed call on the
+// editor, or on the shared operations in [`crate::eln::operations`] where the
+// arguments arrive as C strings and have to be decoded first. The editor and
+// history handles stay the ABI-owned opaque allocations they are, and the
+// exported entry points remain the only route in from outside the crate.
 // ---------------------------------------------------------------------------
 
-// `EditLine` and `History` are ABI-owned opaque allocations. Only their
-// pointer values cross this declaration; no caller can name or inspect their
-// fields, and every exported definition in this crate uses the same handles.
-unsafe extern "C" {
-    /// C: `int el_set(EditLine *el, int op, ...);` — defined by
-    /// [`crate::eln::el_set`].
-    #[link_name = "el_set"]
-    fn el_set_va(el: *mut c_void, op: c_int, ...) -> c_int;
-
-    /// C: `int el_get(EditLine *el, int op, ...);` — defined by
-    /// [`crate::eln::el_get`].
-    #[link_name = "el_get"]
-    fn el_get_va(el: *mut c_void, op: c_int, ...) -> c_int;
-
-}
 // ---------------------------------------------------------------------------
 // Memory a C caller frees, and the C strings this file reads.
 // ---------------------------------------------------------------------------
@@ -885,7 +844,7 @@ fn strcmp_pointer_repr(a: *mut c_char, b: *mut c_char) -> Ordering {
 /// callback, handing libedit the application's `rl_prompt`.
 // [spec:libedit:def:readline.get-prompt-fn]
 // [spec:libedit:sem:readline.get-prompt-fn]
-fn _get_prompt(el: *mut EditLine) -> *mut c_char {
+unsafe extern "C" fn _get_prompt(el: *mut EditLine) -> *mut c_char {
     let _ = el;
     // SAFETY: single-threaded module state. `rl_prompt` is borrowed, not
     // handed over: libedit must not free or modify it, and `rl_set_prompt`
@@ -900,7 +859,7 @@ fn _get_prompt(el: *mut EditLine) -> *mut c_char {
 /// `EL_GETCFN` shim that forwards to `rl_getc_function`.
 // [spec:libedit:def:readline.getc-function-fn]
 // [spec:libedit:sem:readline.getc-function-fn]
-fn _getc_function(el: *mut EditLine, c: *mut u32) -> c_int {
+unsafe extern "C" fn _getc_function(el: *mut EditLine, c: *mut u32) -> c_int {
     let _ = el;
     // SAFETY: `c` is EditLine's one-character out parameter.
     unsafe {
@@ -931,7 +890,7 @@ fn _getc_function(el: *mut EditLine, c: *mut u32) -> c_int {
 /// callback that republishes the line into `rl_line_buffer`.
 // [spec:libedit:def:readline.resize-fun-fn]
 // [spec:libedit:sem:readline.resize-fun-fn]
-fn _resize_fun(el: *mut EditLine, a: *mut c_void) {
+unsafe extern "C" fn _resize_fun(el: *mut EditLine, a: *mut c_void) {
     if el.is_null() || a.is_null() {
         return;
     }
@@ -1118,16 +1077,12 @@ pub unsafe extern "C" fn readline(p: *const c_char) -> *mut c_char {
             let event_hook = rl_event_hook;
             if event_hook.is_some() && !runtime_editor().is_null() && (&*runtime_editor()).is_tty()
             {
-                el_set_va(
-                    runtime_editor().cast(),
-                    EL_GETCFN,
-                    _rl_event_read_char as *const c_void,
-                );
+                with_runtime_editor(|editor| editor.set_read_callback(Some(_rl_event_read_char)));
                 READLINE_RUNTIME.access(|runtime| runtime.used_event_hook = true);
             }
             let used_event_hook = READLINE_RUNTIME.access(|runtime| runtime.used_event_hook);
             if event_hook.is_none() && used_event_hook {
-                el_set_va(runtime_editor().cast(), EL_GETCFN, EL_BUILTIN_GETCFN);
+                with_runtime_editor(|editor| editor.set_read_callback(None));
                 READLINE_RUNTIME.access(|runtime| runtime.used_event_hook = false);
             }
 
@@ -2933,7 +2888,7 @@ pub unsafe extern "C" fn rl_complete(ignore: c_int, invoking_key: c_int) -> c_in
 /// `ED_TTY_SIGTSTP`-alike bound to `^Z`.
 // [spec:libedit:def:readline.el-rl-tstp-fn]
 // [spec:libedit:sem:readline.el-rl-tstp-fn]
-fn _el_rl_tstp(el: *mut EditLine, ch: c_int) -> c_uchar {
+unsafe extern "C" fn _el_rl_tstp(el: *mut EditLine, ch: u32) -> c_uchar {
     let _ = (el, ch);
     // The whole body. Terminal state around the stop is EditLine's business:
     // `EL_SIGNAL`'s own `SIGTSTP` handler is what puts the tty back into
@@ -3085,8 +3040,12 @@ pub unsafe extern "C" fn rl_newline(count: c_int, c: c_int) -> c_int {
 /// `rl_command_func_t`s installed by `rl_bind_key`.
 // [spec:libedit:def:readline.rl-bind-wrapper-fn]
 // [spec:libedit:sem:readline.rl-bind-wrapper-fn]
-fn rl_bind_wrapper(el: *mut EditLine, c: c_uchar) -> c_uchar {
+unsafe extern "C" fn rl_bind_wrapper(el: *mut EditLine, c: u32) -> c_uchar {
     let _ = el;
+    // The C declares the parameter `unsigned char` and registers the function
+    // as an `el_func_t`, whose argument is a `wchar_t`: a key above a byte is
+    // truncated before the table is indexed, and again where it is passed on.
+    let c = c as u8;
     // SAFETY: single-threaded module state.
     unsafe {
         let Some(f) = READLINE_RUNTIME.access(|runtime| runtime.commands[c as usize]) else {
@@ -3132,15 +3091,17 @@ pub unsafe extern "C" fn rl_add_defun(
         // is stored raw: the caller must keep the function alive.
         READLINE_RUNTIME.access(|runtime| runtime.commands[c as usize] = fun);
         // There is no lazy `rl_initialize()` here, so the C hands a NULL
-        // editor to `el_set` and crashes (ERR-readline-11, UB); `el_set`
-        // taking the NULL is the port's definition of it.
-        el_set_va(
-            runtime_editor().cast(),
-            EL_ADDFN,
-            name,
-            name,
-            rl_bind_wrapper as *const c_void,
-        );
+        // editor to `el_set` and crashes (ERR-readline-11, UB); running no
+        // operation at all is the port's definition of it. A NULL `name` is
+        // the C's other unchecked argument: the registration is refused, and
+        // the binding below is left with no command word, which asks the
+        // editor to report the binding rather than to install one.
+        let name = c_bytes_opt(name);
+        if let Some(name) = name {
+            with_runtime_editor(|editor| {
+                operations::add_function(editor, name, name, rl_bind_wrapper)
+            });
+        }
         // strvis form: control characters as `^X`, other non-printables as
         // `\nnn`, whitespace encoded, no backslash doubling.
         let vised =
@@ -3151,13 +3112,11 @@ pub unsafe extern "C" fn rl_add_defun(
         for (slot, &b) in dest.iter_mut().zip(&vised[..vised.len().min(7)]) {
             *slot = b as c_char;
         }
-        el_set_va(
-            runtime_editor().cast(),
-            EL_BIND,
-            dest.as_ptr(),
-            name,
-            ptr::null::<c_char>(),
-        );
+        let key_sequence = c_bytes(dest.as_ptr());
+        let arguments: Vec<&[u8]> = core::iter::once(key_sequence).chain(name).collect();
+        with_runtime_editor(|editor| {
+            operations::run_list_command(editor, ListCommand::Bind, &arguments)
+        });
         // Both `el_set` results are discarded, so a failed registration or
         // binding is not reported.
         0
@@ -3183,7 +3142,7 @@ pub unsafe extern "C" fn rl_callback_read_char() {
         // (ERR-readline-37).
         let buf = crate::eln::el_gets(runtime_editor(), &mut count);
 
-        el_set_va(runtime_editor().cast(), EL_UNBUFFERED, 1);
+        with_runtime_editor(|editor| editor.set_unbuffered_reading(true));
         count -= 1;
         if buf.is_null() || count < 0 {
             return;
@@ -3202,7 +3161,7 @@ pub unsafe extern "C" fn rl_callback_read_char() {
 
         let linefunc = rl_linefunc;
         if done != 0 && linefunc.is_some() {
-            el_set_va(runtime_editor().cast(), EL_UNBUFFERED, 0);
+            with_runtime_editor(|editor| editor.set_unbuffered_reading(false));
             let wbuf = if done == 2 {
                 let w = c_dup(bytes);
                 if !w.is_null() {
@@ -3243,7 +3202,7 @@ pub unsafe extern "C" fn rl_callback_handler_install(
         // Installing a second handler simply overwrites this; there is no
         // stack of handlers.
         rl_linefunc = linefunc;
-        el_set_va(runtime_editor().cast(), EL_UNBUFFERED, 1);
+        with_runtime_editor(|editor| editor.set_unbuffered_reading(true));
     }
 }
 
@@ -3258,7 +3217,7 @@ pub unsafe extern "C" fn rl_callback_handler_remove() {
         // Nothing else happens: the prompt is not restored or freed, no
         // partially typed line is discarded, the terminal is not deprepped and
         // the display is left as it is.
-        el_set_va(runtime_editor().cast(), EL_UNBUFFERED, 0);
+        with_runtime_editor(|editor| editor.set_unbuffered_reading(false));
         rl_linefunc = None;
     }
 }
@@ -3311,7 +3270,7 @@ pub unsafe extern "C" fn rl_prep_terminal(meta_flag: c_int) {
     let _ = meta_flag;
     // SAFETY: single-threaded module state; no lazy-init guard, as in the C.
     unsafe {
-        el_set_va(runtime_editor().cast(), EL_PREP_TERM, 1);
+        with_runtime_editor(|editor| editor.set_terminal_mode(TerminalMode::Editing).ok());
     }
 }
 
@@ -3322,7 +3281,7 @@ pub unsafe extern "C" fn rl_prep_terminal(meta_flag: c_int) {
 pub unsafe extern "C" fn rl_deprep_terminal() {
     // SAFETY: single-threaded module state; no lazy-init guard, as in the C.
     unsafe {
-        el_set_va(runtime_editor().cast(), EL_PREP_TERM, 0);
+        with_runtime_editor(|editor| editor.set_terminal_mode(TerminalMode::Cooked).ok());
     }
 }
 
@@ -3386,16 +3345,20 @@ pub unsafe extern "C" fn rl_variable_bind(var: *const c_char, value: *const c_ch
     // (ERR-readline-45, reproduced). No lazy-init guard, as in the C.
     // SAFETY: both are NUL-terminated strings owned by the caller.
     unsafe {
-        c_int::from(
-            el_set_va(
-                runtime_editor().cast(),
-                EL_BIND,
-                c"".as_ptr(),
-                var,
-                value,
-                ptr::null::<c_char>(),
-            ) == -1,
-        )
+        // The C's collection loop stops at the first NULL, so a NULL `var`
+        // hides `value` as well.
+        let mut arguments: Vec<&[u8]> = vec![b"".as_slice()];
+        if let Some(var) = c_bytes_opt(var) {
+            arguments.push(var);
+            if let Some(value) = c_bytes_opt(value) {
+                arguments.push(value);
+            }
+        }
+        let refused = with_runtime_editor(|editor| {
+            operations::run_list_command(editor, ListCommand::Bind, &arguments)
+        })
+        .is_none_or(|outcome| outcome.is_err());
+        c_int::from(refused)
     }
 }
 
@@ -3421,7 +3384,7 @@ pub unsafe extern "C" fn rl_stuff_char(c: c_int) -> c_int {
 /// `EL_GETCFN` shim that spins `rl_event_hook` while the read would block.
 // [spec:libedit:def:readline.rl-event-read-char-fn]
 // [spec:libedit:sem:readline.rl-event-read-char-fn]
-fn _rl_event_read_char(el: *mut EditLine, wc: *mut u32) -> c_int {
+unsafe extern "C" fn _rl_event_read_char(el: *mut EditLine, wc: *mut u32) -> c_int {
     let mut ch: u8 = 0;
     let mut num_read: c_int = 0;
     // SAFETY: `wc` is EditLine's one-character out parameter and `el` its own
@@ -3468,8 +3431,10 @@ fn _rl_event_read_char(el: *mut EditLine, wc: *mut u32) -> c_int {
             }
         }
         // The hook cleared itself: put the builtin reader back.
-        if { rl_event_hook }.is_none() && !el.is_null() {
-            el_set_va(el.cast(), EL_GETCFN, EL_BUILTIN_GETCFN);
+        if { rl_event_hook }.is_none()
+            && let Some(editor) = el.as_mut()
+        {
+            editor.set_read_callback(None);
         }
         // Exactly one *byte*, widened with no multibyte decoding, so non-ASCII
         // input is corrupted whenever an event hook is installed
@@ -3633,11 +3598,16 @@ pub unsafe extern "C" fn rl_get_screen_size(rows: *mut c_int, cols: *mut c_int) 
     unsafe {
         // Neither result is checked, so on failure the caller's variables keep
         // whatever they held: this function does not initialize them.
-        if !rows.is_null() {
-            el_get_va(runtime_editor().cast(), EL_GETTC, c"li".as_ptr(), rows);
-        }
-        if !cols.is_null() {
-            el_get_va(runtime_editor().cast(), EL_GETTC, c"co".as_ptr(), cols);
+        for (out, capability) in [(rows, b"li"), (cols, b"co")] {
+            if out.is_null() {
+                continue;
+            }
+            if let Some(value) =
+                with_runtime_editor(|editor| editor.terminal_capability_number(capability))
+                    .flatten()
+            {
+                *out = value;
+            }
         }
     }
 }
@@ -3675,25 +3645,19 @@ pub unsafe extern "C" fn rl_message(format: *const c_char, ap: ...) {
 pub unsafe extern "C" fn rl_set_screen_size(rows: c_int, cols: c_int) {
     // SAFETY: single-threaded module state; no lazy-init guard, as in the C.
     unsafe {
-        // `EL_SETTC` takes strings, so the values are formatted as decimal.
-        // Negative values are accepted without validation, and the display
-        // arrays are not resized the way `el_resize` would resize them.
-        let buf = format!("{rows}\0");
-        el_set_va(
-            runtime_editor().cast(),
-            EL_SETTC,
-            c"li".as_ptr(),
-            buf.as_ptr(),
-            ptr::null::<c_char>(),
-        );
-        let buf = format!("{cols}\0");
-        el_set_va(
-            runtime_editor().cast(),
-            EL_SETTC,
-            c"co".as_ptr(),
-            buf.as_ptr(),
-            ptr::null::<c_char>(),
-        );
+        // The capability store takes text, so the values are formatted as
+        // decimal. Negative values are accepted without validation, and the
+        // display arrays are not resized the way `el_resize` would resize them.
+        for (capability, value) in [(b"li", rows), (b"co", cols)] {
+            let value = format!("{value}");
+            with_runtime_editor(|editor| {
+                operations::run_list_command(
+                    editor,
+                    ListCommand::SetCapability,
+                    &[capability, value.as_bytes()],
+                )
+            });
+        }
     }
 }
 
@@ -3818,12 +3782,14 @@ pub unsafe extern "C" fn rl_filename_completion_function(
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn rl_forced_update_display() {
-    // SAFETY: single-threaded module state; no lazy-init guard, as in the C.
-    // `rl_redisplay_function` is never consulted, so a custom redisplay
-    // routine has no effect.
-    unsafe {
-        el_set_va(runtime_editor().cast(), EL_REFRESH);
-    }
+    // C: `el_set(e, EL_REFRESH)`, which clears the C's recorded display and
+    // redraws prompt and line from it. The port's next display is a complete
+    // frame with no separate screen cache standing between it and the
+    // terminal, so the request has nothing to clear — which is why the
+    // editor's own refresh operation has an empty body as well.
+    //
+    // `rl_redisplay_function` is never consulted either, so a custom
+    // redisplay routine has no effect.
 }
 
 // [spec:libedit:def:readline.rl-abort-internal-fn]

@@ -1,5 +1,6 @@
 //! Structural checks for the maintained Rust source boundary.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -150,6 +151,116 @@ fn first_party_rust_rejects_allow_attributes() {
                 path.strip_prefix(&root).unwrap_or(&path).display()
             );
             remainder = &remainder[end + 2..];
+        }
+    }
+}
+
+/// The C symbol a `#[unsafe(no_mangle)]` item defines, if the line declares
+/// one.
+fn exported_symbol(declaration: &str) -> Option<&str> {
+    let item = declaration.strip_prefix("pub ")?;
+    let name = item
+        .strip_prefix("unsafe extern \"C\" fn ")
+        .or_else(|| item.strip_prefix("extern \"C\" fn "))
+        .or_else(|| item.strip_prefix("static mut "))
+        .or_else(|| item.strip_prefix("static "))?;
+    name.split(|character: char| !(character.is_alphanumeric() || character == '_'))
+        .next()
+        .filter(|name| !name.is_empty())
+}
+
+/// Every C symbol the ABI crate defines.
+fn exported_symbols(abi_source: &Path) -> BTreeSet<String> {
+    let mut sources = Vec::new();
+    rust_sources_below(abi_source, &mut sources);
+    let mut symbols = BTreeSet::new();
+    for path in sources {
+        let source = fs::read_to_string(&path).expect("read an ABI crate source");
+        let mut exported = false;
+        for line in source.lines() {
+            let line = line.trim();
+            if line == "#[unsafe(no_mangle)]" {
+                exported = true;
+                continue;
+            }
+            if !exported || line.starts_with('#') || line.starts_with("//") {
+                continue;
+            }
+            exported = false;
+            if let Some(name) = exported_symbol(line) {
+                symbols.insert(name.to_owned());
+            }
+        }
+    }
+    symbols
+}
+
+/// Every C symbol `source` declares as coming from somewhere else, whether by
+/// its Rust name or through a linkage name.
+fn foreign_declarations(source: &str) -> Vec<String> {
+    let mut declarations = Vec::new();
+    let mut inside = false;
+    for line in source.lines() {
+        let line = line.trim();
+        if !inside {
+            inside = line.ends_with("extern \"C\" {");
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("#[link_name = \"") {
+            if let Some(name) = rest.split('"').next() {
+                declarations.push(name.to_owned());
+            }
+            continue;
+        }
+        let declared = line
+            .strip_prefix("fn ")
+            .or_else(|| line.strip_prefix("unsafe fn "))
+            .or_else(|| line.strip_prefix("pub fn "))
+            .or_else(|| line.strip_prefix("static "))
+            .or_else(|| line.strip_prefix("static mut "));
+        if let Some(name) = declared {
+            declarations.extend(
+                name.split(|character: char| !(character.is_alphanumeric() || character == '_'))
+                    .next()
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned),
+            );
+            continue;
+        }
+        if line.starts_with('}') {
+            inside = false;
+        }
+    }
+    declarations
+}
+
+/// A symbol this workspace defines must never also be declared as foreign:
+/// that would make private code re-enter the library through the linker
+/// rather than call the implementation it is compiled with, and would carry
+/// the C's operation codes and variadic tails inwards with it.
+// [spec:nshedit:req:abi.rust-internals/test]
+#[test]
+fn no_exported_symbol_is_declared_foreign() {
+    let root = repo_root();
+    let exported = exported_symbols(&root.join("crates/nshedit-abi/src"));
+    for expected in ["el_set", "el_get", "history", "readline", "rl_line_buffer"] {
+        assert!(
+            exported.contains(expected),
+            "the exported ABI surface was not recognised: {expected} is missing"
+        );
+    }
+
+    let mut sources = Vec::new();
+    rust_sources_below(&root.join("crates"), &mut sources);
+    sources.sort();
+    for path in sources {
+        let source = fs::read_to_string(&path).expect("read first-party Rust source");
+        for declared in foreign_declarations(&source) {
+            assert!(
+                !exported.contains(&declared),
+                "{} declares {declared}, which this workspace defines; private code must call the typed implementation instead of re-entering the exported symbol",
+                path.strip_prefix(&root).unwrap_or(&path).display()
+            );
         }
     }
 }

@@ -554,7 +554,7 @@ fn the_bind_wrapper_hardcodes_a_count_of_one_and_discards_the_result() {
         // An unbound byte is CC_ERROR and the table is not consulted
         // further — this is the only failure the wrapper can report.
         READLINE_RUNTIME.access(|runtime| runtime.commands[key as usize] = None);
-        assert_eq!(rl_bind_wrapper(ptr::null_mut(), key), CC_ERROR);
+        assert_eq!(rl_bind_wrapper(ptr::null_mut(), key.into()), CC_ERROR);
 
         READLINE_RUNTIME.access(|runtime| runtime.commands[key as usize] = Some(recording_command));
         BOUND_COUNT.store(-1, Relaxed);
@@ -562,14 +562,14 @@ fn the_bind_wrapper_hardcodes_a_count_of_one_and_discards_the_result() {
         BOUND_SETS_DONE.store(false, Relaxed);
         rl_done = 0;
 
-        assert_eq!(rl_bind_wrapper(ptr::null_mut(), key), CC_NORM);
+        assert_eq!(rl_bind_wrapper(ptr::null_mut(), key.into()), CC_NORM);
         assert_eq!(BOUND_COUNT.load(Relaxed), 1);
         assert_eq!(BOUND_KEY.load(Relaxed), c_int::from(key));
 
         // The command's -1 above did not become CC_ERROR; setting
         // `rl_done` is what the editor loop actually notices.
         BOUND_SETS_DONE.store(true, Relaxed);
-        assert_eq!(rl_bind_wrapper(ptr::null_mut(), key), CC_EOF);
+        assert_eq!(rl_bind_wrapper(ptr::null_mut(), key.into()), CC_EOF);
 
         READLINE_RUNTIME.access(|runtime| runtime.commands[key as usize] = saved);
         BOUND_SETS_DONE.store(false, Relaxed);
@@ -596,7 +596,7 @@ fn command_callback_can_reenter_the_runtime() {
         REENTRANT_BIND_RESULT.store(c_int::MIN, Relaxed);
 
         assert_eq!(
-            rl_bind_wrapper(runtime_editor(), invoking),
+            rl_bind_wrapper(runtime_editor(), invoking.into()),
             CC_NORM,
             "the outer dispatch completes normally"
         );
@@ -635,7 +635,8 @@ fn suspending_raises_sigtstp_at_this_thread_and_resumes_normally() {
     let handlers = SignalHandlers::with_signals(&[Signal::Suspend]).unwrap();
 
     // Both parameters are unused.
-    let rc = _el_rl_tstp(ptr::null_mut(), c_int::from(b'\x1a'));
+    // SAFETY: the editor argument is never dereferenced by this command.
+    let rc = unsafe { _el_rl_tstp(ptr::null_mut(), u32::from(b'\x1a')) };
 
     // `raise` is `pthread_kill(pthread_self(), ...)`, so delivery has
     // already happened by the time it returns.
@@ -963,7 +964,7 @@ fn the_tab_command_narrows_what_rl_complete_returns() {
         // The editor argument is unused; `rl_complete` reaches the module
         // statics for the editor it actually needs.
         assert_eq!(
-            _el_rl_complete(ptr::null_mut(), c_int::from(b'\t')),
+            _el_rl_complete(ptr::null_mut(), u32::from(b'\t')),
             CC_REFRESH
         );
 

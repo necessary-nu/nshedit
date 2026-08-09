@@ -1188,22 +1188,7 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // string.
             let p = unsafe { ap.next_arg::<*mut c_void>() };
             let bytes = unsafe { cbytes(p.cast::<c_char>()) };
-            // The core takes `&str`. A type name that is not UTF-8 is passed
-            // on lossily rather than rejected — unlike `el_init`'s program
-            // name and `H_LOAD`'s filename, which fail the call. The reason
-            // is that this string is only ever a lookup key: the C's own
-            // outcome for a name the terminfo database has no entry for is
-            // the diagnostic, the hardcoded dumb terminal and -1, and running
-            // that path is closer than refusing to configure anything.
-            let name = bytes
-                .map(String::from_utf8_lossy)
-                .map(std::borrow::Cow::into_owned)
-                .or_else(|| {
-                    crate::adapter::secure_environment("TERM")
-                        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-                })
-                .unwrap_or_else(|| "dumb".to_owned());
-            el.set_terminal_name(&name)
+            el.set_terminal_type(bytes).map_or(-1, |()| 0)
         }
 
         // One `wchar_t *`: `L\"emacs\"` or `L\"vi\"`, anything else -1. Also
@@ -1350,28 +1335,11 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
         // read-prepare sequence; the reverse clears it and runs read-finish;
         // setting it to the value it already holds does nothing. Always 0.
         EL_UNBUFFERED => {
+            // `read_prepare` enters raw mode only when UNBUFFERED is set and
+            // editing is enabled, and `read_finish` leaves the tty raw when it
+            // is set — which is why the transition returns it to cooked mode.
             // SAFETY: the op's argument is an `int`.
-            let on = unsafe { ap.next_arg::<c_int>() } != 0;
-            let was = el.unbuffered();
-            // The flag is written *before* the sequence runs, and both
-            // sequences read it: `read_prepare` enters raw mode only when
-            // UNBUFFERED is set and editing is enabled, and `read_finish`
-            // leaves the tty raw when it is set — which is why
-            // `read_finish` here returns it to cooked mode.
-            if on && !was {
-                el.set_unbuffered(true);
-                if el.handle_signals() {
-                    let _ = el.arm_persistent_signal_handlers();
-                }
-                el.reset_line();
-                if el.editing_enabled() {
-                    let _ = el.set_terminal_mode(nshedit::domain::TerminalMode::Editing);
-                }
-            } else if !on && was {
-                el.set_unbuffered(false);
-                let _ = el.set_terminal_mode(nshedit::domain::TerminalMode::Cooked);
-                let _ = el.disarm_persistent_signal_handlers();
-            }
+            el.set_unbuffered_reading(unsafe { ap.next_arg::<c_int>() } != 0);
             0
         }
 
@@ -1822,7 +1790,7 @@ pub unsafe extern "C" fn history_wend(h: *mut HistoryW) {
 /// # Safety
 /// `h` and `ev` must be a live handle and a writable event of this
 /// instantiation, and the tail must carry what the op code says.
-unsafe fn history_dispatch<C: HistoryChar>(
+pub(crate) unsafe fn history_dispatch<C: HistoryChar>(
     h: *mut HistoryHandle<C>,
     ev: *mut HistEventGen<C>,
     op: c_int,
