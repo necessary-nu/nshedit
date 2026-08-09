@@ -85,8 +85,8 @@ impl EditLine {
             return -1;
         }
         let text = input.iter().copied().map(TextUnit::from_wide).collect();
-        match self.native.execute(Action::Insert(text)) {
-            Ok(_) => 0,
+        match self.native.insert_untracked(text) {
+            Ok(()) => 0,
             Err(_) => -1,
         }
     }
@@ -96,12 +96,7 @@ impl EditLine {
             return -1;
         }
         let text = input.iter().copied().map(TextUnit::from_wide).collect();
-        let span = self
-            .native
-            .line()
-            .span(0..self.native.line().len())
-            .expect("the complete line is a valid span");
-        match self.native.replace(span, text) {
+        match self.native.replace_line_untracked(text) {
             Ok(()) => 0,
             Err(_) => -1,
         }
@@ -117,9 +112,26 @@ impl EditLine {
     }
 
     pub(crate) fn finish_accepted_line(&mut self, mut line: Text) -> bool {
+        let cursor = self.native.cursor().get();
         if line.as_units().last() != Some(&TextUnit::Scalar('\n')) {
             line.push(TextUnit::Scalar('\n'));
         }
+        if !self.replace_line(line) {
+            return false;
+        }
+        let position = self
+            .native
+            .line()
+            .index(cursor.min(self.native.line().len()))
+            .expect("a clamped accepted-line cursor is valid");
+        self.native
+            .execute(Action::Move(Motion::Absolute(position)))
+            .is_ok()
+    }
+
+    pub(crate) fn append_end_of_input(&mut self) -> bool {
+        let mut line = self.native.line().clone();
+        line.push(TextUnit::Scalar('\u{4}'));
         self.replace_line(line)
     }
 

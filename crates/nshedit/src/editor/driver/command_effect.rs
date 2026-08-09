@@ -32,7 +32,6 @@ impl ReadDriver {
         _invoking: TextUnit,
         explicit_repeat: Option<usize>,
     ) -> Result<ReadStep, DriverError> {
-        self.beep_pending = false;
         let repeat = self.take_optional_repeat(explicit_repeat);
         match command {
             EffectCommand::SearchHistory(command) => self.dispatch_history_search(editor, command),
@@ -42,14 +41,17 @@ impl ReadDriver {
             }
             EffectCommand::SelectHistoryLine => {
                 let Some(position) = history_position(repeat) else {
-                    self.beep_pending = true;
+                    self.queue_beep();
                     return self.schedule_command_display(editor);
                 };
                 self.request_history_line(editor, position)
             }
+            EffectCommand::RestoreHistoryLine => {
+                self.request_history_line(editor, HistoryPosition::Current)
+            }
             EffectCommand::InsertHistoryWord => {
                 let Some(position) = history_word_position(repeat) else {
-                    self.beep_pending = true;
+                    self.queue_beep();
                     return self.schedule_command_display(editor);
                 };
                 self.pending(
@@ -71,7 +73,7 @@ impl ReadDriver {
             EffectCommand::EditHistory => match repeat {
                 Some(count) => {
                     let Some(count) = RepeatCount::new(count) else {
-                        self.beep_pending = true;
+                        self.queue_beep();
                         return self.schedule_command_display(editor);
                     };
                     self.after_history_line = Some(AfterHistoryLine::ExternalEdit);
@@ -98,17 +100,6 @@ impl ReadDriver {
         )
     }
 
-    pub(super) fn reject_effect_as_motion<T: TerminalControl>(
-        &mut self,
-        editor: &mut Editor<T>,
-    ) -> Result<ReadStep, DriverError> {
-        self.pending_operator = None;
-        self.repeat_argument = None;
-        self.finish_change(editor);
-        self.beep_pending = true;
-        self.schedule_command_display(editor)
-    }
-
     pub(super) fn cancel_pending_effect_command(&mut self) {
         self.alias_selector_pending = false;
         self.after_history_line = None;
@@ -122,14 +113,20 @@ impl ReadDriver {
         response: <HistorySearchEffect as Effect>::Response,
     ) -> Result<ReadStep, DriverError> {
         let direction = pending.request().direction;
+        let clear_prompt_line = matches!(pending.request().input, HistorySearchInput::Prompted);
         let response = self.accept(editor, pending, EffectKind::HistorySearch, response)?;
+        if clear_prompt_line {
+            editor
+                .replace_line_untracked(Text::default())
+                .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
+        }
         match response {
             Ok(HistorySearchResponse { history, pattern }) => {
                 self.last_history_search = Some(StoredHistorySearch { pattern, direction });
-                self.apply_history_response(editor, &history)?;
+                self.apply_history_response(editor, &history, true)?;
             }
             Err(HostFailure::Unavailable | HostFailure::Cancelled) => {
-                self.beep_pending = true;
+                self.queue_beep();
             }
             Err(HostFailure::Interrupted) => {
                 return self.complete(
@@ -154,13 +151,16 @@ impl ReadDriver {
         match response {
             Ok(response) => {
                 let selected = !matches!(response.selection(), HistorySelection::Unchanged);
-                self.apply_history_response(editor, &response)?;
-                if selected && continuation == Some(AfterHistoryLine::ExternalEdit) {
+                self.apply_history_response(editor, &response, true)?;
+                if selected
+                    && !response.reached_boundary()
+                    && continuation == Some(AfterHistoryLine::ExternalEdit)
+                {
                     return self.request_external_edit(editor);
                 }
             }
             Err(HostFailure::Unavailable | HostFailure::Cancelled) => {
-                self.beep_pending = true;
+                self.queue_beep();
             }
             Err(HostFailure::Interrupted) => {
                 return self.complete(
@@ -204,7 +204,7 @@ impl ReadDriver {
             }
             Ok(HistoryWordResponse::Missing)
             | Err(HostFailure::Unavailable | HostFailure::Cancelled) => {
-                self.beep_pending = true;
+                self.queue_beep();
             }
             Err(HostFailure::Interrupted) => {
                 return self.complete(
@@ -229,10 +229,15 @@ impl ReadDriver {
             Ok(AliasResponse::Expansion(expansion)) => {
                 self.expand_macro(expansion, 1)
                     .map_err(|error| self.fail(editor, error))?;
-                self.advance(editor)
+                if editor.config().buffering() == crate::domain::Buffering::Command {
+                    self.schedule_command_display(editor)
+                } else {
+                    self.advance(editor)
+                }
             }
-            Ok(AliasResponse::Missing) | Err(HostFailure::Unavailable | HostFailure::Cancelled) => {
-                self.beep_pending = true;
+            Ok(AliasResponse::Missing) => self.after_host_action(editor),
+            Err(HostFailure::Unavailable | HostFailure::Cancelled) => {
+                self.queue_beep();
                 self.after_host_action(editor)
             }
             Err(HostFailure::Interrupted) => self.complete(
@@ -251,11 +256,14 @@ impl ReadDriver {
         response: <EditorCommandEffect as Effect>::Response,
     ) -> Result<ReadStep, DriverError> {
         let response = self.accept(editor, pending, EffectKind::EditorCommand, response)?;
+        editor
+            .replace_line_untracked(Text::default())
+            .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
         match response {
             Ok(EditorCommandResponse::Applied) => editor.request_redraw(),
             Ok(EditorCommandResponse::Rejected)
             | Err(HostFailure::Unavailable | HostFailure::Cancelled) => {
-                self.beep_pending = true;
+                self.queue_beep();
             }
             Err(HostFailure::Interrupted) => {
                 return self.complete(
@@ -281,13 +289,19 @@ impl ReadDriver {
                 editor
                     .restore_history_line(line.clone())
                     .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
+                self.apply_sequence_action(
+                    editor,
+                    Action::Move(crate::domain::Motion::Absolute(
+                        crate::domain::TextIndex::START,
+                    )),
+                )?;
                 self.after_outcome(editor, crate::domain::Outcome::Accepted(line))
             }
             Err(HostFailure::Unavailable | HostFailure::Cancelled) => {
                 editor
                     .set_terminal_mode(TerminalMode::Editing)
                     .map_err(|error| self.fail(editor, DriverError::Terminal(error)))?;
-                self.beep_pending = true;
+                self.queue_beep();
                 self.after_host_action(editor)
             }
             Err(HostFailure::Interrupted) => self.complete(
@@ -302,6 +316,7 @@ impl ReadDriver {
         &mut self,
         editor: &mut Editor<T>,
         response: &HistoryResponse,
+        notify_boundary: bool,
     ) -> Result<(), DriverError> {
         let line = match response.selection() {
             HistorySelection::Entry(line) => Some(line.clone()),
@@ -314,7 +329,7 @@ impl ReadDriver {
                 .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
             editor.request_redraw();
         }
-        self.beep_pending |= response.reached_boundary();
+        self.queue_beep_if(notify_boundary && response.reached_boundary());
         Ok(())
     }
 
@@ -325,7 +340,11 @@ impl ReadDriver {
     ) -> Result<ReadStep, DriverError> {
         let (input, direction, matching) = match command {
             HistorySearchCommand::Prefix(direction) => {
-                let end = editor.cursor().get();
+                let end = editor.cursor().get()
+                    + usize::from(
+                        editor.keymap_mode() == KeymapMode::ViCommand
+                            && editor.cursor().get() < editor.line().len(),
+                    );
                 let pattern = editor.line().as_units()[..end].iter().copied().collect();
                 (
                     HistorySearchInput::Pattern(pattern),
@@ -339,13 +358,13 @@ impl ReadDriver {
                 HistoryMatch::Contains,
             ),
             HistorySearchCommand::Incremental(direction) => (
-                HistorySearchInput::Incremental,
+                HistorySearchInput::Incremental(editor.keymap_mode()),
                 direction,
                 HistoryMatch::Contains,
             ),
             HistorySearchCommand::Repeat(repetition) => {
                 let Some(stored) = &self.last_history_search else {
-                    self.beep_pending = true;
+                    self.queue_beep();
                     return self.schedule_command_display(editor);
                 };
                 let direction = match repetition {

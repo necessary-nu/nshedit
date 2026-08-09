@@ -29,11 +29,13 @@ alternatives (
 )
 consequences {
     accepted (
-        "The ABI catalog maps every compatibility command name to closed semantic actions, command-sequence continuations, or typed host effects. Only caller-registered command names use the user-command effect."
+        "The ABI catalog maps every compatibility command name to closed semantic actions, dispatch-context ImmediateCommand values, command-sequence continuations, or typed host effects. Only caller-registered command names use Binding::User and the user-command effect."
         "The read driver owns bounded repeat and replay state plus closed continuations for commands that consume later input. Vi operators compose with semantic motions and checked edit targets rather than storing C action masks or buffer pointers."
         "History search, alias expansion, command input, and external editing suspend through operation-specific effects after native borrows end; the adapter alone invokes foreign callbacks or platform facilities."
+        "A repeat count is part of a host-navigation request and is applied atomically by the effect handler. Interactive search and command-input continuations own their temporary line lifecycle and retain the keymap context needed to interpret termination."
+        "Locale-dependent 8-bit meta keys and narrow-history numbering defects are adapter projections. Native default keymaps contain logical Rust text sequences only, and native history effects carry semantic selections rather than compatibility event numbers."
         "Compatibility-only cursor conventions and documented defects are explicit adapter policies over checked native operations, never placeholder success, unconditional error, or unconditional beep."
-        "Conformance enumerates every built-in through an installed binding and observes its resulting line, cursor, mode, output, effect, or continuation."
+        "Conformance executes every built-in through an installed binding in both editing maps, with and without a repeat count, and observes its resulting line, cursor, mode, output, effect, or continuation."
     )
 }
 edges {
@@ -55,8 +57,18 @@ others are phases of one interaction; still others cross a host boundary.
 Treating every missing mapping as `Action::User` erased those distinctions and
 made a successful `bind` call conceal an unconditional beep at execution time.
 
-The native split is therefore by protocol. Immediate edits stay ordinary
-actions, interactions that consume more keys become typed driver continuations,
-and operations controlled by the application or platform become typed effects.
-The ABI adapter resolves legacy names into those closed values and translates
-the result back to C status codes only after the native operation has run.
+The native split is therefore by protocol. Self-contained edits stay ordinary
+actions; commands whose edit depends on the invoking unit, repeat count, mode,
+or pending operator use the closed `ImmediateCommand` protocol; interactions
+that consume more keys become typed driver continuations; and operations
+controlled by the application or platform become typed effects. The ABI
+adapter resolves legacy names into those closed values and translates the
+result back to C status codes only after the native operation has run.
+
+Counts remain data when an operation crosses the host boundary. Replaying a
+history callback once per count would expose intermediate callback state and
+could leave a partially navigated line; one counted request instead lets the
+adapter reproduce the reference operation atomically. Likewise, prompted
+search and external-command input are driver-owned interactions: their
+temporary line is cleared or accepted by the continuation itself, while the
+adapter supplies history storage, process execution, and locale projection.

@@ -2,8 +2,8 @@ use std::io;
 
 use super::*;
 use crate::domain::{
-    CommandName, CommandSequence, EditingMode, KeyLookup, NonScalarWide, Refresh, TerminalMode,
-    TextUnit, ViOperator, ViSequence, WordKind,
+    CommandSequence, EditingMode, ImmediateCommand, KeyLookup, NonScalarWide, Refresh,
+    TerminalMode, TextUnit, ViOperator, ViSequence, WordKind, WordTraversal,
 };
 use crate::editor::{Editor, TerminalControl};
 
@@ -119,6 +119,14 @@ fn non_unicode_units_keep_word_class() {
             kind: WordKind::Word,
         }),
     );
+    assert_eq!(editor.cursor().get(), 1);
+    apply(
+        &mut editor,
+        Action::Move(Motion::Word {
+            direction: Direction::Next,
+            kind: WordKind::Word,
+        }),
+    );
     assert_eq!(editor.cursor().get(), 3);
     apply(
         &mut editor,
@@ -206,6 +214,21 @@ fn replacement_and_reset_are_session_operations() {
     assert_eq!(editor.cursor(), TextIndex::START);
     assert!(!editor.can_undo());
     assert!(!editor.can_redo());
+}
+
+#[test]
+fn untracked_host_edits_preserve_undo_history() {
+    let mut editor = editor();
+    editor.insert_untracked(Text::from("seed")).unwrap();
+    assert_eq!(editor.line(), &Text::from("seed"));
+    assert!(!editor.can_undo());
+
+    apply(&mut editor, Action::Insert(Text::from("!")));
+    assert!(editor.can_undo());
+    editor.replace_line_untracked(Text::from("host")).unwrap();
+    assert!(editor.can_undo());
+    apply(&mut editor, Action::Undo);
+    assert_eq!(editor.line(), &Text::from("seed"));
 }
 
 #[test]
@@ -381,9 +404,9 @@ fn reset_restores_default_bindings() {
     ));
     assert!(matches!(
         editor.binding(KeymapMode::Emacs, &capitalise),
-        Some(Binding::Action(Action::Transform {
-            transform: TextTransform::Capitalize,
-            ..
+        Some(Binding::Immediate(ImmediateCommand::TraverseWords {
+            direction: Direction::Next,
+            operation: WordTraversal::Transform(TextTransform::Capitalize),
         }))
     ));
 }
@@ -424,11 +447,6 @@ fn host_bound_actions_return_typed_steps() {
             .execute(Action::History(Direction::Previous))
             .unwrap(),
         CommandStep::NeedsHistory(Direction::Previous)
-    );
-    let name = CommandName::new("transpose-words").unwrap();
-    assert_eq!(
-        editor.execute(Action::User(name.clone())).unwrap(),
-        CommandStep::NeedsUserCommand(name)
     );
 }
 

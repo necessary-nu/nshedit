@@ -19,6 +19,7 @@ impl EditLine {
         let (terminal, terminal_state) = AbiTerminal::new(input_descriptor, output_descriptor);
         let config = EditorConfig::default().with_signal_policy(SignalPolicy::Ignore);
         let mut native = Editor::new(config, terminal).ok()?;
+        let _ = native.execute(Action::SetMark);
         let _ = native.set_terminal_mode(TerminalMode::Cooked);
         let lookup = nshterm::TermInfo::from_name(terminal_name.to_str().unwrap_or("dumb"));
         let window_size = termios::window_size(input_descriptor)
@@ -70,6 +71,7 @@ impl EditLine {
 
     pub(crate) fn reset_line(&mut self) {
         self.native.reset_line();
+        let _ = self.native.execute(Action::SetMark);
         self.boundary.history_depth = 0;
         self.boundary.history_live_line.clear();
     }
@@ -87,7 +89,7 @@ impl EditLine {
                 SignalPolicy::Ignore
             })
             .with_buffering(if self.boundary.policy.unbuffered {
-                Buffering::Character
+                Buffering::Command
             } else {
                 Buffering::Line
             });
@@ -322,6 +324,12 @@ impl EditLine {
     }
 
     pub(crate) fn set_word_characters(&mut self, characters: &[u32]) {
+        let policy = characters
+            .iter()
+            .copied()
+            .map(TextUnit::from_wide)
+            .collect();
+        self.native.set_word_policy(WordPolicy::new(policy));
         let mut characters = characters.to_vec();
         characters.push(0);
         self.boundary.word_characters = Some(characters);

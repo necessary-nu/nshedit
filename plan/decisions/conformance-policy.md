@@ -11,6 +11,7 @@ scope {
         [spec:nshedit:req:abi.behavioural-conformance]
         [spec:nshedit:req:abi.terminal-controls]
         [spec:nshedit:req:abi.bindings]
+        [spec:nshedit:req:abi.binding-dispatch]
         [spec:nshedit:req:abi.history-effects]
         [spec:nshedit:req:abi.signal-lifecycle]
         [spec:nshedit:req:abi.observational-coverage]
@@ -36,6 +37,8 @@ consequences {
         "The detailed libedit corpus remains the behavioural authority for the ABI: return values, errno, emitted bytes, stream effects, callback ordering, pointer validity, and state transitions are observable."
         "A compatibility probe counts as evidence only when it observes the effect the reference operation promises. A matching success code cannot prove a state mutation, emitted sequence, callback, or handler transition."
         "State-changing probes include a dependent observation after the mutation, so an unconditional stand-in cannot satisfy the oracle by returning the reference status."
+        "Binding-dispatch evidence installs and executes every advertised built-in in both editing maps, with and without a repeat count, and compares the returned line plus post-command line and cursor against the oracle."
+        "Generated execution claims are replaced from current instrumentation rather than accumulated across deleted implementations; a lower measured count is preferable to stale proof."
         "The compatibility oracle is strengthened before structural replacement. A missing implementation, unconditional error, or documented stand-in is fixed before it can be treated as baseline behaviour whenever the reference performs real work; reference-defined unsupported and no-op behaviour remains compatible."
         "Defined defects in the reference are preserved unless a separate decided record and a versioned rule change authorize a C-visible divergence. Idiomatization is not automatic permission to change them."
         "Existing intentional divergences are re-proven by the oracle and remain only where a rule explicitly defines them."
@@ -56,6 +59,7 @@ codifies (
     [spec:nshedit:req:abi.behavioural-conformance]
     [spec:nshedit:req:abi.terminal-controls]
     [spec:nshedit:req:abi.bindings]
+    [spec:nshedit:req:abi.binding-dispatch]
     [spec:nshedit:req:abi.history-effects]
     [spec:nshedit:req:abi.signal-lifecycle]
     [spec:nshedit:req:abi.observational-coverage]

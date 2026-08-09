@@ -2,8 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use nshedit::domain::{Outcome, Refresh};
-use nshedit::editor::CommandStep;
+use nshedit::domain::Refresh;
 
 use super::*;
 
@@ -11,8 +10,8 @@ mod catalog;
 mod codec;
 
 use catalog::{
-    BUILTIN_COMMANDS, TERMINAL_KEYS, action_name, effect_name, is_builtin, named_binding,
-    sequence_name,
+    BUILTIN_COMMANDS, TERMINAL_KEYS, action_name, effect_name, immediate_name, is_builtin,
+    named_binding, sequence_name,
 };
 use codec::{decode_key_sequence, text_bytes, visual_text, wide_bytes};
 
@@ -35,8 +34,31 @@ impl EditLine {
         self.native.reset_bindings(mode);
         if mode == EditingMode::Emacs {
             self.native.clear_bindings(KeymapMode::ViCommand);
+            self.apply_locale_meta_overrides();
         }
         self.install_terminal_bindings();
+    }
+
+    fn apply_locale_meta_overrides(&mut self) {
+        const META_BINDINGS: [(u32, &str); 4] = [
+            (0x9f, "em-copy-prev-word"),
+            (0xe2, "ed-prev-word"),
+            (0xe6, "em-next-word"),
+            (0xf8, "ed-command"),
+        ];
+
+        for (value, command) in META_BINDINGS {
+            let character = char::from_u32(value).expect("8-bit values are Unicode scalars");
+            let sequence = KeySequence::new(std::iter::once(TextUnit::Scalar(character)).collect())
+                .expect("one scalar is a non-empty key sequence");
+            if character.is_control() || crate::conversion::encoded_width(value) == 0 {
+                let binding =
+                    named_binding(command).expect("compatibility meta commands are built in");
+                self.native.bind(KeymapMode::Emacs, sequence, binding);
+            } else {
+                self.native.unbind(KeymapMode::Emacs, &sequence);
+            }
+        }
     }
 
     pub(in crate::adapter) fn install_terminal_bindings(&mut self) {
@@ -180,11 +202,16 @@ impl EditLine {
                 self.report_invalid_command(command_name, raw_value);
                 return -1;
             }
-            match named_binding(&name) {
-                Some(binding) => binding,
-                None => Binding::Action(Action::User(
+            if builtin {
+                let Some(binding) = named_binding(&name) else {
+                    self.report_invalid_command(command_name, raw_value);
+                    return -1;
+                };
+                binding
+            } else {
+                Binding::User(
                     CommandName::new(name).expect("validated command names are non-empty"),
-                )),
+                )
             }
         };
 
@@ -208,26 +235,6 @@ impl EditLine {
         };
         self.replace_legacy_binding(mode, sequence, binding);
         0
-    }
-
-    pub(crate) fn run_builtin_binding(
-        &mut self,
-        name: &CommandName,
-        invoking: TextUnit,
-    ) -> Option<Outcome> {
-        if !is_builtin(name.as_str()) {
-            return None;
-        }
-        let action = match name.as_str() {
-            "ed-insert" | "ed-digit" | "ed-argument-digit" => {
-                Action::Insert(std::iter::once(invoking).collect())
-            }
-            _ => return Some(Outcome::Refresh(Refresh::Beep)),
-        };
-        Some(match self.native.execute(action) {
-            Ok(CommandStep::Applied(outcome)) => outcome,
-            Ok(_) | Err(_) => Outcome::Refresh(Refresh::Beep),
-        })
     }
 
     fn binding_mode(&self, alternate: bool) -> KeymapMode {
@@ -415,8 +422,10 @@ fn terminal_key_index(name: &[u32]) -> Option<usize> {
 fn binding_description(binding: &Binding) -> String {
     match binding {
         Binding::Action(action) => action_name(action).unwrap_or("ed-unassigned").to_owned(),
+        Binding::Immediate(command) => immediate_name(*command).to_owned(),
         Binding::Sequence(sequence) => sequence_name(*sequence).to_owned(),
         Binding::Effect(command) => effect_name(*command).to_owned(),
+        Binding::User(name) => name.as_str().to_owned(),
         Binding::Macro(expansion) => visual_text(expansion, true),
     }
 }
@@ -471,8 +480,8 @@ fn append_named_line(output: &mut Vec<u8>, key: &str, description: &str) {
 mod tests {
     use nshedit::domain::{
         ArgumentCommand, CharacterSearch, CharacterSearchLanding, CommandSequence, Direction,
-        EffectCommand, HistorySearchCommand, HistorySearchRepetition, ViOperator, ViSequence,
-        ViSubstitution,
+        EffectCommand, HistorySearchCommand, HistorySearchRepetition, ImmediateCommand, ViOperator,
+        ViSequence, ViSubstitution, WordKind, WordTraversal,
     };
 
     use super::*;
@@ -567,12 +576,49 @@ mod tests {
     fn all_builtin_names_resolve() {
         let mut editor = editor();
         for command in BUILTIN_COMMANDS {
+            let binding = named_binding(command.name)
+                .unwrap_or_else(|| panic!("{} has no closed native binding", command.name));
+            assert!(
+                !matches!(binding, Binding::User(_)),
+                "{} resolved as a registered callback",
+                command.name
+            );
             assert_eq!(
                 bind(&mut editor, &["bind", "^X", command.name]),
                 0,
                 "{} did not resolve",
                 command.name
             );
+        }
+    }
+
+    // [spec:nshedit:req:abi.binding-dispatch/test]
+    #[test]
+    fn typed_immediate_projection() {
+        let cases = [
+            ("ed-insert", ImmediateCommand::InsertInvoking),
+            ("ed-sequence-lead-in", ImmediateCommand::KeySequenceLeadIn),
+            (
+                "em-copy-prev-word",
+                ImmediateCommand::TraverseWords {
+                    direction: Direction::Previous,
+                    operation: WordTraversal::Duplicate,
+                },
+            ),
+            ("vi-end-word", ImmediateCommand::EndOfWord(WordKind::Word)),
+            (
+                "vi-end-big-word",
+                ImmediateCommand::EndOfWord(WordKind::BigWord),
+            ),
+            ("vi-list-or-eof", ImmediateCommand::EndOfInputIfEmpty),
+            ("vi-match", ImmediateCommand::MatchDelimiter),
+            ("vi-to-column", ImmediateCommand::MoveToColumn),
+            ("vi-comment-out", ImmediateCommand::CommentAndAccept),
+        ];
+
+        for (name, command) in cases {
+            assert_eq!(named_binding(name), Some(Binding::Immediate(command)));
+            assert_eq!(immediate_name(command), name);
         }
     }
 

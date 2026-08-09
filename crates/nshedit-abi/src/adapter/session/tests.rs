@@ -70,7 +70,7 @@ fn policy_reconfigures_native_editor() {
         editor.native().config().signal_policy(),
         SignalPolicy::Handle
     );
-    assert_eq!(editor.native().config().buffering(), Buffering::Character);
+    assert_eq!(editor.native().config().buffering(), Buffering::Command);
 }
 
 #[test]
@@ -149,6 +149,11 @@ fn commands_validate_before_binding() {
     let bind = [b'b' as u32, b'i' as u32, b'n' as u32, b'd' as u32];
     let key = [b'^' as u32, b'X' as u32];
     assert_eq!(editor.bind_command(&[&bind, &key, &name]), 0);
+    let control_x = KeySequence::try_from("\u{18}").expect("control-X is non-empty");
+    assert_eq!(
+        editor.native().binding(KeymapMode::Emacs, &control_x),
+        Some(&Binding::User(command_name))
+    );
     let unknown = [b'n' as u32, b'o' as u32];
     assert_eq!(editor.bind_command(&[&bind, &key, &unknown]), -1);
 }

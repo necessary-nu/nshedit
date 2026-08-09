@@ -9,7 +9,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::domain::{
-    CommandName, Direction, Outcome, Prompt, RepeatCount, ScreenSize, Signal, Text, TextUnit,
+    CommandName, Direction, KeymapMode, Outcome, Prompt, RepeatCount, ScreenSize, Signal, Text,
+    TextUnit,
 };
 
 use super::{CompletionCandidates, CompletionQuery, Editor, TerminalControl};
@@ -84,6 +85,8 @@ pub enum ReadOutcome {
 pub struct HistoryNavigateEffect {
     /// Which neighbouring entry to request.
     pub direction: Direction,
+    /// Number of history positions to traverse atomically.
+    pub count: RepeatCount,
 }
 
 impl sealed::Sealed for HistoryNavigateEffect {}
@@ -108,8 +111,9 @@ pub enum HistorySearchInput {
     Pattern(Text),
     /// Collect a complete query using the host's interactive input facility.
     Prompted,
-    /// Collect a query using the host's incremental-search interaction.
-    Incremental,
+    /// Collect a query using the host's incremental-search interaction and
+    /// the active native keymap's termination rules.
+    Incremental(KeymapMode),
 }
 
 // [spec:nshedit:req:core.command-effects]
@@ -142,6 +146,8 @@ pub struct HistorySearchResponse {
 /// Which host history record an exact-selection command requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HistoryPosition {
+    /// Select the host's saved snapshot for the current live line.
+    Current,
     /// Select the oldest retained record.
     Oldest,
     /// Select the record carrying this displayed history number.
@@ -236,6 +242,15 @@ impl HistoryResponse {
         Self {
             selection: HistorySelection::Unchanged,
             reached_boundary: true,
+        }
+    }
+
+    /// Leave the current line unchanged without reporting a boundary.
+    #[must_use]
+    pub const fn unchanged() -> Self {
+        Self {
+            selection: HistorySelection::Unchanged,
+            reached_boundary: false,
         }
     }
 
@@ -627,18 +642,21 @@ mod tests {
         accepts(
             HistoryNavigateEffect {
                 direction: Direction::Previous,
+                count: RepeatCount::ONE,
             },
             Ok(HistoryResponse::entry(Text::from("old"))),
         );
         accepts(
             HistoryNavigateEffect {
                 direction: Direction::Next,
+                count: RepeatCount::ONE,
             },
             Ok(HistoryResponse::live()),
         );
         accepts(
             HistoryNavigateEffect {
                 direction: Direction::Previous,
+                count: RepeatCount::ONE,
             },
             Ok(HistoryResponse::boundary()),
         );

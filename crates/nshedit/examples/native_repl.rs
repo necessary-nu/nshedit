@@ -162,7 +162,9 @@ fn read_line<T: TerminalControl>(
                 return Ok(match result {
                     ReadResult::Accepted(line) => Some(line),
                     ReadResult::Character(unit) => Some(std::iter::once(unit).collect()),
-                    ReadResult::EndOfInput | ReadResult::Interrupted(_) => None,
+                    ReadResult::Command | ReadResult::EndOfInput | ReadResult::Interrupted(_) => {
+                        None
+                    }
                 });
             }
         };

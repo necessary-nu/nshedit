@@ -35,9 +35,9 @@ consequences {
         "Action names semantic operations. EditTarget resolves characters, words, motions, embedded lines, the whole buffer, checked spans, and marked regions without exposing buffer pointers or integer operation codes."
         "One undo record represents one successful command-level text mutation. Cursor-only commands, mode changes, searches, register copies, and no-ops create no record; a new edit clears redo; an operation error restores its pre-command snapshot."
         "Insert, replace, delete, kill, yank, Unicode case transformation, and transpose preserve raw bytes and non-scalar compatibility values. Marks are revalidated and rebased after every text replacement."
-        "Word motion treats Unicode whitespace explicitly, treats alphanumeric scalars plus underscore as ordinary words, and keeps raw bytes, non-scalar wide values, and scalar punctuation in the non-word class. Big-word motion groups every non-whitespace unit."
-        "A KeySequence is non-empty logical Text. Each mode map returns Exact, Ambiguous, Prefix, or Unbound and stores only typed Action, closed CommandSequence, closed EffectCommand, or owned macro bindings. Built-in Emacs and Vi maps are native defaults, not transcribed numeric tables."
-        "Pure actions return typed outcomes. Completion, history navigation, and user commands return typed CommandStep requests for the driver to turn into effects; no host operation runs inside line-state code."
+        "Word traversal is parameterized by a typed WordPolicy. The native default treats Unicode whitespace explicitly, treats alphanumeric scalars plus underscore as ordinary words, and keeps raw bytes, non-scalar wide values, and scalar punctuation in the non-word class. Big-word traversal groups every non-whitespace unit."
+        "A KeySequence is non-empty logical Text. Each mode map returns Exact, Ambiguous, Prefix, or Unbound and stores typed Action, closed ImmediateCommand, closed CommandSequence, closed EffectCommand, registered User, or owned macro bindings. Built-in Emacs and Vi maps are native defaults, not transcribed numeric tables."
+        "Pure actions return typed outcomes. Completion and history navigation return typed CommandStep requests for the driver to turn into effects; registered user commands are dispatched directly from Binding::User, so no command name enters line-state code and no host operation runs while it is borrowed."
         "The read driver owns repeat counts, bounded semantic replay, key-prefix disambiguation, and closed continuations. Multi-key bindings remain typed KeySequence values, Vi operators compose semantic motions with checked anchors, and EffectCommand values become owned typed suspensions; the ABI adapter translates reference quirks rather than adding C operator or callback fields to the core."
     )
     deferred (
@@ -67,9 +67,21 @@ granularity, and every retained auxiliary value owns its data. Key dispatch
 answers the real parsing question—including an exact binding that is also a
 prefix—without a sentinel command slot or a second trie that can drift.
 
+Dispatch context does not belong in the line state. `ImmediateCommand` is a
+closed binding-level recipe for operations whose checked action depends on the
+invoking unit, count, mode, or a pending Vi operator. Registered callback names
+remain a separate `Binding::User` case and are turned into effects by the read
+driver without first masquerading as a line action.
+
 This does not weaken drop-in compatibility. The detailed corpus remains the
 oracle for the ABI adapter, which can inspect typed line values and issue exact
 spans, motions, register operations, and mode transitions. Numeric command
 IDs, vi cursor conventions, low-byte lookup, and recorded defects therefore
 remain translations at the compatibility boundary rather than native Rust
 semantics.
+
+The same boundary applies to word classification. Native traversal consumes a
+typed policy selected for the session; it does not call an ABI character-class
+parser or retain a compatibility string. This keeps motion, transformation,
+and kill semantics composable for Rust consumers while allowing the adapter to
+project the configured libedit word class.

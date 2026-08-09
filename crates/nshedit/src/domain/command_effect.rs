@@ -37,6 +37,8 @@ pub enum EffectCommand {
     /// Select an exact numbered history entry, or the oldest entry when no
     /// count was supplied.
     SelectHistoryLine,
+    /// Restore the host's saved snapshot of the current history line.
+    RestoreHistoryLine,
     /// Ask for one word from the newest history entry and insert it.
     InsertHistoryWord,
     /// Ask the host to collect and execute one editor configuration command.

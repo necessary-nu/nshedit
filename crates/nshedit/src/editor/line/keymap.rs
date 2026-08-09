@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 
 use crate::domain::{
     Action, Binding, CharacterSearch, CharacterSearchLanding, CommandSequence, Direction,
-    EditTarget, EffectCommand, HistorySearchCommand, HistorySearchRepetition, KeyLookup,
-    KeySequence, KeymapMode, Motion, Refresh, SearchRepetition, Text, TextTransform,
-    ViInsertPlacement, ViOperator, ViSequence, ViSubstitution, WordKind, YankPlacement,
+    EditTarget, EffectCommand, HistorySearchCommand, HistorySearchRepetition, ImmediateCommand,
+    KeyLookup, KeySequence, KeymapMode, Motion, Refresh, SearchRepetition, Text, TextTransform,
+    ViInsertPlacement, ViOperator, ViSequence, ViSubstitution, WordKind, WordTraversal,
+    YankPlacement,
 };
 
 #[derive(Debug)]
@@ -135,13 +136,13 @@ impl Keymaps {
             "\u{15}",
             Action::Kill(EditTarget::Motion(Motion::StartOfLine)),
         );
-        insert(
+        insert_immediate(
             map,
             "\u{17}",
-            Action::Kill(EditTarget::Word {
+            ImmediateCommand::TraverseWords {
                 direction: Direction::Previous,
-                kind: WordKind::Word,
-            }),
+                operation: WordTraversal::Kill,
+            },
         );
         insert(map, "\u{19}", Action::Yank(YankPlacement::AtCursor));
         insert(map, "\u{1f}", Action::Undo);
@@ -155,19 +156,30 @@ impl Keymaps {
         );
         insert_sequence(map, "\u{16}", CommandSequence::QuotedInsert);
         insert_sequence(map, "\u{1b}", CommandSequence::MetaNext);
-        insert(map, "\u{1b}b", word_motion(Direction::Previous));
-        insert(
+        insert_immediate(
             map,
-            "\u{1b}c",
-            Action::Transform {
-                target: EditTarget::Word {
-                    direction: Direction::Next,
-                    kind: WordKind::Word,
-                },
-                transform: TextTransform::Capitalize,
+            "\u{1b}b",
+            ImmediateCommand::TraverseWords {
+                direction: Direction::Previous,
+                operation: WordTraversal::Move,
             },
         );
-        insert(map, "\u{1b}f", word_motion(Direction::Next));
+        insert_immediate(
+            map,
+            "\u{1b}c",
+            ImmediateCommand::TraverseWords {
+                direction: Direction::Next,
+                operation: WordTraversal::Transform(TextTransform::Capitalize),
+            },
+        );
+        insert_immediate(
+            map,
+            "\u{1b}f",
+            ImmediateCommand::TraverseWords {
+                direction: Direction::Next,
+                operation: WordTraversal::Move,
+            },
+        );
         insert_effect(
             map,
             "\u{1b}n",
@@ -178,30 +190,22 @@ impl Keymaps {
             "\u{1b}p",
             EffectCommand::SearchHistory(HistorySearchCommand::Prefix(Direction::Previous)),
         );
-        insert(
+        insert_immediate(
             map,
             "\u{1b}l",
-            Action::Transform {
-                target: EditTarget::Word {
-                    direction: Direction::Next,
-                    kind: WordKind::Word,
-                },
-                transform: TextTransform::Lowercase,
+            ImmediateCommand::TraverseWords {
+                direction: Direction::Next,
+                operation: WordTraversal::Transform(TextTransform::Lowercase),
             },
         );
-        insert(
+        insert_immediate(
             map,
             "\u{1b}u",
-            Action::Transform {
-                target: EditTarget::Word {
-                    direction: Direction::Next,
-                    kind: WordKind::Word,
-                },
-                transform: TextTransform::Uppercase,
+            ImmediateCommand::TraverseWords {
+                direction: Direction::Next,
+                operation: WordTraversal::Transform(TextTransform::Uppercase),
             },
         );
-        insert(map, "\u{e2}", word_motion(Direction::Previous));
-        insert(map, "\u{e6}", word_motion(Direction::Next));
         insert_effect(map, "\u{1b}x", EffectCommand::ReadEditorCommand);
     }
 
@@ -222,6 +226,7 @@ impl Keymaps {
             }),
         );
         insert_sequence(map, "\u{16}", CommandSequence::QuotedInsert);
+        insert_immediate(map, "\u{4}", ImmediateCommand::EndOfInputIfEmpty);
         insert(map, "\n", Action::AcceptLine);
         insert(map, "\r", Action::AcceptLine);
     }
@@ -292,6 +297,8 @@ impl Keymaps {
                 kind: WordKind::BigWord,
             }),
         );
+        insert_immediate(map, "e", ImmediateCommand::EndOfWord(WordKind::Word));
+        insert_immediate(map, "E", ImmediateCommand::EndOfWord(WordKind::BigWord));
         insert(
             map,
             "x",
@@ -403,6 +410,10 @@ impl Keymaps {
         insert_effect(map, "G", EffectCommand::SelectHistoryLine);
         insert_effect(map, "_", EffectCommand::InsertHistoryWord);
         insert_effect(map, "v", EffectCommand::EditHistory);
+        insert_immediate(map, "\u{4}", ImmediateCommand::EndOfInputIfEmpty);
+        insert_immediate(map, "%", ImmediateCommand::MatchDelimiter);
+        insert_immediate(map, "|", ImmediateCommand::MoveToColumn);
+        insert_immediate(map, "#", ImmediateCommand::CommentAndAccept);
         insert(map, "\u{12}", Action::Refresh(Refresh::Redisplay));
         insert(map, "\n", Action::AcceptLine);
         insert(map, "\r", Action::AcceptLine);
@@ -421,6 +432,16 @@ fn insert_sequence(map: &mut BTreeMap<KeySequence, Binding>, key: &str, sequence
     map.insert(key, Binding::Sequence(sequence));
 }
 
+fn insert_immediate(
+    map: &mut BTreeMap<KeySequence, Binding>,
+    key: &str,
+    command: ImmediateCommand,
+) {
+    let key =
+        KeySequence::new(Text::from(key)).expect("built-in key sequences are statically non-empty");
+    map.insert(key, Binding::Immediate(command));
+}
+
 fn insert_effect(map: &mut BTreeMap<KeySequence, Binding>, key: &str, command: EffectCommand) {
     let key =
         KeySequence::new(Text::from(key)).expect("built-in key sequences are statically non-empty");
@@ -431,11 +452,4 @@ fn character_search(direction: Direction, landing: CharacterSearchLanding) -> Co
     CommandSequence::Vi(ViSequence::CharacterSearch(CharacterSearch::new(
         direction, landing,
     )))
-}
-
-fn word_motion(direction: Direction) -> Action {
-    Action::Move(Motion::Word {
-        direction,
-        kind: WordKind::Word,
-    })
 }

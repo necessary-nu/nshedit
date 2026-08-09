@@ -31,8 +31,10 @@
 //! `cargo install`, so its version is pinned by `Cargo.lock` and the same
 //! bytes come out on every machine.
 
+#[cfg(not(test))]
 include!("../cbindgen/generate.rs");
 
+#[cfg(not(test))]
 fn main() {
     let out_root = match std::env::args().nth(1) {
         Some(dir) => PathBuf::from(dir),
@@ -40,3 +42,6 @@ fn main() {
     };
     write_headers(&out_root);
 }
+
+#[cfg(test)]
+fn main() {}

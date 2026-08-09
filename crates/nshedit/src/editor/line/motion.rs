@@ -1,18 +1,21 @@
 use crate::domain::{
-    Direction, EditTarget, Error, Motion, Text, TextIndex, TextSpan, TextUnit, WordKind,
+    Direction, EditTarget, Error, Motion, Text, TextIndex, TextSpan, TextUnit, WordKind, WordPolicy,
 };
 
 pub(super) fn destination(
     line: &Text,
     cursor: TextIndex,
     motion: Motion,
+    word_policy: &WordPolicy,
 ) -> Result<TextIndex, Error> {
     line.index(cursor.get())?;
     let units = line.as_units();
     let position = match motion {
         Motion::Character(Direction::Previous) => cursor.get().saturating_sub(1),
         Motion::Character(Direction::Next) => cursor.get().saturating_add(1).min(line.len()),
-        Motion::Word { direction, kind } => word_boundary(units, cursor.get(), direction, kind),
+        Motion::Word { direction, kind } => {
+            word_boundary(units, cursor.get(), direction, kind, word_policy)
+        }
         Motion::Line(direction) => adjacent_line(units, cursor.get(), direction),
         Motion::StartOfLine => line_start(units, cursor.get()),
         Motion::EndOfLine => line_end(units, cursor.get()),
@@ -28,10 +31,11 @@ pub(super) fn repeated_destination(
     cursor: TextIndex,
     motion: Motion,
     count: usize,
+    word_policy: &WordPolicy,
 ) -> Result<TextIndex, Error> {
     let mut destination = cursor;
     for _ in 0..count {
-        let next = self::destination(line, destination, motion)?;
+        let next = self::destination(line, destination, motion, word_policy)?;
         if next == destination {
             break;
         }
@@ -45,6 +49,7 @@ pub(super) fn target_span(
     cursor: TextIndex,
     mark: Option<TextIndex>,
     target: EditTarget,
+    word_policy: &WordPolicy,
 ) -> Result<TextSpan, Error> {
     line.index(cursor.get())?;
     let range = match target {
@@ -54,11 +59,12 @@ pub(super) fn target_span(
         }
         EditTarget::Word { direction, kind } => ordered(
             cursor.get(),
-            word_boundary(line.as_units(), cursor.get(), direction, kind),
+            word_boundary(line.as_units(), cursor.get(), direction, kind, word_policy),
         ),
-        EditTarget::Motion(motion) => {
-            ordered(cursor.get(), destination(line, cursor, motion)?.get())
-        }
+        EditTarget::Motion(motion) => ordered(
+            cursor.get(),
+            destination(line, cursor, motion, word_policy)?.get(),
+        ),
         EditTarget::Line => {
             line_start(line.as_units(), cursor.get())..line_end(line.as_units(), cursor.get())
         }
@@ -106,20 +112,31 @@ fn ordered(first: usize, second: usize) -> std::ops::Range<usize> {
     first.min(second)..first.max(second)
 }
 
-fn word_boundary(units: &[TextUnit], cursor: usize, direction: Direction, kind: WordKind) -> usize {
+fn word_boundary(
+    units: &[TextUnit],
+    cursor: usize,
+    direction: Direction,
+    kind: WordKind,
+    word_policy: &WordPolicy,
+) -> usize {
     match direction {
-        Direction::Previous => previous_word(units, cursor, kind),
-        Direction::Next => next_word(units, cursor, kind),
+        Direction::Previous => previous_word(units, cursor, kind, word_policy),
+        Direction::Next => next_word(units, cursor, kind, word_policy),
     }
 }
 
-fn next_word(units: &[TextUnit], mut position: usize, kind: WordKind) -> usize {
+fn next_word(
+    units: &[TextUnit],
+    mut position: usize,
+    kind: WordKind,
+    word_policy: &WordPolicy,
+) -> usize {
     if position >= units.len() {
         return units.len();
     }
     if !is_space(units[position]) {
-        let class = word_class(units[position], kind);
-        while position < units.len() && word_class(units[position], kind) == class {
+        let class = word_class(units[position], kind, word_policy);
+        while position < units.len() && word_class(units[position], kind, word_policy) == class {
             position += 1;
         }
     }
@@ -129,15 +146,20 @@ fn next_word(units: &[TextUnit], mut position: usize, kind: WordKind) -> usize {
     position
 }
 
-fn previous_word(units: &[TextUnit], mut position: usize, kind: WordKind) -> usize {
+fn previous_word(
+    units: &[TextUnit],
+    mut position: usize,
+    kind: WordKind,
+    word_policy: &WordPolicy,
+) -> usize {
     while position > 0 && is_space(units[position - 1]) {
         position -= 1;
     }
     if position == 0 {
         return 0;
     }
-    let class = word_class(units[position - 1], kind);
-    while position > 0 && word_class(units[position - 1], kind) == class {
+    let class = word_class(units[position - 1], kind, word_policy);
+    while position > 0 && word_class(units[position - 1], kind, word_policy) == class {
         position -= 1;
     }
     position
@@ -187,10 +209,10 @@ enum WordClass {
     Other,
 }
 
-fn word_class(unit: TextUnit, kind: WordKind) -> WordClass {
+fn word_class(unit: TextUnit, kind: WordKind, word_policy: &WordPolicy) -> WordClass {
     if is_space(unit) {
         WordClass::Space
-    } else if kind == WordKind::BigWord || is_word(unit) {
+    } else if kind == WordKind::BigWord || word_policy.is_word(unit) {
         WordClass::Word
     } else {
         WordClass::Other
@@ -199,10 +221,6 @@ fn word_class(unit: TextUnit, kind: WordKind) -> WordClass {
 
 fn is_space(unit: TextUnit) -> bool {
     matches!(unit, TextUnit::Scalar(character) if character.is_whitespace())
-}
-
-fn is_word(unit: TextUnit) -> bool {
-    matches!(unit, TextUnit::Scalar(character) if character.is_alphanumeric() || character == '_')
 }
 
 fn is_newline(unit: TextUnit) -> bool {

@@ -18,8 +18,8 @@ mod terminal;
 mod text;
 
 pub use command::{
-    Action, CommandName, Direction, EditTarget, KeymapMode, Motion, Outcome, Refresh, Signal,
-    TextTransform, WordKind, YankPlacement,
+    Action, CommandName, Direction, EditTarget, ImmediateCommand, KeymapMode, Motion, Outcome,
+    Refresh, Signal, TextTransform, WordKind, WordPolicy, WordTraversal, YankPlacement,
 };
 pub use command_effect::{EffectCommand, HistorySearchCommand, HistorySearchRepetition};
 pub use keymap::{Binding, KeyLookup, KeySequence};
@@ -74,6 +74,8 @@ pub enum Buffering {
     Line,
     /// Yield after each input unit.
     Character,
+    /// Dispatch one complete command, then yield the current line.
+    Command,
 }
 
 // [spec:nshedit:req:core.typed-domain+1]

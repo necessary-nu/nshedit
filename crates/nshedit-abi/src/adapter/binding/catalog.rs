@@ -1,8 +1,9 @@
 use nshedit::domain::{
     Action, ArgumentCommand, Binding, CharacterSearch, CharacterSearchLanding, CommandSequence,
-    Direction, EditTarget, EffectCommand, HistorySearchCommand, HistorySearchRepetition, Motion,
-    Refresh, RepeatCount, SearchRepetition, TextTransform, ViInsertPlacement, ViOperator,
-    ViSequence, ViSubstitution, WordKind, YankPlacement,
+    Direction, EditTarget, EffectCommand, HistorySearchCommand, HistorySearchRepetition,
+    ImmediateCommand, Motion, Refresh, RepeatCount, SearchRepetition, TextTransform,
+    ViInsertPlacement, ViOperator, ViSequence, ViSubstitution, WordKind, WordTraversal,
+    YankPlacement,
 };
 
 pub(super) struct CommandHelp {
@@ -287,7 +288,62 @@ pub(super) fn named_binding(name: &str) -> Option<Binding> {
     named_sequence(name)
         .map(Binding::Sequence)
         .or_else(|| named_effect(name).map(Binding::Effect))
+        .or_else(|| named_immediate(name).map(Binding::Immediate))
         .or_else(|| named_action(name).map(Binding::Action))
+}
+
+fn named_immediate(name: &str) -> Option<ImmediateCommand> {
+    match name {
+        "ed-insert" => Some(ImmediateCommand::InsertInvoking),
+        "ed-sequence-lead-in" => Some(ImmediateCommand::KeySequenceLeadIn),
+        "ed-prev-word" => Some(ImmediateCommand::TraverseWords {
+            direction: Direction::Previous,
+            operation: WordTraversal::Move,
+        }),
+        "ed-delete-prev-word" => Some(ImmediateCommand::TraverseWords {
+            direction: Direction::Previous,
+            operation: WordTraversal::Kill,
+        }),
+        "em-delete-next-word" => Some(ImmediateCommand::TraverseWords {
+            direction: Direction::Next,
+            operation: WordTraversal::Kill,
+        }),
+        "em-next-word" => Some(ImmediateCommand::TraverseWords {
+            direction: Direction::Next,
+            operation: WordTraversal::Move,
+        }),
+        "em-copy-prev-word" => Some(ImmediateCommand::TraverseWords {
+            direction: Direction::Previous,
+            operation: WordTraversal::Duplicate,
+        }),
+        "em-upper-case" => Some(ImmediateCommand::TraverseWords {
+            direction: Direction::Next,
+            operation: WordTraversal::Transform(TextTransform::Uppercase),
+        }),
+        "em-capitol-case" => Some(ImmediateCommand::TraverseWords {
+            direction: Direction::Next,
+            operation: WordTraversal::Transform(TextTransform::Capitalize),
+        }),
+        "em-lower-case" => Some(ImmediateCommand::TraverseWords {
+            direction: Direction::Next,
+            operation: WordTraversal::Transform(TextTransform::Lowercase),
+        }),
+        "vi-end-word" => Some(ImmediateCommand::EndOfWord(WordKind::Word)),
+        "vi-end-big-word" => Some(ImmediateCommand::EndOfWord(WordKind::BigWord)),
+        "vi-list-or-eof" => Some(ImmediateCommand::EndOfInputIfEmpty),
+        "vi-match" => Some(ImmediateCommand::MatchDelimiter),
+        "vi-to-column" => Some(ImmediateCommand::MoveToColumn),
+        "vi-comment-out" => Some(ImmediateCommand::CommentAndAccept),
+        "em-gosmacs-transpose" => Some(ImmediateCommand::TransposeBeforeCursor),
+        "vi-delete-prev-char" => Some(ImmediateCommand::DeletePreviousUnit),
+        "vi-paste-prev" => Some(ImmediateCommand::PasteRegister(YankPlacement::AtCursor)),
+        "vi-paste-next" => Some(ImmediateCommand::PasteRegister(YankPlacement::AfterCursor)),
+        "vi-change-case" => Some(ImmediateCommand::ToggleCaseAndAdvance),
+        "vi-zero" => Some(ImmediateCommand::StartOfLineOrArgument),
+        "vi-undo" => Some(ImmediateCommand::UndoRequired),
+        "em-delete-or-list" => Some(ImmediateCommand::DeleteFollowingOrEndOfInput),
+        _ => None,
+    }
 }
 
 fn named_effect(name: &str) -> Option<EffectCommand> {
@@ -309,6 +365,7 @@ fn named_effect(name: &str) -> Option<EffectCommand> {
         ))),
         "vi-alias" => Some(EffectCommand::ExpandAlias),
         "vi-to-history-line" => Some(EffectCommand::SelectHistoryLine),
+        "vi-undo-line" => Some(EffectCommand::RestoreHistoryLine),
         "vi-history-word" => Some(EffectCommand::InsertHistoryWord),
         "ed-command" => Some(EffectCommand::ReadEditorCommand),
         "vi-histedit" => Some(EffectCommand::EditHistory),
@@ -373,10 +430,6 @@ pub(super) fn named_action(name: &str) -> Option<Action> {
 }
 
 fn named_common_action(name: &str) -> Option<Action> {
-    let word = |direction| EditTarget::Word {
-        direction,
-        kind: WordKind::Word,
-    };
     let word_motion = |direction| {
         Action::Move(Motion::Word {
             direction,
@@ -391,19 +444,17 @@ fn named_common_action(name: &str) -> Option<Action> {
     };
     match name {
         "ed-end-of-file" => Some(Action::EndOfInput),
-        "ed-delete-prev-word" => Some(Action::Kill(word(Direction::Previous))),
         "ed-delete-next-char" => Some(Action::Delete(EditTarget::Character(Direction::Next))),
         "ed-kill-line" => Some(Action::Kill(EditTarget::Motion(Motion::EndOfBuffer))),
         "ed-move-to-end" => Some(Action::Move(Motion::EndOfBuffer)),
         "ed-move-to-beg" => Some(Action::Move(Motion::StartOfBuffer)),
         "ed-transpose-chars" => Some(Action::TransposeCharacters),
         "ed-next-char" => Some(Action::Move(Motion::Character(Direction::Next))),
-        "ed-prev-word" => Some(word_motion(Direction::Previous)),
         "ed-prev-char" => Some(Action::Move(Motion::Character(Direction::Previous))),
         "ed-unassigned" => Some(Action::Refresh(Refresh::Beep)),
         "ed-ignore" => Some(Action::Noop),
         "ed-newline" => Some(Action::AcceptLine),
-        "ed-delete-prev-char" | "em-delete-prev-char" | "vi-delete-prev-char" => {
+        "ed-delete-prev-char" | "em-delete-prev-char" => {
             Some(Action::Delete(EditTarget::Character(Direction::Previous)))
         }
         "ed-clear-screen" => Some(Action::Refresh(Refresh::Full)),
@@ -413,30 +464,14 @@ fn named_common_action(name: &str) -> Option<Action> {
         "ed-next-history" => Some(Action::History(Direction::Next)),
         "ed-prev-line" => Some(Action::Move(Motion::Line(Direction::Previous))),
         "ed-next-line" => Some(Action::Move(Motion::Line(Direction::Next))),
-        "em-delete-or-list" => Some(Action::DeleteOrEndOfInput),
-        "em-delete-next-word" => Some(Action::Kill(word(Direction::Next))),
-        "em-yank" | "vi-paste-prev" => Some(Action::Yank(YankPlacement::AtCursor)),
-        "vi-paste-next" => Some(Action::Yank(YankPlacement::AfterCursor)),
+        "em-yank" => Some(Action::Yank(YankPlacement::AtCursor)),
         "em-kill-line" => Some(Action::Kill(EditTarget::Buffer)),
         "em-kill-region" => Some(Action::Kill(EditTarget::MarkedRegion)),
         "em-copy-region" => Some(Action::Copy(EditTarget::MarkedRegion)),
-        "em-gosmacs-transpose" => Some(Action::TransposeCharacters),
-        "em-next-word" | "vi-next-word" => Some(word_motion(Direction::Next)),
+        "vi-next-word" => Some(word_motion(Direction::Next)),
         "vi-next-big-word" => Some(big_word_motion(Direction::Next)),
         "vi-prev-word" => Some(word_motion(Direction::Previous)),
         "vi-prev-big-word" => Some(big_word_motion(Direction::Previous)),
-        "em-upper-case" => Some(Action::Transform {
-            target: word(Direction::Next),
-            transform: TextTransform::Uppercase,
-        }),
-        "em-capitol-case" => Some(Action::Transform {
-            target: word(Direction::Next),
-            transform: TextTransform::Capitalize,
-        }),
-        "em-lower-case" => Some(Action::Transform {
-            target: word(Direction::Next),
-            transform: TextTransform::Lowercase,
-        }),
         "em-set-mark" => Some(Action::SetMark),
         "em-exchange-mark" => Some(Action::ExchangeMark),
         "em-toggle-overwrite" => Some(Action::ToggleInputMode),
@@ -446,12 +481,6 @@ fn named_common_action(name: &str) -> Option<Action> {
 
 fn named_vi_action(name: &str) -> Option<Action> {
     match name {
-        "vi-change-case" => Some(Action::Transform {
-            target: EditTarget::Character(Direction::Next),
-            transform: TextTransform::ToggleCase,
-        }),
-        "vi-undo" | "vi-undo-line" => Some(Action::Undo),
-        "vi-zero" => Some(Action::Move(Motion::StartOfLine)),
         "vi-kill-line-prev" => Some(Action::Kill(EditTarget::Motion(Motion::StartOfLine))),
         "vi-yank-end" => Some(Action::Copy(EditTarget::Motion(Motion::EndOfLine))),
         _ => None,
@@ -530,9 +559,64 @@ pub(super) fn effect_name(command: EffectCommand) -> &'static str {
         )) => "vi-repeat-search-prev",
         EffectCommand::ExpandAlias => "vi-alias",
         EffectCommand::SelectHistoryLine => "vi-to-history-line",
+        EffectCommand::RestoreHistoryLine => "vi-undo-line",
         EffectCommand::InsertHistoryWord => "vi-history-word",
         EffectCommand::ReadEditorCommand => "ed-command",
         EffectCommand::EditHistory => "vi-histedit",
+    }
+}
+
+pub(super) const fn immediate_name(command: ImmediateCommand) -> &'static str {
+    match command {
+        ImmediateCommand::InsertInvoking => "ed-insert",
+        ImmediateCommand::KeySequenceLeadIn => "ed-sequence-lead-in",
+        ImmediateCommand::TraverseWords {
+            direction: Direction::Previous,
+            operation: WordTraversal::Move,
+        } => "ed-prev-word",
+        ImmediateCommand::TraverseWords {
+            direction: Direction::Previous,
+            operation: WordTraversal::Kill,
+        } => "ed-delete-prev-word",
+        ImmediateCommand::TraverseWords {
+            direction: Direction::Next,
+            operation: WordTraversal::Kill,
+        } => "em-delete-next-word",
+        ImmediateCommand::TraverseWords {
+            direction: Direction::Next,
+            operation: WordTraversal::Move,
+        } => "em-next-word",
+        ImmediateCommand::TraverseWords {
+            direction: Direction::Previous,
+            operation: WordTraversal::Duplicate,
+        } => "em-copy-prev-word",
+        ImmediateCommand::TraverseWords {
+            direction: Direction::Next,
+            operation: WordTraversal::Transform(TextTransform::Uppercase),
+        } => "em-upper-case",
+        ImmediateCommand::TraverseWords {
+            direction: Direction::Next,
+            operation: WordTraversal::Transform(TextTransform::Capitalize),
+        } => "em-capitol-case",
+        ImmediateCommand::TraverseWords {
+            direction: Direction::Next,
+            operation: WordTraversal::Transform(TextTransform::Lowercase),
+        } => "em-lower-case",
+        ImmediateCommand::TraverseWords { .. } => "ed-unassigned",
+        ImmediateCommand::EndOfWord(WordKind::Word) => "vi-end-word",
+        ImmediateCommand::EndOfWord(WordKind::BigWord) => "vi-end-big-word",
+        ImmediateCommand::EndOfInputIfEmpty => "vi-list-or-eof",
+        ImmediateCommand::MatchDelimiter => "vi-match",
+        ImmediateCommand::MoveToColumn => "vi-to-column",
+        ImmediateCommand::CommentAndAccept => "vi-comment-out",
+        ImmediateCommand::TransposeBeforeCursor => "em-gosmacs-transpose",
+        ImmediateCommand::DeletePreviousUnit => "vi-delete-prev-char",
+        ImmediateCommand::PasteRegister(YankPlacement::AtCursor) => "vi-paste-prev",
+        ImmediateCommand::PasteRegister(YankPlacement::AfterCursor) => "vi-paste-next",
+        ImmediateCommand::ToggleCaseAndAdvance => "vi-change-case",
+        ImmediateCommand::StartOfLineOrArgument => "vi-zero",
+        ImmediateCommand::UndoRequired => "vi-undo",
+        ImmediateCommand::DeleteFollowingOrEndOfInput => "em-delete-or-list",
     }
 }
 
@@ -592,7 +676,6 @@ pub(super) fn action_name(action: &Action) -> Option<&str> {
         Action::Refresh(Refresh::Full) => Some("ed-clear-screen"),
         Action::Refresh(Refresh::Redisplay) => Some("ed-redisplay"),
         Action::Refresh(Refresh::Beep) => Some("ed-unassigned"),
-        Action::User(name) => Some(name.as_str()),
         _ => None,
     }
 }

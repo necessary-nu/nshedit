@@ -372,4 +372,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule core.command-effects}
     )}
+    {id greenfield-binding-dispatch, covered_rules (
+        abi.binding-dispatch
+    ), covered_claims (
+        {impl_name native-impl, rule abi.binding-dispatch}
+    )}
 )

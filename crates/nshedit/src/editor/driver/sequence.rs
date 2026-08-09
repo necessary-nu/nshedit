@@ -23,6 +23,7 @@ impl RepeatArgument {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PendingUnit {
+    KeySequenceContinuation,
     QuotedInsert {
         count: usize,
     },
@@ -37,9 +38,8 @@ pub(super) enum PendingUnit {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct PendingOperator {
-    operator: ViOperator,
-    anchor: TextIndex,
-    count: usize,
+    pub(super) operator: ViOperator,
+    pub(super) anchor: TextIndex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,7 +152,7 @@ impl ReadDriver {
         } else {
             self.pending_operator = None;
             self.finish_change(editor);
-            self.beep_pending = true;
+            self.queue_beep();
             self.schedule_command_display(editor)
         }
     }
@@ -265,17 +265,13 @@ impl ReadDriver {
             ViSequence::Operator(operator) => {
                 self.begin_operator(editor, operator, invoking, explicit_repeat)
             }
-            ViSequence::Insert(placement) if self.pending_operator.is_none() => {
+            ViSequence::Insert(placement) => {
                 self.begin_vi_insert(editor, placement, invoking, explicit_repeat)
             }
             ViSequence::CommandMode => self.enter_vi_command_mode(editor, invoking),
-            ViSequence::ReplaceNext if self.pending_operator.is_none() => {
-                self.begin_replacement(editor, invoking, explicit_repeat)
-            }
-            ViSequence::ReplaceMode if self.pending_operator.is_none() => {
-                self.begin_replace_mode(editor, invoking, explicit_repeat)
-            }
-            ViSequence::Substitute(target) if self.pending_operator.is_none() => {
+            ViSequence::ReplaceNext => self.begin_replacement(editor, invoking, explicit_repeat),
+            ViSequence::ReplaceMode => self.begin_replace_mode(editor, invoking, explicit_repeat),
+            ViSequence::Substitute(target) => {
                 self.substitute(editor, target, invoking, explicit_repeat)
             }
             ViSequence::CharacterSearch(search) => {
@@ -291,13 +287,13 @@ impl ReadDriver {
                 self.pending_operator = None;
                 self.finish_change(editor);
                 self.repeat_argument = None;
-                self.beep_pending = true;
+                self.queue_beep();
                 self.schedule_command_display(editor)
             }
         }
     }
 
-    fn apply_argument<T: TerminalControl>(
+    pub(super) fn apply_argument<T: TerminalControl>(
         &mut self,
         editor: &mut Editor<T>,
         command: ArgumentCommand,
@@ -306,7 +302,7 @@ impl ReadDriver {
         match command {
             ArgumentCommand::DigitOrInsert if self.repeat_argument.is_none() => {
                 let Some(_) = decimal_digit(invoking) else {
-                    self.beep_pending = true;
+                    self.queue_beep();
                     return self.schedule_command_display(editor);
                 };
                 self.prepare_action_recording(
@@ -324,7 +320,7 @@ impl ReadDriver {
             }
             ArgumentCommand::DigitOrInsert | ArgumentCommand::StartDigit => {
                 let Some(digit) = decimal_digit(invoking) else {
-                    self.beep_pending = true;
+                    self.queue_beep();
                     return self.schedule_command_display(editor);
                 };
                 let replace = matches!(
@@ -399,13 +395,16 @@ impl ReadDriver {
         invoking: TextUnit,
         explicit_repeat: Option<usize>,
     ) -> Result<ReadStep, DriverError> {
-        let count = self.take_repeat(explicit_repeat);
+        let repeat = explicit_repeat
+            .map(RepeatArgument::Explicit)
+            .or_else(|| self.repeat_argument.take());
+        let count = repeat.map_or(1, RepeatArgument::value);
         let sequence = CommandSequence::Vi(ViSequence::Operator(operator));
         if let Some(pending) = self.pending_operator {
             if pending.operator != operator {
                 self.pending_operator = None;
                 self.finish_change(editor);
-                self.beep_pending = true;
+                self.queue_beep();
                 return self.schedule_command_display(editor);
             }
             self.record_invocation(Binding::Sequence(sequence), invoking, count)
@@ -419,8 +418,8 @@ impl ReadDriver {
         self.pending_operator = Some(PendingOperator {
             operator,
             anchor: editor.cursor(),
-            count,
         });
+        self.repeat_argument = repeat.map(|_| RepeatArgument::Explicit(count));
         self.advance(editor)
     }
 
@@ -501,7 +500,7 @@ impl ReadDriver {
     ) -> Result<ReadStep, DriverError> {
         if editor.cursor().get() >= editor.line().len() {
             self.repeat_argument = None;
-            self.beep_pending = true;
+            self.queue_beep();
             return self.schedule_command_display(editor);
         }
         let count = self.take_repeat(explicit_repeat);
@@ -617,7 +616,7 @@ impl ReadDriver {
         let Some(stored) = self.last_character_search else {
             self.pending_operator = None;
             self.finish_change(editor);
-            self.beep_pending = true;
+            self.queue_beep();
             return self.schedule_command_display(editor);
         };
         let search = match repetition {
@@ -636,12 +635,19 @@ impl ReadDriver {
         self.record_step(ReplayStep::ContinuationUnit(unit), 1)
             .map_err(|error| self.fail(editor, error))?;
         match pending {
+            PendingUnit::KeySequenceContinuation => {
+                self.queue_beep();
+                self.process_unit(editor, unit)
+            }
             PendingUnit::QuotedInsert { count } => {
                 editor
                     .set_terminal_mode(TerminalMode::Editing)
                     .map_err(|error| self.fail(editor, DriverError::Terminal(error)))?;
                 let inserted = std::iter::repeat_n(unit, count).collect();
                 self.apply_sequence_action(editor, Action::Insert(inserted))?;
+                if count > 1 {
+                    self.clamp_vi_command_cursor(editor)?;
+                }
                 self.schedule_command_display(editor)
             }
             PendingUnit::Replace { count } => self.replace_with_unit(editor, unit, count),
@@ -655,7 +661,7 @@ impl ReadDriver {
         }
     }
 
-    fn replace_with_unit<T: TerminalControl>(
+    pub(super) fn replace_with_unit<T: TerminalControl>(
         &mut self,
         editor: &mut Editor<T>,
         unit: TextUnit,
@@ -700,7 +706,7 @@ impl ReadDriver {
         else {
             self.pending_operator = None;
             self.finish_change(editor);
-            self.beep_pending = true;
+            self.queue_beep();
             return self.schedule_command_display(editor);
         };
         if self.pending_operator.is_some() {
@@ -720,17 +726,20 @@ impl ReadDriver {
         let pending = self
             .pending_operator
             .ok_or_else(|| self.fail(editor, DriverError::InvalidSequenceState))?;
-        let count = pending
-            .count
-            .checked_mul(motion_count)
-            .filter(|count| *count <= self.work_limit)
-            .ok_or(DriverError::WorkLimitExceeded {
-                limit: self.work_limit,
-            })
-            .map_err(|error| self.fail(editor, error))?;
         let destination = editor
-            .motion_destination(motion, count)
+            .motion_destination(motion, motion_count)
             .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
+        if destination == pending.anchor
+            && matches!(
+                motion,
+                Motion::Character(_) | Motion::Word { .. } | Motion::Line(_)
+            )
+        {
+            self.pending_operator = None;
+            self.finish_change(editor);
+            self.queue_beep();
+            return self.schedule_command_display(editor);
+        }
         let span = operator_span(editor.line(), pending.anchor, destination, false)
             .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
         self.apply_operator_span(editor, span)
@@ -755,7 +764,7 @@ impl ReadDriver {
         self.apply_operator_span(editor, span)
     }
 
-    fn apply_operator_span<T: TerminalControl>(
+    pub(super) fn apply_operator_span<T: TerminalControl>(
         &mut self,
         editor: &mut Editor<T>,
         span: TextSpan,
@@ -796,7 +805,7 @@ impl ReadDriver {
     ) -> Result<ReadStep, DriverError> {
         let repeat = self.take_repeat(explicit_repeat);
         let Some(change) = self.last_change.clone() else {
-            self.beep_pending = true;
+            self.queue_beep();
             return self.schedule_command_display(editor);
         };
         let work = change
@@ -862,7 +871,7 @@ impl ReadDriver {
         Ok(())
     }
 
-    fn apply_sequence_action<T: TerminalControl>(
+    pub(super) fn apply_sequence_action<T: TerminalControl>(
         &mut self,
         editor: &mut Editor<T>,
         action: Action,
@@ -924,7 +933,7 @@ fn character_destination(
     line.index(landing).ok()
 }
 
-fn operator_span(
+pub(super) fn operator_span(
     line: &Text,
     anchor: TextIndex,
     destination: TextIndex,
@@ -967,6 +976,5 @@ fn action_belongs_in_replay(action: &Action) -> bool {
             | Action::Undo
             | Action::Redo
             | Action::Refresh(_)
-            | Action::User(_)
     )
 }

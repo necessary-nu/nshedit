@@ -35,17 +35,17 @@ use core::ffi::{CStr, c_char, c_int, c_void};
 use core::ptr;
 
 use crate::adapter::{
-    CommandCallback as ElFuncT, EditLine, HistoryCallback as HistFunT,
-    NarrowPromptCallback as ElPfuncT,
+    AliasCallback as ElAfuncT, CommandCallback as ElFuncT, EditLine, HistoryCallback as HistFunT,
+    NarrowPromptCallback as ElPfuncT, ResizeCallback as ElZfuncT,
 };
 use crate::cdecl::histedit::LineInfo;
 use crate::conversion::{decode_bytes, encode_one, encode_wide, encoded_width};
 use crate::histedit::{
-    EL_BIND, EL_CLIENTDATA, EL_ECHOTC, EL_EDITMODE, EL_EDITOR, EL_GETCFN, EL_GETFP, EL_GETTC,
-    EL_HIST, EL_PREP_TERM, EL_PROMPT, EL_PROMPT_ESC, EL_RPROMPT, EL_RPROMPT_ESC, EL_SAFEREAD,
-    EL_SETFP, EL_SETTC, EL_SETTY, EL_SIGNAL, EL_TELLTC, EL_TERMINAL, EL_UNBUFFERED, EL_WORDCHARS,
-    el_wget_va, el_wgetc, el_wgets, el_winsertstr, el_wline, el_wparse, el_wpush, el_wreplacestr,
-    el_wset_va,
+    EL_ALIAS_TEXT, EL_BIND, EL_CLIENTDATA, EL_ECHOTC, EL_EDITMODE, EL_EDITOR, EL_GETCFN, EL_GETFP,
+    EL_GETTC, EL_HIST, EL_PREP_TERM, EL_PROMPT, EL_PROMPT_ESC, EL_REFRESH, EL_RESIZE, EL_RPROMPT,
+    EL_RPROMPT_ESC, EL_SAFEREAD, EL_SETFP, EL_SETTC, EL_SETTY, EL_SIGNAL, EL_TELLTC, EL_TERMINAL,
+    EL_UNBUFFERED, EL_WORDCHARS, el_wget_va, el_wgetc, el_wgets, el_winsertstr, el_wline,
+    el_wparse, el_wpush, el_wreplacestr, el_wset_va,
 };
 use core::ffi::VaList;
 
@@ -448,6 +448,27 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         // SAFETY: the tail is untouched and carries what this op declares,
         // which is the same argument the wide arm reads.
         return unsafe { el_wset_va(el, op, ap) };
+    }
+
+    if op == EL_RESIZE {
+        // SAFETY: the tail carries the callback and opaque cookie declared by
+        // the narrow API for this operation.
+        let callback = unsafe { crate::histedit::fn_arg::<ElZfuncT>(&mut ap) };
+        let cookie = unsafe { ap.next_arg::<*mut c_void>() };
+        el.set_resize_callback(callback, cookie);
+        return 0;
+    }
+
+    if op == EL_ALIAS_TEXT {
+        // SAFETY: alias callbacks remain byte-oriented in both entry points.
+        let callback = unsafe { crate::histedit::fn_arg::<ElAfuncT>(&mut ap) };
+        let cookie = unsafe { ap.next_arg::<*mut c_void>() };
+        el.set_alias_callback(callback, cookie);
+        return 0;
+    }
+
+    if op == EL_REFRESH {
+        return 0;
     }
 
     // The list ops. The C cannot forward these to `el_wset` — it says so in

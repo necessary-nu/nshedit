@@ -969,6 +969,18 @@ pub unsafe extern "C" fn el_wgets(el: *mut EditLine, nread: *mut c_int) -> *cons
                 return core::ptr::null();
             }
         }
+        ReadResult::Command => {
+            if unsafe { (&*el).native().line().is_empty() } {
+                *nread = -1;
+                return core::ptr::null();
+            }
+        }
+        ReadResult::EndOfInput if unsafe { (&*el).unbuffered() } => {
+            if !unsafe { (&mut *el).append_end_of_input() } {
+                *nread = -1;
+                return core::ptr::null();
+            }
+        }
         ReadResult::EndOfInput => return core::ptr::null(),
         ReadResult::Interrupted(_) => {
             *nread = -1;

@@ -6,7 +6,7 @@ mod motion;
 use crate::domain::{
     Action, Binding, Direction, EditTarget, EditingMode, EditorConfig, Error, InputMode, KeyLookup,
     KeySequence, KeymapMode, Motion, Outcome, Text, TextIndex, TextSpan, TextTransform, TextUnit,
-    YankPlacement,
+    WordPolicy, YankPlacement,
 };
 
 use super::CommandStep;
@@ -36,6 +36,7 @@ pub(super) struct State {
     input_mode: InputMode,
     keymap_mode: KeymapMode,
     keymaps: keymap::Keymaps,
+    word_policy: WordPolicy,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
     edit_group: Option<EditGroup>,
@@ -53,6 +54,7 @@ impl State {
             input_mode: InputMode::Insert,
             keymap_mode,
             keymaps: keymap::Keymaps::default(),
+            word_policy: WordPolicy::for_editing_mode(config.editing_mode()),
             undo: Vec::new(),
             redo: Vec::new(),
             edit_group: None,
@@ -76,6 +78,7 @@ impl State {
             EditingMode::Emacs => KeymapMode::Emacs,
             EditingMode::Vi => KeymapMode::ViInsert,
         };
+        self.word_policy = WordPolicy::for_editing_mode(mode);
     }
 
     pub(super) fn reset_bindings(&mut self, mode: EditingMode) {
@@ -154,7 +157,15 @@ impl State {
         motion: Motion,
         count: usize,
     ) -> Result<TextIndex, Error> {
-        motion::repeated_destination(&self.line, self.cursor, motion, count)
+        motion::repeated_destination(&self.line, self.cursor, motion, count, &self.word_policy)
+    }
+
+    pub(super) const fn word_policy(&self) -> &WordPolicy {
+        &self.word_policy
+    }
+
+    pub(super) fn set_word_policy(&mut self, policy: WordPolicy) {
+        self.word_policy = policy;
     }
 
     pub(super) fn bind(
@@ -228,7 +239,6 @@ impl State {
             Action::Undo => self.undo(),
             Action::Redo => self.redo(),
             Action::Refresh(refresh) => Outcome::Refresh(refresh),
-            Action::User(name) => return Ok(CommandStep::NeedsUserCommand(name)),
         };
         Ok(CommandStep::Applied(outcome))
     }
@@ -252,12 +262,18 @@ impl State {
     }
 
     fn move_cursor(&mut self, movement: Motion) -> Result<Outcome, Error> {
-        self.cursor = motion::destination(&self.line, self.cursor, movement)?;
+        self.cursor = motion::destination(&self.line, self.cursor, movement, &self.word_policy)?;
         Ok(Outcome::CursorMoved(self.cursor))
     }
 
     fn delete(&mut self, target: EditTarget, save: bool) -> Result<Outcome, Error> {
-        let span = motion::target_span(&self.line, self.cursor, self.mark, target)?;
+        let span = motion::target_span(
+            &self.line,
+            self.cursor,
+            self.mark,
+            target,
+            &self.word_policy,
+        )?;
         let removed = self.record_edit(|state| {
             let removed = state.line.remove(span)?;
             state.adjust_mark(span, 0)?;
@@ -281,7 +297,13 @@ impl State {
     }
 
     fn copy(&mut self, target: EditTarget) -> Result<Outcome, Error> {
-        let span = motion::target_span(&self.line, self.cursor, self.mark, target)?;
+        let span = motion::target_span(
+            &self.line,
+            self.cursor,
+            self.mark,
+            target,
+            &self.word_policy,
+        )?;
         self.kill = Some(self.line.slice(span)?.iter().copied().collect());
         Ok(Outcome::Continue)
     }
@@ -316,7 +338,13 @@ impl State {
         target: EditTarget,
         transform: TextTransform,
     ) -> Result<Outcome, Error> {
-        let span = motion::target_span(&self.line, self.cursor, self.mark, target)?;
+        let span = motion::target_span(
+            &self.line,
+            self.cursor,
+            self.mark,
+            target,
+            &self.word_policy,
+        )?;
         let replacement = transformed(self.line.slice(span)?, transform);
         self.record_edit(|state| {
             state.line.replace(span, &replacement)?;
@@ -417,6 +445,27 @@ impl State {
             state.cursor = state.line.index(end)?;
             Ok(Outcome::Continue)
         })
+    }
+
+    pub(super) fn insert_untracked(&mut self, text: Text) -> Result<(), Error> {
+        let start = self.cursor.get();
+        let span = self.line.span(start..start)?;
+        self.line.replace(span, &text)?;
+        self.cursor = self.line.index(
+            start
+                .checked_add(text.len())
+                .ok_or(Error::TextLengthOverflow)?,
+        )?;
+        Ok(())
+    }
+
+    pub(super) fn replace_line_untracked(&mut self, line: Text) -> Result<(), Error> {
+        let cursor = self.cursor.get().min(line.len());
+        let mark = self.mark.map(|mark| mark.get().min(line.len()));
+        self.line = line;
+        self.cursor = self.line.index(cursor)?;
+        self.mark = mark.map(|position| self.line.index(position)).transpose()?;
+        Ok(())
     }
 
     pub(super) fn restore_history(

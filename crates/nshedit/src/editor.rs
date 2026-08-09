@@ -9,9 +9,9 @@ use std::io::{self, Read, Write};
 use std::os::fd::BorrowedFd;
 
 use crate::domain::{
-    Action, Binding, CommandName, Direction, EditingMode, EditorConfig, Error, InputMode,
-    KeyLookup, KeySequence, KeymapMode, Outcome, Prompt, Screen, ScreenPosition, ScreenSize,
-    TerminalMode, Text, TextIndex, TextSpan,
+    Action, Binding, Direction, EditingMode, EditorConfig, Error, InputMode, KeyLookup,
+    KeySequence, KeymapMode, Outcome, Prompt, Screen, ScreenPosition, ScreenSize, TerminalMode,
+    Text, TextIndex, TextSpan,
 };
 
 // [spec:nshedit:req:core.effect-hooks]
@@ -25,6 +25,8 @@ mod completion;
 
 // [spec:nshedit:req:core.line-commands]
 mod line;
+
+mod host;
 
 // [spec:nshedit:req:core.terminal-render+1]
 mod render;
@@ -146,8 +148,6 @@ pub enum CommandStep {
     NeedsCompletion,
     /// The driver must request a neighbouring history entry.
     NeedsHistory(Direction),
-    /// The driver must run a registered host command.
-    NeedsUserCommand(CommandName),
 }
 
 // [spec:nshedit:req:core.raii-lifecycle]

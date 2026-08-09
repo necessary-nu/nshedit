@@ -2,8 +2,8 @@ use std::io;
 
 use crate::domain::{
     Action, ArgumentCommand, Binding, CommandName, CommandSequence, EditingMode, EditorConfig,
-    EffectCommand, HistorySearchCommand, HistorySearchRepetition, KeySequence, KeymapMode, Motion,
-    Prompt, ScreenSize, Signal, TerminalMode, Text, TextUnit,
+    EffectCommand, HistorySearchCommand, HistorySearchRepetition, ImmediateCommand, KeySequence,
+    KeymapMode, Motion, Prompt, ScreenSize, Signal, TerminalMode, Text, TextUnit, WordTraversal,
 };
 use crate::editor::effect::{
     AliasResponse, HistoryMatch, HistoryPosition, HistoryResponse, HistorySearchInput,
@@ -148,29 +148,29 @@ fn driver_decodes_and_accepts_utf8() {
 
 #[test]
 fn prefix_timeout_uses_exact_binding() {
-    let mut editor = editor(EditorConfig::default());
-    editor.bind(
+    let mut first_editor = editor(EditorConfig::default());
+    first_editor.bind(
         KeymapMode::Emacs,
         KeySequence::try_from("x").unwrap(),
         Binding::Action(Action::Insert(Text::from("A"))),
     );
-    editor.bind(
+    first_editor.bind(
         KeymapMode::Emacs,
         KeySequence::try_from("xy").unwrap(),
         Binding::Action(Action::Insert(Text::from("B"))),
     );
     let mut driver = ReadDriver::default();
     let mut output = Vec::new();
-    let begin = driver.begin(&mut editor).unwrap();
-    let pending = read(settle(&mut driver, &mut editor, begin, &mut output));
-    let step = input_unit(&mut driver, &mut editor, &pending, 'x');
+    let begin = driver.begin(&mut first_editor).unwrap();
+    let pending = read(settle(&mut driver, &mut first_editor, begin, &mut output));
+    let step = input_unit(&mut driver, &mut first_editor, &pending, 'x');
     let pending = read(step);
     assert_eq!(pending.request(), &ReadEffect::KeySequence);
     let step = driver
-        .resume_read(&mut editor, &pending, Ok(ReadOutcome::TimedOut))
+        .resume_read(&mut first_editor, &pending, Ok(ReadOutcome::TimedOut))
         .unwrap();
-    let _pending = read(settle(&mut driver, &mut editor, step, &mut output));
-    assert_eq!(editor.line(), &Text::from("A"));
+    let _pending = read(settle(&mut driver, &mut first_editor, step, &mut output));
+    assert_eq!(first_editor.line(), &Text::from("A"));
 }
 
 #[test]
@@ -213,7 +213,7 @@ fn user_command_receives_invoking_unit() {
     editor.bind(
         KeymapMode::Emacs,
         KeySequence::try_from("xy").unwrap(),
-        Binding::Action(Action::User(CommandName::new("host-command").unwrap())),
+        Binding::User(CommandName::new("host-command").unwrap()),
     );
     let mut driver = ReadDriver::default();
     let mut output = Vec::new();
@@ -694,4 +694,127 @@ fn command_failure_is_typed() {
             if message.as_ref() == "parse failed"
     ));
     assert_eq!(editor.terminal_mode(), TerminalMode::Cooked);
+}
+
+// [spec:nshedit:req:abi.binding-dispatch/test]
+#[test]
+fn immediate_insertion_and_word_duplication() {
+    let mut first_editor = editor(EditorConfig::default());
+    first_editor.bind(
+        KeymapMode::Emacs,
+        KeySequence::try_from("2").unwrap(),
+        Binding::Sequence(CommandSequence::Argument(ArgumentCommand::StartDigit)),
+    );
+    first_editor.bind(
+        KeymapMode::Emacs,
+        KeySequence::try_from("q").unwrap(),
+        Binding::Immediate(ImmediateCommand::InsertInvoking),
+    );
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut first_editor).unwrap();
+    let step = send(&mut driver, &mut first_editor, begin, &mut output, '2');
+    let step = send(&mut driver, &mut first_editor, step, &mut output, 'q');
+    let _pending = read(settle(&mut driver, &mut first_editor, step, &mut output));
+    assert_eq!(first_editor.line(), &Text::from("qq"));
+
+    let mut second_editor = editor(EditorConfig::default());
+    second_editor
+        .execute(Action::Insert(Text::from("one two")))
+        .unwrap();
+    second_editor.bind(
+        KeymapMode::Emacs,
+        KeySequence::try_from("2").unwrap(),
+        Binding::Sequence(CommandSequence::Argument(ArgumentCommand::StartDigit)),
+    );
+    second_editor.bind(
+        KeymapMode::Emacs,
+        KeySequence::try_from("q").unwrap(),
+        Binding::Immediate(ImmediateCommand::TraverseWords {
+            direction: Direction::Previous,
+            operation: WordTraversal::Duplicate,
+        }),
+    );
+    let mut driver = ReadDriver::default();
+    let begin = driver.begin(&mut second_editor).unwrap();
+    let step = send(&mut driver, &mut second_editor, begin, &mut output, '2');
+    let step = send(&mut driver, &mut second_editor, step, &mut output, 'q');
+    let _pending = read(settle(&mut driver, &mut second_editor, step, &mut output));
+    assert_eq!(second_editor.line(), &Text::from("one twoone two"));
+}
+
+// [spec:nshedit:req:abi.binding-dispatch/test]
+#[test]
+fn vi_immediate_motions_compose_with_operators() {
+    let mut editor = vi_with_line("foo bar");
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+    let step = send(&mut driver, &mut editor, begin, &mut output, 'e');
+    let _pending = read(settle(&mut driver, &mut editor, step, &mut output));
+    assert_eq!(editor.cursor().get(), 2);
+
+    let mut editor = vi_with_line("foo bar");
+    let mut driver = ReadDriver::default();
+    let begin = driver.begin(&mut editor).unwrap();
+    let step = send(&mut driver, &mut editor, begin, &mut output, 'd');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'e');
+    let _pending = read(settle(&mut driver, &mut editor, step, &mut output));
+    assert_eq!(editor.line(), &Text::from(" bar"));
+
+    let mut editor = vi_with_line("a(bc)d");
+    let mut driver = ReadDriver::default();
+    let begin = driver.begin(&mut editor).unwrap();
+    let step = send(&mut driver, &mut editor, begin, &mut output, '%');
+    let _pending = read(settle(&mut driver, &mut editor, step, &mut output));
+    assert_eq!(editor.cursor().get(), 4);
+
+    let mut editor = vi_with_line("abcdef");
+    let mut driver = ReadDriver::default();
+    let begin = driver.begin(&mut editor).unwrap();
+    let step = send(&mut driver, &mut editor, begin, &mut output, '5');
+    let step = send(&mut driver, &mut editor, step, &mut output, '|');
+    let _pending = read(settle(&mut driver, &mut editor, step, &mut output));
+    assert_eq!(editor.cursor().get(), 4);
+}
+
+// [spec:nshedit:req:abi.binding-dispatch/test]
+#[test]
+fn vi_immediate_terminal_outcomes_are_typed() {
+    let mut editor = vi_with_line("");
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+    let step = send(&mut driver, &mut editor, begin, &mut output, '\u{4}');
+    let step = settle(&mut driver, &mut editor, step, &mut output);
+    assert!(matches!(step, ReadStep::Complete(ReadResult::EndOfInput)));
+    assert!(output.ends_with(b"^D"));
+
+    let mut editor = vi_with_line("echo ok");
+    let mut driver = ReadDriver::default();
+    let begin = driver.begin(&mut editor).unwrap();
+    let step = send(&mut driver, &mut editor, begin, &mut output, '#');
+    let ReadStep::RecordHistory(record) = step else {
+        panic!("comment command did not accept the line");
+    };
+    assert_eq!(record.request().line, Text::from("#echo ok"));
+}
+
+// [spec:nshedit:req:abi.binding-dispatch/test]
+#[test]
+fn sequence_lead_in_dispatches_next_unit() {
+    let mut editor = editor(EditorConfig::default());
+    editor.bind(
+        KeymapMode::Emacs,
+        KeySequence::try_from("q").unwrap(),
+        Binding::Immediate(ImmediateCommand::KeySequenceLeadIn),
+    );
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+    let step = send(&mut driver, &mut editor, begin, &mut output, 'q');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'x');
+    let _pending = read(settle(&mut driver, &mut editor, step, &mut output));
+    assert_eq!(editor.line(), &Text::from("x"));
+    assert!(output.contains(&b'\x07'));
 }

@@ -1,4 +1,4 @@
-use super::{Error, InputMode, Text, TextIndex, TextSpan};
+use super::{EditingMode, Error, InputMode, Text, TextIndex, TextSpan, TextUnit};
 
 /// A direction in logical text or history.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -37,6 +37,65 @@ pub enum WordKind {
     Word,
     /// Every non-whitespace run is one word.
     BigWord,
+}
+
+/// Configurable classification used by word-oriented commands.
+///
+/// Alphanumeric scalars are always words. This policy owns the additional
+/// logical units that should be treated as word characters.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WordPolicy {
+    additional: Text,
+}
+
+impl WordPolicy {
+    /// Build a policy from an owned set of additional word characters.
+    #[must_use]
+    pub const fn new(additional: Text) -> Self {
+        Self { additional }
+    }
+
+    /// The conventional policy for an editing family.
+    #[must_use]
+    pub fn for_editing_mode(mode: EditingMode) -> Self {
+        let additional = match mode {
+            EditingMode::Emacs => Text::from("*?_-.[]~="),
+            EditingMode::Vi => Text::from("_"),
+        };
+        Self { additional }
+    }
+
+    /// Whether a logical unit belongs to a word under this policy.
+    #[must_use]
+    pub fn is_word(&self, unit: TextUnit) -> bool {
+        matches!(unit, TextUnit::Scalar(character) if character.is_alphanumeric())
+            || self.additional.as_units().contains(&unit)
+    }
+
+    /// Borrow the additional word characters owned by this policy.
+    #[must_use]
+    pub const fn additional(&self) -> &Text {
+        &self.additional
+    }
+}
+
+impl Default for WordPolicy {
+    fn default() -> Self {
+        Self::for_editing_mode(EditingMode::Emacs)
+    }
+}
+
+/// What to do with the span reached by a configured word traversal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WordTraversal {
+    /// Move to the reached word boundary.
+    Move,
+    /// Delete the traversed span into the kill register.
+    Kill,
+    /// Duplicate the traversed span at the cursor.
+    Duplicate,
+    /// Transform the traversed span.
+    Transform(TextTransform),
 }
 
 /// A cursor motion expressed without integer command identifiers.
@@ -198,8 +257,55 @@ pub enum Action {
     Redo,
     /// Request a particular kind of redraw.
     Refresh(Refresh),
-    /// Ask the host to execute a registered command.
-    User(CommandName),
+}
+
+// [spec:nshedit:req:abi.binding-dispatch]
+/// A closed, immediate command whose final action depends on dispatch context.
+///
+/// These values carry semantic intent rather than compatibility command names.
+/// The read driver supplies the invoking unit, repeat count, current mode, and
+/// pending Vi operator before applying checked line actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ImmediateCommand {
+    /// Insert copies of the unit that selected this binding.
+    InsertInvoking,
+    /// Swallow an incomplete key-sequence prefix without changing state.
+    KeySequenceLeadIn,
+    /// Traverse configured words and apply one semantic operation to the
+    /// reached span.
+    TraverseWords {
+        /// Direction in which word boundaries are traversed.
+        direction: Direction,
+        /// Operation applied to the traversed span.
+        operation: WordTraversal,
+    },
+    /// Move to the final unit of a classified word.
+    EndOfWord(WordKind),
+    /// Report end of input only when the editable line is empty.
+    EndOfInputIfEmpty,
+    /// Match the first paired delimiter at or after the cursor.
+    MatchDelimiter,
+    /// Move to the one-based logical column supplied as the repeat count.
+    MoveToColumn,
+    /// Prefix the line with a comment marker and accept it.
+    CommentAndAccept,
+    /// Exchange the two logical units immediately before the cursor.
+    TransposeBeforeCursor,
+    /// Delete exactly one logical unit immediately before the cursor.
+    DeletePreviousUnit,
+    /// Insert the kill register, failing when it has no contents.
+    PasteRegister(YankPlacement),
+    /// Toggle case over the repeat span and leave the cursor on the final
+    /// transformed unit when the span reaches the end of the line.
+    ToggleCaseAndAdvance,
+    /// Move to the start of the line unless an argument is being entered, in
+    /// which case the invoking unit extends that argument.
+    StartOfLineOrArgument,
+    /// Restore the most recent edit, failing when no snapshot exists.
+    UndoRequired,
+    /// Delete a counted following span, report end of input for an empty
+    /// line, or notify twice when invoked at the end of non-empty input.
+    DeleteFollowingOrEndOfInput,
 }
 
 /// The active family of key bindings.

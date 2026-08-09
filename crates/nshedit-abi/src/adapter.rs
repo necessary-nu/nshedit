@@ -17,7 +17,7 @@ use std::rc::Rc;
 
 use nshedit::domain::{
     Action, Binding, Buffering, CommandName, EditTarget, EditingMode, EditorConfig, KeySequence,
-    KeymapMode, Motion, ScreenSize, SignalPolicy, TerminalMode, Text, TextUnit,
+    KeymapMode, Motion, ScreenSize, SignalPolicy, TerminalMode, Text, TextUnit, WordPolicy,
 };
 use nshedit::editor::{
     BaudRate, Continuation, Editor, QuoteStyle, ReadDriver, TerminalControl, TerminalProfile,

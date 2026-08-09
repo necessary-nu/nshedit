@@ -8,10 +8,12 @@ use std::os::unix::ffi::OsStringExt;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use nshedit::domain::{KeymapMode, RepeatCount};
 use nshedit::editor::effect::{
     AliasEffect, AliasResponse, EditorCommandEffect, EditorCommandResponse, ExternalEditEffect,
-    HistoryLineEffect, HistoryMatch, HistoryPosition, HistorySearchEffect, HistorySearchInput,
-    HistorySearchResponse, HistoryWordEffect, HistoryWordPosition, HistoryWordResponse,
+    HistoryLineEffect, HistoryMatch, HistoryNavigateEffect, HistoryPosition, HistorySearchEffect,
+    HistorySearchInput, HistorySearchResponse, HistoryWordEffect, HistoryWordPosition,
+    HistoryWordResponse,
 };
 
 /// A safe writer over the caller-owned output stream for one driver step.
@@ -325,18 +327,19 @@ unsafe fn fetch_history(el: *mut EditLine, depth: usize) -> HistoryFetch {
 
 unsafe fn host_history(
     el: *mut EditLine,
-    direction: Direction,
+    request: &HistoryNavigateEffect,
 ) -> Result<HistoryResponse, HostFailure> {
     if unsafe { (&*el).history_callback() }.is_none_or(|(_, cookie)| cookie.is_null()) {
         return Err(HostFailure::Unavailable);
     }
     let depth = unsafe { (&*el).history_depth() };
-    match direction {
+    let count = request.count.get();
+    match request.direction {
         Direction::Previous => {
             if depth == 0 {
                 unsafe { (&mut *el).save_history_live_line() };
             }
-            let requested = depth.saturating_add(1);
+            let requested = depth.saturating_add(count);
             match unsafe { fetch_history(el, requested) } {
                 HistoryFetch::Entry(line) => {
                     unsafe { (&mut *el).set_history_depth(requested) };
@@ -372,14 +375,17 @@ unsafe fn host_history(
         Direction::Next if depth == 0 => {
             Ok(HistoryResponse::entry(unsafe { (&*el).history_live_line().clone() }).at_boundary())
         }
-        Direction::Next if depth == 1 => {
+        Direction::Next if count >= depth => {
             unsafe { (&mut *el).set_history_depth(0) };
-            Ok(HistoryResponse::entry(unsafe {
-                (&*el).history_live_line().clone()
-            }))
+            let response = HistoryResponse::entry(unsafe { (&*el).history_live_line().clone() });
+            Ok(if count > depth {
+                response.at_boundary()
+            } else {
+                response
+            })
         }
         Direction::Next => {
-            let requested = depth - 1;
+            let requested = depth - count;
             match unsafe { fetch_history(el, requested) } {
                 HistoryFetch::Entry(line) => {
                     unsafe { (&mut *el).set_history_depth(requested) };
@@ -476,7 +482,30 @@ unsafe fn host_history_search(
             };
             unsafe { read_host_text(el, &prompt, true) }?
         }
-        HistorySearchInput::Incremental => {
+        HistorySearchInput::Incremental(KeymapMode::ViCommand) => {
+            let prompt = match request.direction {
+                Direction::Previous => Text::from("\nbck: "),
+                Direction::Next => Text::from("\nfwd: "),
+            };
+            unsafe { (&*el).write_compatibility_stream(1, &terminal_bytes(prompt.as_units())) };
+            let mut value = 0;
+            match unsafe { read_wide_character(el, &raw mut value) } {
+                1 if unsafe { (&mut *el).push_input(&[value]) } => {
+                    return Ok(HistorySearchResponse {
+                        history: HistoryResponse::unchanged(),
+                        pattern: Text::default(),
+                    });
+                }
+                1 => return Err(HostFailure::Failed("input pushback is full".into())),
+                0 => return Err(HostFailure::Cancelled),
+                _ => {
+                    return Err(HostFailure::Failed(
+                        "incremental search input failed".into(),
+                    ));
+                }
+            }
+        }
+        HistorySearchInput::Incremental(_) => {
             let prompt = match request.direction {
                 Direction::Previous => Text::from("\nbck: "),
                 Direction::Next => Text::from("\nfwd: "),
@@ -538,11 +567,33 @@ unsafe fn host_history_line(
     el: *mut EditLine,
     request: &HistoryLineEffect,
 ) -> Result<HistoryResponse, HostFailure> {
+    if request.position == HistoryPosition::Current {
+        unsafe { (&mut *el).set_history_depth(0) };
+        return Ok(HistoryResponse::entry(
+            unsafe { (&*el).history_live_line() }.clone(),
+        ));
+    }
     let items = unsafe { history_items(el) }?;
-    if unsafe { (&*el).history_depth() } == 0 {
+    let original_depth = unsafe { (&*el).history_depth() };
+    if original_depth == 0 {
         unsafe { (&mut *el).save_history_live_line() };
     }
+    if let HistoryPosition::Number(number) = request.position
+        && unsafe { (&*el).narrow_history() }
+    {
+        if number == RepeatCount::ONE {
+            unsafe { (&mut *el).set_history_depth(0) };
+            return Ok(HistoryResponse::live());
+        }
+        unsafe { (&mut *el).set_history_depth(original_depth) };
+        return Ok(items
+            .first()
+            .map_or_else(HistoryResponse::boundary, |item| {
+                HistoryResponse::entry(item.line.clone()).at_boundary()
+            }));
+    }
     let selected = match request.position {
+        HistoryPosition::Current => unreachable!("handled before scanning retained history"),
         HistoryPosition::Oldest => items.iter().enumerate().next_back(),
         HistoryPosition::Number(number) => items
             .iter()
@@ -665,9 +716,6 @@ unsafe fn host_command(
     name: &nshedit::domain::CommandName,
     invoking: nshedit::domain::TextUnit,
 ) -> Result<Outcome, HostFailure> {
-    if let Some(outcome) = unsafe { (&mut *el).run_builtin_binding(name, invoking) } {
-        return Ok(outcome);
-    }
     let Some(callback) = (unsafe { (&*el).command_callback(name) }) else {
         return Err(HostFailure::Unavailable);
     };
@@ -712,7 +760,7 @@ pub(super) unsafe fn drive_read(el: *mut EditLine) -> Result<ReadResult, ()> {
                     .map_err(|_| ())?
             }
             ReadStep::History(pending) => {
-                let response = unsafe { host_history(el, pending.request().direction) };
+                let response = unsafe { host_history(el, pending.request()) };
                 let (editor, driver) = unsafe { (&mut *el).split_driver() };
                 driver
                     .resume_history(editor, &pending, response)
