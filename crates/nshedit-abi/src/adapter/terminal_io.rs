@@ -58,7 +58,7 @@ impl EditLine {
         ScreenSize::new(capabilities.rows, capabilities.columns).ok()
     }
 
-    fn write_compatibility_stream(&self, index: usize, bytes: &[u8]) {
+    pub(crate) fn write_compatibility_stream(&self, index: usize, bytes: &[u8]) {
         let _ = crate::cstdio::write(self.stream(index).unwrap_or(core::ptr::null_mut()), bytes);
     }
 

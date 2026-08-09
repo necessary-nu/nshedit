@@ -15,7 +15,7 @@ use crate::domain::{
 
 use super::effect::{
     CompletionEffect, Effect, EffectResult, HistoryNavigateEffect, HistoryRecordEffect,
-    HistoryResponse, HostFailure, PromptEffect, PromptSide, ReadEffect, ReadOutcome, ResizeEffect,
+    HistorySelection, HostFailure, PromptEffect, PromptSide, ReadEffect, ReadOutcome, ResizeEffect,
     SignalEffect, Suspension, UserCommandEffect,
 };
 use super::{CompletionOutcome, Editor, RenderError, TerminalControl, Tokenizer};
@@ -57,6 +57,8 @@ enum DisplayKind {
     RefreshAndBeep,
     /// Emit the accepted-line break before completing the read.
     FinishLine,
+    /// Echo the invoking unit before completing end of input.
+    Echo(TextUnit),
 }
 
 /// An owned display request that can be performed with any safe writer.
@@ -137,6 +139,7 @@ enum Phase {
 #[derive(Debug, Clone)]
 struct Repetition {
     action: Action,
+    invoking: TextUnit,
     remaining: usize,
 }
 
@@ -158,7 +161,7 @@ pub struct ReadDriver {
     decoder: Decoder,
     replay: VecDeque<TextUnit>,
     key_sequence: Text,
-    ambiguous: Option<(Binding, usize)>,
+    ambiguous: Option<(Binding, usize, TextUnit)>,
     repeat_count: Option<usize>,
     repetition: Option<Repetition>,
     expanded_units: usize,
@@ -304,6 +307,7 @@ impl ReadDriver {
                 .render_to(&display.left, display.right.as_ref(), output)
                 .and_then(|_| editor.beep(output).map(|_| ())),
             DisplayKind::FinishLine => editor.renderer.finish_line(output).map(|_| ()),
+            DisplayKind::Echo(unit) => write_echo(unit, output),
         };
         if let Err(error) = emitted {
             return Err(self.fail(editor, DriverError::Render(error)));
@@ -364,24 +368,24 @@ impl ReadDriver {
     ) -> Result<ReadStep, DriverError> {
         let response = self.accept(editor, pending, EffectKind::History, response)?;
         match response {
-            Ok(HistoryResponse::Entry(line)) => {
-                let end = editor.line().len();
-                editor
-                    .state
-                    .replace_at(line, 0, end)
-                    .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
-            }
-            Ok(HistoryResponse::Live) => {
-                if let Some(line) = self.live_line.clone() {
-                    let end = editor.line().len();
+            Ok(response) => {
+                let redraw = !matches!(response.selection(), HistorySelection::Unchanged);
+                let line = match response.selection() {
+                    HistorySelection::Entry(line) => Some(line.clone()),
+                    HistorySelection::Live => self.live_line.clone(),
+                    HistorySelection::Unchanged => None,
+                };
+                if let Some(line) = line {
                     editor
-                        .state
-                        .replace_at(line, 0, end)
+                        .restore_history_line(line)
                         .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
                 }
+                if redraw {
+                    editor.request_redraw();
+                }
+                self.beep_pending |= response.reached_boundary();
             }
-            Ok(HistoryResponse::Boundary)
-            | Err(HostFailure::Unavailable | HostFailure::Cancelled) => {
+            Err(HostFailure::Unavailable | HostFailure::Cancelled) => {
                 self.beep_pending = true;
             }
             Err(HostFailure::Interrupted) => {
@@ -532,10 +536,10 @@ impl ReadDriver {
         match lookup {
             OwnedLookup::Exact(binding) => {
                 self.ambiguous = None;
-                self.dispatch_binding(editor, binding)
+                self.dispatch_binding(editor, binding, unit)
             }
             OwnedLookup::Ambiguous(binding) => {
-                self.ambiguous = Some((binding, self.key_sequence.len()));
+                self.ambiguous = Some((binding, self.key_sequence.len(), unit));
                 self.advance(editor)
             }
             OwnedLookup::Prefix => self.advance(editor),
@@ -548,13 +552,13 @@ impl ReadDriver {
         editor: &mut Editor<T>,
         unit: TextUnit,
     ) -> Result<ReadStep, DriverError> {
-        if let Some((binding, prefix_len)) = self.ambiguous.take() {
+        if let Some((binding, prefix_len, invoking)) = self.ambiguous.take() {
             let suffix: Vec<_> = self.key_sequence.as_units()[prefix_len..].to_vec();
             self.key_sequence.clear();
             for unit in suffix.into_iter().rev() {
                 self.replay.push_front(unit);
             }
-            return self.dispatch_binding(editor, binding);
+            return self.dispatch_binding(editor, binding, invoking);
         }
 
         let insert = self.key_sequence.len() == 1
@@ -566,7 +570,12 @@ impl ReadDriver {
         self.key_sequence.clear();
         self.repeat_count = None;
         if insert {
-            self.dispatch_action(editor, Action::Insert(std::iter::once(unit).collect()), 1)
+            self.dispatch_action(
+                editor,
+                Action::Insert(std::iter::once(unit).collect()),
+                unit,
+                1,
+            )
         } else {
             self.schedule_display(editor, DisplayKind::Beep)
         }
@@ -577,8 +586,8 @@ impl ReadDriver {
         editor: &mut Editor<T>,
     ) -> Result<ReadStep, DriverError> {
         self.key_sequence.clear();
-        if let Some((binding, _)) = self.ambiguous.take() {
-            self.dispatch_binding(editor, binding)
+        if let Some((binding, _, invoking)) = self.ambiguous.take() {
+            self.dispatch_binding(editor, binding, invoking)
         } else {
             self.repeat_count = None;
             self.schedule_display(editor, DisplayKind::Beep)
@@ -589,9 +598,9 @@ impl ReadDriver {
         &mut self,
         editor: &mut Editor<T>,
     ) -> Result<ReadStep, DriverError> {
-        if let Some((binding, _)) = self.ambiguous.take() {
+        if let Some((binding, _, invoking)) = self.ambiguous.take() {
             self.key_sequence.clear();
-            return self.dispatch_binding(editor, binding);
+            return self.dispatch_binding(editor, binding, invoking);
         }
         self.key_sequence.clear();
         self.repeat_count = None;
@@ -628,12 +637,13 @@ impl ReadDriver {
         &mut self,
         editor: &mut Editor<T>,
         binding: Binding,
+        invoking: TextUnit,
     ) -> Result<ReadStep, DriverError> {
         let repeat = self.repeat_count.take().unwrap_or(1);
         self.key_sequence.clear();
         self.ambiguous = None;
         match binding {
-            Binding::Action(action) => self.dispatch_action(editor, action, repeat),
+            Binding::Action(action) => self.dispatch_action(editor, action, invoking, repeat),
             Binding::Macro(text) => {
                 self.expand_macro(text, repeat)
                     .map_err(|error| self.fail(editor, error))?;
@@ -666,11 +676,13 @@ impl ReadDriver {
         &mut self,
         editor: &mut Editor<T>,
         action: Action,
+        invoking: TextUnit,
         repeat: usize,
     ) -> Result<ReadStep, DriverError> {
         self.beep_pending = false;
         self.repetition = Some(Repetition {
             action,
+            invoking,
             remaining: repeat,
         });
         self.continue_repetition(editor)
@@ -686,6 +698,8 @@ impl ReadDriver {
                 .take()
                 .expect("dispatch installs a positive repetition");
             let action = repetition.action.clone();
+            let invoking = repetition.invoking;
+            let echoes_end_of_input = matches!(&action, Action::DeleteOrEndOfInput);
             repetition.remaining -= 1;
             if repetition.remaining != 0 {
                 self.repetition = Some(repetition);
@@ -695,11 +709,16 @@ impl ReadDriver {
                 .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
             match step {
                 super::CommandStep::Applied(outcome) => {
+                    if echoes_end_of_input && outcome == Outcome::EndOfInput {
+                        self.repetition = None;
+                        self.completion = Some(ReadResult::EndOfInput);
+                        return self.schedule_display(editor, DisplayKind::Echo(invoking));
+                    }
                     if matches!(outcome, Outcome::Accepted(_) | Outcome::EndOfInput) {
                         self.repetition = None;
                         return self.after_outcome(editor, outcome);
                     }
-                    self.note_outcome(outcome);
+                    self.note_outcome(editor, outcome);
                     if self.repetition.is_none() {
                         return self.schedule_command_display(editor);
                     }
@@ -736,7 +755,11 @@ impl ReadDriver {
                     return self
                         .pending(
                             editor,
-                            UserCommandEffect { name, arguments },
+                            UserCommandEffect {
+                                name,
+                                invoking,
+                                arguments,
+                            },
                             EffectKind::UserCommand,
                         )
                         .map(ReadStep::UserCommand);
@@ -765,15 +788,18 @@ impl ReadDriver {
                 self.complete(editor, ReadResult::EndOfInput)
             }
             other => {
-                self.note_outcome(other);
+                self.note_outcome(editor, other);
                 self.after_host_action(editor)
             }
         }
     }
 
-    fn note_outcome(&mut self, outcome: Outcome) {
-        if outcome == Outcome::Refresh(Refresh::Beep) {
-            self.beep_pending = true;
+    fn note_outcome<T: TerminalControl>(&mut self, editor: &mut Editor<T>, outcome: Outcome) {
+        match outcome {
+            Outcome::Refresh(Refresh::Beep) => self.beep_pending = true,
+            Outcome::Refresh(Refresh::Redraw) => editor.request_redraw(),
+            Outcome::Refresh(Refresh::Full | Refresh::Redisplay) => editor.invalidate_display(),
+            _ => {}
         }
     }
 
@@ -838,7 +864,10 @@ impl ReadDriver {
         kind: DisplayKind,
     ) -> Result<ReadStep, DriverError> {
         self.display_kind = kind;
-        if matches!(kind, DisplayKind::Beep | DisplayKind::FinishLine) {
+        if matches!(
+            kind,
+            DisplayKind::Beep | DisplayKind::FinishLine | DisplayKind::Echo(_)
+        ) {
             self.left_prompt = Prompt::default();
             self.right_prompt = None;
             self.make_display()
@@ -985,6 +1014,43 @@ impl ReadDriver {
         self.live_line = None;
         self.completion = None;
     }
+}
+
+fn write_echo(unit: TextUnit, output: &mut dyn Write) -> Result<(), RenderError> {
+    match unit {
+        TextUnit::Scalar(character) => {
+            write_visual_scalar(character, output)?;
+        }
+        TextUnit::RawByte(byte) => {
+            if byte.is_ascii_control() {
+                let visual = if byte == 0x7f { b'?' } else { byte | 0x40 };
+                output.write_all(&[b'^', visual])?;
+            } else {
+                output.write_all(&[byte])?;
+            }
+        }
+        TextUnit::CompatibilityWide(_) => output.write_all("\u{fffd}".as_bytes())?,
+    }
+    output.flush()?;
+    Ok(())
+}
+
+fn write_visual_scalar(character: char, output: &mut dyn Write) -> Result<(), RenderError> {
+    let scalar = character as u32;
+    if scalar <= 0xff && character.is_control() {
+        output.write_all(b"^")?;
+        let visual = if scalar == 0x7f {
+            '?'
+        } else {
+            char::from_u32(scalar | 0x40).unwrap_or('\u{fffd}')
+        };
+        let mut encoded = [0; 4];
+        output.write_all(visual.encode_utf8(&mut encoded).as_bytes())?;
+    } else {
+        let mut encoded = [0; 4];
+        output.write_all(character.encode_utf8(&mut encoded).as_bytes())?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

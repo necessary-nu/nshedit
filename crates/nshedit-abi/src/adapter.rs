@@ -16,9 +16,8 @@ use std::os::fd::FromRawFd;
 use std::rc::Rc;
 
 use nshedit::domain::{
-    Action, Binding, Buffering, CommandName, Direction, EditTarget, EditingMode, EditorConfig,
-    InputMode, KeySequence, KeymapMode, Motion, ScreenSize, SignalPolicy, TerminalMode, Text,
-    TextUnit, WordKind,
+    Action, Binding, Buffering, CommandName, EditTarget, EditingMode, EditorConfig, KeySequence,
+    KeymapMode, Motion, ScreenSize, SignalPolicy, TerminalMode, Text, TextUnit,
 };
 use nshedit::editor::{
     BaudRate, Continuation, Editor, QuoteStyle, ReadDriver, TerminalControl, TerminalProfile,
@@ -29,6 +28,7 @@ use nshedit_plat::termios::{self, Termios};
 use crate::cdecl::histedit::{CFile, HistEventWide, LineInfo, LineInfoWide as LineInfoW};
 use crate::conversion::ConversionBuffer;
 
+mod binding;
 mod session;
 mod terminal_io;
 mod tokenizer;
@@ -84,8 +84,9 @@ struct HostCallbacks {
 }
 
 struct HostCommand {
+    name: CommandName,
     callback: CommandCallback,
-    _help: Text,
+    help: Text,
 }
 
 /// ABI-owned capability values addressed by terminfo capnames.
@@ -283,7 +284,8 @@ struct EditLineBoundary {
     policy: Policy,
     prompts: [PromptSpec; 2],
     callbacks: HostCallbacks,
-    commands: HashMap<CommandName, HostCommand>,
+    commands: Vec<HostCommand>,
+    terminal_bindings: [Option<Binding>; 7],
     pushback: VecDeque<VecDeque<TextUnit>>,
     terminal: Rc<RefCell<TerminalState>>,
     terminal_capabilities: TerminalCapabilities,
@@ -295,6 +297,7 @@ struct EditLineBoundary {
     word_characters: Option<Vec<u32>>,
     client_data: *mut c_void,
     history_depth: usize,
+    history_live_line: Text,
     completion_pending_listing: bool,
 }
 
@@ -334,7 +337,8 @@ impl EditLineBoundary {
                 history: None,
                 environment: None,
             },
-            commands: HashMap::new(),
+            commands: Vec::new(),
+            terminal_bindings: std::array::from_fn(|_| None),
             pushback: VecDeque::new(),
             terminal,
             terminal_capabilities,
@@ -354,6 +358,7 @@ impl EditLineBoundary {
             word_characters: Some(vec![b'_' as u32, 0]),
             client_data: core::ptr::null_mut(),
             history_depth: 0,
+            history_live_line: Text::default(),
             completion_pending_listing: false,
         }
     }
@@ -380,73 +385,6 @@ pub(crate) fn unit_to_wide(unit: TextUnit) -> u32 {
 
 fn wide_string(input: &[u32]) -> Option<String> {
     input.iter().copied().map(char::from_u32).collect()
-}
-
-fn decode_key_sequence(input: &str) -> Option<Text> {
-    let bytes = input.as_bytes();
-    let mut output = Text::default();
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'^' if index + 1 < bytes.len() => {
-                let next = bytes[index + 1];
-                let byte = if next == b'?' { 0x7f } else { next & 0x1f };
-                output.push(TextUnit::Scalar(char::from(byte)));
-                index += 2;
-            }
-            b'\\' if index + 1 < bytes.len() => {
-                let next = bytes[index + 1];
-                let byte = match next {
-                    b'e' | b'E' => 0x1b,
-                    b'n' => b'\n',
-                    b'r' => b'\r',
-                    b't' => b'\t',
-                    b'b' => 0x08,
-                    b'f' => 0x0c,
-                    b'v' => 0x0b,
-                    b'\\' => b'\\',
-                    _ => next,
-                };
-                output.push(TextUnit::Scalar(char::from(byte)));
-                index += 2;
-            }
-            byte if byte.is_ascii() => {
-                output.push(TextUnit::Scalar(char::from(byte)));
-                index += 1;
-            }
-            _ => {
-                let remaining = input.get(index..)?;
-                let character = remaining.chars().next()?;
-                output.push(TextUnit::Scalar(character));
-                index += character.len_utf8();
-            }
-        }
-    }
-    Some(output)
-}
-
-fn named_action(name: &str) -> Option<Action> {
-    match name {
-        "ed-move-to-beg" => Some(Action::Move(Motion::StartOfBuffer)),
-        "ed-move-to-end" => Some(Action::Move(Motion::EndOfBuffer)),
-        "ed-delete-next-char" => Some(Action::Delete(EditTarget::Character(Direction::Next))),
-        "ed-delete-prev-char" => Some(Action::Delete(EditTarget::Character(Direction::Previous))),
-        "em-next-word" => Some(Action::Move(Motion::Word {
-            direction: Direction::Next,
-            kind: WordKind::Word,
-        })),
-        "ed-prev-word" => Some(Action::Move(Motion::Word {
-            direction: Direction::Previous,
-            kind: WordKind::Word,
-        })),
-        "em-toggle-overwrite" => Some(Action::SetInputMode(InputMode::Replace)),
-        "ed-insert" => Some(Action::SetModes {
-            input: InputMode::Insert,
-            keymap: KeymapMode::Emacs,
-        }),
-        "em-inc-search-prev" => Some(Action::Refresh(nshedit::domain::Refresh::Redisplay)),
-        _ => None,
-    }
 }
 
 pub(crate) fn secure_environment(name: &str) -> Option<Vec<u8>> {

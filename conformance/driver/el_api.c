@@ -233,7 +233,103 @@ static void section_parse(EditLine *el)
 }
 
 /* --------------------------------------------------------------------- */
-/* 3. Terminal capabilities and tty commands — observe their effects      */
+/* 3. History callbacks — editrc output and downstream store mutation     */
+/* --------------------------------------------------------------------- */
+
+/* [spec:nshedit:req:abi.history-effects+1/test]
+ * The return value alone cannot show that `history` crossed the installed
+ * callback boundary.  Capture list output, then inspect the callback-owned
+ * store after the editrc size mutation.  Exercise both public callback
+ * representations because EL_HIST records which event layout it installed. */
+static void section_history(EditLine *el, FILE *devnull)
+{
+	const char *list[] = { "history", "list" };
+	const char *size[] = { "history", "size", "1" };
+	const char *unique[] = { "history", "unique", "1" };
+	HistoryW *wide;
+	History *narrow;
+	HistEventW wev;
+	HistEvent nev;
+	FILE *capture;
+	int rc;
+
+	wide = history_winit();
+	op("wide history init");
+	printf("%d\n", wide != NULL);
+	if (wide != NULL) {
+		history_w(wide, &wev, H_SETSIZE, 8);
+		history_w(wide, &wev, H_ENTER, L"wide older\n");
+		history_w(wide, &wev, H_ENTER, L"wide newer\nline\n");
+		op("EL_HIST wide");
+		pr(el_wset(el, EL_HIST, history_w, wide));
+
+		capture = tmpfile();
+		op("wide history tmpfile");
+		printf("%d\n", capture != NULL);
+		if (capture != NULL) {
+			el_set(el, EL_SETFP, 1, capture);
+			op("wide history list");
+			pr(el_parse(el, 2, list));
+			el_set(el, EL_SETFP, 1, devnull);
+			dump_stream(capture, "wide history output");
+			fclose(capture);
+		}
+
+		op("wide history size 1");
+		pr(el_parse(el, 3, size));
+		history_w(wide, &wev, H_ENTER, L"wide after size\n");
+		rc = history_w(wide, &wev, H_GETSIZE);
+		op("wide count after size");
+		printf("rc=%d num=%d\n", rc, wev.num);
+		op("wide history unique 1");
+		pr(el_parse(el, 3, unique));
+		rc = history_w(wide, &wev, H_GETUNIQUE);
+		op("wide history unique value");
+		printf("rc=%d num=%d\n", rc, wev.num);
+		history_wend(wide);
+	}
+
+	narrow = history_init();
+	op("narrow history init");
+	printf("%d\n", narrow != NULL);
+	if (narrow != NULL) {
+		history(narrow, &nev, H_SETSIZE, 8);
+		history(narrow, &nev, H_ENTER, "narrow older\n");
+		history(narrow, &nev, H_ENTER, "narrow newer\nline\n");
+		op("EL_HIST narrow");
+		pr(el_set(el, EL_HIST, history, narrow));
+
+		capture = tmpfile();
+		op("narrow history tmpfile");
+		printf("%d\n", capture != NULL);
+		if (capture != NULL) {
+			el_set(el, EL_SETFP, 1, capture);
+			op("narrow history list");
+			pr(el_parse(el, 2, list));
+			el_set(el, EL_SETFP, 1, devnull);
+			dump_stream(capture, "narrow history output");
+			fclose(capture);
+		}
+
+		op("narrow history size 1");
+		pr(el_parse(el, 3, size));
+		history(narrow, &nev, H_ENTER, "narrow after size\n");
+		rc = history(narrow, &nev, H_GETSIZE);
+		op("narrow count after size");
+		printf("rc=%d num=%d\n", rc, nev.num);
+		op("narrow history unique 1");
+		pr(el_parse(el, 3, unique));
+		rc = history(narrow, &nev, H_GETUNIQUE);
+		op("narrow history unique value");
+		printf("rc=%d num=%d\n", rc, nev.num);
+		history_end(narrow);
+	}
+
+	el_wset(el, EL_HIST, NULL, NULL);
+}
+
+/* --------------------------------------------------------------------- */
+/* 4. Terminal capabilities and tty commands — observe their effects      */
 /* --------------------------------------------------------------------- */
 
 /*
@@ -349,7 +445,7 @@ static void section_terminal(EditLine *el, FILE *devnull)
 }
 
 /* --------------------------------------------------------------------- */
-/* 4. el_source — the same surface, reached from a file                   */
+/* 5. el_source — the same surface, reached from a file                   */
 /* --------------------------------------------------------------------- */
 
 static void write_editrc(const char *name, const char *body)
@@ -385,7 +481,7 @@ static void section_source(EditLine *el)
 }
 
 /* --------------------------------------------------------------------- */
-/* 5. The line buffer — chared.c, without a keystroke in sight            */
+/* 6. The line buffer — chared.c, without a keystroke in sight            */
 /* --------------------------------------------------------------------- */
 
 static void dump_line(EditLine *el, const char *label)
@@ -438,7 +534,7 @@ static void section_line(EditLine *el)
 }
 
 /* --------------------------------------------------------------------- */
-/* 6. Geometry                                                            */
+/* 7. Geometry                                                            */
 /* --------------------------------------------------------------------- */
 
 static void section_geometry(EditLine *el)
@@ -500,6 +596,7 @@ int main(int argc, char **argv)
 
 	section_setget(el);
 	section_parse(el);
+	section_history(el, devnull);
 	section_terminal(el, devnull);
 	section_source(el);
 	section_line(el);

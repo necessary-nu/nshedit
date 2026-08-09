@@ -85,7 +85,7 @@ use crate::adapter::{
 };
 use crate::cdecl::handles::{History, HistoryW};
 use crate::cdecl::histedit::{
-    CC_EOF, CC_NEWLINE, CC_REDISPLAY, CC_REFRESH_BEEP, CFile, H_FIRST, H_NEXT, H_PREV, HistEvent,
+    CC_EOF, CC_NEWLINE, CC_REDISPLAY, CC_REFRESH_BEEP, CFile, H_FIRST, H_NEXT, HistEvent,
     HistEventGen, HistEventWide as HistEventW, LineInfo, LineInfoGen, LineInfoWide as LineInfoW,
     WcharT,
 };

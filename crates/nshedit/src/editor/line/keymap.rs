@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::domain::{
     Action, Binding, Direction, EditTarget, InputMode, KeyLookup, KeySequence, KeymapMode, Motion,
-    Refresh, Text, WordKind, YankPlacement,
+    Refresh, Text, TextTransform, WordKind, YankPlacement,
 };
 
 #[derive(Debug)]
@@ -27,6 +27,14 @@ impl Default for Keymaps {
 }
 
 impl Keymaps {
+    pub(super) fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    pub(super) fn clear(&mut self, mode: KeymapMode) {
+        self.map_mut(mode).clear();
+    }
+
     pub(super) fn bind(
         &mut self,
         mode: KeymapMode,
@@ -54,6 +62,17 @@ impl Keymaps {
         }
     }
 
+    pub(super) fn binding(&self, mode: KeymapMode, sequence: &KeySequence) -> Option<&Binding> {
+        self.map(mode).get(sequence)
+    }
+
+    pub(super) fn bindings(
+        &self,
+        mode: KeymapMode,
+    ) -> impl Iterator<Item = (&KeySequence, &Binding)> {
+        self.map(mode).iter()
+    }
+
     fn map(&self, mode: KeymapMode) -> &BTreeMap<KeySequence, Binding> {
         match mode {
             KeymapMode::Emacs => &self.emacs,
@@ -78,11 +97,7 @@ impl Keymaps {
             "\u{2}",
             Action::Move(Motion::Character(Direction::Previous)),
         );
-        insert(
-            map,
-            "\u{4}",
-            Action::Delete(EditTarget::Character(Direction::Next)),
-        );
+        insert(map, "\u{4}", Action::DeleteOrEndOfInput);
         insert(map, "\u{5}", Action::Move(Motion::EndOfLine));
         insert(
             map,
@@ -121,8 +136,46 @@ impl Keymaps {
         insert(map, "\t", Action::Complete);
         insert(map, "\n", Action::AcceptLine);
         insert(map, "\r", Action::AcceptLine);
+        insert(
+            map,
+            "\u{7f}",
+            Action::Delete(EditTarget::Character(Direction::Previous)),
+        );
         insert(map, "\u{1b}b", word_motion(Direction::Previous));
+        insert(
+            map,
+            "\u{1b}c",
+            Action::Transform {
+                target: EditTarget::Word {
+                    direction: Direction::Next,
+                    kind: WordKind::Word,
+                },
+                transform: TextTransform::Capitalize,
+            },
+        );
         insert(map, "\u{1b}f", word_motion(Direction::Next));
+        insert(
+            map,
+            "\u{1b}l",
+            Action::Transform {
+                target: EditTarget::Word {
+                    direction: Direction::Next,
+                    kind: WordKind::Word,
+                },
+                transform: TextTransform::Lowercase,
+            },
+        );
+        insert(
+            map,
+            "\u{1b}u",
+            Action::Transform {
+                target: EditTarget::Word {
+                    direction: Direction::Next,
+                    kind: WordKind::Word,
+                },
+                transform: TextTransform::Uppercase,
+            },
+        );
     }
 
     fn install_vi_insert(&mut self) {

@@ -104,6 +104,15 @@ static char *prompt(EditLine *el)
 	return (char *)"> ";
 }
 
+/* [spec:nshedit:req:abi.bindings/test]
+ * The inserted text proves both that the callback ran against the same live
+ * editor and that it received the character which completed its binding. */
+static unsigned char bound_command(EditLine *el, int character)
+{
+	const char *text = character == 7 ? "!" : "BAD";
+	return el_insertstr(el, text) == 0 ? CC_REFRESH : CC_ERROR;
+}
+
 /*
  * Runs in the child, with `slave` already its controlling terminal. Never
  * returns: the parent reads what it wrote and reaps it.
@@ -129,6 +138,9 @@ static void child_session(void)
 	el_set(el, EL_PROMPT, prompt);
 	el_set(el, EL_HIST, history, h);
 	el_set(el, EL_SIGNAL, 0);
+	el_set(el, EL_ADDFN, "bound-command", "observe invoking character",
+	    bound_command);
+	el_set(el, EL_BIND, "^G", "bound-command", NULL);
 
 	/* Each returned line is echoed back with a marker, so the trace shows
 	 * what the editor decided the line WAS as well as what it drew. */
@@ -243,6 +255,7 @@ static const struct {
 	const char *keys;
 } script[] = {
 	{ "type hello",              "hello" },
+	{ "user command ^G",         "\007" },
 	{ "move to beginning ^A",    "\001" },
 	{ "move to end ^E",          "\005" },
 	{ "back one ^B",             "\002" },

@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod history;
+
 pub(super) unsafe fn environment_value(el: *mut EditLine, name: &str) -> Option<Vec<u8>> {
     let callback = unsafe { (&*el).environment_callback() };
     if let Some(callback) = callback {
@@ -79,7 +81,7 @@ pub(super) unsafe fn dispatch_editrc(el: *mut EditLine, words: &[&[u32]]) -> c_i
         },
         "setty" => unsafe { (&mut *el).set_tty_modes(words) },
         "echotc" | "telltc" | "settc" => unsafe { (&mut *el).terminal_command(words) },
-        "history" => 0,
+        "history" => unsafe { history::history_command(el, words) },
         _ => return -1,
     };
     -status

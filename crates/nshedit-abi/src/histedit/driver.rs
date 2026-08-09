@@ -210,69 +210,190 @@ pub(super) unsafe fn read_wide_character(el: *mut EditLine, wc: *mut WcharT) -> 
     }
 }
 
-unsafe fn host_history(
-    el: *mut EditLine,
-    direction: Direction,
-) -> Result<HistoryResponse, HostFailure> {
-    let Some((callback, cookie)) = (unsafe { (&*el).history_callback() }) else {
-        return Err(HostFailure::Unavailable);
-    };
-    let depth = unsafe { (&*el).history_depth() };
-    if direction == Direction::Next && depth == 0 {
-        return Ok(HistoryResponse::Live);
+enum HistoryFetch {
+    Entry(Text),
+    Missing {
+        last_depth: usize,
+        last_entry: Option<Text>,
+    },
+}
+
+unsafe fn history_entry(el: *mut EditLine, operation: c_int) -> Option<Text> {
+    let (callback, cookie) = unsafe { (&*el).history_callback() }?;
+    if cookie.is_null() {
+        return None;
     }
-    let operation = match (direction, depth) {
-        (Direction::Previous, 0) => H_FIRST,
-        (Direction::Previous, _) => H_NEXT,
-        (Direction::Next, _) => H_PREV,
-    };
-    let narrow = unsafe { (&*el).narrow_history() };
-    let line = if narrow {
+    let mut line: Text = if unsafe { (&*el).narrow_history() } {
         let mut event = HistEvent {
             num: 0,
             str: core::ptr::null(),
         };
-        let result = unsafe { callback(cookie, (&raw mut event).cast(), operation) };
-        if result != 0 {
-            return Ok(HistoryResponse::Boundary);
+        if unsafe {
+            callback(
+                cookie,
+                (&raw mut event).cast(),
+                operation,
+                core::ptr::null_mut::<c_void>(),
+            )
+        } == -1
+        {
+            return None;
         }
-        text_from_bytes(unsafe { cbytes(event.str) }.unwrap_or(&[]))
+        let bytes = unsafe { cbytes(event.str) }?;
+        let mut conversion = crate::conversion::ConversionBuffer::new();
+        crate::conversion::decode_bytes(Some(bytes), &mut conversion)?
+            .iter()
+            .copied()
+            .map(TextUnit::from_wide)
+            .collect()
     } else {
         let mut event = HistEventW {
             num: 0,
             str: core::ptr::null(),
         };
-        let result = unsafe { callback(cookie, &raw mut event, operation) };
-        if result != 0 {
-            return Ok(HistoryResponse::Boundary);
+        if unsafe {
+            callback(
+                cookie,
+                &raw mut event,
+                operation,
+                core::ptr::null_mut::<c_void>(),
+            )
+        } == -1
+        {
+            return None;
         }
-        unsafe { wstr(event.str) }
-            .unwrap_or(&[])
+        unsafe { wstr(event.str) }?
             .iter()
             .copied()
             .map(TextUnit::from_wide)
             .collect()
     };
-    let next_depth = match direction {
-        Direction::Previous => depth.saturating_add(1),
-        Direction::Next => depth.saturating_sub(1),
+
+    let mut end = line.len();
+    if line.as_units().get(end.wrapping_sub(1)) == Some(&TextUnit::Scalar('\n')) {
+        end -= 1;
+    }
+    if line.as_units().get(end.wrapping_sub(1)) == Some(&TextUnit::Scalar(' ')) {
+        end -= 1;
+    }
+    if end != line.len() {
+        line = line.as_units()[..end].iter().copied().collect();
+    }
+    Some(line)
+}
+
+unsafe fn fetch_history(el: *mut EditLine, depth: usize) -> HistoryFetch {
+    debug_assert!(depth > 0);
+    let Some(mut line) = (unsafe { history_entry(el, H_FIRST) }) else {
+        return HistoryFetch::Missing {
+            last_depth: 0,
+            last_entry: None,
+        };
     };
-    unsafe { (&mut *el).set_history_depth(next_depth) };
-    Ok(HistoryResponse::Entry(line))
+    let mut reached = 1;
+    while reached < depth {
+        let Some(next) = (unsafe { history_entry(el, H_NEXT) }) else {
+            return HistoryFetch::Missing {
+                last_depth: reached,
+                last_entry: Some(line),
+            };
+        };
+        line = next;
+        reached += 1;
+    }
+    HistoryFetch::Entry(line)
+}
+
+unsafe fn host_history(
+    el: *mut EditLine,
+    direction: Direction,
+) -> Result<HistoryResponse, HostFailure> {
+    if unsafe { (&*el).history_callback() }.is_none_or(|(_, cookie)| cookie.is_null()) {
+        return Err(HostFailure::Unavailable);
+    }
+    let depth = unsafe { (&*el).history_depth() };
+    match direction {
+        Direction::Previous => {
+            if depth == 0 {
+                unsafe { (&mut *el).save_history_live_line() };
+            }
+            let requested = depth.saturating_add(1);
+            match unsafe { fetch_history(el, requested) } {
+                HistoryFetch::Entry(line) => {
+                    unsafe { (&mut *el).set_history_depth(requested) };
+                    Ok(HistoryResponse::entry(line))
+                }
+                HistoryFetch::Missing {
+                    last_depth,
+                    last_entry,
+                } => {
+                    let selected = if unsafe { (&*el).editor_is_vi() } {
+                        depth
+                    } else if last_depth == 0 {
+                        requested
+                    } else {
+                        last_depth
+                    };
+                    unsafe { (&mut *el).set_history_depth(selected) };
+                    let retried = if selected == 0 {
+                        Some(unsafe { (&*el).history_live_line().clone() })
+                    } else {
+                        match unsafe { fetch_history(el, selected) } {
+                            HistoryFetch::Entry(line) => Some(line),
+                            HistoryFetch::Missing { last_entry, .. } => last_entry,
+                        }
+                    }
+                    .or(last_entry);
+                    Ok(retried.map_or_else(HistoryResponse::boundary, |line| {
+                        HistoryResponse::entry(line).at_boundary()
+                    }))
+                }
+            }
+        }
+        Direction::Next if depth == 0 => {
+            Ok(HistoryResponse::entry(unsafe { (&*el).history_live_line().clone() }).at_boundary())
+        }
+        Direction::Next if depth == 1 => {
+            unsafe { (&mut *el).set_history_depth(0) };
+            Ok(HistoryResponse::entry(unsafe {
+                (&*el).history_live_line().clone()
+            }))
+        }
+        Direction::Next => {
+            let requested = depth - 1;
+            match unsafe { fetch_history(el, requested) } {
+                HistoryFetch::Entry(line) => {
+                    unsafe { (&mut *el).set_history_depth(requested) };
+                    Ok(HistoryResponse::entry(line))
+                }
+                HistoryFetch::Missing { last_depth, .. } => {
+                    if last_depth != 0 {
+                        unsafe { (&mut *el).set_history_depth(last_depth) };
+                    }
+                    Ok(HistoryResponse::boundary())
+                }
+            }
+        }
+    }
 }
 
 unsafe fn host_command(
     el: *mut EditLine,
     name: &nshedit::domain::CommandName,
+    invoking: nshedit::domain::TextUnit,
 ) -> Result<Outcome, HostFailure> {
+    if let Some(outcome) = unsafe { (&mut *el).run_builtin_binding(name, invoking) } {
+        return Ok(outcome);
+    }
     let Some(callback) = (unsafe { (&*el).command_callback(name) }) else {
         return Err(HostFailure::Unavailable);
     };
-    let result = unsafe { callback(el, 0) };
+    let result = unsafe { callback(el, crate::adapter::unit_to_wide(invoking)) };
     Ok(match result {
         CC_NEWLINE => Outcome::Accepted(unsafe { (&*el).native().line().clone() }),
         CC_EOF => Outcome::EndOfInput,
-        crate::cdecl::histedit::CC_REFRESH | CC_REDISPLAY => Outcome::Refresh(Refresh::Full),
+        crate::cdecl::histedit::CC_REFRESH => Outcome::Refresh(Refresh::Redraw),
+        CC_REDISPLAY => Outcome::Refresh(Refresh::Redisplay),
         CC_REFRESH_BEEP => Outcome::Refresh(Refresh::Beep),
         0 => Outcome::Continue,
         _ => Outcome::Refresh(Refresh::Beep),
@@ -315,9 +436,12 @@ pub(super) unsafe fn drive_read(el: *mut EditLine) -> Result<ReadResult, ()> {
                     .map_err(|_| ())?
             }
             ReadStep::RecordHistory(pending) => {
+                // libedit returns an accepted line to the application and
+                // leaves H_ENTER to that caller. The native effect is still
+                // resumed explicitly so the core retains one typed protocol.
                 let (editor, driver) = unsafe { (&mut *el).split_driver() };
                 driver
-                    .resume_history_record(editor, &pending, Err(HostFailure::Unavailable))
+                    .resume_history_record(editor, &pending, Ok(()))
                     .map_err(|_| ())?
             }
             ReadStep::Completion(pending) => {
@@ -330,7 +454,8 @@ pub(super) unsafe fn drive_read(el: *mut EditLine) -> Result<ReadResult, ()> {
                     .map_err(|_| ())?
             }
             ReadStep::UserCommand(pending) => {
-                let response = unsafe { host_command(el, &pending.request().name) };
+                let request = pending.request();
+                let response = unsafe { host_command(el, &request.name, request.invoking) };
                 let (editor, driver) = unsafe { (&mut *el).split_driver() };
                 driver
                     .resume_user_command(editor, &pending, response)

@@ -69,6 +69,15 @@ impl State {
         };
     }
 
+    pub(super) fn reset_bindings(&mut self, mode: EditingMode) {
+        self.keymaps.reset();
+        self.select_editing_mode(mode);
+    }
+
+    pub(super) fn clear_bindings(&mut self, mode: KeymapMode) {
+        self.keymaps.clear(mode);
+    }
+
     pub(super) const fn input_mode(&self) -> InputMode {
         self.input_mode
     }
@@ -114,11 +123,24 @@ impl State {
         self.keymaps.lookup(self.keymap_mode, sequence)
     }
 
+    pub(super) fn binding(&self, mode: KeymapMode, sequence: &KeySequence) -> Option<&Binding> {
+        self.keymaps.binding(mode, sequence)
+    }
+
+    pub(super) fn bindings(
+        &self,
+        mode: KeymapMode,
+    ) -> impl Iterator<Item = (&KeySequence, &Binding)> {
+        self.keymaps.bindings(mode)
+    }
+
     pub(super) fn execute(&mut self, action: Action) -> Result<CommandStep, Error> {
         let outcome = match action {
+            Action::Noop => Outcome::Continue,
             Action::Insert(text) => self.insert(text)?,
             Action::Move(motion) => self.move_cursor(motion)?,
             Action::Delete(target) => self.delete(target, false)?,
+            Action::DeleteOrEndOfInput => self.delete_or_end_of_input()?,
             Action::Kill(target) => self.delete(target, true)?,
             Action::Copy(target) => self.copy(target)?,
             Action::Yank(placement) => self.yank(placement)?,
@@ -130,6 +152,13 @@ impl State {
             Action::RepeatSearch(direction) => self.repeat_search(direction)?,
             Action::SetInputMode(mode) => {
                 self.input_mode = mode;
+                Outcome::Continue
+            }
+            Action::ToggleInputMode => {
+                self.input_mode = match self.input_mode {
+                    InputMode::Insert | InputMode::ReplaceOnce => InputMode::Replace,
+                    InputMode::Replace => InputMode::Insert,
+                };
                 Outcome::Continue
             }
             Action::SetKeymap(mode) => {
@@ -190,6 +219,16 @@ impl State {
         Ok(Outcome::Continue)
     }
 
+    fn delete_or_end_of_input(&mut self) -> Result<Outcome, Error> {
+        if self.line.is_empty() {
+            Ok(Outcome::EndOfInput)
+        } else if self.cursor.get() == self.line.len() {
+            Ok(Outcome::Refresh(crate::domain::Refresh::Beep))
+        } else {
+            self.delete(EditTarget::Character(Direction::Next), false)
+        }
+    }
+
     fn copy(&mut self, target: EditTarget) -> Result<Outcome, Error> {
         let span = motion::target_span(&self.line, self.cursor, self.mark, target)?;
         self.kill = Some(self.line.slice(span)?.iter().copied().collect());
@@ -205,6 +244,7 @@ impl State {
             YankPlacement::AfterCursor => self.cursor.get().saturating_add(1).min(self.line.len()),
         };
         self.replace_at(killed, start, start)
+            .map(|_| Outcome::Refresh(crate::domain::Refresh::Redraw))
     }
 
     fn set_mark(&mut self) -> Outcome {
@@ -328,6 +368,23 @@ impl State {
         })
     }
 
+    pub(super) fn restore_history(
+        &mut self,
+        line: Text,
+        cursor_at_start: bool,
+    ) -> Result<(), Error> {
+        self.line = line;
+        let cursor = if cursor_at_start { 0 } else { self.line.len() };
+        self.cursor = self.line.index(cursor)?;
+        self.mark = self
+            .mark
+            .map(|mark| self.line.index(mark.get().min(self.line.len())))
+            .transpose()?;
+        self.undo.clear();
+        self.redo.clear();
+        Ok(())
+    }
+
     fn record_edit<R>(
         &mut self,
         operation: impl FnOnce(&mut Self) -> Result<R, Error>,
@@ -399,6 +456,7 @@ fn initial_keymap(config: EditorConfig) -> KeymapMode {
 
 fn transformed(units: &[TextUnit], transform: TextTransform) -> Text {
     let mut result = Text::default();
+    let mut capitalized = false;
     for &unit in units {
         let TextUnit::Scalar(character) = unit else {
             result.push(unit);
@@ -417,6 +475,14 @@ fn transformed(units: &[TextUnit], transform: TextTransform) -> Text {
             TextTransform::ToggleCase => {
                 result.extend(character.to_lowercase().map(TextUnit::Scalar));
             }
+            TextTransform::Capitalize if !capitalized && character.is_alphabetic() => {
+                result.extend(character.to_uppercase().map(TextUnit::Scalar));
+                capitalized = true;
+            }
+            TextTransform::Capitalize if capitalized && character.is_uppercase() => {
+                result.extend(character.to_lowercase().map(TextUnit::Scalar));
+            }
+            TextTransform::Capitalize => result.push(unit),
         }
     }
     result

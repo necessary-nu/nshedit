@@ -2609,12 +2609,34 @@ children (
 
             {
                 id greenfield-binding-compat
-                title "Implement complete binding forms and command dispatch compatibility"
+                title "Implement binding forms, inventory, and user callbacks"
                 kind @fix
                 implements {
                     native-impl ([spec:nshedit:req:abi.bindings])
                 }
                 deps (greenfield-line-commands greenfield-effect-runtime greenfield-abi-adapter)
+                log (
+                    {
+                        at 2026-08-09T02:50:44.15948739Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T03:53:34.467622304Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Binding compatibility is projected into typed native keymaps: the ABI adapter owns C command names, escape syntax, callback pointers, and editrc forms; the core owns Action, Binding, KeySequence, and keymap semantics. Evidence covers all 96 built-in names, mutations and queries, terminal-key bindings, macro bindings, and a reentrant user command receiving its invoking character."
+                    }
+
+                    {
+                        at 2026-08-09T04:00:33.323847211Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Execution audit found that inventory-only built-ins were encoded as Action::User and converted to an unconditional beep when no registered callback existed. This node now owns only binding forms, catalog resolution, and actual user callbacks; full built-in execution is the dependent greenfield-binding-dispatch node."
+                    }
+                )
             }
 
             {
@@ -2629,6 +2651,28 @@ children (
                     greenfield-effect-runtime
                     greenfield-read-driver
                     greenfield-abi-adapter
+                )
+                log (
+                    {
+                        at 2026-08-09T03:26:20.45038957Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T03:26:20.45038957Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "single-flight overridden: started while greenfield-binding-compat had uncommitted WIP"
+                    }
+
+                    {
+                        at 2026-08-09T03:53:34.421162755Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Corrected [spec:nshedit:req:abi.history-effects] to match the C ownership boundary: el_gets yields the accepted line but does not call H_ENTER. The compatibility driver now acknowledges the typed native record effect while the application remains solely responsible for persistence. Exact evidence covers narrow and wide editrc callbacks, interactive traversal, list output, policy mutation, and non-duplication."
+                    }
                 )
             }
 
@@ -2654,7 +2698,7 @@ children (
                     greenfield-rust-consumer
                     nshterm-hashed-db
                     greenfield-terminal-compat
-                    greenfield-binding-compat
+                    greenfield-binding-dispatch
                     greenfield-history-compat
                     greenfield-signal-compat
                 )
@@ -2764,6 +2808,54 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "single-flight overridden: started while greenfield-terminal-compat had uncommitted WIP"
+                    }
+                )
+            }
+
+            {
+                id greenfield-command-sequences
+                title "Implement typed multi-step command sequencing"
+                kind @feat
+                implements {
+                    native-impl ([spec:nshedit:req:core.command-sequences])
+                }
+                deps (greenfield-line-commands greenfield-read-driver)
+            }
+
+            {
+                id greenfield-command-effects
+                title "Implement typed host-dependent command effects"
+                kind @feat
+                implements {
+                    native-impl ([spec:nshedit:req:core.command-effects])
+                }
+                deps (
+                    greenfield-command-sequences
+                    greenfield-history
+                    greenfield-token-completion
+                    greenfield-effect-runtime
+                )
+            }
+
+            {
+                id greenfield-binding-dispatch
+                title "Execute every built-in binding through native semantics"
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:abi.binding-dispatch])
+                }
+                deps (
+                    greenfield-binding-compat
+                    greenfield-command-sequences
+                    greenfield-command-effects
+                    greenfield-abi-adapter
+                )
+                log (
+                    {
+                        at 2026-08-09T04:00:18.885184948Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Full dispatch depends on two native protocols rather than compatibility-name fallbacks: greenfield-command-sequences owns repeat/next-unit/Vi composition, and greenfield-command-effects owns history, alias, command-input, and external-edit suspension. Final acceptance now joins this node instead of the surface-only binding node."
                     }
                 )
             }

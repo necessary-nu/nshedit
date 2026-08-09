@@ -76,12 +76,22 @@ states where those semantics may live and what the native Rust API must be.
 > MUST receive the invoking character and the same observable editor state as
 > the reference callback.
 
-> [spec:nshedit:req:abi.history-effects]
+> [spec:nshedit:req:abi.binding-dispatch]
+> Every built-in command in the compatibility inventory, whether reached from a
+> default map or a caller-installed binding, MUST execute the behaviour assigned
+> by the detailed command rules with the reference invoking unit, repeat count,
+> editing mode, and downstream effects. A built-in MUST NOT be encoded as a
+> registered user command, sent through foreign callback lookup, or collapsed to
+> an unconditional beep unless the detailed rule assigns that result.
+
+> [spec:nshedit:req:abi.history-effects+1]
 > An installed narrow or wide history callback MUST service editrc history
-> commands, traversal, and accepted-line recording with the arguments, ordering,
-> return translation, and output assigned by the detailed history and read
-> rules. Foreign callback storage and invocation remain ABI-owned; the native
-> editor MUST cross this boundary only through typed history effects.
+> commands and traversal with the arguments, ordering, return translation, and
+> output assigned by the detailed history and read rules. The compatibility
+> adapter MUST acknowledge the native accepted-line record effect without an
+> implicit `H_ENTER`, because the C API assigns recording to the caller after
+> `el_gets` returns. Foreign callback storage and invocation remain ABI-owned;
+> the native editor MUST cross this boundary only through typed history effects.
 
 > [spec:nshedit:req:abi.signal-lifecycle]
 > Signal-enabled reads MUST install, observe, propagate, and restore the signal
@@ -144,6 +154,21 @@ states where those semantics may live and what the native Rust API must be.
 > built-in editor commands MUST operate on private typed Rust state while
 > retaining the behaviours required by the corresponding detailed libedit
 > rules at the ABI adapter.
+
+> [spec:nshedit:req:core.command-sequences]
+> Repeat arguments, quoted and meta next-unit input, Vi operator-motion
+> composition, character search and repetition, replacement, substitution, and
+> redo MUST be native typed continuations over semantic actions, checked text
+> boundaries, and bounded replay. The core MUST NOT represent these protocols
+> with C command numbers, operator bit masks, pointer anchors, or compatibility
+> callback names.
+
+> [spec:nshedit:req:core.command-effects]
+> Commands that require history search, history line or word selection, alias
+> expansion, editor-command input, or external history editing MUST suspend as
+> owned typed effects and resume with operation-specific responses after all
+> editor borrows have ended. Cancellation, unavailability, and callback failure
+> MUST remain typed outcomes until the compatibility adapter translates them.
 
 > [spec:nshedit:req:core.history+1]
 > Native history storage and traversal MUST use owned `Text` records, typed

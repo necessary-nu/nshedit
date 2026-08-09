@@ -96,6 +96,9 @@ pub enum TextTransform {
     Uppercase,
     /// Exchange lowercase and uppercase scalar characters.
     ToggleCase,
+    /// Uppercase the first alphabetic scalar and lowercase later uppercase
+    /// scalars in the selected text.
+    Capitalize,
 }
 
 /// Where a yank inserts its owned register contents.
@@ -138,12 +141,17 @@ impl CommandName {
 /// service are returned as a typed command step for the driver to suspend.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Action {
+    /// Leave editor state unchanged.
+    Noop,
     /// Insert or replace logical text according to the current input mode.
     Insert(Text),
     /// Move the checked cursor without changing text.
     Move(Motion),
     /// Delete text without changing the kill register.
     Delete(EditTarget),
+    /// Delete the next logical unit, or report end of input when the line is
+    /// empty.
+    DeleteOrEndOfInput,
     /// Delete text and replace the kill register with it.
     Kill(EditTarget),
     /// Copy text into the kill register without deleting it.
@@ -167,6 +175,8 @@ pub enum Action {
     RepeatSearch(Direction),
     /// Select how following inserted text changes the line.
     SetInputMode(InputMode),
+    /// Exchange insert and replace input modes.
+    ToggleInputMode,
     /// Select the active typed keymap.
     SetKeymap(KeymapMode),
     /// Change input and keymap modes as one command transition.
@@ -207,6 +217,9 @@ pub enum KeymapMode {
 /// The kind of redraw requested after an action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Refresh {
+    /// Redraw the complete editor frame without forgetting its terminal
+    /// contents.
+    Redraw,
     /// Recompute and draw the complete display.
     Full,
     /// Draw from the current logical damage point.

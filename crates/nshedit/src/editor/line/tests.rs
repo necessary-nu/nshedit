@@ -248,6 +248,46 @@ fn transforms_preserve_text_unit_kinds() {
 }
 
 #[test]
+fn capitalization_and_toggle_are_semantic() {
+    let mut editor = editor();
+    apply(&mut editor, Action::Insert(Text::from("hELLO")));
+    apply(&mut editor, Action::Move(Motion::StartOfBuffer));
+    apply(
+        &mut editor,
+        Action::Transform {
+            target: EditTarget::Buffer,
+            transform: TextTransform::Capitalize,
+        },
+    );
+    assert_eq!(editor.line(), &Text::from("Hello"));
+
+    apply(&mut editor, Action::ToggleInputMode);
+    assert_eq!(editor.input_mode(), InputMode::Replace);
+    apply(&mut editor, Action::ToggleInputMode);
+    assert_eq!(editor.input_mode(), InputMode::Insert);
+}
+
+#[test]
+fn delete_or_eof_is_stateful() {
+    let mut editor = editor();
+    assert_eq!(
+        apply(&mut editor, Action::DeleteOrEndOfInput),
+        Outcome::EndOfInput
+    );
+    apply(&mut editor, Action::Insert(Text::from("a")));
+    assert_eq!(
+        apply(&mut editor, Action::DeleteOrEndOfInput),
+        Outcome::Refresh(Refresh::Beep)
+    );
+    apply(&mut editor, Action::Move(Motion::StartOfBuffer));
+    assert_eq!(
+        apply(&mut editor, Action::DeleteOrEndOfInput),
+        Outcome::Continue
+    );
+    assert!(editor.line().is_empty());
+}
+
+#[test]
 fn search_remembers_exact_pattern() {
     let mut editor = editor();
     apply(&mut editor, Action::Insert(Text::from("banana")));
@@ -317,6 +357,31 @@ fn keymaps_report_all_match_states() {
         Some(Binding::Macro(Text::from("escape")))
     );
     assert_eq!(editor.key_binding(&escape), KeyLookup::Prefix);
+}
+
+#[test]
+fn reset_restores_default_bindings() {
+    let mut editor = editor();
+    let delete = sequence("\u{7f}");
+    let capitalise = sequence("\u{1b}c");
+    editor.unbind(KeymapMode::Emacs, &delete);
+    editor.unbind(KeymapMode::Emacs, &capitalise);
+    assert!(editor.binding(KeymapMode::Emacs, &delete).is_none());
+
+    editor.reset_bindings(EditingMode::Emacs);
+    assert!(matches!(
+        editor.binding(KeymapMode::Emacs, &delete),
+        Some(Binding::Action(Action::Delete(EditTarget::Character(
+            Direction::Previous
+        ))))
+    ));
+    assert!(matches!(
+        editor.binding(KeymapMode::Emacs, &capitalise),
+        Some(Binding::Action(Action::Transform {
+            transform: TextTransform::Capitalize,
+            ..
+        }))
+    ));
 }
 
 #[test]

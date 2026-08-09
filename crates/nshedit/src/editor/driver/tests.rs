@@ -1,8 +1,8 @@
 use std::io;
 
 use crate::domain::{
-    Action, Binding, EditingMode, EditorConfig, KeySequence, KeymapMode, Prompt, ScreenSize,
-    Signal, TerminalMode, Text, TextUnit,
+    Action, Binding, CommandName, EditingMode, EditorConfig, KeySequence, KeymapMode, Prompt,
+    ScreenSize, Signal, TerminalMode, Text, TextUnit,
 };
 use crate::editor::effect::{HistoryResponse, PromptSide, ReadEffect, ReadOutcome};
 use crate::editor::{CompletionCandidate, CompletionCandidates, TerminalProfile};
@@ -181,6 +181,79 @@ fn vi_counts_and_macros_are_bounded() {
 }
 
 #[test]
+fn user_command_receives_invoking_unit() {
+    let mut editor = editor(EditorConfig::default());
+    editor.bind(
+        KeymapMode::Emacs,
+        KeySequence::try_from("xy").unwrap(),
+        Binding::Action(Action::User(CommandName::new("host-command").unwrap())),
+    );
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+    let pending = read(settle(&mut driver, &mut editor, begin, &mut output));
+    let step = input_unit(&mut driver, &mut editor, &pending, 'x');
+    let pending = read(step);
+    let step = input_unit(&mut driver, &mut editor, &pending, 'y');
+    let ReadStep::UserCommand(command) = step else {
+        panic!("binding did not request the host command");
+    };
+    assert_eq!(command.request().invoking, TextUnit::Scalar('y'));
+}
+
+#[test]
+fn echo_uses_human_readable_control_notation() {
+    let mut output = Vec::new();
+
+    write_echo(TextUnit::Scalar('\u{4}'), &mut output).unwrap();
+    write_echo(TextUnit::RawByte(0x7f), &mut output).unwrap();
+    write_echo(TextUnit::Scalar('x'), &mut output).unwrap();
+
+    assert_eq!(output, b"^D^?x");
+}
+
+#[test]
+fn history_restoration_preserves_live_line() {
+    let mut editor = editor(EditorConfig::default());
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+    let pending = read(settle(&mut driver, &mut editor, begin, &mut output));
+    editor.execute(Action::Insert(Text::from("draft"))).unwrap();
+    assert!(editor.can_undo());
+
+    let step = input_unit(&mut driver, &mut editor, &pending, '\u{10}');
+    let ReadStep::History(history) = step else {
+        panic!("history binding did not suspend");
+    };
+    let emitted_before = output.len();
+    let step = driver
+        .resume_history(
+            &mut editor,
+            &history,
+            Ok(HistoryResponse::entry(Text::from("old")).at_boundary()),
+        )
+        .unwrap();
+    let pending = read(settle(&mut driver, &mut editor, step, &mut output));
+    assert_eq!(editor.line(), &Text::from("old"));
+    assert_eq!(editor.cursor(), editor.line().index(3).unwrap());
+    assert!(!editor.can_undo());
+    assert!(output[emitted_before..].contains(&b'\x07'));
+
+    let step = input_unit(&mut driver, &mut editor, &pending, '\u{e}');
+    let ReadStep::History(history) = step else {
+        panic!("next-history binding did not suspend");
+    };
+    let step = driver
+        .resume_history(&mut editor, &history, Ok(HistoryResponse::live()))
+        .unwrap();
+    let _pending = read(settle(&mut driver, &mut editor, step, &mut output));
+    assert_eq!(editor.line(), &Text::from("draft"));
+    assert_eq!(editor.cursor(), editor.line().index(5).unwrap());
+    assert!(!editor.can_undo());
+}
+
+#[test]
 fn history_completion_and_signal_resume() {
     let mut editor = editor(EditorConfig::default());
     let mut driver = ReadDriver::default();
@@ -195,7 +268,7 @@ fn history_completion_and_signal_resume() {
         .resume_history(
             &mut editor,
             &history,
-            Ok(HistoryResponse::Entry(Text::from("ec"))),
+            Ok(HistoryResponse::entry(Text::from("ec"))),
         )
         .unwrap();
     let pending = read(settle(&mut driver, &mut editor, step, &mut output));

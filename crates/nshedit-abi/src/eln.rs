@@ -34,7 +34,10 @@
 use core::ffi::{CStr, c_char, c_int, c_void};
 use core::ptr;
 
-use crate::adapter::{EditLine, HistoryCallback as HistFunT, NarrowPromptCallback as ElPfuncT};
+use crate::adapter::{
+    CommandCallback as ElFuncT, EditLine, HistoryCallback as HistFunT,
+    NarrowPromptCallback as ElPfuncT,
+};
 use crate::cdecl::histedit::LineInfo;
 use crate::conversion::{decode_bytes, encode_one, encode_wide, encoded_width};
 use crate::histedit::{
@@ -526,6 +529,37 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         } else {
             -1
         };
+    }
+
+    if op == crate::histedit::EL_ADDFN {
+        // SAFETY: the op's arguments are two null-terminated byte strings
+        // followed by an editor-command callback.
+        let name = unsafe { ap.next_arg::<*const c_char>() };
+        let help = unsafe { ap.next_arg::<*const c_char>() };
+        let callback = unsafe { crate::histedit::fn_arg::<ElFuncT>(&mut ap) };
+        if name.is_null() || help.is_null() || callback.is_none() {
+            return -1;
+        }
+        // SAFETY: both pointers are non-null and follow the op's string
+        // contract. Own each conversion before the shared buffer is reused.
+        let Some(name_bytes) = (unsafe { bytes_upto_nul(name) }) else {
+            return -1;
+        };
+        let Some(help_bytes) = (unsafe { bytes_upto_nul(help) }) else {
+            return -1;
+        };
+        let Some(name) =
+            decode_bytes(Some(name_bytes), el.narrow_conversion_mut()).map(<[u32]>::to_vec)
+        else {
+            return -1;
+        };
+        let Some(help) =
+            decode_bytes(Some(help_bytes), el.narrow_conversion_mut()).map(<[u32]>::to_vec)
+        else {
+            return -1;
+        };
+        return c_int::from(!el.add_command(&name, &help, callback.expect("checked above")))
+            .wrapping_neg();
     }
 
     // The prompt ops. Not forwardable, and the reason is one argument: the

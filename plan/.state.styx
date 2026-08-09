@@ -1,12 +1,12 @@
 schema_version 7
 
-last_sync_at 2026-08-09T02:47:35.780276431Z
+last_sync_at 2026-08-09T03:53:39.410881552Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
     {id abi.bindings, version 0}
     {id abi.complete-surface, version 1}
-    {id abi.history-effects, version 0}
+    {id abi.history-effects, version 1}
     {id abi.observational-coverage, version 0}
     {id abi.opaque-owner, version 0}
     {id abi.signal-lifecycle, version 0}
@@ -321,6 +321,13 @@ impl_evidence (
     ), rule_versions_seen (
         {id abi.termcap-view, version 0}
     )}
+    {id greenfield-terminal-compat, covered_rules (
+        abi.terminal-controls
+    ), covered_claims (
+        {impl_name native-impl, rule abi.terminal-controls}
+    ), rule_versions_seen (
+        {id abi.terminal-controls, version 1}
+    )}
     {id greenfield-terminal-render, covered_rules (
         core.terminal-render
     ), covered_claims (
@@ -345,9 +352,14 @@ impl_evidence (
     ), rule_versions_seen (
         {id abi.tty-modes, version 0}
     )}
-    {id greenfield-terminal-compat, covered_rules (
-        abi.terminal-controls
+    {id greenfield-binding-compat, covered_rules (
+        abi.bindings
     ), covered_claims (
-        {impl_name native-impl, rule abi.terminal-controls}
+        {impl_name native-impl, rule abi.bindings}
+    )}
+    {id greenfield-history-compat, covered_rules (
+        abi.history-effects
+    ), covered_claims (
+        {impl_name native-impl, rule abi.history-effects}
     )}
 )

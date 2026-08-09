@@ -145,7 +145,7 @@ impl TerminalCapabilities {
             .unwrap_or(0)
     }
 
-    pub(super) fn string(&self, code: &str) -> Option<&CStr> {
+    pub(in crate::adapter) fn string(&self, code: &str) -> Option<&CStr> {
         string_capability_name(code)
             .and_then(|name| self.strings.get(name))
             .map(CString::as_c_str)
@@ -201,6 +201,7 @@ impl EditLine {
         self.boundary.terminal_capabilities = capabilities;
         self.boundary.terminal_name = name;
         self.configure_terminal_display();
+        self.install_terminal_bindings();
         if result.is_ok() { 0 } else { -1 }
     }
 

@@ -1,0 +1,448 @@
+use nshedit::domain::{
+    Action, Direction, EditTarget, InputMode, KeymapMode, Motion, Refresh, TextTransform, WordKind,
+    YankPlacement,
+};
+
+pub(super) struct CommandHelp {
+    pub(super) name: &'static str,
+    pub(super) description: &'static str,
+}
+
+pub(super) struct TerminalKey {
+    pub(super) name: &'static str,
+    pub(super) capability: &'static str,
+    pub(super) fallback: &'static [&'static str],
+    pub(super) default_command: &'static str,
+}
+
+pub(super) const TERMINAL_KEYS: [TerminalKey; 7] = [
+    TerminalKey {
+        name: "down",
+        capability: "kd",
+        fallback: &["\u{1b}[B", "\u{1b}OB"],
+        default_command: "ed-next-history",
+    },
+    TerminalKey {
+        name: "up",
+        capability: "ku",
+        fallback: &["\u{1b}[A", "\u{1b}OA"],
+        default_command: "ed-prev-history",
+    },
+    TerminalKey {
+        name: "left",
+        capability: "kl",
+        fallback: &["\u{1b}[D", "\u{1b}OD"],
+        default_command: "ed-prev-char",
+    },
+    TerminalKey {
+        name: "right",
+        capability: "kr",
+        fallback: &["\u{1b}[C", "\u{1b}OC"],
+        default_command: "ed-next-char",
+    },
+    TerminalKey {
+        name: "home",
+        capability: "kh",
+        fallback: &["\u{1b}[H", "\u{1b}OH"],
+        default_command: "ed-move-to-beg",
+    },
+    TerminalKey {
+        name: "end",
+        capability: "@7",
+        fallback: &["\u{1b}[F", "\u{1b}OF"],
+        default_command: "ed-move-to-end",
+    },
+    TerminalKey {
+        name: "delete",
+        capability: "kD",
+        fallback: &[],
+        default_command: "ed-delete-next-char",
+    },
+];
+
+pub(super) const BUILTIN_COMMANDS: &[CommandHelp] = &[
+    command("ed-end-of-file", "Indicate end of file"),
+    command("ed-insert", "Add character to the line"),
+    command(
+        "ed-delete-prev-word",
+        "Delete from beginning of current word to cursor",
+    ),
+    command("ed-delete-next-char", "Delete character under cursor"),
+    command("ed-kill-line", "Cut to the end of line"),
+    command("ed-move-to-end", "Move cursor to the end of line"),
+    command("ed-move-to-beg", "Move cursor to the beginning of line"),
+    command(
+        "ed-transpose-chars",
+        "Exchange the character to the left of the cursor with the one under it",
+    ),
+    command("ed-next-char", "Move to the right one character"),
+    command("ed-prev-word", "Move to the beginning of the current word"),
+    command("ed-prev-char", "Move to the left one character"),
+    command("ed-quoted-insert", "Add the next character typed verbatim"),
+    command("ed-digit", "Adds to argument or enters a digit"),
+    command("ed-argument-digit", "Digit that starts argument"),
+    command("ed-unassigned", "Indicates unbound character"),
+    command("ed-ignore", "Input characters that have no effect"),
+    command("ed-newline", "Execute command"),
+    command(
+        "ed-delete-prev-char",
+        "Delete the character to the left of the cursor",
+    ),
+    command(
+        "ed-clear-screen",
+        "Clear screen leaving current line at the top",
+    ),
+    command("ed-redisplay", "Redisplay everything"),
+    command("ed-start-over", "Erase current line and start from scratch"),
+    command("ed-sequence-lead-in", "First character in a bound sequence"),
+    command("ed-prev-history", "Move to the previous history line"),
+    command("ed-next-history", "Move to the next history line"),
+    command(
+        "ed-search-prev-history",
+        "Search previous in history for a line matching the current",
+    ),
+    command(
+        "ed-search-next-history",
+        "Search next in history for a line matching the current",
+    ),
+    command("ed-prev-line", "Move up one line"),
+    command("ed-next-line", "Move down one line"),
+    command("ed-command", "Editline extended command"),
+    command(
+        "em-delete-or-list",
+        "Delete character under cursor or list completions if at end of line",
+    ),
+    command(
+        "em-delete-next-word",
+        "Cut from cursor to end of current word",
+    ),
+    command("em-yank", "Paste cut buffer at cursor position"),
+    command("em-kill-line", "Cut the entire line and save in cut buffer"),
+    command(
+        "em-kill-region",
+        "Cut area between mark and cursor and save in cut buffer",
+    ),
+    command(
+        "em-copy-region",
+        "Copy area between mark and cursor to cut buffer",
+    ),
+    command(
+        "em-gosmacs-transpose",
+        "Exchange the two characters before the cursor",
+    ),
+    command("em-next-word", "Move next to end of current word"),
+    command(
+        "em-upper-case",
+        "Uppercase the characters from cursor to end of current word",
+    ),
+    command(
+        "em-capitol-case",
+        "Capitalize the characters from cursor to end of current word",
+    ),
+    command(
+        "em-lower-case",
+        "Lowercase the characters from cursor to end of current word",
+    ),
+    command("em-set-mark", "Set the mark at cursor"),
+    command("em-exchange-mark", "Exchange the cursor and mark"),
+    command(
+        "em-universal-argument",
+        "Universal argument (argument times 4)",
+    ),
+    command("em-meta-next", "Add 8th bit to next character typed"),
+    command(
+        "em-toggle-overwrite",
+        "Switch from insert to overwrite mode or vice versa",
+    ),
+    command("em-copy-prev-word", "Copy current word to cursor"),
+    command("em-inc-search-next", "Emacs incremental next search"),
+    command("em-inc-search-prev", "Emacs incremental reverse search"),
+    command(
+        "em-delete-prev-char",
+        "Delete the character to the left of the cursor",
+    ),
+    command(
+        "vi-paste-next",
+        "Vi paste previous deletion to the right of the cursor",
+    ),
+    command(
+        "vi-paste-prev",
+        "Vi paste previous deletion to the left of the cursor",
+    ),
+    command(
+        "vi-prev-big-word",
+        "Vi move to the previous space delimited word",
+    ),
+    command("vi-prev-word", "Vi move to the previous word"),
+    command(
+        "vi-next-big-word",
+        "Vi move to the next space delimited word",
+    ),
+    command("vi-next-word", "Vi move to the next word"),
+    command(
+        "vi-change-case",
+        "Vi change case of character under the cursor and advance one character",
+    ),
+    command("vi-change-meta", "Vi change prefix command"),
+    command(
+        "vi-insert-at-bol",
+        "Vi enter insert mode at the beginning of line",
+    ),
+    command(
+        "vi-replace-char",
+        "Vi replace character under the cursor with the next character typed",
+    ),
+    command("vi-replace-mode", "Vi enter replace mode"),
+    command(
+        "vi-substitute-char",
+        "Vi replace character under the cursor and enter insert mode",
+    ),
+    command("vi-substitute-line", "Vi substitute entire line"),
+    command("vi-change-to-eol", "Vi change to end of line"),
+    command("vi-insert", "Vi enter insert mode"),
+    command("vi-add", "Vi enter insert mode after the cursor"),
+    command("vi-add-at-eol", "Vi enter insert mode at end of line"),
+    command("vi-delete-meta", "Vi delete prefix command"),
+    command(
+        "vi-end-big-word",
+        "Vi move to the end of the current space delimited word",
+    ),
+    command("vi-end-word", "Vi move to the end of the current word"),
+    command("vi-undo", "Vi undo last change"),
+    command(
+        "vi-command-mode",
+        "Vi enter command mode (use alternative key bindings)",
+    ),
+    command("vi-zero", "Vi move to the beginning of line"),
+    command(
+        "vi-delete-prev-char",
+        "Vi move to previous character (backspace)",
+    ),
+    command(
+        "vi-list-or-eof",
+        "Vi list choices for completion or indicate end of file if empty line",
+    ),
+    command(
+        "vi-kill-line-prev",
+        "Vi cut from beginning of line to cursor",
+    ),
+    command("vi-search-prev", "Vi search history previous"),
+    command("vi-search-next", "Vi search history next"),
+    command(
+        "vi-repeat-search-next",
+        "Vi repeat current search in the same search direction",
+    ),
+    command(
+        "vi-repeat-search-prev",
+        "Vi repeat current search in the opposite search direction",
+    ),
+    command("vi-next-char", "Vi move to the character specified next"),
+    command(
+        "vi-prev-char",
+        "Vi move to the character specified previous",
+    ),
+    command(
+        "vi-to-next-char",
+        "Vi move up to the character specified next",
+    ),
+    command(
+        "vi-to-prev-char",
+        "Vi move up to the character specified previous",
+    ),
+    command(
+        "vi-repeat-next-char",
+        "Vi repeat current character search in the same search direction",
+    ),
+    command(
+        "vi-repeat-prev-char",
+        "Vi repeat current character search in the opposite search direction",
+    ),
+    command("vi-match", "Vi go to matching () {} or []"),
+    command("vi-undo-line", "Vi undo all changes to line"),
+    command("vi-to-column", "Vi go to specified column"),
+    command("vi-yank-end", "Vi yank to end of line"),
+    command("vi-yank", "Vi yank"),
+    command("vi-comment-out", "Vi comment out current command"),
+    command("vi-alias", "Vi include shell alias"),
+    command(
+        "vi-to-history-line",
+        "Vi go to specified history file line.",
+    ),
+    command("vi-histedit", "Vi edit history line with vi"),
+    command("vi-history-word", "Vi append word from previous input line"),
+    command("vi-redo", "Vi redo last non-motion command"),
+];
+
+const fn command(name: &'static str, description: &'static str) -> CommandHelp {
+    CommandHelp { name, description }
+}
+
+pub(super) fn is_builtin(name: &str) -> bool {
+    BUILTIN_COMMANDS.iter().any(|command| command.name == name)
+}
+
+pub(super) fn named_action(name: &str) -> Option<Action> {
+    named_common_action(name).or_else(|| named_vi_action(name))
+}
+
+fn named_common_action(name: &str) -> Option<Action> {
+    let word = |direction| EditTarget::Word {
+        direction,
+        kind: WordKind::Word,
+    };
+    let word_motion = |direction| {
+        Action::Move(Motion::Word {
+            direction,
+            kind: WordKind::Word,
+        })
+    };
+    let big_word_motion = |direction| {
+        Action::Move(Motion::Word {
+            direction,
+            kind: WordKind::BigWord,
+        })
+    };
+    match name {
+        "ed-end-of-file" => Some(Action::EndOfInput),
+        "ed-delete-prev-word" => Some(Action::Kill(word(Direction::Previous))),
+        "ed-delete-next-char" => Some(Action::Delete(EditTarget::Character(Direction::Next))),
+        "ed-kill-line" => Some(Action::Kill(EditTarget::Motion(Motion::EndOfBuffer))),
+        "ed-move-to-end" => Some(Action::Move(Motion::EndOfBuffer)),
+        "ed-move-to-beg" => Some(Action::Move(Motion::StartOfBuffer)),
+        "ed-transpose-chars" => Some(Action::TransposeCharacters),
+        "ed-next-char" => Some(Action::Move(Motion::Character(Direction::Next))),
+        "ed-prev-word" => Some(word_motion(Direction::Previous)),
+        "ed-prev-char" => Some(Action::Move(Motion::Character(Direction::Previous))),
+        "ed-unassigned" => Some(Action::Refresh(Refresh::Beep)),
+        "ed-ignore" => Some(Action::Noop),
+        "ed-newline" => Some(Action::AcceptLine),
+        "ed-delete-prev-char" | "em-delete-prev-char" | "vi-delete-prev-char" => {
+            Some(Action::Delete(EditTarget::Character(Direction::Previous)))
+        }
+        "ed-clear-screen" => Some(Action::Refresh(Refresh::Full)),
+        "ed-redisplay" => Some(Action::Refresh(Refresh::Redisplay)),
+        "ed-start-over" => Some(Action::Delete(EditTarget::Buffer)),
+        "ed-prev-history" => Some(Action::History(Direction::Previous)),
+        "ed-next-history" => Some(Action::History(Direction::Next)),
+        "ed-prev-line" => Some(Action::Move(Motion::Line(Direction::Previous))),
+        "ed-next-line" => Some(Action::Move(Motion::Line(Direction::Next))),
+        "em-delete-or-list" => Some(Action::DeleteOrEndOfInput),
+        "em-delete-next-word" => Some(Action::Kill(word(Direction::Next))),
+        "em-yank" | "vi-paste-prev" => Some(Action::Yank(YankPlacement::AtCursor)),
+        "vi-paste-next" => Some(Action::Yank(YankPlacement::AfterCursor)),
+        "em-kill-line" => Some(Action::Kill(EditTarget::Buffer)),
+        "em-kill-region" => Some(Action::Kill(EditTarget::MarkedRegion)),
+        "em-copy-region" => Some(Action::Copy(EditTarget::MarkedRegion)),
+        "em-gosmacs-transpose" => Some(Action::TransposeCharacters),
+        "em-next-word" | "vi-next-word" => Some(word_motion(Direction::Next)),
+        "vi-next-big-word" => Some(big_word_motion(Direction::Next)),
+        "vi-prev-word" => Some(word_motion(Direction::Previous)),
+        "vi-prev-big-word" => Some(big_word_motion(Direction::Previous)),
+        "em-upper-case" => Some(Action::Transform {
+            target: word(Direction::Next),
+            transform: TextTransform::Uppercase,
+        }),
+        "em-capitol-case" => Some(Action::Transform {
+            target: word(Direction::Next),
+            transform: TextTransform::Capitalize,
+        }),
+        "em-lower-case" => Some(Action::Transform {
+            target: word(Direction::Next),
+            transform: TextTransform::Lowercase,
+        }),
+        "em-set-mark" => Some(Action::SetMark),
+        "em-exchange-mark" => Some(Action::ExchangeMark),
+        "em-toggle-overwrite" => Some(Action::ToggleInputMode),
+        _ => None,
+    }
+}
+
+fn named_vi_action(name: &str) -> Option<Action> {
+    match name {
+        "vi-change-case" => Some(Action::Transform {
+            target: EditTarget::Character(Direction::Next),
+            transform: TextTransform::ToggleCase,
+        }),
+        "vi-replace-mode" => Some(Action::SetModes {
+            input: InputMode::Replace,
+            keymap: KeymapMode::ViInsert,
+        }),
+        "vi-insert" => Some(Action::SetModes {
+            input: InputMode::Insert,
+            keymap: KeymapMode::ViInsert,
+        }),
+        "vi-undo" | "vi-undo-line" => Some(Action::Undo),
+        "vi-redo" => Some(Action::Redo),
+        "vi-command-mode" => Some(Action::SetModes {
+            input: InputMode::Insert,
+            keymap: KeymapMode::ViCommand,
+        }),
+        "vi-zero" => Some(Action::Move(Motion::StartOfLine)),
+        "vi-kill-line-prev" => Some(Action::Kill(EditTarget::Motion(Motion::StartOfLine))),
+        "vi-yank-end" => Some(Action::Copy(EditTarget::Motion(Motion::EndOfLine))),
+        "vi-yank" => Some(Action::Copy(EditTarget::Line)),
+        _ => None,
+    }
+}
+
+pub(super) fn action_name(action: &Action) -> Option<&str> {
+    match action {
+        Action::Noop => Some("ed-ignore"),
+        Action::Insert(_) => Some("ed-insert"),
+        Action::Move(Motion::StartOfLine | Motion::StartOfBuffer) => Some("ed-move-to-beg"),
+        Action::Move(Motion::EndOfLine | Motion::EndOfBuffer) => Some("ed-move-to-end"),
+        Action::Move(Motion::Character(Direction::Previous)) => Some("ed-prev-char"),
+        Action::Move(Motion::Character(Direction::Next)) => Some("ed-next-char"),
+        Action::Move(Motion::Word {
+            direction: Direction::Previous,
+            kind: WordKind::Word,
+        }) => Some("ed-prev-word"),
+        Action::Move(Motion::Word {
+            direction: Direction::Next,
+            kind: WordKind::Word,
+        }) => Some("em-next-word"),
+        Action::Delete(EditTarget::Character(Direction::Next)) => Some("ed-delete-next-char"),
+        Action::Delete(EditTarget::Character(Direction::Previous)) => Some("ed-delete-prev-char"),
+        Action::Delete(EditTarget::Buffer) => Some("ed-start-over"),
+        Action::DeleteOrEndOfInput => Some("em-delete-or-list"),
+        Action::Kill(EditTarget::Motion(Motion::EndOfLine | Motion::EndOfBuffer)) => {
+            Some("ed-kill-line")
+        }
+        Action::Kill(EditTarget::Buffer) => Some("em-kill-line"),
+        Action::Kill(EditTarget::MarkedRegion) => Some("em-kill-region"),
+        Action::Copy(EditTarget::MarkedRegion) => Some("em-copy-region"),
+        Action::Yank(YankPlacement::AtCursor) => Some("em-yank"),
+        Action::TransposeCharacters => Some("ed-transpose-chars"),
+        Action::Transform {
+            transform: TextTransform::Uppercase,
+            ..
+        } => Some("em-upper-case"),
+        Action::Transform {
+            transform: TextTransform::Lowercase,
+            ..
+        } => Some("em-lower-case"),
+        Action::Transform {
+            transform: TextTransform::Capitalize,
+            ..
+        } => Some("em-capitol-case"),
+        Action::Transform {
+            transform: TextTransform::ToggleCase,
+            ..
+        } => Some("vi-change-case"),
+        Action::SetMark => Some("em-set-mark"),
+        Action::ExchangeMark => Some("em-exchange-mark"),
+        Action::ToggleInputMode => Some("em-toggle-overwrite"),
+        Action::AcceptLine => Some("ed-newline"),
+        Action::EndOfInput => Some("ed-end-of-file"),
+        Action::Complete => Some("em-delete-or-list"),
+        Action::History(Direction::Previous) => Some("ed-prev-history"),
+        Action::History(Direction::Next) => Some("ed-next-history"),
+        Action::Undo => Some("vi-undo"),
+        Action::Redo => Some("vi-redo"),
+        Action::Refresh(Refresh::Full) => Some("ed-clear-screen"),
+        Action::Refresh(Refresh::Redisplay) => Some("ed-redisplay"),
+        Action::Refresh(Refresh::Beep) => Some("ed-unassigned"),
+        Action::User(name) => Some(name.as_str()),
+        _ => None,
+    }
+}

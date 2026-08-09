@@ -91,15 +91,70 @@ impl Effect for HistoryNavigateEffect {
 }
 
 // [spec:nshedit:req:core.history+1]
-/// The host's typed result of navigating native history.
+/// Which line a host selected while navigating history.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum HistoryResponse {
+pub enum HistorySelection {
     /// Replace the edited line with this owned history entry.
     Entry(Text),
     /// Navigation moved past the newest entry to the saved live line.
     Live,
-    /// No entry exists in the requested direction.
-    Boundary,
+    /// Preserve the line already being edited.
+    Unchanged,
+}
+
+/// The host's typed result of navigating native history.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct HistoryResponse {
+    selection: HistorySelection,
+    reached_boundary: bool,
+}
+
+impl HistoryResponse {
+    /// Select one owned history entry.
+    #[must_use]
+    pub const fn entry(line: Text) -> Self {
+        Self {
+            selection: HistorySelection::Entry(line),
+            reached_boundary: false,
+        }
+    }
+
+    /// Restore the live line saved before traversal began.
+    #[must_use]
+    pub const fn live() -> Self {
+        Self {
+            selection: HistorySelection::Live,
+            reached_boundary: false,
+        }
+    }
+
+    /// Leave the current line unchanged and report a traversal boundary.
+    #[must_use]
+    pub const fn boundary() -> Self {
+        Self {
+            selection: HistorySelection::Unchanged,
+            reached_boundary: true,
+        }
+    }
+
+    /// Mark a selected line as the clamped result of crossing a boundary.
+    #[must_use]
+    pub const fn at_boundary(mut self) -> Self {
+        self.reached_boundary = true;
+        self
+    }
+
+    /// Inspect the selected line operation.
+    #[must_use]
+    pub const fn selection(&self) -> &HistorySelection {
+        &self.selection
+    }
+
+    /// Whether the requested movement crossed the available history range.
+    #[must_use]
+    pub const fn reached_boundary(&self) -> bool {
+        self.reached_boundary
+    }
 }
 
 /// Ask the host history to retain an accepted line.
@@ -183,6 +238,8 @@ impl Effect for EnvironmentEffect {
 pub struct UserCommandEffect {
     /// Registered command to invoke.
     pub name: CommandName,
+    /// Logical input unit that completed the binding.
+    pub invoking: TextUnit,
     /// Owned logical arguments supplied to the command.
     pub arguments: Vec<Text>,
 }
@@ -425,19 +482,19 @@ mod tests {
             HistoryNavigateEffect {
                 direction: Direction::Previous,
             },
-            Ok(HistoryResponse::Entry(Text::from("old"))),
+            Ok(HistoryResponse::entry(Text::from("old"))),
         );
         accepts(
             HistoryNavigateEffect {
                 direction: Direction::Next,
             },
-            Ok(HistoryResponse::Live),
+            Ok(HistoryResponse::live()),
         );
         accepts(
             HistoryNavigateEffect {
                 direction: Direction::Previous,
             },
-            Ok(HistoryResponse::Boundary),
+            Ok(HistoryResponse::boundary()),
         );
         accepts(
             HistoryRecordEffect {
@@ -475,6 +532,7 @@ mod tests {
         accepts(
             UserCommandEffect {
                 name: CommandName::new("transpose").unwrap(),
+                invoking: TextUnit::Scalar('t'),
                 arguments: vec![Text::from("word")],
             },
             Ok(Outcome::Continue),

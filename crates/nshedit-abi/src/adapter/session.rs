@@ -34,7 +34,7 @@ impl EditLine {
         let profile = terminal_capabilities.profile(None);
         let size = ScreenSize::new(rows, columns).ok()?;
         native.configure_display(profile, size);
-        let editor = Box::new(Self {
+        let mut editor = Box::new(Self {
             native,
             driver: ReadDriver::default(),
             boundary: EditLineBoundary::new(
@@ -51,6 +51,8 @@ impl EditLine {
         if let Err(error) = &lookup {
             editor.report_terminal_lookup_failure(terminal_name.as_c_str(), error);
         }
+        editor.initialize_terminal_bindings();
+        editor.reset_compatibility_bindings(EditingMode::Emacs);
         Some(editor)
     }
 
@@ -69,6 +71,7 @@ impl EditLine {
     pub(crate) fn reset_line(&mut self) {
         self.native.reset_line();
         self.boundary.history_depth = 0;
+        self.boundary.history_live_line.clear();
     }
 
     pub(crate) fn reconfigure(&mut self) {
@@ -92,8 +95,7 @@ impl EditLine {
     }
 
     pub(crate) fn set_editor(&mut self, mode: EditingMode) {
-        let config = self.native.config().with_editing_mode(mode);
-        self.native.reconfigure(config);
+        self.reset_compatibility_bindings(mode);
         self.boundary.word_characters = None;
     }
 
@@ -268,7 +270,6 @@ impl EditLine {
         }
         self.boundary.callbacks.history = callback.map(|callback| (callback, cookie));
         self.boundary.policy.narrow_history = narrow;
-        self.boundary.history_depth = 0;
         true
     }
 
@@ -282,6 +283,14 @@ impl EditLine {
 
     pub(crate) fn set_history_depth(&mut self, depth: usize) {
         self.boundary.history_depth = depth;
+    }
+
+    pub(crate) fn save_history_live_line(&mut self) {
+        self.boundary.history_live_line = self.native.line().clone();
+    }
+
+    pub(crate) fn history_live_line(&self) -> &Text {
+        &self.boundary.history_live_line
     }
 
     pub(crate) fn take_completion_pending_listing(&mut self) -> bool {
@@ -333,78 +342,20 @@ impl EditLine {
         let Ok(name) = CommandName::new(name) else {
             return false;
         };
-        self.boundary.commands.insert(
+        self.boundary.commands.push(HostCommand {
             name,
-            HostCommand {
-                callback,
-                _help: help.iter().copied().map(TextUnit::from_wide).collect(),
-            },
-        );
+            callback,
+            help: help.iter().copied().map(TextUnit::from_wide).collect(),
+        });
         true
     }
 
     pub(crate) fn command_callback(&self, name: &CommandName) -> Option<CommandCallback> {
         self.boundary
             .commands
-            .get(name)
-            .map(|command| command.callback)
-    }
-
-    pub(crate) fn bind_command(&mut self, arguments: &[&[u32]]) -> c_int {
-        let args: Vec<String> = arguments
             .iter()
-            .filter_map(|argument| wide_string(argument))
-            .collect();
-        if args.len() < 2 {
-            return -1;
-        }
-        match args[1].as_str() {
-            "-e" => {
-                self.set_editor(EditingMode::Emacs);
-                return 0;
-            }
-            "-v" => {
-                self.set_editor(EditingMode::Vi);
-                return 0;
-            }
-            _ => {}
-        }
-        let (macro_binding, key, command) = if args.get(1).is_some_and(|arg| arg == "-s") {
-            let (Some(key), Some(value)) = (args.get(2), args.get(3)) else {
-                return -1;
-            };
-            (true, key.as_str(), value.as_str())
-        } else {
-            let (Some(key), Some(command)) = (args.get(1), args.get(2)) else {
-                return -1;
-            };
-            (false, key.as_str(), command.as_str())
-        };
-        let Some(key) = decode_key_sequence(key) else {
-            return -1;
-        };
-        let Ok(key) = KeySequence::new(key) else {
-            return -1;
-        };
-        let binding = if macro_binding {
-            let Some(value) = decode_key_sequence(command) else {
-                return -1;
-            };
-            Binding::Macro(value)
-        } else if let Some(action) = named_action(command) {
-            Binding::Action(action)
-        } else {
-            let Ok(name) = CommandName::new(command) else {
-                return -1;
-            };
-            if !self.boundary.commands.contains_key(&name) {
-                return -1;
-            }
-            Binding::Action(Action::User(name))
-        };
-        let mode = self.native.keymap_mode();
-        self.native.bind(mode, key, binding);
-        0
+            .find(|command| command.name == *name)
+            .map(|command| command.callback)
     }
 
     pub(crate) fn bind_byte_to_insert(&mut self, byte: u8) {

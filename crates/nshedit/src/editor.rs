@@ -9,9 +9,9 @@ use std::io::{self, Read, Write};
 use std::os::fd::BorrowedFd;
 
 use crate::domain::{
-    Action, Binding, CommandName, Direction, EditorConfig, Error, InputMode, KeyLookup,
-    KeySequence, KeymapMode, Outcome, Prompt, Screen, ScreenPosition, ScreenSize, TerminalMode,
-    Text, TextIndex, TextSpan,
+    Action, Binding, CommandName, Direction, EditingMode, EditorConfig, Error, InputMode,
+    KeyLookup, KeySequence, KeymapMode, Outcome, Prompt, Screen, ScreenPosition, ScreenSize,
+    TerminalMode, Text, TextIndex, TextSpan,
 };
 
 // [spec:nshedit:req:core.effect-hooks]
@@ -270,6 +270,11 @@ impl<T: TerminalControl> Editor<T> {
             .map(|_| ())
     }
 
+    fn restore_history_line(&mut self, line: Text) -> Result<(), Error> {
+        self.state
+            .restore_history(line, self.config.editing_mode() == EditingMode::Vi)
+    }
+
     /// Begin a fresh logical line while preserving session policy, bindings,
     /// and long-lived registers.
     pub fn reset_line(&mut self) {
@@ -289,6 +294,28 @@ impl<T: TerminalControl> Editor<T> {
     /// Remove a typed binding from one keymap.
     pub fn unbind(&mut self, mode: KeymapMode, sequence: &KeySequence) -> Option<Binding> {
         self.state.unbind(mode, sequence)
+    }
+
+    /// Restore the built-in maps and select an editing family.
+    pub fn reset_bindings(&mut self, mode: EditingMode) {
+        self.state.reset_bindings(mode);
+        self.config = self.config.with_editing_mode(mode);
+    }
+
+    /// Remove every binding from a selected map without changing modes.
+    pub fn clear_bindings(&mut self, mode: KeymapMode) {
+        self.state.clear_bindings(mode);
+    }
+
+    /// Inspect an exact binding in a selected keymap without activating it.
+    #[must_use]
+    pub fn binding(&self, mode: KeymapMode, sequence: &KeySequence) -> Option<&Binding> {
+        self.state.binding(mode, sequence)
+    }
+
+    /// Iterate over a selected keymap in logical sequence order.
+    pub fn bindings(&self, mode: KeymapMode) -> impl Iterator<Item = (&KeySequence, &Binding)> {
+        self.state.bindings(mode)
     }
 
     /// Match a non-empty logical sequence against the active keymap.
@@ -367,6 +394,14 @@ impl<T: TerminalControl> Editor<T> {
     /// Emit the configured terminal's notification capability.
     pub fn beep(&mut self, output: &mut dyn Write) -> Result<usize, RenderError> {
         self.renderer.beep(output)
+    }
+
+    fn request_redraw(&mut self) {
+        self.renderer.redraw();
+    }
+
+    fn invalidate_display(&mut self) {
+        self.renderer.damage();
     }
 
     /// Restore the terminal, reporting any failure to the caller.

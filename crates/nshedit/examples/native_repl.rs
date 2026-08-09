@@ -113,9 +113,9 @@ fn read_line<T: TerminalControl>(
                     .history
                     .navigate(&mut host.history_cursor, pending.request().direction)
                 {
-                    Navigation::Entry(entry) => HistoryResponse::Entry(entry.line().clone()),
-                    Navigation::Live => HistoryResponse::Live,
-                    Navigation::Boundary => HistoryResponse::Boundary,
+                    Navigation::Entry(entry) => HistoryResponse::entry(entry.line().clone()),
+                    Navigation::Live => HistoryResponse::live(),
+                    Navigation::Boundary => HistoryResponse::boundary(),
                 };
                 driver.resume_history(editor, &pending, Ok(response))?
             }

@@ -125,6 +125,7 @@ struct Configured {
     cursor: ScreenPosition,
     rows_used: usize,
     variables: Variables,
+    redraw: bool,
     damaged: bool,
 }
 
@@ -133,6 +134,7 @@ struct Committed<'a> {
     screen: &'a Screen,
     rows: &'a [layout::Row],
     cursor: ScreenPosition,
+    redraw: bool,
     damaged: bool,
 }
 
@@ -147,6 +149,7 @@ impl State {
                 .expect("a validated screen has an origin"),
             rows_used: 0,
             variables: Variables::new(),
+            redraw: false,
             damaged: false,
         });
     }
@@ -162,8 +165,22 @@ impl State {
             .position(0, 0)
             .expect("a validated screen has an origin");
         configured.rows_used = 0;
+        configured.redraw = false;
         configured.damaged = true;
         Ok(())
+    }
+
+    pub(super) fn redraw(&mut self) {
+        if let Some(configured) = &mut self.configured {
+            configured.redraw = true;
+        }
+    }
+
+    pub(super) fn damage(&mut self) {
+        if let Some(configured) = &mut self.configured {
+            configured.redraw = false;
+            configured.damaged = true;
+        }
     }
 
     pub(super) fn profile(&self) -> Option<&TerminalProfile> {
@@ -200,11 +217,16 @@ impl State {
             screen: &configured.screen,
             rows: &configured.rows,
             cursor: configured.cursor,
+            redraw: configured.redraw,
             damaged: configured.damaged,
         };
         let bytes = encode(&configured.profile, &frame, committed, &mut variables)?;
 
         if let Err(error) = output.write_all(&bytes).and_then(|()| output.flush()) {
+            self.configured
+                .as_mut()
+                .expect("display configuration cannot disappear during a write")
+                .redraw = false;
             self.configured
                 .as_mut()
                 .expect("display configuration cannot disappear during a write")
@@ -228,6 +250,7 @@ impl State {
         configured.cursor = frame.cursor;
         configured.rows_used = rows_used;
         configured.variables = variables;
+        configured.redraw = false;
         configured.damaged = false;
         Ok(summary)
     }
@@ -269,6 +292,7 @@ impl State {
             .position(0, 0)
             .expect("a validated screen has an origin");
         configured.rows_used = 0;
+        configured.redraw = false;
         configured.damaged = false;
         Ok(1)
     }
@@ -316,7 +340,7 @@ fn encode_addressed(
     for row in 0..rows {
         let current = frame.rows.get(row);
         let previous = committed.rows.get(row);
-        if !cleared && !committed.damaged && current == previous {
+        if !cleared && !committed.redraw && !committed.damaged && current == previous {
             continue;
         }
         append_cursor(profile, output, row, 0, variables)?;
@@ -386,16 +410,23 @@ fn encode_plain(
         return append_plain_redraw(profile, frame, previous, true, output, variables);
     }
 
+    if committed.redraw {
+        return append_plain_redraw(profile, frame, previous, false, output, variables);
+    }
+
     if row == previous {
         return match frame.cursor.column().cmp(&committed.cursor.column()) {
             std::cmp::Ordering::Less if committed.cursor.column() - frame.cursor.column() == 1 => {
                 append_cursor_left(profile, output, 1, variables)
             }
-            std::cmp::Ordering::Less => {
-                append_carriage_return(profile, output, variables)?;
-                append_atom_range(output, row, 0, frame.cursor.column(), true);
-                Ok(())
-            }
+            std::cmp::Ordering::Less => append_plain_left(
+                profile,
+                row,
+                committed.cursor.column(),
+                frame.cursor.column(),
+                output,
+                variables,
+            ),
             std::cmp::Ordering::Greater => {
                 append_atom_range(
                     output,
@@ -493,12 +524,40 @@ fn append_plain_reposition(
     match distance {
         0 => Ok(()),
         1 => append_cursor_left(profile, output, 1, variables),
-        _ => {
-            append_carriage_return(profile, output, variables)?;
-            append_atom_range(output, row, 0, to, true);
-            Ok(())
-        }
+        _ => append_plain_left(profile, row, from, to, output, variables),
     }
+}
+
+fn append_plain_left(
+    profile: &TerminalProfile,
+    row: &layout::Row,
+    from: usize,
+    to: usize,
+    output: &mut Vec<u8>,
+    variables: &mut Variables,
+) -> Result<(), RenderError> {
+    let mut left = Vec::new();
+    let mut left_variables = variables.clone();
+    append_cursor_left(
+        profile,
+        &mut left,
+        from.saturating_sub(to),
+        &mut left_variables,
+    )?;
+
+    let mut restart = Vec::new();
+    let mut restart_variables = variables.clone();
+    append_carriage_return(profile, &mut restart, &mut restart_variables)?;
+    append_atom_range(&mut restart, row, 0, to, true);
+
+    if left.len() <= restart.len() {
+        output.extend_from_slice(&left);
+        *variables = left_variables;
+    } else {
+        output.extend_from_slice(&restart);
+        *variables = restart_variables;
+    }
+    Ok(())
 }
 
 fn append_carriage_return(
