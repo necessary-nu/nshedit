@@ -3196,17 +3196,39 @@ children (
                 id macos-contract
                 title "Define the macOS drop-in target, termios projection, and Mach-O shape gates"
                 kind @docs
+                sealed true
+                log (
+                    {
+                        at 2026-08-09T20:24:15.466107686Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T20:26:25.744405883Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
             }
 
             {
                 id macos-platform
                 title "Give nshedit-plat true Darwin arms for passwd and signals"
+                implements {
+                    native-impl ([spec:nshedit:req:platform.per-os-layouts] [spec:nshedit:req:platform.darwin-termios])
+                }
                 deps (macos-contract)
             }
 
             {
                 id macos-abi
                 title "Give the ABI crate its Darwin stdio and export surface"
+                implements {
+                    native-impl ([spec:nshedit:req:abi.darwin-runtime])
+                }
                 deps (macos-contract)
             }
 
@@ -3214,6 +3236,9 @@ children (
                 id macos-cross-check
                 title "Gate the workspace on a Darwin cross-check from Linux"
                 kind @ci
+                implements {
+                    native-impl ([spec:nshedit:req:workspace.darwin-cross-check])
+                }
                 deps (macos-platform macos-abi)
             }
 
@@ -3221,6 +3246,9 @@ children (
                 id macos-acceptance
                 title "Prove the suite and differential conformance on macOS hardware"
                 kind @test
+                implements {
+                    native-impl ([spec:nshedit:req:abi.darwin-drop-in])
+                }
                 deps (macos-cross-check)
             }
         )
