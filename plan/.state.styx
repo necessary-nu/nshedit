@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-09T19:32:53.60057205Z
+last_sync_at 2026-08-09T19:39:34.672137357Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -497,4 +497,8 @@ impl_evidence (
     ), rule_versions_seen (
         {id core.text-screen-model, version 1}
     )}
+)
+
+walk_frontier (
+    ded8bb34faae10dd204d2988ec56e10de53652f2
 )
