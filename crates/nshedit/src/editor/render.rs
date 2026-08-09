@@ -330,6 +330,9 @@ fn encode_addressed(
             frame.rows_used(),
             variables,
         )?;
+    let columns = frame.screen.size().columns();
+    let mut terminal_cursor =
+        (!committed.damaged).then_some((committed.cursor.row(), committed.cursor.column()));
     let rows = if cleared {
         frame.rows_used()
     } else if committed.damaged {
@@ -340,36 +343,55 @@ fn encode_addressed(
     for row in 0..rows {
         let current = frame.rows.get(row);
         let previous = committed.rows.get(row);
-        if !cleared && !committed.redraw && !committed.damaged && current == previous {
-            continue;
+        let rewrite = cleared || committed.redraw || committed.damaged;
+        let start = if rewrite {
+            0
+        } else {
+            let Some(start) = first_changed_column(frame, committed, row, current, previous) else {
+                continue;
+            };
+            if start < columns { start } else { 0 }
+        };
+        if terminal_cursor != Some((row, start)) {
+            append_cursor(profile, output, row, start, variables)?;
+            terminal_cursor = Some((row, start));
         }
-        append_cursor(profile, output, row, 0, variables)?;
         let used = match current {
             Some(content) => {
-                append_atoms(output, &content.atoms);
+                append_atom_range(output, content, start, content.used(), true);
+                if content.used() > start {
+                    terminal_cursor = (content.used() < columns).then_some((row, content.used()));
+                }
                 content.used()
             }
             None => 0,
         };
-        let cleared_to_end = append_capability(
-            profile,
-            output,
-            CapabilityKind::ClearToEndOfLine,
-            &[],
-            1,
-            variables,
-        )?;
-        if !cleared_to_end {
-            let previous_used = previous.map_or(0, layout::Row::used);
-            let erase_to = if committed.damaged {
-                frame.screen.size().columns()
-            } else {
-                used.max(previous_used)
-            };
-            output.extend(std::iter::repeat_n(b' ', erase_to.saturating_sub(used)));
+        let previous_used = previous.map_or(0, layout::Row::used);
+        if !cleared && (rewrite || previous_used > used) {
+            let cleared_to_end = append_capability(
+                profile,
+                output,
+                CapabilityKind::ClearToEndOfLine,
+                &[],
+                1,
+                variables,
+            )?;
+            if !cleared_to_end {
+                let erase_to = if committed.damaged {
+                    columns
+                } else {
+                    used.max(previous_used)
+                };
+                let spaces = erase_to.saturating_sub(used);
+                output.extend(std::iter::repeat_n(b' ', spaces));
+                if spaces > 0 {
+                    terminal_cursor = (erase_to < columns).then_some((row, erase_to));
+                }
+            }
         }
     }
-    if !output.is_empty() || frame.cursor != committed.cursor {
+    let target = (frame.cursor.row(), frame.cursor.column());
+    if terminal_cursor != Some(target) {
         append_cursor(
             profile,
             output,
@@ -379,6 +401,33 @@ fn encode_addressed(
         )?;
     }
     Ok(())
+}
+
+fn first_changed_column(
+    frame: &Frame,
+    committed: Committed<'_>,
+    row: usize,
+    current: Option<&layout::Row>,
+    previous: Option<&layout::Row>,
+) -> Option<usize> {
+    if current == previous {
+        return None;
+    }
+    let columns = frame.screen.size().columns();
+    let offset = row * columns;
+    let cell = committed.screen.cells()[offset..offset + columns]
+        .iter()
+        .zip(&frame.screen.cells()[offset..offset + columns])
+        .position(|(before, after)| before != after);
+    let used = match (
+        previous.map(layout::Row::used),
+        current.map(layout::Row::used),
+    ) {
+        (Some(before), Some(after)) if before != after => Some(before.min(after)),
+        (Some(_), None) | (None, Some(_)) => Some(0),
+        _ => None,
+    };
+    Some(cell.into_iter().chain(used).min().unwrap_or(0))
 }
 
 fn encode_plain(
@@ -736,6 +785,35 @@ mod tests {
             state.screen().unwrap().get(first),
             Ok(ScreenCell::Glyph(_))
         ));
+    }
+
+    // [spec:nshedit:req:core.incremental-render/test]
+    #[test]
+    fn addressed_frames_diff_from_first_change() {
+        let mut state = configured(TerminalProfile::ansi(), 2, 20);
+        let prompt = Prompt::from("> ");
+        let mut output = Vec::new();
+
+        let mut present = |state: &mut State, line: &str, cursor: usize| {
+            output.clear();
+            let line = Text::from(line);
+            state
+                .present(
+                    &prompt,
+                    None,
+                    &line,
+                    line.index(cursor).unwrap(),
+                    &mut output,
+                )
+                .unwrap();
+            output.clone()
+        };
+
+        assert_eq!(present(&mut state, "", 0), b"> ");
+        assert_eq!(present(&mut state, "h", 1), b"h");
+        assert_eq!(present(&mut state, "hello", 5), b"ello");
+        assert_eq!(present(&mut state, "hallo", 2), b"\x1b[1;4Hallo\x1b[1;5H");
+        assert_eq!(present(&mut state, "hall", 4), b"\x1b[1;7H\x1b[K");
     }
 
     #[test]

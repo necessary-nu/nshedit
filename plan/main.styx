@@ -2838,6 +2838,14 @@ children (
                         kind @note
                         text "single-flight overridden: started while greenfield-terminal-compat had uncommitted WIP"
                     }
+
+                    {
+                        at 2026-08-09T23:05:46.843363663Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "The addressed terminal path skips unchanged rows but rewrites every changed row from column zero. A single appended character therefore emits two absolute cursor addresses, the complete prompt and line, and clear-to-end instead of preserving the unchanged prefix or taking the fast append path required by the incremental-render contract."
+                        after_done true
+                    }
                 )
             }
 
@@ -3166,6 +3174,29 @@ children (
                                 text "Doing → Done (nplan complete)"
                             }
                         )
+                    }
+                )
+            }
+
+            {
+                id greenfield-addressed-render-diff
+                title "Diff changed cells in addressed terminal rendering"
+                kind @fix
+                deps (greenfield-incremental-render)
+                sealed true
+                log (
+                    {
+                        at 2026-08-09T23:05:54.440199872Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T23:15:33.938291651Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
