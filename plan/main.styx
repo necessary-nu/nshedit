@@ -3143,6 +3143,29 @@ children (
                         title "Reprove the Rust architecture and drop-in ABI from a clean checkout"
                         kind @test
                         deps (rust-idiom-lint-naming)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-09T18:48:28.496215419Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-09T18:56:26.083684577Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Clean-checkout acceptance run at 020db65. Fresh `git clone --no-hardlinks` of this repository into a directory outside it (no target/, no sibling-path dependencies, no local state); every build input resolved from the checkout plus the crates.io registry. Toolchain nightly-2026-07-30 (rustc 1.99.0-nightly), pinned by rust-toolchain.toml. Gate, in order, all from the clean tree: `cargo fmt --all -- --check` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean (zero diagnostics); `cargo build --workspace` clean; `cargo test --workspace` all green — 423 tests across 13 binaries plus doctests, 0 failed, 0 ignored. Breakdown: nshedit 123, nshedit-abi 133, conformance 8, driven 1, headers 2, workspace_hygiene 6, nshedit-plat 32, nshterm 46, parm_format 9, parm_grammar 34, parm_robustness 16, terminfo 12, doctest 1. The 8-stage conformance run built the C oracle from the committed Autotools inputs inside the clean tree and passed every stage: oracle_builds, abi_shape, header_diff, differential_traces, traces_are_deterministic, undefined_behaviour_is_defined, vis_matches_libbsd, soname_and_version_symlinks (84s). The architecture holds from scratch: the safe core, the platform layer, the terminal-capability crate and the C ABI all build and prove themselves with no artefact carried over from a developer tree."
+                            }
+
+                            {
+                                at 2026-08-09T18:56:33.30057473Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
+                        )
                     }
                 )
             }
