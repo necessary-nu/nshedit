@@ -118,6 +118,7 @@ use self::searcher::get_dbpath_for_term;
 
 pub mod parm;
 pub mod searcher;
+mod termcap;
 
 /// `TermInfo` format parsing.
 pub mod parser {
@@ -129,20 +130,6 @@ pub mod parser {
     /// `EL_SETTC` take a name a user typed, and what users type is termcap.
     /// A crate-private table could not answer that.
     pub mod names;
-}
-
-/// Returns true if the named terminal supports basic ANSI escape codes.
-fn is_ansi(name: &str) -> bool {
-    // SORTED! We binary search this.
-    static ANSI_TERM_PREFIX: &[&str] = &[
-        "Eterm", "ansi", "eterm", "iterm", "konsole", "linux", "mrxvt", "msyscon", "rxvt",
-        "screen", "tmux", "xterm",
-    ];
-    match ANSI_TERM_PREFIX.binary_search(&name) {
-        Ok(_) => true,
-        Err(0) => false,
-        Err(idx) => name.starts_with(ANSI_TERM_PREFIX[idx - 1]),
-    }
 }
 
 /// A parsed terminfo database entry.
@@ -190,26 +177,7 @@ impl TermInfo {
                 Err(e) => return Err(e),
             }
         }
-        // Basic ANSI fallback terminal.
-        if is_ansi(name) {
-            let mut strings = HashMap::new();
-            strings.insert("sgr0", b"\x1B[0m".to_vec());
-            strings.insert("bold", b"\x1B[1m".to_vec());
-            strings.insert("setaf", b"\x1B[3%p1%dm".to_vec());
-            strings.insert("setab", b"\x1B[4%p1%dm".to_vec());
-
-            let mut numbers = HashMap::new();
-            numbers.insert("colors", 8);
-
-            Ok(TermInfo {
-                names: vec![name.to_owned()],
-                bools: HashMap::new(),
-                numbers,
-                strings,
-            })
-        } else {
-            Err(TerminfoEntryNotFound)
-        }
+        Err(TerminfoEntryNotFound)
     }
 
     /// Parse the given `TermInfo`.
@@ -231,6 +199,17 @@ impl TermInfo {
     /// Read a `TermInfo` out of an already-open compiled entry.
     pub fn from_reader<R: Read>(mut reader: R) -> Result<TermInfo> {
         parse(&mut reader, false)
+    }
+
+    /// Project one termcap string capability from this terminfo entry.
+    ///
+    /// Most two-letter names are a direct namespace translation. `me` is
+    /// different: termcap has no `sgr` operation and therefore requires its
+    /// reset string to preserve alternate-character-set state. Ncurses makes
+    /// the same compatibility projection before answering `tgetstr("me")`.
+    #[must_use]
+    pub fn termcap_string(&self, code: &str) -> Option<Vec<u8>> {
+        termcap::string(self, code)
     }
 
     /// Retrieve a capability `cmd` and expand it with `params`, writing result to `out`.

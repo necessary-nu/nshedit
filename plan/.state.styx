@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-09T02:19:38.778000232Z
+last_sync_at 2026-08-09T02:23:06.507789064Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -259,6 +259,8 @@ impl_evidence (
         core.incremental-render
     ), covered_claims (
         {impl_name native-impl, rule core.incremental-render}
+    ), rule_versions_seen (
+        {id core.incremental-render, version 0}
     )}
     {id greenfield-line-commands, covered_rules (
         core.line-commands
@@ -322,5 +324,10 @@ impl_evidence (
         core.token-completion
     ), covered_claims (
         {impl_name native-impl, rule core.token-completion}
+    )}
+    {id greenfield-termcap-view, covered_rules (
+        abi.termcap-view
+    ), covered_claims (
+        {impl_name native-impl, rule abi.termcap-view}
     )}
 )

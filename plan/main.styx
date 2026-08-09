@@ -2676,6 +2676,21 @@ children (
                     native-impl ([spec:nshedit:req:abi.termcap-view])
                 }
                 deps (nshterm-hashed-db)
+                log (
+                    {
+                        at 2026-08-09T02:22:12.534655742Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T02:22:12.534655742Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "single-flight overridden: started while greenfield-terminal-compat had uncommitted WIP"
+                    }
+                )
             }
 
             {

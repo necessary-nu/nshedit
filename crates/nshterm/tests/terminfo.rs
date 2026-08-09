@@ -172,6 +172,11 @@ fn from_name_finds_an_entry_under_terminfo() {
             Error::TerminfoEntryNotFound,
             "a terminal that exists nowhere must not resolve to something else"
         );
+        assert_eq!(
+            TermInfo::from_name("xterm-nshterm-no-such-terminal").unwrap_err(),
+            Error::TerminfoEntryNotFound,
+            "an ANSI-looking name must still identify a real database entry"
+        );
         return;
     }
 
