@@ -11,6 +11,13 @@ const GROWTH: usize = 1024;
 const MAX_MULTIBYTE_LENGTH: usize = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PrefixDecode {
+    Complete(u32),
+    Incomplete,
+    Invalid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Encoding {
     Ascii,
     Utf8,
@@ -34,6 +41,58 @@ fn current_encoding() -> Encoding {
             encoding
         }
     })
+}
+
+pub(crate) fn max_multibyte_length() -> usize {
+    match current_encoding() {
+        Encoding::Ascii => 1,
+        Encoding::Utf8 => MAX_MULTIBYTE_LENGTH,
+    }
+}
+
+/// Classify one locale-encoded character without consuming a following one.
+///
+/// The direct `el_wgetc` boundary reads a byte at a time. Keeping this
+/// distinction here prevents that ABI operation from borrowing the native
+/// driver's UTF-8 decoder or discarding the rest of a larger descriptor read.
+pub(crate) fn decode_prefix(input: &[u8]) -> PrefixDecode {
+    let Some(&first) = input.first() else {
+        return PrefixDecode::Incomplete;
+    };
+    match current_encoding() {
+        Encoding::Ascii => {
+            if first < 0x80 {
+                PrefixDecode::Complete(u32::from(first))
+            } else {
+                PrefixDecode::Invalid
+            }
+        }
+        Encoding::Utf8 => {
+            let length = match first {
+                0x00..=0x7f => return PrefixDecode::Complete(u32::from(first)),
+                0xc2..=0xdf => 2,
+                0xe0..=0xef => 3,
+                0xf0..=0xf7 => 4,
+                0xf8..=0xfb => 5,
+                0xfc..=0xfd => 6,
+                _ => return PrefixDecode::Invalid,
+            };
+            if input
+                .iter()
+                .take(length)
+                .skip(1)
+                .any(|byte| !(0x80..=0xbf).contains(byte))
+            {
+                return PrefixDecode::Invalid;
+            }
+            if input.len() < length {
+                return PrefixDecode::Incomplete;
+            }
+            decode_value(Encoding::Utf8, input).map_or(PrefixDecode::Invalid, |(value, _)| {
+                PrefixDecode::Complete(value)
+            })
+        }
+    }
 }
 
 fn encoding_from_locale(locale: &[u8]) -> Encoding {

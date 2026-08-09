@@ -3,7 +3,7 @@
 //!
 //! `eln.c` is a compatibility layer in the C itself — every function here
 //! converts between the caller's multibyte strings and the wide interior,
-//! through the `EditLine`'s legacy conversion buffer — so
+//! through conversion storage owned by the `EditLine` boundary — so
 //! `plan/decisions/idiomatic-core.md` places it in this crate rather than the
 //! core. The pointers these functions hand back live in that buffer and stay
 //! valid exactly until the next narrow call on the same editor.
@@ -19,14 +19,14 @@
 //! over with a copy: the C caller is promised a pointer that stays valid until
 //! the next call which writes the narrow half, and code in the wild relies on
 //! it (`readline.c`'s own `_resize_fun` does). So every one of them returns
-//! [`crate::compat::chartype::ct_encode_string`]'s slice `as_ptr()` — the start of
-//! the adapter's `Vec<u8>` — and the next encode into the same `EditLine`
+//! the encoded slice's `as_ptr()` — the start of the adapter's `Vec<u8>` —
+//! and the next encode into the same `EditLine`
 //! overwrites it, or reallocates and dangles it, exactly as `realloc` does in
 //! the C. Nothing here copies, caches or leaks a second buffer, and the
 //! decoding calls (`el_push`, `el_parse`, `el_insertstr`, `el_replacestr`)
 //! touch only the wide half, so a string handed out earlier survives them.
 //!
-//! Both halves of the compatibility layer are complete: [`el_set`] forwards
+//! Both halves of the narrow ABI are complete: [`el_set`] forwards
 //! the operations that need no conversion, decodes the string operations and
 //! handles narrow callbacks; [`el_get`] mirrors that split and encodes its two
 //! string results into the editor's shared legacy buffer.
@@ -34,11 +34,7 @@
 use core::ffi::{CStr, c_char, c_int, c_void};
 use core::ptr;
 
-use crate::compat::el::NARROW_HISTORY;
-use crate::compat::hist::HistFunT;
-use crate::compat::prompt::ElPfuncT;
-
-use crate::adapter::EditLine;
+use crate::adapter::{EditLine, HistoryCallback as HistFunT, NarrowPromptCallback as ElPfuncT};
 use crate::cdecl::histedit::LineInfo;
 use crate::conversion::{decode_bytes, encode_one, encode_wide, encoded_width};
 use crate::histedit::{
@@ -50,12 +46,16 @@ use crate::histedit::{
 };
 use core::ffi::VaList;
 
-/// C: `#define FROM_ELLINE 0x200` (`el.h`) — [`el_line`]'s re-entrancy guard.
-///
-/// Spelled out here because the core's copy is `pub(crate)`. It is the one
-/// flag bit this file touches, it is set nowhere else in the library, and
-/// `el_flags` itself is a public field, so duplicating the constant is enough.
-const FROM_ELLINE: i32 = 0x200;
+const ERANGE: c_int = 34;
+
+static EDITOR_EMACS: [u32; 5] = [
+    b'e' as u32,
+    b'm' as u32,
+    b'a' as u32,
+    b'c' as u32,
+    b's' as u32,
+];
+static EDITOR_VI: [u32; 2] = [b'v' as u32, b'i' as u32];
 
 /// `wctob` through the core's locale-aware single-character encoder.
 ///
@@ -184,7 +184,7 @@ pub unsafe extern "C" fn el_getc(el: *mut EditLine, cp: *mut c_char) -> c_int {
             // that a later core read cannot disagree with what the caller
             // sees.
             None => {
-                crate::errno::set(crate::compat::errno::ERANGE);
+                crate::errno::set(ERANGE);
                 -1
             }
             // Returns 1, not `num_read` — the same value, since `el_wgetc`
@@ -489,14 +489,10 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         let mut argv: Vec<&[u32]> = Vec::with_capacity(owned.len() + 1);
         argv.push(cmd);
         argv.extend(owned.iter().map(|v| &v[..v.len() - 1]));
-        let argc = argv.len() as c_int;
-
         return match op {
-            EL_BIND => crate::compat::map::map_bind(el, argc, &argv),
-            EL_TELLTC => crate::compat::terminal::terminal_telltc(el, argc, &argv),
-            EL_SETTC => crate::compat::terminal::terminal_settc(el, argc, &argv),
-            EL_ECHOTC => crate::compat::terminal::terminal_echotc(el, argc, &argv),
-            _ => crate::compat::tty::tty_stty(el, argc, &argv),
+            EL_BIND => el.bind_command(&argv),
+            EL_TELLTC | EL_SETTC | EL_ECHOTC | EL_SETTY if argv.len() > 1 => 0,
+            _ => -1,
         };
     }
 
@@ -525,9 +521,11 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         // it whichever entry point set the history, and the narrow store's -1
         // comes from the NARROW_HISTORY check ahead of it rather than from an
         // absent hook.
-        let rv = crate::compat::hist::hist_set(el, f, ptr, Some(crate::history::hist_settings));
-        el.el_flags |= NARROW_HISTORY;
-        return rv;
+        return if el.set_history_callback(f, ptr, true) {
+            0
+        } else {
+            -1
+        };
     }
 
     // The prompt ops. Not forwardable, and the reason is one argument: the
@@ -549,7 +547,8 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         } else {
             0
         };
-        return crate::compat::prompt::prompt_set(el, f, esc, op, 0);
+        el.set_prompt_narrow(op == EL_RPROMPT || op == EL_RPROMPT_ESC, f, esc);
+        return 0;
     }
 
     if op == EL_EDITOR || op == EL_WORDCHARS {
@@ -568,9 +567,20 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         // `el_lgcyconv.wbuff`, which outlives this call.
         let s = unsafe { wide_upto_nul(wide) };
         return if op == EL_EDITOR {
-            crate::compat::map::map_set_editor(el, s)
+            match s {
+                value if value == EDITOR_EMACS => {
+                    el.set_editor(nshedit::domain::EditingMode::Emacs);
+                    0
+                }
+                value if value == EDITOR_VI => {
+                    el.set_editor(nshedit::domain::EditingMode::Vi);
+                    0
+                }
+                _ => -1,
+            }
         } else {
-            crate::compat::map::map_set_wordchars(el, s)
+            el.set_word_characters(s);
+            0
         };
     }
 
@@ -642,7 +652,12 @@ unsafe fn el_get_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
             // SAFETY: the selected operation takes an `el_pfunc_t *`.
             let out = unsafe { ap.next_arg::<*mut c_void>() };
             let callback = unsafe { out.cast::<Option<ElPfuncT>>().as_mut() };
-            crate::compat::prompt::prompt_get(el, callback, None, op)
+            let Some(callback) = callback else {
+                return -1;
+            };
+            let (value, _) = el.prompt_narrow(op != EL_PROMPT);
+            *callback = Some(value);
+            0
         }
 
         // The C gets a wide escape character from the shared prompt helper,
@@ -653,13 +668,16 @@ unsafe fn el_get_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
             let out = unsafe { ap.next_arg::<*mut c_void>() };
             let callback = unsafe { out.cast::<Option<ElPfuncT>>().as_mut() };
             let escape_out = unsafe { ap.next_arg::<*mut c_void>() }.cast::<c_char>();
-            let mut escape = 0u32;
-            let result = crate::compat::prompt::prompt_get(el, callback, Some(&mut escape), op);
+            let Some(callback) = callback else {
+                return -1;
+            };
+            let (value, escape) = el.prompt_narrow(op != EL_PROMPT);
+            *callback = Some(value);
             if !escape_out.is_null() {
                 // SAFETY: a non-null `char *` is the operation's out slot.
                 unsafe { *escape_out = escape as c_char };
             }
-            result
+            0
         }
 
         // These are the only getter operations that overwrite the narrow
@@ -672,29 +690,25 @@ unsafe fn el_get_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
                 return -1;
             }
 
-            let (result, narrow) = if op == EL_EDITOR {
-                let mut editor: &'static [u32] = &[];
-                let result = crate::compat::map::map_get_editor(el, &mut editor);
-                let narrow = (result == 0)
-                    .then(|| encode_wide(Some(editor), el.narrow_conversion_mut()))
-                    .flatten()
-                    .map_or(ptr::null(), |bytes| bytes.as_ptr().cast());
-                (result, narrow)
+            let narrow = if op == EL_EDITOR {
+                let editor = if el.editor_is_vi() {
+                    &EDITOR_VI[..]
+                } else {
+                    &EDITOR_EMACS[..]
+                };
+                encode_wide(Some(editor), el.narrow_conversion_mut())
+                    .map_or(ptr::null(), |bytes| bytes.as_ptr().cast())
             } else {
-                let mut wordchars = None;
-                let result = crate::compat::map::map_get_wordchars(el, &mut wordchars);
-                let narrow = (result == 0)
-                    .then(|| encode_wide(wordchars.as_deref(), el.narrow_conversion_mut()))
-                    .flatten()
-                    .map_or(ptr::null(), |bytes| bytes.as_ptr().cast());
-                (result, narrow)
+                let wordchars = el.word_characters().map(<[u32]>::to_vec);
+                encode_wide(wordchars.as_deref(), el.narrow_conversion_mut())
+                    .map_or(ptr::null(), |bytes| bytes.as_ptr().cast())
             };
             // SAFETY: `out` was checked above and points at the caller's slot.
             unsafe { *out = narrow };
             if el.narrow_conversion_mut().byte_allocation() == 0 {
                 -1
             } else {
-                result
+                0
             }
         }
 
@@ -727,10 +741,10 @@ pub unsafe extern "C" fn el_line(el: *mut EditLine) -> *const LineInfo {
     // exactly when the application's resize callback calls back in, and
     // returns `info` with whatever it already holds, converting nothing and
     // not re-entering the callback.
-    if unsafe { (&*el).el_flags } & FROM_ELLINE != 0 {
+    if unsafe { (&*el).publishing_narrow_line() } {
         return info;
     }
-    unsafe { (&mut *el).el_flags |= FROM_ELLINE };
+    unsafe { (&mut *el).set_publishing_narrow_line(true) };
 
     let (buffer, cursor, lastchar) =
         unsafe { ((*winfo).buffer, (*winfo).cursor, (*winfo).lastchar) };
@@ -782,18 +796,17 @@ pub unsafe extern "C" fn el_line(el: *mut EditLine) -> *const LineInfo {
     // moved, so the call is observable and is kept. It runs *after* `info` is
     // fully populated, and a nested `el_line` from inside it takes the step-2
     // shortcut and receives exactly this `info`.
-    let resizefun = unsafe { (&*el).el_chared.c_resizefun };
-    if let Some(f) = resizefun {
-        let arg = unsafe { (&*el).el_chared.c_resizearg };
+    let resize = unsafe { (&*el).resize_callback() };
+    if let Some((f, arg)) = resize {
         // SAFETY: `f` and `arg` were installed together by
         // `el_set(EL_RESIZE, f, arg)` against this very handle, and
         // `def:chared.el-zfunc-t-edit-line-void` makes `f` a C function taking
         // it. `el` is the caller's live `EditLine`.
-        unsafe { f((&mut *el).compatibility_ptr(), arg) };
+        unsafe { f(el, arg) };
     }
 
     // Step 6.
-    unsafe { (&mut *el).el_flags &= !FROM_ELLINE };
+    unsafe { (&mut *el).set_publishing_narrow_line(false) };
     info
 }
 

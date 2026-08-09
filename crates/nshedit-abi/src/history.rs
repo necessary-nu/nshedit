@@ -28,7 +28,7 @@ use crate::cdecl::handles::History as OpaqueHistory;
 use crate::cdecl::histedit::HistEventGen;
 use crate::conversion::{ConversionBuffer, decode_bytes, encode_wide};
 
-pub(crate) use dispatch::{dispatch, hist_settings};
+pub(crate) use dispatch::dispatch;
 
 const OK: c_int = 0;
 const UNKNOWN: c_int = 1;

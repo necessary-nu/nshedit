@@ -35,11 +35,16 @@ use core::ffi::{CStr, c_char, c_int, c_uint};
 use core::ptr;
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
+use std::fs::ReadDir;
 
-use crate::compat::filecomplete::{self, FilenameCompletionState};
+use nshedit::domain::{Text, TextUnit};
+use nshedit::editor::{
+    CompletionCandidate, CompletionCandidates, CompletionOutcome, CompletionQuery,
+    Tokenizer as NativeTokenizer,
+};
 
 use crate::adapter::EditLine;
-use crate::cdecl::histedit::CC_ERROR;
+use crate::cdecl::histedit::{CC_ERROR, CC_NORM, CC_REDISPLAY, CC_REFRESH};
 use crate::readline::{c_bytes, c_bytes_opt, c_dup, c_free_array, c_free_str};
 
 /// C: `char *(*)(const char *, int)` — the match generator `fn_complete2`
@@ -56,6 +61,39 @@ pub type AttemptedCompletionFuncC =
 /// completed name. The result must not be freed, so it points at storage the
 /// hook owns.
 pub type AppFuncC = unsafe extern "C" fn(*const c_char) -> *const c_char;
+
+pub(crate) const FN_QUOTE_MATCH: c_uint = 1;
+
+pub(crate) type CompleteFunc = dyn FnMut(&str, c_int) -> Option<String>;
+pub(crate) type AttemptedCompletionFunc = fn(&str, c_int, c_int) -> Option<Vec<String>>;
+pub(crate) type AppFunc = fn(&str) -> &'static str;
+
+const BREAK_CHARACTERS: &[u32] = &[
+    b' ' as u32,
+    b'\t' as u32,
+    b'\n' as u32,
+    b'"' as u32,
+    b'\\' as u32,
+    b'\'' as u32,
+    b'`' as u32,
+    b'@' as u32,
+    b'$' as u32,
+    b'>' as u32,
+    b'<' as u32,
+    b'=' as u32,
+    b';' as u32,
+    b'|' as u32,
+    b'&' as u32,
+    b'{' as u32,
+    b'(' as u32,
+];
+
+#[derive(Default)]
+pub(crate) struct FilenameCompletionState {
+    directory: Option<ReadDir>,
+    filename: String,
+    dirname: String,
+}
 
 thread_local! {
     /// The `app_func` argument of the call in progress, for [`app_func_adapter`].
@@ -127,7 +165,7 @@ fn intern(b: &[u8]) -> &'static str {
     })
 }
 
-/// The caller's `app_func` in the shape the core's [`filecomplete::AppFunc`]
+/// The caller's `app_func` in the shape the native adapter's [`AppFunc`]
 /// wants.
 ///
 /// A NULL return is the C's undefined case — `escape_filename` indexes
@@ -153,7 +191,7 @@ fn app_func_adapter(name: &str) -> &'static str {
 }
 
 /// The caller's `attempted_completion_function` in the shape the core's
-/// [`filecomplete::AttemptedCompletionFunc`] wants.
+/// [`AttemptedCompletionFunc`] wants.
 ///
 /// Ownership follows the C: `fn_complete2` takes the returned array, so the
 /// array and its strings are released here once copied into the `Vec`.
@@ -185,6 +223,304 @@ fn attempted_adapter(text: &str, start: i32, end: i32) -> Option<Vec<String>> {
         c_free_array(matches, i + 1);
         Some(out)
     }
+}
+
+fn text_bytes(text: &Text) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for unit in text.as_units() {
+        match unit {
+            TextUnit::Scalar(character) => {
+                let mut encoded = [0; 4];
+                bytes.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
+            }
+            TextUnit::RawByte(byte) => bytes.push(*byte),
+            TextUnit::CompatibilityWide(_) => bytes.extend_from_slice("\u{fffd}".as_bytes()),
+        }
+    }
+    bytes
+}
+
+fn tilde_expand_string(text: &str) -> Option<String> {
+    if !text.starts_with('~') {
+        return Some(text.to_owned());
+    }
+    let (name, rest) = match text[1..].find('/') {
+        Some(index) => (&text[1..index + 1], &text[index + 2..]),
+        None => (&text[1..], text),
+    };
+    let home = if name.is_empty() {
+        nshedit_plat::passwd::home_dir_by_uid(nshedit_plat::getuid())
+    } else {
+        nshedit_plat::passwd::home_dir_by_name(name)
+    }?;
+    let home = String::from_utf8(home).ok()?;
+    Some(format!("{home}/{rest}"))
+}
+
+fn append_character(name: &str) -> &'static str {
+    let path = if name.starts_with('~') {
+        tilde_expand_string(name).unwrap_or_else(|| name.to_owned())
+    } else {
+        name.to_owned()
+    };
+    if std::fs::metadata(path).is_ok_and(|metadata| metadata.is_dir()) {
+        "/"
+    } else {
+        " "
+    }
+}
+
+pub(crate) fn filename_completion(
+    scan: &mut FilenameCompletionState,
+    text: &str,
+    state: c_int,
+) -> Option<String> {
+    if state == 0 || scan.directory.is_none() {
+        let (dirname, filename) = text.rsplit_once('/').map_or_else(
+            || (String::new(), text.to_owned()),
+            |(directory, filename)| (format!("{directory}/"), filename.to_owned()),
+        );
+        let path = if dirname.is_empty() {
+            "./".to_owned()
+        } else if dirname.starts_with('~') {
+            tilde_expand_string(&dirname)?
+        } else {
+            dirname.clone()
+        };
+        scan.directory = std::fs::read_dir(path).ok();
+        scan.dirname = dirname;
+        scan.filename = filename;
+    }
+
+    let directory = scan.directory.as_mut()?;
+    for entry in directory.by_ref() {
+        let Ok(entry) = entry else {
+            break;
+        };
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if name != "." && name != ".." && name.starts_with(&scan.filename) {
+            return Some(format!("{}{}", scan.dirname, name));
+        }
+    }
+    scan.directory = None;
+    None
+}
+
+pub(crate) fn completion_matches(text: &str, generator: &mut CompleteFunc) -> Option<Vec<String>> {
+    let mut matches = Vec::new();
+    let mut state = 0;
+    while let Some(candidate) = generator(text, state) {
+        matches.push(candidate);
+        state = state.saturating_add(1);
+    }
+    let first = matches.first()?;
+    let mut prefix_length = first.len();
+    for candidate in matches.iter().skip(1) {
+        prefix_length = first
+            .as_bytes()
+            .iter()
+            .zip(candidate.as_bytes())
+            .take(prefix_length)
+            .take_while(|(left, right)| left == right)
+            .count();
+    }
+    while !first.is_char_boundary(prefix_length) {
+        prefix_length -= 1;
+    }
+    let mut result = Vec::with_capacity(matches.len() + 1);
+    result.push(first[..prefix_length].to_owned());
+    result.extend(matches);
+    Some(result)
+}
+
+/// Resolve the native driver's typed completion request with the ABI's
+/// default filename provider.
+pub(crate) fn builtin_candidates(query: &CompletionQuery) -> CompletionCandidates {
+    let stem = String::from_utf8_lossy(&text_bytes(query.stem())).into_owned();
+    let mut scan = FilenameCompletionState::default();
+    let mut state = 0;
+    let mut candidates = Vec::new();
+    while let Some(candidate) = filename_completion(&mut scan, &stem, state) {
+        let suffix = append_character(&candidate);
+        candidates.push(CompletionCandidate::new(candidate).with_suffix(suffix));
+        state = state.saturating_add(1);
+    }
+    candidates.into()
+}
+
+pub(crate) fn display_match_list(
+    el: &mut EditLine,
+    matches: &mut [String],
+    num: usize,
+    width: usize,
+    app_func: Option<AppFunc>,
+) {
+    if num == 0 || matches.len() < 2 {
+        return;
+    }
+    let entries = &mut matches[1..];
+    let count = (num - 1).min(entries.len());
+    entries[..count].sort_by_key(|entry| entry.to_ascii_lowercase());
+    let columns = el.screen_size().map_or(80, |size| size.columns());
+    let per_line = (columns / width.saturating_add(2)).max(1);
+    let lines = count.div_ceil(per_line);
+    let append = app_func.unwrap_or(append_character);
+    let mut output = Vec::new();
+    for line in 0..lines {
+        for column in 0..per_line {
+            let index = line + column * lines;
+            if index >= count {
+                break;
+            }
+            let entry = &entries[index];
+            if column != 0 {
+                output.push(b' ');
+            }
+            output.extend_from_slice(entry.as_bytes());
+            output.extend_from_slice(append(entry).as_bytes());
+            output.resize(output.len() + width.saturating_sub(entry.len()), b' ');
+        }
+        output.push(b'\n');
+    }
+    let _ = el.write_output(&output);
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the C completion boundary has independently optional hooks and result slots"
+)]
+pub(crate) fn complete_native(
+    el: &mut EditLine,
+    complete_func: Option<&mut CompleteFunc>,
+    attempted_completion_function: Option<AttemptedCompletionFunc>,
+    word_break: &[u32],
+    special_prefixes: Option<&[u32]>,
+    app_func: Option<AppFunc>,
+    query_items: usize,
+    completion_type: Option<&mut c_int>,
+    over: Option<&mut c_int>,
+    point: Option<&mut c_int>,
+    end: Option<&mut c_int>,
+    flags: c_uint,
+) -> c_int {
+    let list = el.take_completion_pending_listing();
+    if let Some(completion_type) = completion_type {
+        *completion_type = if list { b'?' } else { b'\t' }.into();
+    }
+    let line_end = el.native().line().len();
+    let cursor = el.native().cursor().get();
+    if let Some(point) = point {
+        *point = c_int::try_from(cursor).unwrap_or(c_int::MAX);
+    }
+    if let Some(end) = end {
+        *end = c_int::try_from(line_end).unwrap_or(c_int::MAX);
+    }
+
+    let separators: Text = word_break
+        .iter()
+        .chain(special_prefixes.into_iter().flatten())
+        .copied()
+        .map(TextUnit::from_wide)
+        .collect();
+    let tokenizer = NativeTokenizer::new(separators);
+    let Ok(query) = el.native().completion_query(&tokenizer) else {
+        return c_int::from(CC_ERROR);
+    };
+    let stem = String::from_utf8_lossy(&text_bytes(query.stem())).into_owned();
+    let start = c_int::try_from(query.replacement().start().get()).unwrap_or(c_int::MAX);
+    let finish = c_int::try_from(query.cursor().get()).unwrap_or(c_int::MAX);
+
+    let mut matches =
+        attempted_completion_function.and_then(|function| function(&stem, start, finish));
+    let fallback = attempted_completion_function.is_none()
+        || (over.as_deref().is_some_and(|value| *value == 0) && matches.is_none());
+    if fallback {
+        matches = if let Some(generator) = complete_func {
+            completion_matches(&stem, generator)
+        } else {
+            let mut scan = FilenameCompletionState::default();
+            completion_matches(&stem, &mut move |text, state| {
+                filename_completion(&mut scan, text, state)
+            })
+        };
+    }
+    if let Some(over) = over {
+        *over = 0;
+    }
+    let Some(matches) = matches else {
+        el.beep();
+        el.clear_completion_pending_listing();
+        return c_int::from(CC_NORM);
+    };
+    let actual = if matches.len() > 1 {
+        &matches[1..]
+    } else {
+        &matches[..]
+    };
+    let append = app_func.unwrap_or(append_character);
+    let candidates: Vec<_> = actual
+        .iter()
+        .map(|candidate| {
+            let mut value = CompletionCandidate::new(candidate.clone());
+            if actual.len() == 1
+                && (flags & FN_QUOTE_MATCH != 0 || attempted_completion_function.is_some())
+            {
+                value = value.with_suffix(append(candidate));
+            }
+            value
+        })
+        .collect();
+    let Ok(outcome) = el.native_mut().apply_completion(&query, candidates.into()) else {
+        return c_int::from(CC_ERROR);
+    };
+    match outcome {
+        CompletionOutcome::Unique { .. } => {
+            el.clear_completion_pending_listing();
+            c_int::from(CC_REFRESH)
+        }
+        CompletionOutcome::NoMatch => {
+            el.beep();
+            el.clear_completion_pending_listing();
+            c_int::from(CC_NORM)
+        }
+        CompletionOutcome::Ambiguous { candidates, .. } if list => {
+            let mut display = Vec::with_capacity(candidates.len() + 1);
+            display.push(String::new());
+            display.extend(candidates.iter().map(|candidate| {
+                String::from_utf8_lossy(&text_bytes(candidate.display())).into_owned()
+            }));
+            let width = display.iter().skip(1).map(String::len).max().unwrap_or(0);
+            let count = display.len();
+            let _ = el.write_output(b"\n");
+            if count.saturating_sub(1) <= query_items {
+                display_match_list(el, &mut display, count, width, Some(append));
+            }
+            c_int::from(CC_REDISPLAY)
+        }
+        CompletionOutcome::Ambiguous { .. } => {
+            el.beep();
+            c_int::from(CC_REFRESH)
+        }
+    }
+}
+
+pub(crate) fn complete_builtin(el: &mut EditLine, _character: c_int) -> u8 {
+    complete_native(
+        el,
+        None,
+        None,
+        BREAK_CHARACTERS,
+        None,
+        None,
+        100,
+        None,
+        None,
+        None,
+        None,
+        FN_QUOTE_MATCH,
+    ) as u8
 }
 
 /// The C's `const wchar_t *` as a slice, up to but not including the
@@ -221,7 +557,7 @@ unsafe fn out<'a>(p: *mut c_int) -> Option<&'a mut c_int> {
     }
 }
 
-/// One call translated from either exported C completion entry point.
+/// One call adapted from either exported C completion entry point.
 struct CompletionCall {
     el: *mut EditLine,
     complete_func: Option<CompleteFuncC>,
@@ -306,49 +642,41 @@ unsafe fn complete(call: CompletionCall) -> c_int {
     // A NULL `complete_func` is not "a generator that answers nothing": the C
     // substitutes `fn_filename_completion_function`, which the core does for
     // itself when handed `None`.
-    let generator: Option<&mut filecomplete::CompleteFunc> = if complete_func.is_some() {
+    let generator: Option<&mut CompleteFunc> = if complete_func.is_some() {
         Some(&mut generator)
     } else {
         None
     };
-    let attempted = attempted_completion_function
-        .map(|_| attempted_adapter as filecomplete::AttemptedCompletionFunc);
-    let app = app_func.map(|_| app_func_adapter as filecomplete::AppFunc);
+    let attempted =
+        attempted_completion_function.map(|_| attempted_adapter as AttemptedCompletionFunc);
+    let app = app_func.map(|_| app_func_adapter as AppFunc);
 
     // SAFETY: `el` is non-NULL, and the four out-parameters are NULL or
     // writable, which is the C's own contract for them.
     unsafe {
         let el = &mut *el;
         let (ct, ov, po, en) = (out(completion_type), out(over), out(point), out(end));
-        match flags {
-            Some(flags) => filecomplete::fn_complete2(
-                el,
-                generator,
-                attempted,
-                word_break,
-                special,
-                app,
-                query_items,
-                ct,
-                ov,
-                po,
-                en,
-                flags,
-            ),
-            None => filecomplete::fn_complete(
-                el,
-                generator,
-                attempted,
-                word_break,
-                special,
-                app,
-                query_items,
-                ct,
-                ov,
-                po,
-                en,
-            ),
-        }
+        let flags = flags.unwrap_or_else(|| {
+            if attempted.is_some() {
+                0
+            } else {
+                FN_QUOTE_MATCH
+            }
+        });
+        complete_native(
+            el,
+            generator,
+            attempted,
+            word_break,
+            special,
+            app,
+            query_items,
+            ct,
+            ov,
+            po,
+            en,
+            flags,
+        )
     }
 }
 
@@ -468,7 +796,7 @@ pub unsafe extern "C" fn fn_display_match_list(
         return;
     }
     let _hooks = HookGuard::install(app_func, None);
-    let app = app_func.map(|_| app_func_adapter as filecomplete::AppFunc);
+    let app = app_func.map(|_| app_func_adapter as AppFunc);
 
     // SAFETY: `matches` holds `num` pointers, each NULL or NUL-terminated,
     // which is what the C reads through the same indices.
@@ -485,7 +813,7 @@ pub unsafe extern "C" fn fn_display_match_list(
             });
         }
 
-        filecomplete::fn_display_match_list(&mut *el, &mut owned, num, width, app);
+        display_match_list(&mut *el, &mut owned, num, width, app);
 
         permute_to_match(matches, &owned);
     }
@@ -611,7 +939,7 @@ pub unsafe extern "C" fn fn_filename_completion_function(
     let text = String::from_utf8_lossy(bytes).into_owned();
     FILENAME_SCAN.with_borrow_mut(|scan| {
         let scan = scan.get_or_insert_with(FilenameCompletionState::default);
-        match filecomplete::fn_filename_completion_function(scan, &text, state) {
+        match filename_completion(scan, &text, state) {
             // SAFETY: the block is handed to the caller, who frees it.
             Some(s) => unsafe { c_dup(s.as_bytes()) },
             None => ptr::null_mut(),

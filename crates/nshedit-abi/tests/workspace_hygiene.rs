@@ -158,6 +158,42 @@ fn native_core_surface_is_safe() {
     );
 }
 
+// [spec:nshedit:req:core.no-compat-internals/test]
+#[test]
+fn translated_core_and_facade_are_absent() {
+    let root = repo_root();
+    let native = root.join("crates/nshedit/src");
+    let abi = root.join("crates/nshedit-abi/src");
+
+    assert!(
+        !abi.join("compat.rs").exists() && !abi.join("compat").exists(),
+        "the retired translated implementation must not remain disconnected behind the ABI"
+    );
+
+    let mut sources = Vec::new();
+    rust_sources_below(&native, &mut sources);
+    sources.sort();
+    let forbidden = [
+        "extern \"C\"",
+        "core::ffi::c_",
+        "std::ffi::c_",
+        "VaList",
+        "CFile",
+        "errno::",
+        "#[path",
+    ];
+    for path in sources {
+        let source = fs::read_to_string(&path).expect("read native core source");
+        for spelling in forbidden {
+            assert!(
+                !source.contains(spelling),
+                "{} contains retired compatibility spelling {spelling:?}",
+                path.strip_prefix(&root).unwrap_or(&path).display()
+            );
+        }
+    }
+}
+
 // [spec:nshedit:req:workspace.no-legacy-allows/test]
 #[test]
 fn first_party_rust_rejects_allow_attributes() {

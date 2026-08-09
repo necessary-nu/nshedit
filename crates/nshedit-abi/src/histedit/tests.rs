@@ -1,5 +1,5 @@
 use super::*;
-use crate::compat::prompt::ElPfuncT;
+use crate::adapter::WidePromptCallback as ElPfuncT;
 use std::ffi::CStr;
 
 /// A live handle with all three descriptors deliberately unusable: -1
@@ -57,10 +57,11 @@ fn output_of(el: *mut EditLine, tag: &str, body: impl FnOnce(*mut EditLine)) -> 
     let path = scratch_path(tag);
     let file = std::fs::File::create(&path).unwrap();
     // SAFETY: `el` is live for the whole of this function.
-    let saved = unsafe { (&*el).el_outfd };
-    unsafe { (&mut *el).el_outfd = file.as_raw_fd() };
+    let saved_stream = unsafe { (&*el).stream(1).unwrap() };
+    let saved_descriptor = unsafe { (&*el).descriptor(1).unwrap() };
+    unsafe { (&mut *el).set_stream(1, core::ptr::null_mut(), file.as_raw_fd()) };
     body(el);
-    unsafe { (&mut *el).el_outfd = saved };
+    unsafe { (&mut *el).set_stream(1, saved_stream, saved_descriptor) };
     drop(file);
     let bytes = std::fs::read(&path).unwrap();
     let _ = std::fs::remove_file(&path);
@@ -87,31 +88,19 @@ fn resetting_empties_the_line_but_keeps_the_pushed_back_input() {
     let pushed = wcs("xy");
     unsafe { el_wpush(el, pushed.as_ptr()) };
 
-    // SAFETY: `el` is live.
-    let e = unsafe { &mut *el };
-    e.el_state.doingarg = 1;
-    e.el_state.argument = 4;
-    e.el_chared.c_kill.mark = 3;
-    e.el_history.eventno = 7;
-    assert_eq!(e.el_line.lastchar, 5);
+    assert_eq!(unsafe { (&*el).native().line() }, &Text::from("hello"));
 
     unsafe { el_reset(el) };
 
     let e = unsafe { &mut *el };
-    assert_eq!((e.el_line.cursor, e.el_line.lastchar), (0, 0));
+    assert!(e.native().line().is_empty());
     assert_eq!(
-        &e.el_line.buffer[..5],
-        &wcs("hello")[..5],
-        "the text is still in the buffer above lastchar; only the \
-         positions were reset"
+        e.pop_input().map(crate::adapter::unit_to_wide),
+        Some(u32::from(b'x'))
     );
-    assert_eq!((e.el_state.doingarg, e.el_state.argument), (0, 1));
-    assert_eq!(e.el_chared.c_kill.mark, 0);
-    assert_eq!(e.el_history.eventno, 0);
     assert_eq!(
-        e.el_read.as_ref().unwrap().macros.r#macro.len(),
-        1,
-        "el_reset does not clear the macro queue"
+        e.pop_input().map(crate::adapter::unit_to_wide),
+        Some(u32::from(b'y'))
     );
     done(el);
 }
@@ -127,17 +116,9 @@ fn resetting_empties_the_line_but_keeps_the_pushed_back_input() {
 #[test]
 fn the_bell_goes_to_the_output_descriptor() {
     let el = editline();
-    // SAFETY: `el` is live.
-    let e = unsafe { &mut *el };
-    // `T_BL` is `pub(crate)` in the core; slot 1 is the bell string.
-    e.el_terminal.t_str[1] = None;
-    e.el_cursor.h = 5;
-
     let out = output_of(el, "beep", |el| unsafe { el_beep(el) });
     assert_eq!(out, [0x07]);
-    // SAFETY: `el` is live.
-    assert_eq!(unsafe { (&*el).el_cursor.h }, 5);
-    assert_eq!(unsafe { (&*el).el_line.lastchar }, 0);
+    assert!(unsafe { (&*el).native().line().is_empty() });
     done(el);
 }
 
@@ -177,7 +158,7 @@ fn pushed_back_input_comes_back_first_in_first_out() {
     // The queue empties as the last character of each entry is taken, so
     // by now there is nothing left and the read falls through to the tty.
     // SAFETY: `el` is live.
-    assert!(unsafe { (&*el).el_read.as_ref().unwrap().macros.r#macro.is_empty() });
+    assert!(unsafe { (&mut *el).pop_input().is_none() });
     let mut wc: u32 = 0xdead;
     // Descriptor -1 cannot be put into raw mode, and `el_wgetc` reports
     // that as end of file rather than as an error (ERR-input-24), leaving
@@ -194,15 +175,12 @@ fn pushing_nothing_is_reported_only_to_the_user() {
     let el = editline();
     // SAFETY: `el` is live; `sem:histedit.el-wpush-fn` allows a NULL
     // string and defines it as the failure path.
-    unsafe { &mut *el }.el_terminal.t_str[1] = None;
     let out = output_of(el, "push", |el| unsafe {
         el_wpush(el, core::ptr::null());
     });
     assert_eq!(out, [0x07]);
     // SAFETY: `el` is live.
-    let ma = unsafe { &(&*el).el_read.as_ref().unwrap().macros };
-    assert!(ma.r#macro.is_empty());
-    assert_eq!(ma.level, -1, "the level increment is undone");
+    assert!(unsafe { (&mut *el).pop_input().is_none() });
     done(el);
 }
 
@@ -247,7 +225,7 @@ fn the_flag_getters_report_bits_where_the_c_reported_bits() {
         assert_eq!(el_wset(el, EL_EDITMODE, 0 as c_int), 0);
         assert_eq!(el_wget(el, EL_EDITMODE, &raw mut out), 0);
         assert_eq!(out, 0);
-        assert_ne!((&*el).el_flags & EDIT_DISABLED, 0);
+        assert!(!(&*el).editing_enabled());
     }
     done(el);
 }
@@ -336,7 +314,7 @@ fn the_word_characters_survive_a_round_trip_and_an_editor_switch_resets_them() {
 /// `EL_PROMPT` passes a NULL escape-character pointer.
 #[test]
 fn the_escape_form_of_the_prompt_op_does_not_round_trip() {
-    unsafe extern "C" fn never_called(_: *mut crate::compat::el::EditLine) -> *mut u32 {
+    unsafe extern "C" fn never_called(_: *mut EditLine) -> *mut u32 {
         core::ptr::null_mut()
     }
 
@@ -390,12 +368,12 @@ fn the_environment_accessor_of_a_fresh_handle_is_an_address_not_null() {
         let reported = hook.expect("never NULL, unlike the core's `None`");
         assert_eq!(el_wset(el, EL_GETENV, reported), 0);
         assert!(
-            (&*el).el_getenv.is_none(),
+            (&*el).environment_callback().is_none(),
             "installing the reported default must not arm an indirect call"
         );
         // ERR-core-api-08: a NULL hook leaves the built-in in force.
         assert_eq!(el_wset(el, EL_GETENV, core::ptr::null::<c_void>()), 0);
-        assert!((&*el).el_getenv.is_none());
+        assert!((&*el).environment_callback().is_none());
     }
     done(el);
 }
@@ -429,7 +407,7 @@ fn the_stream_ops_carry_the_streams_and_nothing_else() {
             el_wset(el, EL_SETFP, 2 as c_int, core::ptr::null::<c_void>()),
             0
         );
-        assert_eq!((&*el).el_errfd, -1);
+        assert_eq!((&*el).descriptor(2), Some(-1));
         assert_eq!(el_wget(el, EL_GETFP, 2 as c_int, &raw mut back), 0);
         assert!(back.is_null());
 
@@ -481,19 +459,16 @@ fn the_two_completion_commands_are_one_behaviour_under_two_symbols() {
         let el = editline();
         // SAFETY: `el` is live and `prefix` is NUL-terminated.
         assert_eq!(unsafe { el_insertstr(el, prefix.as_ptr()) }, 0);
-        // SAFETY: `el` is live.
-        let e = unsafe { &mut *el };
-        // The driver treats a repeat of the same command as "list the
-        // possibilities"; these must differ for it to complete.
-        e.el_state.lastcmd = 1;
-        e.el_state.thiscmd = 2;
         // SAFETY: `el` is live; the second argument is ignored.
         let rv = unsafe { f(el, 0) };
-        // SAFETY: `el` is live.
-        let e = unsafe { &*el };
-        let line: String = e.el_line.buffer[..e.el_line.lastchar]
+        let line: String = unsafe { (&*el).native().line() }
+            .as_units()
             .iter()
-            .filter_map(|&c| char::from_u32(c))
+            .filter_map(|unit| match unit {
+                TextUnit::Scalar(character) => Some(*character),
+                TextUnit::RawByte(byte) => Some(char::from(*byte)),
+                TextUnit::CompatibilityWide(value) => char::from_u32(value.get()),
+            })
             .collect();
         done(el);
         (rv, line)

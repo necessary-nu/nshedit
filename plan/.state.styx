@@ -178,7 +178,6 @@ assertions (
     {id cross-concern-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-08T13:15:16.991315761Z}
     {id greenfield-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:17:31.852523476Z}
     {id greenfield-abi-oracle, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:46:10.110061941Z}
-    {id greenfield-retire-port, kind @doing, author "brendan@necessary.nu", at 2026-08-08T22:53:40.733464415Z}
 )
 
 impl_evidence (
@@ -262,7 +261,11 @@ impl_evidence (
     ), rule_versions_seen (
         {id core.read-driver, version 0}
     )}
-    {id greenfield-retire-port}
+    {id greenfield-retire-port, covered_rules (
+        core.no-compat-internals
+    ), covered_claims (
+        {impl_name native-impl, rule core.no-compat-internals}
+    )}
     {id greenfield-terminal-render, covered_rules (
         core.terminal-render
     ), covered_claims (

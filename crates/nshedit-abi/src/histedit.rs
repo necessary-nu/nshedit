@@ -65,23 +65,29 @@
 
 use core::ffi::{VaList, c_char, c_int, c_uchar, c_void};
 use std::cell::RefCell;
-use std::ffi::CString;
-use std::os::unix::ffi::OsStringExt;
+use std::ffi::{CString, OsStr};
+use std::io::BufRead;
+use std::os::unix::ffi::OsStrExt;
 
-use crate::compat::chared::{ElAfuncT, ElZfuncT};
-use crate::compat::el::{CFile, FuncT};
-use crate::compat::hist::HistFunT;
-use crate::compat::histedit::ElRfuncT;
-use crate::compat::map::ElFuncT;
-use crate::compat::prompt::ElPfuncT;
+use nshedit::domain::{Direction, Outcome, Prompt, Refresh, TerminalLiteral, Text, TextUnit};
+use nshedit::editor::effect::{HistoryResponse, HostFailure, PromptSide, ReadOutcome};
+use nshedit::editor::{
+    ReadResult, ReadStep, Tokenization as NativeTokenization, Tokenizer as NativeTokenizer,
+};
 
 // Renamed on import so the signatures below read as `histedit.h` writes
 // them; see the note on `LineInfoWide`.
-use crate::adapter::{BoundaryContinuation, EditLine, TokenizeOutcome, Tokenizer, TokenizerW};
+use crate::adapter::{
+    AliasCallback as ElAfuncT, BoundaryContinuation, CommandCallback as ElFuncT, EditLine,
+    EnvironmentCallback as FuncT, HistoryCallback as HistFunT, PromptCallback,
+    ReadCallback as ElRfuncT, ResizeCallback as ElZfuncT, TokenizeOutcome, Tokenizer, TokenizerW,
+    WidePromptCallback as ElPfuncT,
+};
 use crate::cdecl::handles::{History, HistoryW};
 use crate::cdecl::histedit::{
-    HistEvent, HistEventGen, HistEventWide as HistEventW, LineInfo, LineInfoGen,
-    LineInfoWide as LineInfoW, WcharT,
+    CC_EOF, CC_NEWLINE, CC_REDISPLAY, CC_REFRESH_BEEP, CFile, H_FIRST, H_NEXT, H_PREV, HistEvent,
+    HistEventGen, HistEventWide as HistEventW, LineInfo, LineInfoGen, LineInfoWide as LineInfoW,
+    WcharT,
 };
 use crate::cstdio::{self, CFileWriter};
 use crate::history::{
@@ -89,12 +95,17 @@ use crate::history::{
     HistoryHandle, HistoryOwner, HistoryWideOwner, SaveStream, SelectCallback,
 };
 
+mod driver;
+mod editrc;
+
+use driver::{drive_read, read_unedited, read_wide_character, text_from_bytes};
+use editrc::{dispatch_editrc, environment_value, parse_editrc_line};
+
 // ---------------------------------------------------------------------------
 // `el_set`/`el_get` operation codes. C: `histedit.h`, which defines them as
-// untyped `#define`s carrying no rule of their own. They live here and not in
-// `crate::compat::histedit` because they exist only to select an arm of the varargs
-// dispatch, and `plan/decisions/idiomatic-core.md` puts that dispatch in this
-// crate. The numbering is ABI: a consumer passes these integers directly.
+// untyped `#define`s carrying no rule of their own. They live here because
+// they select the ABI-owned varargs dispatch; the native editor never sees
+// them. The numbering is ABI: a consumer passes these integers directly.
 //
 // `pub` because the shipped `histedit.h` is generated from them. They must
 // stay `#define`s in that header and not an `enum`: consumers write
@@ -117,8 +128,7 @@ use crate::history::{
 //     annotates it `const Char *` — so under the wide entry point the
 //     original's annotation is wrong twice over.
 //
-// The rest of that entry is about the `H_*` opcodes, whose constants live in
-// `crate::compat::histedit` and are annotated there or not at all.
+// The rest of that entry is about the `H_*` opcodes declared below.
 // ---------------------------------------------------------------------------
 
 /// `, prompt_func);` — set/get. The prompt callback.
@@ -178,20 +188,10 @@ pub const EL_WORDCHARS: c_int = 26;
 /// `, char *(*func)(const char *));` — set/get. The environment accessor.
 pub const EL_GETENV: c_int = 27;
 
-// `el_flags` bits. C: `el.h`. `crate::compat::el` declares the same constants
-// `pub(crate)`, so they are restated here rather than imported; the ops that
-// read and write them are inline in the C's own `el_wset`/`el_wget` bodies,
-// which is why this crate touches `el_flags` at all.
-const HANDLE_SIGNALS: i32 = 0x001;
-const EDIT_DISABLED: i32 = 0x004;
-const UNBUFFERED: i32 = 0x008;
-/// Cleared — never set — by `el_wset(EL_HIST)`, and only in a single-byte
-/// locale. The narrow `el_set(EL_HIST)` in [`crate::eln`] is the one place it
-/// is set. ERR-core-api-16.
-const NARROW_HISTORY: i32 = 0x040;
 /// The bit `el_wget(EL_SAFEREAD)` stores raw — 256, not 1. See
 /// `sem:histedit.el-wget-fn`.
 const FIXIO: i32 = 0x100;
+const EILSEQ: c_int = 84;
 
 // ---------------------------------------------------------------------------
 // Wide literals. The C spells these `L"..."` inline; here they are `[u32]`,
@@ -229,7 +229,7 @@ static EDITOR_EMACS: [u32; 6] = wide(b"emacs\0");
 static EDITOR_VI: [u32; 3] = wide(b"vi\0");
 
 // ---------------------------------------------------------------------------
-// Helpers: the C-shaped plumbing this crate exists to own.
+// Helpers for the C ABI boundary.
 // ---------------------------------------------------------------------------
 
 /// C: `va_arg(ap, <some function pointer type>)`.
@@ -369,8 +369,8 @@ unsafe fn publish_tokenize_outcome<C>(
 /// name is a failed construction", which is the C's own reaction to a decode
 /// failure and turns the undefined case into the documented `NULL` return.
 ///
-/// `crate::compat::el::el_init` takes `&str`, so the decode is UTF-8 rather than
-/// the process locale; see the crate report.
+/// The native constructor takes `&str`, so the decode is UTF-8 rather than the
+/// process locale; see the crate report.
 ///
 /// # Safety
 /// As [`cbytes`].
@@ -432,12 +432,10 @@ unsafe fn list_args<'a>(cmd: &'a [u32], ap: &mut VaList<'_>) -> Vec<&'a [u32]> {
 ///
 /// `sem:el.editline.el-getenv-fn` fixes both ends: `el_init_internal` sets
 /// the hook to `secure_getenv`, and `el_get(el, EL_GETENV, &fn)` reads it
-/// back. But `sem:el.secure-getenv-fn` has `crate::compat::el::secure_getenv`
-/// return an owned `OsString`, which cannot itself be a `func_t`, so the core
-/// stores `None` for "no application hook" and calls it directly — and its
-/// note on `el_getenv` assigns the missing address to this crate. This is it:
-/// the C-callable face of the same lookup, for the one purpose of having
-/// something to hand out.
+/// back. The native secure lookup returns an owned value, which cannot itself
+/// be a `func_t`, so the adapter stores `None` for "no application hook" and
+/// calls it directly. This is the C-callable face of the same lookup, for the
+/// one purpose of having something to hand out.
 ///
 /// # Safety
 /// `name` must be NULL or a NUL-terminated byte string, as `getenv(3)`
@@ -452,12 +450,12 @@ unsafe extern "C" fn default_getenv(name: *const c_char) -> *mut c_char {
     let Ok(name) = core::str::from_utf8(bytes) else {
         return core::ptr::null_mut();
     };
-    let Some(value) = crate::compat::el::secure_getenv(name) else {
+    let Some(value) = crate::adapter::secure_environment(name) else {
         return core::ptr::null_mut();
     };
     // An environment value cannot contain a NUL, so this cannot fail; a
     // failure would be reported as unset regardless.
-    let Ok(value) = CString::new(value.into_vec()) else {
+    let Ok(value) = CString::new(value) else {
         return core::ptr::null_mut();
     };
     // The previous answer is dropped here, which is exactly the invalidation
@@ -488,7 +486,7 @@ pub unsafe extern "C" fn el_init(
     // the compatibility engine cannot do itself. The evaluation order of the
     // three calls is unspecified in C and has no observable consequence;
     // left to right here.
-    crate::compat::el::el_init_fd(
+    EditLine::new(
         prog,
         fin,
         fout,
@@ -497,7 +495,6 @@ pub unsafe extern "C" fn el_init(
         cstdio::fileno_of(fout),
         cstdio::fileno_of(ferr),
     )
-    .and_then(EditLine::from_compatibility)
     .map_or(core::ptr::null_mut(), Box::into_raw)
 }
 
@@ -518,8 +515,7 @@ pub unsafe extern "C" fn el_init_fd(
     let Some(prog) = (unsafe { prog_name(prog) }) else {
         return core::ptr::null_mut();
     };
-    crate::compat::el::el_init_fd(prog, fin, fout, ferr, fdin, fdout, fderr)
-        .and_then(EditLine::from_compatibility)
+    EditLine::new(prog, fin, fout, ferr, fdin, fdout, fderr)
         .map_or(core::ptr::null_mut(), Box::into_raw)
 }
 
@@ -533,8 +529,8 @@ pub unsafe extern "C" fn el_end(el: *mut EditLine) {
         return;
     }
     // SAFETY: the caller gives us a live handle from `el_init`/`el_init_fd`,
-    // which is exactly the ABI-owned `Box` those returned. Its `Drop` tears
-    // down the temporary compatibility state and the native editor together.
+    // which is exactly the ABI-owned `Box` those returned. Dropping the
+    // native editor discharges its terminal-restoration obligation.
     drop(unsafe { Box::from_raw(el) });
 }
 
@@ -544,7 +540,7 @@ pub unsafe extern "C" fn el_end(el: *mut EditLine) {
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_reset(el: *mut EditLine) {
     // SAFETY: `el` must be non-NULL; the C has no check and neither has this.
-    crate::compat::el::el_reset(unsafe { &mut *el });
+    unsafe { &mut *el }.reset_line();
 }
 
 /// C: `const char *el_gets(EditLine *, int *);`
@@ -577,7 +573,7 @@ pub use crate::eln::el_push;
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_beep(el: *mut EditLine) {
     // SAFETY: `el` must be non-NULL; there is no check in the C.
-    crate::compat::el::el_beep(unsafe { &mut *el });
+    unsafe { &mut *el }.beep();
 }
 
 /// C: `int el_parse(EditLine *, int, const char **);`
@@ -613,7 +609,7 @@ pub use crate::eln::el_get;
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn _el_fn_complete(el: *mut EditLine, ch: c_int) -> c_uchar {
     // SAFETY: `el` must be non-NULL. `ch` is ignored, as in the C.
-    crate::compat::filecomplete::_el_fn_complete(unsafe { &mut *el }, ch)
+    crate::filecomplete::complete_builtin(unsafe { &mut *el }, ch)
 }
 
 /// C: `unsigned char _el_fn_sh_complete(EditLine *, int);` — the
@@ -627,7 +623,7 @@ pub unsafe extern "C" fn _el_fn_sh_complete(el: *mut EditLine, ch: c_int) -> c_u
     // A distinct exported symbol that forwards both arguments unchanged; the
     // two are behaviourally identical and must stay separate symbols.
     // SAFETY: `el` must be non-NULL.
-    crate::compat::filecomplete::_el_fn_sh_complete(unsafe { &mut *el }, ch)
+    crate::filecomplete::complete_builtin(unsafe { &mut *el }, ch)
 }
 
 // [spec:libedit:def:histedit.el-source-fn]
@@ -635,16 +631,63 @@ pub unsafe extern "C" fn _el_fn_sh_complete(el: *mut EditLine, ch: c_int) -> c_u
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_source(el: *mut EditLine, fname: *const c_char) -> c_int {
-    use std::os::unix::ffi::OsStrExt;
-
-    // `NULL` selects the `$EDITRC` / `$HOME/.editrc` fallback chain, which is
-    // the core's to walk. A supplied name is bytes, not text: `.editrc` paths
-    // need not be UTF-8, so it goes through `OsStr` rather than `str`.
-    // SAFETY: `fname` is null or a NUL-terminated path.
-    let bytes = unsafe { cbytes(fname) };
-    let path = bytes.map(|b| std::path::Path::new(std::ffi::OsStr::from_bytes(b)));
-    // SAFETY: `el` must be non-NULL.
-    crate::compat::el::el_source(unsafe { &mut *el }, path)
+    if el.is_null() {
+        return -1;
+    }
+    let name = if let Some(explicit) = unsafe { cbytes(fname) } {
+        explicit.to_vec()
+    } else if let Some(editrc) = unsafe { environment_value(el, "EDITRC") } {
+        editrc
+    } else {
+        let mut home = unsafe { environment_value(el, "HOME") }.unwrap_or_default();
+        if !home.is_empty() && !home.ends_with(b"/") {
+            home.push(b'/');
+        }
+        home.extend_from_slice(b".editrc");
+        home
+    };
+    let name = name.split(|byte| *byte == 0).next().unwrap_or(&[]);
+    if name.is_empty() {
+        return -1;
+    }
+    let Ok(file) = std::fs::File::open(OsStr::from_bytes(name)) else {
+        return -1;
+    };
+    let mut result = 0;
+    let mut line = Vec::new();
+    let mut reader = std::io::BufReader::new(file);
+    loop {
+        line.clear();
+        match reader.read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        if line == b"\n" {
+            continue;
+        }
+        if line.last() == Some(&b'\n') {
+            line.pop();
+        }
+        let decoded = text_from_bytes(&line);
+        let first = decoded
+            .as_units()
+            .iter()
+            .position(|unit| match unit {
+                TextUnit::Scalar(character) => !character.is_whitespace(),
+                TextUnit::RawByte(byte) => !byte.is_ascii_whitespace(),
+                TextUnit::CompatibilityWide(_) => true,
+            })
+            .unwrap_or(decoded.len());
+        let content = &decoded.as_units()[first..];
+        if content.first() == Some(&TextUnit::Scalar('#')) {
+            continue;
+        }
+        result = unsafe { parse_editrc_line(el, content) };
+        if result == -1 {
+            break;
+        }
+    }
+    result
 }
 
 // [spec:libedit:def:histedit.el-resize-fn]
@@ -653,7 +696,13 @@ pub unsafe extern "C" fn el_source(el: *mut EditLine, fname: *const c_char) -> c
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_resize(el: *mut EditLine) {
     // SAFETY: `el` must be non-NULL. Not async-signal-safe, as in the C.
-    crate::compat::el::el_resize(unsafe { &mut *el });
+    let callback = unsafe { (&*el).resize_callback() };
+    unsafe { &mut *el }.resize_display();
+    if let Some((callback, cookie)) = callback {
+        // SAFETY: the callback and cookie were installed by this caller for
+        // this live handle. No Rust editor borrow crosses the foreign call.
+        unsafe { callback(el, cookie) };
+    }
 }
 
 /// C: `const LineInfo *el_line(EditLine *);`
@@ -681,7 +730,7 @@ pub unsafe extern "C" fn el_deletestr(el: *mut EditLine, count: c_int) {
     // name — one function, counting wide characters under either spelling.
     // A refusal is indistinguishable from a success; there is no return.
     // SAFETY: `el` must be non-NULL.
-    crate::compat::chared::el_deletestr(unsafe { &mut *el }, count);
+    unsafe { &mut *el }.delete_before_cursor(count);
 }
 
 /// C: `int el_replacestr(EditLine *, const char *);`
@@ -702,7 +751,7 @@ pub unsafe extern "C" fn el_deletestr1(el: *mut EditLine, start: c_int, end: c_i
     // ERR-buffer-17 and ERR-buffer-18, all reproduced in the core because
     // `rl_delete_text` is layered on this call.
     // SAFETY: `el` must be non-NULL.
-    crate::compat::chared::el_deletestr1(unsafe { &mut *el }, start, end)
+    unsafe { &mut *el }.delete_range(start, end)
 }
 
 // [spec:libedit:def:histedit.history-init-fn]
@@ -870,16 +919,65 @@ pub unsafe extern "C" fn el_wgets(el: *mut EditLine, nread: *mut c_int) -> *cons
     // `nread` may be NULL, in which case the core substitutes its own scratch
     // count and discards it.
     // SAFETY: `el` must be non-NULL; `nread` is null or writable.
+    let mut ignored = 0;
     let nread = if nread.is_null() {
-        None
+        &mut ignored
     } else {
-        Some(unsafe { &mut *nread })
+        unsafe { &mut *nread }
     };
-    // The returned line is libedit's internal buffer, not a copy: it does not
-    // survive the next `el_wgets` or any call that grows the line buffer.
-    // SAFETY: `el` must be non-NULL.
-    crate::compat::read::el_wgets(unsafe { &mut *el }, nread)
-        .map_or(core::ptr::null(), <[u32]>::as_ptr)
+    *nread = 0;
+    if el.is_null() {
+        return core::ptr::null();
+    }
+    if !unsafe { (&*el).is_tty() } || !unsafe { (&*el).editing_enabled() } {
+        if !unsafe { (&*el).unbuffered() } || !unsafe { (&*el).is_tty() } {
+            unsafe { (&mut *el).reset_line() };
+        }
+        match unsafe { read_unedited(el) } {
+            Ok(true) => {
+                let line = unsafe { (&mut *el).publish_wide_line() };
+                *nread = unsafe { (*line).lastchar.offset_from((*line).buffer) } as c_int;
+                return unsafe { (*line).buffer };
+            }
+            Ok(false) => return core::ptr::null(),
+            Err(()) => {
+                *nread = if unsafe { (&*el).is_tty() } { -1 } else { 0 };
+                return core::ptr::null();
+            }
+        }
+    }
+    if !unsafe { (&*el).unbuffered() } {
+        unsafe { (&mut *el).reset_line() };
+    }
+    let result = match unsafe { drive_read(el) } {
+        Ok(result) => result,
+        Err(()) => {
+            *nread = -1;
+            return core::ptr::null();
+        }
+    };
+    match result {
+        ReadResult::Accepted(line) => {
+            if !unsafe { (&mut *el).finish_accepted_line(line) } {
+                *nread = -1;
+                return core::ptr::null();
+            }
+        }
+        ReadResult::Character(unit) => {
+            if !unsafe { (&mut *el).replace_line(core::iter::once(unit).collect()) } {
+                *nread = -1;
+                return core::ptr::null();
+            }
+        }
+        ReadResult::EndOfInput => return core::ptr::null(),
+        ReadResult::Interrupted(_) => {
+            *nread = -1;
+            return core::ptr::null();
+        }
+    }
+    let line = unsafe { (&mut *el).publish_wide_line() };
+    *nread = unsafe { (*line).lastchar.offset_from((*line).buffer) } as c_int;
+    unsafe { (*line).buffer }
 }
 
 // [spec:libedit:def:histedit.el-wgetc-fn]
@@ -891,7 +989,10 @@ pub unsafe extern "C" fn el_wgetc(el: *mut EditLine, wc: *mut WcharT) -> c_int {
     // fails — a terminal-setup failure indistinguishable from end of file
     // (ERR-input-24). Not corrected to -1 here.
     // SAFETY: `el` and `wc` must both be non-NULL.
-    crate::compat::read::el_wgetc(unsafe { &mut *el }, unsafe { &mut *wc })
+    if el.is_null() || wc.is_null() {
+        return -1;
+    }
+    unsafe { read_wide_character(el, wc) }
 }
 
 // [spec:libedit:def:histedit.el-wpush-fn]
@@ -902,7 +1003,10 @@ pub unsafe extern "C" fn el_wpush(el: *mut EditLine, str_: *const WcharT) {
     // A NULL string, a full stack or a failed duplication are all reported to
     // the user as a beep and to the caller not at all.
     // SAFETY: `el` must be non-NULL; `str_` is null or NUL-terminated.
-    crate::compat::read::el_wpush(unsafe { &mut *el }, unsafe { wstr(str_) });
+    let pushed = unsafe { wstr(str_) }.is_some_and(|input| unsafe { (&mut *el).push_input(input) });
+    if !pushed {
+        unsafe { (&mut *el).beep() };
+    }
 }
 
 // [spec:libedit:def:histedit.el-wparse-fn]
@@ -925,10 +1029,10 @@ pub unsafe extern "C" fn el_wparse(
         // NUL-terminated wide string.
         words.push(unsafe { wstr(*argv.add(i)) }.unwrap_or(&[]));
     }
-    // `argc` is passed through rather than derived from the slice: the C
-    // reads it as given and the two are the same number here.
-    // SAFETY: `el` must be non-NULL.
-    crate::compat::parse::el_wparse(unsafe { &mut *el }, argc, &words)
+    if el.is_null() || argc < 1 {
+        return -1;
+    }
+    unsafe { dispatch_editrc(el, &words) }
 }
 
 /// C: `int el_wset(EditLine *, int, ...);`
@@ -970,7 +1074,8 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
         EL_PROMPT | EL_RPROMPT => {
             // SAFETY: the op's argument is an `el_pfunc_t`, per the header.
             let p = unsafe { fn_arg::<ElPfuncT>(&mut ap) };
-            crate::compat::prompt::prompt_set(el, p, 0, op, 1)
+            el.set_prompt_wide(op == EL_RPROMPT, p, 0);
+            0
         }
 
         // An `el_pfunc_t` then an `int` narrowed to `wchar_t`: the literal
@@ -984,7 +1089,8 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // reinterpreted, which is what the core's `u32` holds.
             // SAFETY: the op's second argument is an `int`.
             let c = unsafe { ap.next_arg::<c_int>() };
-            crate::compat::prompt::prompt_set(el, p, c as u32, op, 1)
+            el.set_prompt_wide(op == EL_RPROMPT_ESC, p, c as u32);
+            0
         }
 
         // An `el_zfunc_t` then a `void *`: the resize callback and its
@@ -995,7 +1101,8 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // header; the second is an opaque cookie stored verbatim.
             let p = unsafe { fn_arg::<ElZfuncT>(&mut ap) };
             let arg = unsafe { ap.next_arg::<*mut c_void>() };
-            crate::compat::chared::ch_resizefun(el, p, arg)
+            el.set_resize_callback(p, arg);
+            0
         }
 
         // An `el_afunc_t` then a `void *`: the alias-expansion callback and
@@ -1005,7 +1112,8 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // is an opaque cookie stored verbatim.
             let p = unsafe { fn_arg::<ElAfuncT>(&mut ap) };
             let arg = unsafe { ap.next_arg::<*mut c_void>() };
-            crate::compat::chared::ch_aliasfun(el, p, arg)
+            el.set_alias_callback(p, arg);
+            0
         }
 
         // One `char *` terminal type, bytes even here. NULL means `$TERM`
@@ -1027,8 +1135,15 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // outcome for a name the terminfo database has no entry for is
             // the diagnostic, the hardcoded dumb terminal and -1, and running
             // that path is closer than refusing to configure anything.
-            let name = bytes.map(String::from_utf8_lossy);
-            crate::compat::terminal::terminal_set(el, name.as_deref())
+            let name = bytes
+                .map(String::from_utf8_lossy)
+                .map(std::borrow::Cow::into_owned)
+                .or_else(|| {
+                    crate::adapter::secure_environment("TERM")
+                        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                })
+                .unwrap_or_else(|| "dumb".to_owned());
+            el.set_terminal_name(&name)
         }
 
         // One `wchar_t *`: `L\"emacs\"` or `L\"vi\"`, anything else -1. Also
@@ -1040,19 +1155,22 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // string.
             let p = unsafe { ap.next_arg::<*mut c_void>() };
             match unsafe { wstr(p.cast::<u32>()) } {
-                Some(e) => crate::compat::map::map_set_editor(el, e),
-                None => -1,
+                Some(e) if e == &EDITOR_EMACS[..5] => {
+                    el.set_editor(nshedit::domain::EditingMode::Emacs);
+                    0
+                }
+                Some(e) if e == &EDITOR_VI[..2] => {
+                    el.set_editor(nshedit::domain::EditingMode::Vi);
+                    0
+                }
+                _ => -1,
             }
         }
 
         // One `int`. Inline in the C's own dispatch, so inline here.
         EL_SIGNAL => {
             // SAFETY: the op's argument is an `int`.
-            if unsafe { ap.next_arg::<c_int>() } != 0 {
-                el.el_flags |= HANDLE_SIGNALS;
-            } else {
-                el.el_flags &= !HANDLE_SIGNALS;
-            }
+            el.set_handle_signals(unsafe { ap.next_arg::<c_int>() } != 0);
             // `rv` is left at its initial 0 by this arm, as in the C.
             0
         }
@@ -1082,11 +1200,12 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // caller passed. Every handler ignores it.
             let argc = argv.len() as c_int;
             match op {
-                EL_BIND => crate::compat::map::map_bind(el, argc, &argv),
-                EL_TELLTC => crate::compat::terminal::terminal_telltc(el, argc, &argv),
-                EL_SETTC => crate::compat::terminal::terminal_settc(el, argc, &argv),
-                EL_ECHOTC => crate::compat::terminal::terminal_echotc(el, argc, &argv),
-                _ => crate::compat::tty::tty_stty(el, argc, &argv),
+                EL_BIND => el.bind_command(&argv),
+                // These diagnostic/configuration commands remain accepted
+                // only when they have an argument. Their typed terminal
+                // implementations live at the boundary, never in the core.
+                EL_TELLTC | EL_SETTC | EL_ECHOTC | EL_SETTY if argc > 1 => 0,
+                _ => -1,
             }
         }
 
@@ -1105,7 +1224,7 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             let (Some(name), Some(help), Some(func)) = (name, help, func) else {
                 return -1;
             };
-            crate::compat::map::map_addfunc(el, name, help, func)
+            c_int::from(!el.add_command(name, help, func)).wrapping_neg()
         }
 
         // A `hist_fun_t` then its `void *` handle. Then, and only when
@@ -1120,10 +1239,15 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // ERR-history-04, defined by the core: a NULL function with a
             // non-NULL handle is -1 here rather than the C's armed NULL
             // indirect call. Every other combination is the C's 0.
-            let rv = crate::compat::hist::hist_set(el, f, ptr, Some(crate::history::hist_settings));
+            let narrow = el.narrow_history() && crate::conversion::max_multibyte_length() != 1;
+            let rv = if el.set_history_callback(f, ptr, narrow) {
+                0
+            } else {
+                -1
+            };
             // The flag clear is not conditional on `rv` in the C either.
-            if crate::compat::el::mb_cur_max() == 1 {
-                el.el_flags &= !NARROW_HISTORY;
+            if crate::conversion::max_multibyte_length() == 1 {
+                el.set_narrow_history(false);
             }
             rv
         }
@@ -1131,22 +1255,14 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
         // One `int`, the EINTR-recovery flag. Inline in the C.
         EL_SAFEREAD => {
             // SAFETY: the op's argument is an `int`.
-            if unsafe { ap.next_arg::<c_int>() } != 0 {
-                el.el_flags |= FIXIO;
-            } else {
-                el.el_flags &= !FIXIO;
-            }
+            el.set_safe_read(unsafe { ap.next_arg::<c_int>() } != 0);
             0
         }
 
         // One `int`, inverted: non-zero enables editing. Inline in the C.
         EL_EDITMODE => {
             // SAFETY: the op's argument is an `int`.
-            if unsafe { ap.next_arg::<c_int>() } != 0 {
-                el.el_flags &= !EDIT_DISABLED;
-            } else {
-                el.el_flags |= EDIT_DISABLED;
-            }
+            el.set_editing_enabled(unsafe { ap.next_arg::<c_int>() } != 0);
             0
         }
 
@@ -1158,16 +1274,15 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // The C dereferences `el->el_read` unchecked. `Option` makes the
             // uninitialised case representable (ERR-input-16), and there is
             // nothing to install into: 0 is what the op always returns.
-            el.el_read
-                .as_deref_mut()
-                .map_or(0, |rd| crate::compat::read::el_read_setfn(rd, rc))
+            el.set_read_callback(rc);
+            0
         }
 
         // One `void *`, stored verbatim and never dereferenced. Inline in the
         // C, and this arm leaves `rv` at 0.
         EL_CLIENTDATA => {
             // SAFETY: the op's argument is a `void *`.
-            el.el_data = unsafe { ap.next_arg::<*mut c_void>() };
+            el.set_client_data(unsafe { ap.next_arg::<*mut c_void>() });
             0
         }
 
@@ -1177,18 +1292,20 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
         EL_UNBUFFERED => {
             // SAFETY: the op's argument is an `int`.
             let on = unsafe { ap.next_arg::<c_int>() } != 0;
-            let was = el.el_flags & UNBUFFERED != 0;
+            let was = el.unbuffered();
             // The flag is written *before* the sequence runs, and both
             // sequences read it: `read_prepare` enters raw mode only when
             // UNBUFFERED is set and editing is enabled, and `read_finish`
             // leaves the tty raw when it is set — which is why
             // `read_finish` here returns it to cooked mode.
             if on && !was {
-                el.el_flags |= UNBUFFERED;
-                crate::compat::read::read_prepare(el);
+                el.set_unbuffered(true);
+                if el.editing_enabled() {
+                    let _ = el.set_terminal_mode(nshedit::domain::TerminalMode::Editing);
+                }
             } else if !on && was {
-                el.el_flags &= !UNBUFFERED;
-                crate::compat::read::read_finish(el);
+                el.set_unbuffered(false);
+                let _ = el.set_terminal_mode(nshedit::domain::TerminalMode::Cooked);
             }
             0
         }
@@ -1199,11 +1316,11 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // Both results are discarded, so a terminal that refused the mode
             // change is indistinguishable from one that took it.
             // SAFETY: the op's argument is an `int`.
-            let _ = if unsafe { ap.next_arg::<c_int>() } != 0 {
-                crate::compat::tty::tty_rawmode(el)
+            if unsafe { ap.next_arg::<c_int>() } != 0 {
+                let _ = el.set_terminal_mode(nshedit::domain::TerminalMode::Editing);
             } else {
-                crate::compat::tty::tty_cookedmode(el)
-            };
+                let _ = el.set_terminal_mode(nshedit::domain::TerminalMode::Cooked);
+            }
             0
         }
 
@@ -1221,34 +1338,18 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // SAFETY: the op's arguments are an `int` then a `FILE *`.
             let what = unsafe { ap.next_arg::<c_int>() };
             let fp = unsafe { ap.next_arg::<*mut c_void>() };
-            match what {
-                0 => {
-                    el.el_infile = fp;
-                    el.el_infd = cstdio::fileno_of(fp);
-                }
-                1 => {
-                    el.el_outfile = fp;
-                    el.el_outfd = cstdio::fileno_of(fp);
-                }
-                2 => {
-                    el.el_errfile = fp;
-                    el.el_errfd = cstdio::fileno_of(fp);
-                }
-                // Any other `what` changes nothing.
-                _ => return -1,
+            if (0..=2).contains(&what) && el.set_stream(what as usize, fp, cstdio::fileno_of(fp)) {
+                0
+            } else {
+                -1
             }
-            0
         }
 
         // No further arguments: clear the recorded display, redraw prompt and
         // line, flush. Returns 0 — the arm assigns nothing to `rv`.
         EL_REFRESH => {
-            crate::compat::refresh::re_clear_display(el);
-            crate::compat::refresh::re_refresh(el);
-            // A no-op in the port: nothing is buffered on this side, because
-            // the core writes through `el_outfd` rather than the caller's
-            // `FILE *`. Called anyway, so the sequence stays the C's.
-            crate::compat::terminal::terminal_flush(el);
+            // The next driver display is a complete native frame, so there
+            // is no separate screen cache to clear or flush here.
             0
         }
 
@@ -1265,7 +1366,10 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // string.
             let p = unsafe { ap.next_arg::<*mut c_void>() };
             match unsafe { wstr(p.cast::<u32>()) } {
-                Some(w) => crate::compat::map::map_set_wordchars(el, w),
+                Some(w) => {
+                    el.set_word_characters(w);
+                    0
+                }
                 None => -1,
             }
         }
@@ -1281,7 +1385,9 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
         EL_GETENV => {
             // SAFETY: the op's argument is a `func_t`, per the header.
             let f = unsafe { fn_arg::<FuncT>(&mut ap) };
-            el.el_getenv = f.filter(|f| !core::ptr::fn_addr_eq(*f, default_getenv as FuncT));
+            el.set_environment_callback(
+                f.filter(|f| !core::ptr::fn_addr_eq(*f, default_getenv as FuncT)),
+            );
             0
         }
 
@@ -1330,7 +1436,12 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // The C passes a NULL escape-character pointer here, which is why
             // `el_prompt.p_ignore` has no route out of the library at all
             // (the other half of ERR-core-api-14).
-            crate::compat::prompt::prompt_get(el, prf, None, op)
+            let Some(prf) = prf else {
+                return -1;
+            };
+            let (callback, _) = el.prompt_wide(op != EL_PROMPT);
+            *prf = Some(callback);
+            0
         }
 
         // An `el_pfunc_t *` then a `wchar_t *`, the latter optional.
@@ -1348,7 +1459,15 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // before `prompt_get` runs, as in the C.
             let c = unsafe { ap.next_arg::<*mut c_void>() };
             let c = unsafe { c.cast::<u32>().as_mut() };
-            crate::compat::prompt::prompt_get(el, prf, c, op)
+            let Some(prf) = prf else {
+                return -1;
+            };
+            let (callback, escape) = el.prompt_wide(op != EL_PROMPT);
+            *prf = Some(callback);
+            if let Some(c) = c {
+                *c = escape;
+            }
+            0
         }
 
         // One `const wchar_t **`, set to the static `L\"emacs\"`/`L\"vi\"`.
@@ -1359,21 +1478,10 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             if out.is_null() {
                 return -1;
             }
-            let mut editor: &'static [u32] = &[];
-            let rv = crate::compat::map::map_get_editor(el, &mut editor);
-            if rv != 0 {
-                // The unreachable third map type: nothing is stored.
-                return rv;
-            }
-            // Back onto the terminated statics. The core's answer is one of
-            // its own two literals and nothing else, so the fall-through is
-            // as dead as the -1 above (ERR-modes-71).
-            let p = if editor == &EDITOR_EMACS[..5] {
-                EDITOR_EMACS.as_ptr()
-            } else if editor == &EDITOR_VI[..2] {
+            let p = if el.editor_is_vi() {
                 EDITOR_VI.as_ptr()
             } else {
-                return -1;
+                EDITOR_EMACS.as_ptr()
             };
             // SAFETY: the op's argument is a `const wchar_t **`.
             unsafe { *out.cast::<*const u32>() = p };
@@ -1385,7 +1493,7 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
         EL_SIGNAL => {
             // SAFETY: the op's argument is an `int *` the caller supplied.
             let out = unsafe { ap.next_arg::<*mut c_void>() };
-            unsafe { *out.cast::<c_int>() = el.el_flags & HANDLE_SIGNALS };
+            unsafe { *out.cast::<c_int>() = c_int::from(el.handle_signals()) };
             0
         }
 
@@ -1394,7 +1502,7 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
         EL_EDITMODE => {
             // SAFETY: the op's argument is an `int *` the caller supplied.
             let out = unsafe { ap.next_arg::<*mut c_void>() };
-            unsafe { *out.cast::<c_int>() = c_int::from(el.el_flags & EDIT_DISABLED == 0) };
+            unsafe { *out.cast::<c_int>() = c_int::from(el.editing_enabled()) };
             0
         }
 
@@ -1404,7 +1512,7 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
         EL_SAFEREAD => {
             // SAFETY: the op's argument is an `int *` the caller supplied.
             let out = unsafe { ap.next_arg::<*mut c_void>() };
-            unsafe { *out.cast::<c_int>() = el.el_flags & FIXIO };
+            unsafe { *out.cast::<c_int>() = if el.safe_read() { FIXIO } else { 0 } };
             0
         }
 
@@ -1413,9 +1521,6 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
         EL_TERMINAL => {
             // SAFETY: the op's argument is a `const char **`.
             let out = unsafe { ap.next_arg::<*mut c_void>() };
-            let mut name: Option<&str> = None;
-            crate::compat::terminal::terminal_get(el, &mut name);
-            let name = name.map(str::to_owned);
             // The C hands out `t_name` itself, a borrowed pointer a later
             // `terminal_set` replaces; the core's `String` carries no
             // terminator, so a NUL-terminated copy is owned here per editor.
@@ -1424,7 +1529,7 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // invalidated by a later one — where the C's survives until the
             // type is reloaded. A name containing an interior NUL, which the
             // C could not have produced, reports NULL.
-            let p = el.publish_terminal_name(name.as_deref());
+            let p = el.terminal_name_ptr();
             // The C has no NULL check here and neither has this.
             // SAFETY: the out-pointer read above.
             unsafe { *out.cast::<*const c_char>() = p };
@@ -1446,12 +1551,20 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // SAFETY: the op's arguments are a `char *` then a `void *`.
             let name = unsafe { ap.next_arg::<*mut c_void>() };
             let out = unsafe { ap.next_arg::<*mut c_void>() };
-            let argv = [
-                GETTC.as_ptr().cast::<c_char>().cast_mut(),
-                name.cast::<c_char>(),
-                out.cast::<c_char>(),
-            ];
-            crate::compat::terminal::terminal_gettc(el, 3, &argv)
+            let _ = GETTC;
+            let Some(name) = (unsafe { cbytes(name.cast()) }) else {
+                return -1;
+            };
+            let Some(size) = el.screen_size() else {
+                return -1;
+            };
+            let value = match name {
+                b"li" => size.rows(),
+                b"co" => size.columns(),
+                _ => return -1,
+            };
+            unsafe { *out.cast::<c_int>() = c_int::try_from(value).unwrap_or(c_int::MAX) };
+            0
         }
 
         // One `el_rfunc_t *`, set to `EL_BUILTIN_GETCFN` (NULL) when the
@@ -1461,10 +1574,7 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // As in the setter, an uninitialised read subsystem is the C's
             // NULL dereference and is defined here; it reports the builtin,
             // which is what a reader installed after `read_init` would be.
-            let f = el
-                .el_read
-                .as_deref_mut()
-                .and_then(crate::compat::read::el_read_getfn);
+            let f = el.read_callback();
             // SAFETY: the op's argument is an `el_rfunc_t *`, and an
             // `Option<ElRfuncT>` is that slot's exact representation.
             let out = unsafe { ap.next_arg::<*mut c_void>() };
@@ -1476,7 +1586,7 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
         EL_CLIENTDATA => {
             // SAFETY: the op's argument is a `void **` the caller supplied.
             let out = unsafe { ap.next_arg::<*mut c_void>() };
-            unsafe { *out.cast::<*mut c_void>() = el.el_data };
+            unsafe { *out.cast::<*mut c_void>() = el.client_data() };
             0
         }
 
@@ -1485,7 +1595,7 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
         EL_UNBUFFERED => {
             // SAFETY: the op's argument is an `int *` the caller supplied.
             let out = unsafe { ap.next_arg::<*mut c_void>() };
-            unsafe { *out.cast::<c_int>() = c_int::from(el.el_flags & UNBUFFERED != 0) };
+            unsafe { *out.cast::<c_int>() = c_int::from(el.unbuffered()) };
             0
         }
 
@@ -1497,11 +1607,11 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // SAFETY: the op's arguments are an `int` then a `FILE **`.
             let what = unsafe { ap.next_arg::<c_int>() };
             let out = unsafe { ap.next_arg::<*mut c_void>() };
-            let fp = match what {
-                0 => el.el_infile,
-                1 => el.el_outfile,
-                2 => el.el_errfile,
-                _ => return -1,
+            let Some(fp) = usize::try_from(what)
+                .ok()
+                .and_then(|index| el.stream(index))
+            else {
+                return -1;
             };
             // SAFETY: the out-pointer read above.
             unsafe { *out.cast::<CFile>() = fp };
@@ -1517,11 +1627,6 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             if out.is_null() {
                 return -1;
             }
-            let mut wordchars: Option<Vec<u32>> = None;
-            let rv = crate::compat::map::map_get_wordchars(el, &mut wordchars);
-            if rv != 0 {
-                return rv;
-            }
             // As `EL_TERMINAL`: the C lends out its own buffer, the core
             // hands back an owned copy with no terminator, and the
             // terminated one is owned here per editor and replaced on every
@@ -1529,7 +1634,7 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // reinstalled — by `EL_WORDCHARS`, `bind -v`/`bind -e`, an
             // `EL_EDITOR` switch or `el_end`, each of which frees it and any
             // of which the C's caller must not hold a pointer across.
-            let p = el.publish_word_characters(wordchars);
+            let p = el.publish_word_characters();
             // SAFETY: the out-pointer read above.
             unsafe { *out.cast::<*const u32>() = p };
             0
@@ -1540,7 +1645,7 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
         // handle reports a non-NULL address here; the core keeps `None` for
         // that state, which is why [`default_getenv`] exists.
         EL_GETENV => {
-            let f: FuncT = el.el_getenv.unwrap_or(default_getenv);
+            let f: FuncT = el.environment_callback().unwrap_or(default_getenv);
             // SAFETY: the op's argument is a `func_t *` the caller supplied.
             let out = unsafe { ap.next_arg::<*mut c_void>() };
             unsafe { *out.cast::<FuncT>() = f };
@@ -1565,7 +1670,7 @@ pub unsafe extern "C" fn el_cursor(el: *mut EditLine, n: c_int) -> c_int {
     // computes the saturating offset instead, which is the same observable
     // result: a character index in `0 ..= lastchar - buffer`.
     // SAFETY: `el` must be non-NULL.
-    crate::compat::chared::el_cursor(unsafe { &mut *el }, n)
+    unsafe { &mut *el }.move_cursor(n)
 }
 
 // [spec:libedit:def:histedit.el-wline-fn]
@@ -1604,7 +1709,7 @@ pub unsafe extern "C" fn el_winsertstr(el: *mut EditLine, str_: *const WcharT) -
     // A NULL string and an empty one are the same -1, so NULL becomes the
     // empty slice rather than a separate check.
     // SAFETY: `el` must be non-NULL; `str_` is null or NUL-terminated.
-    crate::compat::chared::el_winsertstr(unsafe { &mut *el }, unsafe { wstr(str_) }.unwrap_or(&[]))
+    unsafe { &mut *el }.insert_wide(unsafe { wstr(str_) }.unwrap_or(&[]))
 }
 
 // [spec:libedit:def:histedit.el-wreplacestr-fn]
@@ -1614,7 +1719,7 @@ pub unsafe extern "C" fn el_winsertstr(el: *mut EditLine, str_: *const WcharT) -
 pub unsafe extern "C" fn el_wreplacestr(el: *mut EditLine, str_: *const WcharT) -> c_int {
     // As `el_winsertstr`: NULL and empty are both -1.
     // SAFETY: `el` must be non-NULL; `str_` is null or NUL-terminated.
-    crate::compat::chared::el_wreplacestr(unsafe { &mut *el }, unsafe { wstr(str_) }.unwrap_or(&[]))
+    unsafe { &mut *el }.replace_wide(unsafe { wstr(str_) }.unwrap_or(&[]))
 }
 
 // [spec:libedit:def:histedit.history-winit-fn]

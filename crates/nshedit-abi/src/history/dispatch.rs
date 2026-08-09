@@ -1,5 +1,4 @@
-use core::ffi::{c_int, c_void};
-use core::ptr;
+use core::ffi::c_int;
 
 use crate::cdecl::histedit::{
     H_ADD, H_APPEND, H_CLEAR, H_CURR, H_DEL, H_DELDATA, H_END, H_ENTER, H_FIRST, H_FUNC, H_GETSIZE,
@@ -236,31 +235,5 @@ pub(crate) unsafe fn dispatch<C: HistoryChar>(
             set_error(event, UNKNOWN);
             -1
         }
-    }
-}
-
-/// The `.editrc` `history size` / `history unique` compatibility path.
-///
-/// # Safety
-///
-/// `cookie` must be the wide history handle installed on the editor.
-pub(crate) unsafe extern "C" fn hist_settings(
-    cookie: *mut c_void,
-    operation: c_int,
-    number: c_int,
-) -> c_int {
-    let mut event = HistEventGen {
-        num: 0,
-        str: ptr::null(),
-    };
-    // SAFETY: this function's contract and the typed argument shape of the
-    // two supported settings operations.
-    unsafe {
-        dispatch(
-            cookie.cast::<HistoryWideOwner>(),
-            &mut event,
-            operation,
-            DispatchArg::Number(number),
-        )
     }
 }

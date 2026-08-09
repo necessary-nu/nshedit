@@ -1,7 +1,7 @@
 //! Rust-native editor-domain values.
 //!
-//! These types are deliberately independent of the translated compatibility
-//! engine. They contain no C scalar aliases, raw pointers, operation codes,
+//! These types are deliberately independent of the C ABI representation.
+//! They contain no C scalar aliases, raw pointers, operation codes,
 //! flag words, errno values, or sentinel encodings. The safe editor shell is
 //! built from this vocabulary; the ABI adapter translates at its boundary.
 

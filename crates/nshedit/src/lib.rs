@@ -18,6 +18,7 @@ pub mod domain;
 // [spec:nshedit:req:core.terminal-render+1]
 // [spec:nshedit:req:core.token-completion+1]
 // [spec:nshedit:req:core.read-driver]
+// [spec:nshedit:req:core.no-compat-internals]
 /// Safe native editor sessions and their borrowed I/O capabilities.
 pub mod editor;
 

@@ -41,7 +41,6 @@
 mod adapter;
 pub mod cdecl;
 pub mod chartype;
-mod compat;
 mod conversion;
 pub mod eln;
 pub mod filecomplete;
@@ -63,13 +62,8 @@ pub mod readline;
 /// through `std`, exactly as `libedit.so` does, so this is a declaration of a
 /// symbol that is present either way — not a dependency the port acquires.
 ///
-/// The core cannot do this itself: it records into [`crate::compat::errno`] instead,
-/// and this module is what turns that record into the C's `errno`. Both are
-/// per-thread, and [`Mark`] is neither `Send` nor `Sync` so the copy between
-/// them cannot be split across two threads.
 mod errno {
     use core::ffi::c_int;
-    use core::marker::PhantomData;
 
     // glibc, musl and Bionic all publish the thread-local `errno` through
     // `__errno_location`.
@@ -89,39 +83,21 @@ mod errno {
         safe fn errno_location() -> *mut c_int;
     }
 
-    /// A sample of what the core has recorded, taken before a call and spent
-    /// on it afterwards.
-    ///
-    /// Not `Send` and not `Sync`: `errno` is per-thread on both sides, so a
-    /// sample is only meaningful to the thread that took it.
     #[derive(Debug)]
-    pub(crate) struct Mark(u64, PhantomData<*const ()>);
+    pub(crate) struct Mark;
 
-    /// Sample the core's `errno` before calling into it.
+    /// Mark a boundary operation whose platform calls may update `errno`.
     #[must_use]
     pub(crate) fn mark() -> Mark {
-        Mark(crate::compat::errno::writes(), PhantomData)
+        Mark
     }
 
-    /// Copy what the core recorded since `mark` into the C's `errno`.
-    ///
-    /// Nothing is written when the call recorded nothing, so a successful call
-    /// leaves the caller's `errno` exactly as it found it and a value left
-    /// over from an earlier failure is never republished — which is the C's
-    /// discipline: written on failure, never cleared on success.
-    pub(crate) fn publish(mark: Mark) {
-        if crate::compat::errno::writes() != mark.0 {
-            set(crate::compat::errno::errno());
-        }
-    }
+    /// Complete a marked operation. Native platform operations already write
+    /// the caller's thread-local slot directly, so no shadow state is copied.
+    pub(crate) fn publish(_mark: Mark) {}
 
-    /// Write `e` to both homes, for the two errno values this crate produces
-    /// itself: `sem:eln.el-getc-fn`'s `ERANGE`, and the `errno = 0` that
-    /// `sem:readline.read-history-fn` clears with. The core's copy is kept in
-    /// step because the C has one `errno` and code on both sides of this
-    /// boundary reads it.
+    /// Write an ABI-defined value to the caller's thread-local `errno`.
     pub(crate) fn set(e: c_int) {
-        crate::compat::errno::set_errno(e);
         // SAFETY: the accessor answers with this thread's `errno` slot, which
         // is valid for as long as the thread is.
         unsafe { *errno_location() = e };
@@ -133,7 +109,7 @@ mod errno {
     /// `sem:readline.read-history-fn` and its two neighbours — hand back. It
     /// reads the platform's copy rather than the core's because the failing
     /// call may equally have been a `std` one, which sets the platform's and
-    /// not the core's; [`publish`] is what makes the two agree first.
+    /// not an editor-owned shadow.
     pub(crate) fn get() -> c_int {
         // SAFETY: as `set`.
         unsafe { *errno_location() }
@@ -141,7 +117,7 @@ mod errno {
 
     #[cfg(test)]
     mod tests {
-        use super::{get, mark, publish, set};
+        use super::{get, set};
 
         /// The accessor is the same `errno` the platform's own calls write,
         /// which is the whole claim this module rests on: a failing `std` call
@@ -151,20 +127,6 @@ mod errno {
             set(0);
             let e = std::fs::File::open("/nonexistent/nshedit/errno/probe").unwrap_err();
             assert_eq!(get(), e.raw_os_error().unwrap());
-        }
-
-        /// A call that recorded nothing leaves the caller's `errno` alone; one
-        /// that recorded hands the value over.
-        #[test]
-        fn publishing_follows_what_the_core_recorded() {
-            set(7);
-            publish(mark());
-            assert_eq!(get(), 7);
-
-            let m = mark();
-            crate::compat::errno::set_errno(crate::compat::errno::EINVAL);
-            publish(m);
-            assert_eq!(get(), crate::compat::errno::EINVAL);
         }
     }
 }
@@ -212,7 +174,7 @@ pub(crate) mod cstdio {
     use core::ffi::{VaList, c_char, c_int, c_long, c_void};
     use std::io::{self, Write};
 
-    use crate::compat::el::CFile;
+    use crate::cdecl::histedit::CFile;
 
     // These functions are POSIX and spelled the same in every libc this port
     // targets. None is `safe`: each dereferences caller-provided storage or a
@@ -224,6 +186,8 @@ pub(crate) mod cstdio {
         /// C: `long ftell(FILE *stream)` — the stream's position, or -1 on a
         /// stream that cannot report one (a pipe, a socket).
         fn ftell(stream: *mut c_void) -> c_long;
+        /// C: `int fflush(FILE *stream)` — zero on success and EOF on error.
+        fn fflush(stream: *mut c_void) -> c_int;
         /// C: `int fputs(const char *s, FILE *stream)` — non-negative on
         /// success, `EOF` on failure.
         fn fputs(s: *const c_char, stream: *mut c_void) -> c_int;
@@ -288,6 +252,21 @@ pub(crate) mod cstdio {
         // is the contract every rule taking one states, and the C dereferences
         // it with no more checking than this.
         unsafe { fileno(stream) }
+    }
+
+    /// Flush one caller-owned stream without assuming anything about its
+    /// private libc representation.
+    pub(crate) fn flush(stream: CFile) -> io::Result<()> {
+        if stream.is_null() {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        // SAFETY: a non-NULL `CFile` is a live `FILE *` supplied by the
+        // caller. `fflush` does not retain it.
+        if unsafe { fflush(stream) } == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
     }
 
     /// C: `ftell(fp) == 0` — step 1 of `sem:history.history-save-fp-fn`.
