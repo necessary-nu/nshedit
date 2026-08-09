@@ -26,13 +26,13 @@ consequences {
         "nshedit-plat grows true Darwin arms: passwd and sigaction/sigset layouts, spelled from the stable Darwin ABI and self-checked with target-gated layout assertions."
         "nshedit-abi grows the Darwin stdio data symbols (__stdinp/__stdoutp/__stderrp) and a Mach-O export/install-name story; the ELF shape gates gain Mach-O counterparts."
         "Final macOS proof (native test suite, direct C consumer, Mach-O exports, install names, and runtime linking) requires macOS hardware or CI; until then Darwin support is compile-proven from Linux via a cross-check gate."
-        "Windows support is scoped to the native surface: a console backend behind nshedit-plat (VT modes via ConPTY), a builtin VT capability profile in nshterm that bypasses terminfo discovery, and console-event delivery into the driver's signal model. nshedit-abi is explicitly out of scope on Windows."
+        "Windows support is scoped to the native surface: nshedit-plat classifies real console and stream handles, decodes structured console input, and enables VT processing for console output; the editor reuses its existing ANSI profile and treats ConPTY as a byte-stream host. nshedit-abi is explicitly out of scope on Windows. [dec:libedit:windows-terminal-boundary] owns the complete boundary."
         "posix-only-scope records the completed source-port boundary, not which platforms the maintained Rust product targets. Its 'the target is POSIX' reading is narrowed to the C ABI by this decision."
         "macOS drop-in is source and link compatibility, not replacement of the system library: we ship libnshedit.0.dylib under our own install name with the libedit link names beside it, and never claim /usr/lib/libedit.3.dylib, which is served from the dyld shared cache and protected by System Integrity Protection. Recorded as [spec:nshedit:req:abi.darwin-drop-in]; this is the deferred install-name question, decided in macos-contract."
         "The Darwin termios projection is Darwin's own shape — NCCS 20, a 64-bit tcflag_t, the BSD V* subscripts, separate c_ispeed/c_ospeed — and not glibc's NCCS 32, because a macOS caller's struct termios is Darwin's. A terminal behaviour Darwin does not define leaves the platform representation table rather than resolving to a Linux bit. Recorded as [spec:nshedit:req:platform.darwin-termios]."
     )
     deferred (
-        "Windows user-identity and ~user expansion semantics without a passwd database — decided in windows-contract."
+        "Legacy Windows consoles without VT processing and a Windows C ABI remain outside the supported target."
     )
 }
 edges {
@@ -53,11 +53,11 @@ is what makes target expansion a bounded piece of work rather than a
 rewrite.
 
 macOS is POSIX and ships libedit; supporting it is the same product on
-a second POSIX. Windows is a different terminal lineage, but the modern
-console (ConPTY, Windows Terminal) speaks VT sequences, which is the
-render model nshedit already targets — the seam is input, modes, and
-events, not the drawing model. The C ABI skin is the one component with
-no Windows counterpart, and it stays behind.
+a second POSIX. Windows is a different terminal lineage, but modern console
+hosts and pseudoterminals accept VT sequences, which is the render model
+nshedit already targets — the seam is input, modes, and events, not the
+drawing model. The C ABI skin is the one component with no Windows
+counterpart, and it stays behind.
 
 ## What macOS drop-in means
 

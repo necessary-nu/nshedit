@@ -3316,34 +3316,75 @@ children (
         children (
             {
                 id windows-contract
-                title "Decide the Windows scope: native surface only, console seam, VT profile"
+                title "Define the native Windows console and stream contracts"
                 kind @docs
-                deps (macos-platform macos-abi)
+                deps (macos-platform)
+                sealed true
+                log (
+                    {
+                        at 2026-08-09T23:34:32.248751104Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T23:38:06.505008059Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
             }
 
             {
                 id windows-platform
-                title "Build the console backend for nshedit-plat"
+                title "Make the native workspace compile on Windows"
+                kind @build
+                implements {
+                    native-impl ([spec:nshedit:req:workspace.windows-native-build])
+                }
                 deps (windows-contract)
             }
 
             {
                 id windows-terminal
-                title "Give nshterm a builtin VT profile that bypasses terminfo discovery"
-                deps (windows-contract)
+                title "Control Windows console modes, VT output, size, and streams"
+                kind @feat
+                implements {
+                    native-impl ([spec:nshedit:req:platform.windows-console])
+                }
+                deps (windows-platform)
             }
 
             {
                 id windows-editor
-                title "Drive the editor from console input and events end to end"
-                deps (windows-platform windows-terminal)
+                title "Integrate Windows terminal input and output with the editor"
+                kind @feat
+                implements {
+                    native-impl ([spec:nshedit:req:core.windows-session])
+                }
+                deps (windows-terminal windows-input)
             }
 
             {
                 id windows-acceptance
                 title "Prove the native editor and nsh integration on Windows"
                 kind @test
+                implements {
+                    native-impl ([spec:nshedit:req:workspace.windows-acceptance])
+                }
                 deps (windows-editor)
+            }
+
+            {
+                id windows-input
+                title "Decode Windows console records into the native read protocol"
+                kind @feat
+                implements {
+                    native-impl ([spec:nshedit:req:platform.windows-input])
+                }
+                deps (windows-platform)
             }
         )
     }
