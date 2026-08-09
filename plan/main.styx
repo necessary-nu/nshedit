@@ -3256,6 +3256,14 @@ children (
                     native-impl ([spec:nshedit:req:workspace.darwin-cross-check])
                 }
                 deps (macos-platform macos-abi)
+                log (
+                    {
+                        at 2026-08-09T21:30:46.679854694Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

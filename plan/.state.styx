@@ -525,6 +525,11 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule abi.darwin-runtime}
     )}
+    {id macos-cross-check, covered_rules (
+        workspace.darwin-cross-check
+    ), covered_claims (
+        {impl_name native-impl, rule workspace.darwin-cross-check}
+    )}
 )
 
 walk_frontier (
