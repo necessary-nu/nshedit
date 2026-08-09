@@ -3186,4 +3186,82 @@ children (
             }
         )
     }
+
+    {
+        id macos-support
+        title "Prove the workspace on macOS"
+        kind @feat
+        children (
+            {
+                id macos-contract
+                title "Define the macOS drop-in target, termios projection, and Mach-O shape gates"
+                kind @docs
+            }
+
+            {
+                id macos-platform
+                title "Give nshedit-plat true Darwin arms for passwd and signals"
+                deps (macos-contract)
+            }
+
+            {
+                id macos-abi
+                title "Give the ABI crate its Darwin stdio and export surface"
+                deps (macos-contract)
+            }
+
+            {
+                id macos-cross-check
+                title "Gate the workspace on a Darwin cross-check from Linux"
+                kind @ci
+                deps (macos-platform macos-abi)
+            }
+
+            {
+                id macos-acceptance
+                title "Prove the suite and differential conformance on macOS hardware"
+                kind @test
+                deps (macos-cross-check)
+            }
+        )
+    }
+
+    {
+        id windows-support
+        title "Bring the native editor to Windows consoles"
+        kind @feat
+        children (
+            {
+                id windows-contract
+                title "Decide the Windows scope: native surface only, console seam, VT profile"
+                kind @docs
+                deps (macos-platform macos-abi)
+            }
+
+            {
+                id windows-platform
+                title "Build the console backend for nshedit-plat"
+                deps (windows-contract)
+            }
+
+            {
+                id windows-terminal
+                title "Give nshterm a builtin VT profile that bypasses terminfo discovery"
+                deps (windows-contract)
+            }
+
+            {
+                id windows-editor
+                title "Drive the editor from console input and events end to end"
+                deps (windows-platform windows-terminal)
+            }
+
+            {
+                id windows-acceptance
+                title "Prove the native editor and nsh integration on Windows"
+                kind @test
+                deps (windows-editor)
+            }
+        )
+    }
 )

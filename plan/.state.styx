@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-09T19:39:34.672137357Z
+last_sync_at 2026-08-09T20:14:28.652368954Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -99,6 +99,11 @@ derived_priorities (
     {id input-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
     {id input-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
     {id input-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id macos-abi, priority 1, derived_at 2026-08-09T20:14:28.652368954Z}
+    {id macos-acceptance, priority 3, derived_at 2026-08-09T20:14:28.652368954Z}
+    {id macos-contract, priority 0, derived_at 2026-08-09T20:14:28.652368954Z}
+    {id macos-cross-check, priority 2, derived_at 2026-08-09T20:14:28.652368954Z}
+    {id macos-platform, priority 1, derived_at 2026-08-09T20:14:28.652368954Z}
     {id modes-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
     {id modes-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
     {id modes-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
@@ -136,6 +141,11 @@ derived_priorities (
     {id terminal-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
     {id terminal-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
     {id terminal-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id windows-acceptance, priority 3, derived_at 2026-08-09T20:14:28.652368954Z}
+    {id windows-contract, priority 2, derived_at 2026-08-09T20:14:28.652368954Z}
+    {id windows-editor, priority 3, derived_at 2026-08-09T20:14:28.652368954Z}
+    {id windows-platform, priority 3, derived_at 2026-08-09T20:14:28.652368954Z}
+    {id windows-terminal, priority 3, derived_at 2026-08-09T20:14:28.652368954Z}
 )
 
 assertions (
@@ -500,5 +510,5 @@ impl_evidence (
 )
 
 walk_frontier (
-    ded8bb34faae10dd204d2988ec56e10de53652f2
+    9bdf41958a26c6f9bee3c6ad5714aa6aa5c8e98e
 )
