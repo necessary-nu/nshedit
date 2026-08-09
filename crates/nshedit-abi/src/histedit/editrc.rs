@@ -78,7 +78,7 @@ pub(super) unsafe fn dispatch_editrc(el: *mut EditLine, words: &[&[u32]]) -> c_i
             _ => -1,
         },
         "setty" => unsafe { (&mut *el).set_tty_modes(words) },
-        "echotc" | "telltc" | "settc" if words.len() > 1 => 0,
+        "echotc" | "telltc" | "settc" => unsafe { (&mut *el).terminal_command(words) },
         "history" => 0,
         _ => return -1,
     };

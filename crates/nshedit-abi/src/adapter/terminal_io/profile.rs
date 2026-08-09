@@ -1,7 +1,9 @@
 //! Per-handle capability state and native profile configuration.
 
 use super::*;
-use nshterm::parser::names::{BOOL_CODES, BOOL_NAMES, NUMBER_CODES, NUMBER_NAMES};
+use nshterm::parser::names::{
+    BOOL_CODES, BOOL_NAMES, NUMBER_CODES, NUMBER_NAMES, STRING_CODES, STRING_NAMES,
+};
 
 #[derive(Clone, Copy)]
 pub(super) enum CapabilityValueKind {
@@ -14,6 +16,10 @@ fn capability_name<'a>(code: &str, codes: &[&str], names: &'a [&str]) -> Option<
         .iter()
         .position(|candidate| *candidate == code)
         .map(|index| names[index])
+}
+
+pub(super) fn string_capability_name(code: &str) -> Option<&'static str> {
+    capability_name(code, STRING_CODES, STRING_NAMES)
 }
 
 pub(super) fn local_value_capability(code: &str) -> Option<(CapabilityValueKind, &'static str)> {
@@ -137,6 +143,12 @@ impl TerminalCapabilities {
             .copied()
             .or_else(|| self.bools.get(name).copied().map(c_int::from))
             .unwrap_or(0)
+    }
+
+    pub(super) fn string(&self, code: &str) -> Option<&CStr> {
+        string_capability_name(code)
+            .and_then(|name| self.strings.get(name))
+            .map(CString::as_c_str)
     }
 
     pub(super) fn refresh_derived_flags(&mut self) {

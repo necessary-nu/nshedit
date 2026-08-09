@@ -1199,14 +1199,11 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // The C's `i`: where the scan stopped, not how many strings the
             // caller passed. Every handler ignores it.
             let argc = argv.len() as c_int;
+            let _ = argc;
             match op {
                 EL_BIND => el.bind_command(&argv),
                 EL_SETTY => el.set_tty_modes(&argv),
-                // These diagnostic/configuration commands remain accepted
-                // only when they have an argument. Their typed terminal
-                // implementations live at the boundary, never in the core.
-                EL_TELLTC | EL_SETTC | EL_ECHOTC if argc > 1 => 0,
-                _ => -1,
+                _ => el.terminal_command(&argv),
             }
         }
 
@@ -1556,16 +1553,7 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             let Some(name) = (unsafe { cbytes(name.cast()) }) else {
                 return -1;
             };
-            let Some(size) = el.screen_size() else {
-                return -1;
-            };
-            let value = match name {
-                b"li" => size.rows(),
-                b"co" => size.columns(),
-                _ => return -1,
-            };
-            unsafe { *out.cast::<c_int>() = c_int::try_from(value).unwrap_or(c_int::MAX) };
-            0
+            unsafe { el.get_terminal_capability(name, out) }
         }
 
         // One `el_rfunc_t *`, set to `EL_BUILTIN_GETCFN` (NULL) when the

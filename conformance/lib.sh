@@ -75,7 +75,8 @@ pinned_env() {
 # previous run so a stale history file cannot make a load succeed.
 prepare_work() {
     rm -rf -- "$WORK"
-    mkdir -p -- "$WORK/home" "$WORK/tmp" "$WORK/data" "$WORK/terminfo/d"
+    mkdir -p -- "$WORK/home" "$WORK/tmp" "$WORK/data" \
+        "$WORK/terminfo/d" "$WORK/terminfo/x"
     # Pin the terminfo database rather than inheriting the system's. TERM is
     # `dumb`, whose entry is tiny and stable; copying it means the harness
     # reads one known file instead of whatever /usr/share/terminfo holds.
@@ -84,6 +85,13 @@ prepare_work() {
         if [ -f "$src" ]; then cp -- "$src" "$WORK/terminfo/d/dumb"; break; fi
     done
     [ -f "$WORK/terminfo/d/dumb" ] || die "no terminfo entry for TERM=dumb found on this system"
+
+    # xterm exercises parameterised strings and ncurses' termcap-visible
+    # projection of `sgr0` to `me`; `dumb` deliberately contains neither.
+    for src in /usr/share/terminfo/x/xterm /lib/terminfo/x/xterm /etc/terminfo/x/xterm; do
+        if [ -f "$src" ]; then cp -- "$src" "$WORK/terminfo/x/xterm"; break; fi
+    done
+    [ -f "$WORK/terminfo/x/xterm" ] || die "no terminfo entry for TERM=xterm found on this system"
 }
 
 # Runs $2... under the pinned environment for locale $1, with the environment

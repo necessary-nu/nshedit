@@ -85,6 +85,19 @@ static const char *wpath(const char *name)
 	return pathbuf;
 }
 
+static void dump_stream(FILE *stream, const char *label)
+{
+	char bytes[16384];
+	size_t length;
+
+	fflush(stream);
+	rewind(stream);
+	length = fread(bytes, 1, sizeof(bytes), stream);
+	op(label);
+	besc(bytes, length);
+	putchar('\n');
+}
+
 /* --------------------------------------------------------------------- */
 /* 1. Lifecycle and the el_set/el_get mirror                              */
 /* --------------------------------------------------------------------- */
@@ -220,7 +233,123 @@ static void section_parse(EditLine *el)
 }
 
 /* --------------------------------------------------------------------- */
-/* 3. el_source — the same surface, reached from a file                   */
+/* 3. Terminal capabilities and tty commands — observe their effects      */
+/* --------------------------------------------------------------------- */
+
+/*
+ * A successful status is not evidence that a terminal command did
+ * anything. Pair mutation with EL_GETTC, then capture the actual bytes
+ * written by echotc, telltc, and setty's state listing.
+ *
+ * [spec:nshedit:req:abi.terminal-controls+1/test]
+ * [spec:nshedit:req:abi.tty-modes/test]
+ */
+static void section_terminal(EditLine *el, FILE *devnull)
+{
+	FILE *capture;
+	const char *sv;
+	int iv;
+
+	iv = -1;
+	op("EL_GETTC parsed co");
+	pr(el_get(el, EL_GETTC, "co", &iv));
+	op("  parsed co value");
+	printf("%d\n", iv);
+
+	iv = -1;
+	op("EL_GETTC parsed li");
+	pr(el_get(el, EL_GETTC, "li", &iv));
+	op("  parsed li value");
+	printf("%d\n", iv);
+
+	op("EL_TERMINAL xterm");
+	pr(el_set(el, EL_TERMINAL, "xterm"));
+	sv = NULL;
+	op("EL_GETTC xterm me");
+	pr(el_get(el, EL_GETTC, "me", &sv));
+	op("  xterm me value");
+	sesc(sv);
+	putchar('\n');
+
+	capture = tmpfile();
+	op("terminal error tmpfile");
+	printf("%d\n", capture != NULL);
+	if (capture != NULL) {
+		op("EL_SETFP terminal error");
+		pr(el_set(el, EL_SETFP, 2, capture));
+		op("EL_TERMINAL missing");
+		pr(el_set(el, EL_TERMINAL, "nshedit-no-such-terminal"));
+		op("EL_SETFP restore error");
+		pr(el_set(el, EL_SETFP, 2, devnull));
+		dump_stream(capture, "terminal diagnostic bytes");
+		fclose(capture);
+	}
+	op("EL_TERMINAL dumb");
+	pr(el_set(el, EL_TERMINAL, "dumb"));
+
+	op("EL_SETTC co 91");
+	pr(el_set(el, EL_SETTC, "co", "91", NULL));
+	op("EL_SETTC li 37");
+	pr(el_set(el, EL_SETTC, "li", "37", NULL));
+	op("EL_SETTC am yes");
+	pr(el_set(el, EL_SETTC, "am", "yes", NULL));
+	op("EL_SETTC bl B");
+	pr(el_set(el, EL_SETTC, "bl", "B", NULL));
+	op("EL_SETTC ch parm");
+	pr(el_set(el, EL_SETTC, "ch", "%p1%d", NULL));
+
+	iv = -1;
+	op("EL_GETTC direct co");
+	pr(el_get(el, EL_GETTC, "co", &iv));
+	op("  direct co value");
+	printf("%d\n", iv);
+
+	sv = NULL;
+	op("EL_GETTC direct am");
+	pr(el_get(el, EL_GETTC, "am", &sv));
+	op("  direct am value");
+	sesc(sv);
+	putchar('\n');
+
+	sv = NULL;
+	op("EL_GETTC direct bl");
+	pr(el_get(el, EL_GETTC, "bl", &sv));
+	op("  direct bl value");
+	sesc(sv);
+	putchar('\n');
+
+	op("EL_GETTC unknown");
+	pr(el_get(el, EL_GETTC, "zz", &iv));
+
+	capture = tmpfile();
+	op("terminal tmpfile");
+	printf("%d\n", capture != NULL);
+	if (capture == NULL)
+		return;
+
+	op("EL_SETFP terminal out");
+	pr(el_set(el, EL_SETFP, 1, capture));
+	op("EL_ECHOTC bl effect");
+	pr(el_set(el, EL_ECHOTC, "bl", NULL));
+	op("EL_ECHOTC cols effect");
+	pr(el_set(el, EL_ECHOTC, "cols", NULL));
+	op("EL_ECHOTC ch effect");
+	pr(el_set(el, EL_ECHOTC, "ch", "4", NULL));
+	op("EL_TELLTC effect");
+	pr(el_set(el, EL_TELLTC, NULL));
+	op("EL_SETTY mutate");
+	pr(el_set(el, EL_SETTY, "-d", "+echo", "-isig", NULL));
+	op("EL_SETTY list effect");
+	pr(el_set(el, EL_SETTY, "-d", NULL));
+	dump_stream(capture, "terminal output bytes");
+
+	op("EL_SETFP restore out");
+	pr(el_set(el, EL_SETFP, 1, devnull));
+	fclose(capture);
+}
+
+/* --------------------------------------------------------------------- */
+/* 4. el_source — the same surface, reached from a file                   */
 /* --------------------------------------------------------------------- */
 
 static void write_editrc(const char *name, const char *body)
@@ -256,7 +385,7 @@ static void section_source(EditLine *el)
 }
 
 /* --------------------------------------------------------------------- */
-/* 4. The line buffer — chared.c, without a keystroke in sight            */
+/* 5. The line buffer — chared.c, without a keystroke in sight            */
 /* --------------------------------------------------------------------- */
 
 static void dump_line(EditLine *el, const char *label)
@@ -309,7 +438,7 @@ static void section_line(EditLine *el)
 }
 
 /* --------------------------------------------------------------------- */
-/* 5. Geometry                                                            */
+/* 6. Geometry                                                            */
 /* --------------------------------------------------------------------- */
 
 static void section_geometry(EditLine *el)
@@ -371,6 +500,7 @@ int main(int argc, char **argv)
 
 	section_setget(el);
 	section_parse(el);
+	section_terminal(el, devnull);
 	section_source(el);
 	section_line(el);
 	section_geometry(el);

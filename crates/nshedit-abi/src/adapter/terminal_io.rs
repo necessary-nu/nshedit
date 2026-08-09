@@ -2,6 +2,7 @@
 
 use super::*;
 
+mod commands;
 mod profile;
 mod tty;
 
