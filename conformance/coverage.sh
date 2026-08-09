@@ -40,7 +40,7 @@ COV=$OUT/coverage
 COV_TARGET=$ROOT/target/cov-build
 CLAIMS=$ROOT/crates/nshedit-abi/tests/driven.rs
 
-DRIVERS=(hist_tok el_api readline_api pty_edit binding_dispatch signal_lifecycle abi_gaps ub_corpus)
+DRIVERS=(hist_tok el_api readline_api pty_edit binding_api binding_dispatch signal_lifecycle abi_gaps ub_corpus)
 src_of() {
     case $1 in
         ub_corpus) printf '%s\n' "$CONF_DIR/aux/ub_corpus.c" ;;

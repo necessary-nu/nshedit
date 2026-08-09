@@ -41,7 +41,7 @@ consequences {
         "TerminalMode names Cooked, Editing, and Quoted states. TerminalControl transitions through that enum, and Editor publishes a new committed mode only after the controller succeeds."
         "The renderer performs deterministic incremental row differencing with owned terminfo or explicit ANSI capabilities. A one-line terminal uses carriage return, backspace, forward text, and explicit erasure; it receives a typed error for an impossible multiline position instead of guessed escape bytes."
         "The native renderer uses Unicode terminal-width data for scalar layout. Locale-specific narrow and wide C behaviour remains an ABI conversion and conformance responsibility rather than global native renderer state."
-        "The transliterated terminal, tty, prompt, and refresh modules remain compatibility-only until the ABI adapter switches to the native Editor; core.no-compat-internals then deletes them."
+        "The transliterated terminal, tty, prompt, and refresh engine is absent. The ABI adapter projects C-visible configuration into the native renderer without retaining a compatibility renderer."
     )
     deferred (
         "Insert/delete-character cost models beyond suffix rewriting when real terminal profiles demonstrate a byte or latency benefit."
@@ -65,8 +65,8 @@ codifies (
 
 Rendering crosses three representations that must not collapse into one:
 logical input, a sequence of terminal operations, and the physical screen
-image believed to have been committed. The translated engine combines them
-in wide-integer buffers and sends output while mutating those buffers, which
+image believed to have been committed. The retired engine combined them in
+wide-integer buffers and sent output while mutating those buffers, which
 makes sentinel values, callback routing, and partial writes part of the state
 model.
 

@@ -196,6 +196,10 @@
 // [spec:libedit:sem:histedit.wcsdup-fn/test]  crates/nshedit-abi/src/histedit.rs:915
 
 // ---------------------------------------------------------------------------
+// conformance/driver/binding_api.c — 0 rules
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // conformance/driver/binding_dispatch.c — 0 rules
 // ---------------------------------------------------------------------------
 
@@ -224,7 +228,7 @@
 #[test]
 fn the_claim_list_is_what_coverage_measured() {
     // Regenerate with ./conformance/coverage.sh, verify with --check.
-    // 147 rules across 8 drivers, measured under -C instrument-coverage.
+    // 147 rules across 9 drivers, measured under -C instrument-coverage.
     assert_eq!(CLAIMED, 147);
 }
 

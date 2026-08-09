@@ -25,17 +25,18 @@
 //! the line struct. `nshedit` itself is ordinary Rust and carries none of it.
 //! See `plan/decisions/idiomatic-core.md`.
 //!
-//! Behaviour across this boundary is frozen through translation and test,
-//! defects included, then corrected during idiomatization — per
-//! `plan/decisions/conformance-policy.md` and the register in
-//! `docs/errata.md`. A function here that looks wrong is reproducing
-//! something; check its `sem` rule before changing it.
+//! Defined behaviour across this boundary remains reference-compatible even
+//! when the native Rust semantics differ behind it. A C-visible divergence
+//! requires its own decision and versioned rule; undefined inputs instead get
+//! deterministic safe behaviour. See `plan/decisions/conformance-policy.md`
+//! and `docs/errata.md` before changing code that appears surprising.
 
 // Unsafe C entry points document the caller obligations at the Rust boundary;
 // their linked `sem` rules separately freeze the reference implementation's
 // observable behaviour.
 // [spec:nshedit:req:abi.complete-surface+1]
 // [spec:nshedit:req:abi.behavioural-conformance]
+// [spec:nshedit:req:abi.observational-coverage]
 
 // [spec:nshedit:req:abi.opaque-owner]
 mod adapter;

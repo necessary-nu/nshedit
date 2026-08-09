@@ -30,12 +30,12 @@ alternatives (
 consequences {
     accepted (
         "Each incomplete C handle is backed by an ABI allocation containing a native object and its C-only state. The pointer spelling and ownership contract remain unchanged for callers."
-        "During the bounded cutover, the ABI allocation may also contain a private translated compatibility payload for behaviour not yet routed through the native object. That payload is removed concern by concern and is never exposed or cast as the native object."
+        "No translated compatibility payload remains in an ABI allocation; every exported concern routes through the native object and ABI-only state."
         "FILE objects, descriptors supplied by C, client data, callback pointers, cookies, narrow/wide conversion buffers, live line views, tokenizer arrays, term names, word-character strings, errno translation, and exported mutable globals are owned by nshedit-abi."
         "Completed C structs and header-generation inputs are declared by nshedit-abi. cbindgen does not derive public C layout from core source."
         "Rust identifiers remain idiomatic; export_name and cbindgen rename metadata preserve required C symbols and spellings."
-        "The completed adapter calls only safe public semantic operations, and a compile boundary prevents access to core modules or fields. Until that firewall lands, existing exports may reach only the contained compatibility payload for behaviour not yet switched; new behaviour does not target it."
-        "Pointer validity and callback reentrancy are explicit adapter state-machine obligations and are covered by conformance tests. While translated callbacks remain, the compatibility payload is an offset-zero prefix so the callback pointer has exactly the opaque handle's address; this invariant is deleted with the payload."
+        "The adapter calls only safe public semantic operations, and the crate boundary prevents access to core modules or fields."
+        "Pointer validity and callback reentrancy are explicit adapter state-machine obligations covered by conformance tests; neither relies on layout aliasing or an offset-zero compatibility prefix."
     )
     deferred ()
 }
@@ -63,11 +63,9 @@ callback, global, varargs operation, or temporary conversion. The native editor
 then remains free to change its private representation, and cbindgen reads only
 the crate that actually owns C layout.
 
-The migration is deliberately asymmetric. An opaque owner can carry the native
-object alongside the translated payload while an exported concern still uses
-the latter, but it does not synchronize two engines or make both authoritative.
-Translated callbacks currently receive a pointer to that payload, so placing it
-at offset zero preserves the enclosing opaque handle's address for re-entry.
-Once callbacks and dispatch for a concern use the safe semantic interface, its
-compatibility fields and this prefix constraint are removed rather than kept as
-a permanent bridge.
+The migration was deliberately asymmetric. An opaque owner temporarily carried
+the native object beside a translated payload while an exported concern still
+used the latter, without synchronizing two engines or making both authoritative.
+That payload and its former offset-zero callback constraint were removed when
+the last concern switched to the safe semantic interface; the completed adapter
+keeps only native ownership and explicit ABI state.

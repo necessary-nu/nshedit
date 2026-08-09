@@ -194,6 +194,18 @@ fn abi_shape() {
 /// Passes: every operation agrees under both codesets, including every byte
 /// of the saved history file.
 ///
+/// The effect-observing acceptance matrix is part of this one oracle run:
+///
+/// - terminal commands use `el_set`, `el_parse`, and `el_source`, then inspect
+///   the changed capability or tty state and capture emitted/listed bytes;
+/// - bindings use `EL_BIND`, `el_parse`, and `el_source`, then execute the
+///   installed callback or macro in a later `el_gets` and inspect query bytes;
+/// - `EL_HIST` installs both callback representations; parsed commands verify
+///   their assigned behavior, while sourced wide-store mutations are followed
+///   by inspection of output and callback-owned storage;
+/// - `EL_SIGNAL` has no editrc command, so its direct route is followed through
+///   real reads, terminal geometry, caller-handler propagation, and restoration.
+///
 /// The last two divergences were `history_init` and `tok_init` aborting with
 /// `SIGABRT` — all eight narrow entry points routed to a `core_gap()` in
 /// `crates/nshedit-abi/src/histedit.rs`, because `nshedit` had no narrow
@@ -204,6 +216,7 @@ fn abi_shape() {
 /// is what would let the rest of a run survive a regression.
 // [spec:nshedit:req:abi.behavioural-conformance/test]
 // [spec:nshedit:req:abi.signal-lifecycle/test/integration]
+// [spec:nshedit:req:abi.observational-coverage/test/integration]
 #[test]
 fn differential_traces() {
     let _stages = stage_lock();

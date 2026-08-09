@@ -36,8 +36,8 @@
  * `dumb` is deliberate rather than convenient: its terminfo entry has almost
  * no capabilities, so refresh has to fall back to its own arithmetic instead
  * of delegating to the terminal, and the emitted bytes stay small enough to
- * read in a diff. A richer TERM belongs in a later pass, once this one is
- * quiet.
+ * read in a diff. Rich-terminal coverage is a separate matrix concern; this
+ * driver deliberately isolates the fallback renderer.
  */
 /*
  * `posix_openpt`, `grantpt`, `unlockpt` and `ptsname` are XSI, and the

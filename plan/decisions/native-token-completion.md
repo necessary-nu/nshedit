@@ -39,7 +39,7 @@ consequences {
         "Completion candidates own insertion text, optional display text, and an optional suffix. A typed collection filters non-prefix results, removes duplicate insertions deterministically, computes a logical-unit common prefix, and distinguishes no match, unique replacement, and ambiguous replacement or listing."
         "CompletionEffect carries the query and accepts only the typed candidate collection. Filesystem scans, passwd lookup, application callbacks, and policy decisions run outside Editor; the core stores no generator, callback, thread-local result, or process-global scan state."
         "Applying a completion encodes the replacement for its quote context, revalidates the query snapshot and span, and records the whole replacement as one undoable line edit."
-        "The translated tokenizer and file-completion modules remain only for the old compatibility path until the ABI adapter switches to the native read driver and core.no-compat-internals deletes them."
+        "The translated tokenizer and file-completion engine is absent from the core. The ABI adapter owns only the temporary argv, C generator, and completion-record projections required by callers."
     )
     deferred (
         "Candidate ranking, fuzzy matching, interactive cycling, and menu presentation policy belong to future native consumers rather than this deterministic baseline."
@@ -72,7 +72,7 @@ arbitrary or reentrant work while producing candidates because no Editor
 borrow crosses that boundary; when it returns, snapshot validation prevents a
 response for an old line from being applied to new state.
 
-Compatibility remains an adapter responsibility. The later adapter can map
-owned tokens back to temporary argv storage and can drive C generators into a
-typed candidate collection, while the native core never learns their pointer,
-sentinel, callback, or integer-status conventions.
+Compatibility remains an adapter responsibility. The adapter maps owned tokens
+back to temporary argv storage and drives C generators into a typed candidate
+collection, while the native core never learns their pointer, sentinel,
+callback, or integer-status conventions.

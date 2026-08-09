@@ -38,8 +38,8 @@ consequences {
         "Previous means older input and Next means newer input. Navigation distinguishes selecting an entry, returning to the saved live line, and hitting a boundary. Removed or evicted cursor identities repair to the live position."
         "Capacity is Option<NonZeroUsize>, eliminating zero-as-magic ambiguity. Shrinking and bounded insertion return evicted owned entries; consecutive-duplicate rejection returns the caller's Text and metadata."
         "HistoryNavigateEffect carries a typed repeat count and answers atomically with HistoryResponse::Entry, Live, or Boundary, so the read driver neither exposes intermediate navigation nor infers live-line restoration from an ambiguous None."
-        "Persistence and locale conversion are integrations over owned records, not HistoryStore fields. The existing byte history container remains available to compatibility code until a Text-aware native codec is separately decided."
-        "The former NativeHistory byte/global-cursor facade is replaced rather than aliased. The translated HistoryGen, EditorHistory, varargs, event, and narrow/wide paths remain legacy-only until the ABI adapter moves them and core.no-compat-internals deletes them."
+        "Persistence and locale conversion are integrations over owned records, not HistoryStore fields. C history records, callbacks, and narrow/wide conversion remain ABI-only projections; a versioned native Text codec is separately deferred."
+        "The former NativeHistory byte/global-cursor facade, translated HistoryGen and EditorHistory traits, varargs dispatch, and event records are absent from the core rather than retained as aliases or a legacy engine."
     )
     deferred (
         "A versioned native persistence codec for every TextUnit representation and application metadata schema."

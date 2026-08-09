@@ -37,6 +37,7 @@ consequences {
         "The detailed libedit corpus remains the behavioural authority for the ABI: return values, errno, emitted bytes, stream effects, callback ordering, pointer validity, and state transitions are observable."
         "A compatibility probe counts as evidence only when it observes the effect the reference operation promises. A matching success code cannot prove a state mutation, emitted sequence, callback, or handler transition."
         "State-changing probes include a dependent observation after the mutation, so an unconditional stand-in cannot satisfy the oracle by returning the reference status."
+        "The final oracle reaches terminal controls, bindings, and history effects through direct operation codes, el_parse, and el_source, then observes the resulting state, bytes, or callback-owned storage. Signal policy has no editrc command and is instead proven through EL_SIGNAL reads and disposition restoration."
         "Binding-dispatch evidence installs and executes every advertised built-in in both editing maps, with and without a repeat count, and compares the returned line plus post-command line and cursor against the oracle."
         "Signal evidence observes disabled-policy preservation, resize and resume rearming, cooked terminal state before caller propagation, buffered-read and handle-destruction restoration, and unbuffered ownership across calls."
         "Generated execution claims are replaced from current instrumentation rather than accumulated across deleted implementations; a lower measured count is preferable to stale proof."
@@ -82,6 +83,12 @@ look identical until a later read, query, callback, or emitted terminal byte
 is inspected. The oracle therefore couples each mutating operation to an
 observable consequence. This is part of defining compatibility evidence, not
 an expansion of the C contract.
+
+`el_parse` and `el_source` are independent public routes through the editrc
+surface. Where an operation also has an `EL_*` code, all three routes belong
+in the oracle. Signal policy is the exception because editrc exposes no signal
+command; its dependent observations are actual interrupted and resumed reads,
+terminal geometry, caller-handler ordering, and disposition restoration.
 
 The greenfield core changes the mechanism, not that contract. Port-only
 compatibility gaps already documented by the ABI are therefore closed and

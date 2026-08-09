@@ -197,7 +197,6 @@ assertions (
     {id greenfield-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:17:31.852523476Z}
     {id greenfield-abi-oracle, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:46:10.110061941Z}
     {id nshterm-hashed-db, kind @complete, author "brendan@necessary.nu", at 2026-08-09T01:02:09.380870907Z}
-    {id greenfield-acceptance, kind @doing, author "brendan@necessary.nu", at 2026-08-09T01:04:02.612575717Z}
 )
 
 impl_evidence (
@@ -221,7 +220,11 @@ impl_evidence (
     ), rule_versions_seen (
         {id abi.complete-surface, version 1}
     )}
-    {id greenfield-acceptance}
+    {id greenfield-acceptance, covered_rules (
+        abi.observational-coverage
+    ), covered_claims (
+        {impl_name native-impl, rule abi.observational-coverage}
+    )}
     {id greenfield-domain-model, covered_rules (
         core.text-screen-model
         core.typed-domain

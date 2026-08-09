@@ -5,7 +5,7 @@ elements (
         id [arch:libedit:terminal-caps]
         name "In-workspace terminal capability layer"
         kind @boundary
-        lifecycle @provisional
+        lifecycle @active
         owns (
             [spec:libedit:def:terminal.tgetent-fn]
             [spec:libedit:def:terminal.tgetstr-fn]
@@ -26,13 +26,14 @@ elements (
             {at "2026-08-08T14:07:24Z", kind @modified, by "[dec:libedit:lint-policy]"}
             {at "2026-08-09T00:59:40Z", kind @modified, by "[dec:libedit:terminal-caps-via-term-crate]"}
             {at "2026-08-09T02:02:03Z", kind @modified, by "[dec:libedit:terminal-compatibility-view]"}
+            {at "2026-08-09T09:19:15Z", kind @modified, by "[dec:libedit:terminal-caps-via-term-crate]"}
         )
     }
     {
         id [arch:libedit:c-abi]
         name "Drop-in C ABI adapter"
         kind @boundary
-        lifecycle @provisional
+        lifecycle @active
         owns (
             [spec:nshedit:req:abi.complete-surface]
             [spec:nshedit:req:abi.opaque-owner]
@@ -70,13 +71,14 @@ elements (
             {at "2026-08-09T02:02:03Z", kind @modified, by "[dec:libedit:terminal-compatibility-view]"}
             {at "2026-08-09T03:59:03Z", kind @modified, by "[dec:libedit:native-command-protocols]"}
             {at "2026-08-09T08:22:40Z", kind @modified, by "[dec:libedit:signal-lifecycle]"}
+            {at "2026-08-09T09:19:15Z", kind @modified, by "[dec:libedit:conformance-policy]"}
         )
     }
     {
         id [arch:libedit:core]
         name "Rust-native nshedit line-editing library"
         kind @subsystem
-        lifecycle @provisional
+        lifecycle @active
         owns (
             [spec:nshedit:req:core.typed-domain]
             [spec:nshedit:req:core.text-screen-model]
@@ -117,13 +119,14 @@ elements (
             {at "2026-08-08T14:07:24Z", kind @modified, by "[dec:libedit:lint-policy]"}
             {at "2026-08-09T02:02:03Z", kind @modified, by "[dec:libedit:native-terminal-render]"}
             {at "2026-08-09T08:22:40Z", kind @modified, by "[dec:libedit:signal-lifecycle]"}
+            {at "2026-08-09T09:19:15Z", kind @modified, by "[dec:libedit:idiomatic-core]"}
         )
     }
     {
         id [arch:libedit:platform]
         name "Platform layer: syscalls through rustix, signals and passwd through libc"
         kind @boundary
-        lifecycle @provisional
+        lifecycle @active
         owns ()
         exposes ("crates/nshedit-plat/src/**")
         depends_on ()
@@ -137,6 +140,7 @@ elements (
             {at "2026-08-08T14:07:24Z", kind @modified, by "[dec:libedit:lint-policy]"}
             {at "2026-08-09T02:02:03Z", kind @modified, by "[dec:libedit:terminal-compatibility-view]"}
             {at "2026-08-09T08:22:40Z", kind @modified, by "[dec:libedit:signal-lifecycle]"}
+            {at "2026-08-09T09:19:15Z", kind @modified, by "[dec:libedit:platform-layer]"}
         )
     }
     {

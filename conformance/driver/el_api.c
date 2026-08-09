@@ -92,6 +92,19 @@ static const char *wpath(const char *name)
 	return pathbuf;
 }
 
+static void write_editrc(const char *name, const char *body)
+{
+	FILE *file = fopen(wpath(name), "w");
+	if (file == NULL)
+		exit(70);
+	if (fputs(body, file) == EOF) {
+		fclose(file);
+		exit(70);
+	}
+	if (fclose(file) != 0)
+		exit(70);
+}
+
 static void dump_stream(FILE *stream, const char *label)
 {
 	char bytes[16384];
@@ -293,6 +306,20 @@ static void section_history(EditLine *el, FILE *devnull)
 		rc = history_w(wide, &wev, H_GETUNIQUE);
 		op("wide history unique value");
 		printf("rc=%d num=%d\n", rc, wev.num);
+
+		write_editrc("editrc.history",
+		    "history size 2\n"
+		    "history unique 0\n");
+		op("wide history source");
+		pr(el_source(el, wpath("editrc.history")));
+		history_w(wide, &wev, H_ENTER, L"source duplicate\n");
+		history_w(wide, &wev, H_ENTER, L"source duplicate\n");
+		rc = history_w(wide, &wev, H_GETSIZE);
+		op("source history count");
+		printf("rc=%d num=%d\n", rc, wev.num);
+		rc = history_w(wide, &wev, H_GETUNIQUE);
+		op("source history unique");
+		printf("rc=%d num=%d\n", rc, wev.num);
 		history_wend(wide);
 	}
 
@@ -349,6 +376,12 @@ static void section_history(EditLine *el, FILE *devnull)
  */
 static void section_terminal(EditLine *el, FILE *devnull)
 {
+	const char *parse_settc_columns[] = { "settc", "co", "83" };
+	const char *parse_settc_bell[] = { "settc", "bl", "P" };
+	const char *parse_echotc[] = { "echotc", "bl" };
+	const char *parse_telltc[] = { "telltc" };
+	const char *parse_setty[] = { "setty", "-d", "+echo", "-isig" };
+	const char *parse_setty_list[] = { "setty", "-d" };
 	FILE *capture;
 	const char *sv;
 	int iv;
@@ -428,7 +461,7 @@ static void section_terminal(EditLine *el, FILE *devnull)
 	op("terminal tmpfile");
 	printf("%d\n", capture != NULL);
 	if (capture == NULL)
-		return;
+		exit(70);
 
 	op("EL_SETFP terminal out");
 	pr(el_set(el, EL_SETFP, 1, capture));
@@ -449,20 +482,65 @@ static void section_terminal(EditLine *el, FILE *devnull)
 	op("EL_SETFP restore out");
 	pr(el_set(el, EL_SETFP, 1, devnull));
 	fclose(capture);
+
+	/* The same terminal operations through el_parse. Their bytes and a
+	 * later capability query distinguish real work from a zero return. */
+	capture = tmpfile();
+	op("parsed terminal tmpfile");
+	printf("%d\n", capture != NULL);
+	if (capture == NULL)
+		exit(70);
+	el_set(el, EL_SETFP, 1, capture);
+	op("parse settc co");
+	pr(el_parse(el, 3, parse_settc_columns));
+	op("parse settc bl");
+	pr(el_parse(el, 3, parse_settc_bell));
+	op("parse echotc");
+	pr(el_parse(el, 2, parse_echotc));
+	op("parse telltc");
+	pr(el_parse(el, 1, parse_telltc));
+	op("parse setty mutate");
+	pr(el_parse(el, 4, parse_setty));
+	op("parse setty list");
+	pr(el_parse(el, 2, parse_setty_list));
+	iv = -1;
+	op("parsed terminal co");
+	pr(el_get(el, EL_GETTC, "co", &iv));
+	op("  parsed terminal value");
+	printf("%d\n", iv);
+	dump_stream(capture, "parsed terminal bytes");
+	el_set(el, EL_SETFP, 1, devnull);
+	fclose(capture);
+
+	/* And through el_source, which is a distinct public editrc entry point. */
+	write_editrc("editrc.terminal",
+	    "settc co 84\n"
+	    "settc bl S\n"
+	    "echotc bl\n"
+	    "telltc\n"
+	    "setty -d +echo -isig\n"
+	    "setty -d\n");
+	capture = tmpfile();
+	op("source terminal tmpfile");
+	printf("%d\n", capture != NULL);
+	if (capture == NULL)
+		exit(70);
+	el_set(el, EL_SETFP, 1, capture);
+	op("source terminal commands");
+	pr(el_source(el, wpath("editrc.terminal")));
+	iv = -1;
+	op("sourced terminal co");
+	pr(el_get(el, EL_GETTC, "co", &iv));
+	op("  sourced terminal value");
+	printf("%d\n", iv);
+	dump_stream(capture, "sourced terminal bytes");
+	el_set(el, EL_SETFP, 1, devnull);
+	fclose(capture);
 }
 
 /* --------------------------------------------------------------------- */
 /* 5. el_source — the same surface, reached from a file                   */
 /* --------------------------------------------------------------------- */
-
-static void write_editrc(const char *name, const char *body)
-{
-	FILE *f = fopen(wpath(name), "w");
-	if (f == NULL)
-		return;
-	fputs(body, f);
-	fclose(f);
-}
 
 static void section_source(EditLine *el)
 {

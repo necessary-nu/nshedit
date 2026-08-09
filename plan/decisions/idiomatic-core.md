@@ -38,8 +38,8 @@ consequences {
         "The public core contains no raw pointers, FILE objects, C scalar aliases, extern callbacks, varargs dispatch, compatibility buffers, exported mutable state, or ABI record layouts."
         "The core ultimately forbids unsafe code. Platform unsafety belongs to nshedit-plat and C unsafety belongs to nshedit-abi."
         "nshedit-abi depends only on the core's public semantic API and cannot access editor fields or internal modules."
-        "The transliterated implementation is replaced incrementally behind the typed surface and then deleted; it is not retained as a legacy backend."
-        "During the bounded ABI cutover, an opaque owner may contain both the native object and a translated compatibility payload. The payload remains authoritative only for behaviour not yet switched, and no migrated concern may continue updating both representations."
+        "The transliterated implementation and its compatibility payload are absent; the typed native editor is the only core engine and no legacy backend remains."
+        "Opaque ABI owners contain the native object plus ABI-only state, never a second editor representation or synchronized shadow model."
     )
     deferred (
         "Whether a future native API offers async integration in addition to the resumable synchronous driver."
@@ -63,11 +63,11 @@ establishes ([arch:libedit:core])
 
 ## Rationale
 
-The existing core is a faithful transliteration, not the Rust library this
+The replaced core was a faithful transliteration, not the Rust library this
 decision requires. Its file-for-file modules, public state, raw streams,
-foreign callbacks, compatibility buffers, and manual `el_end` lifecycle make
-C representation choices part of the Rust API. A wrapper cannot make those
-invariants disappear while the ABI still reaches through it to mutate fields.
+foreign callbacks, compatibility buffers, and manual `el_end` lifecycle made
+C representation choices part of the Rust API. A wrapper could not make those
+invariants disappear while the ABI still reached through it to mutate fields.
 
 The opaque C handle gives the project a clean seam. `nshedit-abi` can allocate
 an adapter containing a private native editor plus every piece of C-only state,
@@ -76,11 +76,9 @@ and `Tokenizer *` types. Completed records and header generation likewise move
 to the ABI crate. The native crate can then be designed for Rust without
 changing a C layout that consumers can observe.
 
-Replacement proceeds through an ABI-owned shell that can temporarily contain a
-native object and the translated payload, then through vertical concern
-replacements. This is migration scaffolding, not a second supported backend:
-the compatibility payload is the sole authority for an unswitched concern, and
-that concern's compatibility state is deleted once the exported path uses the
-native semantic API. The conformance oracle remains executable throughout, and
-the final deletion of the payload proves the new model is the implementation
-rather than decoration.
+Replacement proceeded through an ABI-owned shell that temporarily contained a
+native object and translated payload, then through vertical concern
+replacements. It was migration scaffolding, never a second supported backend:
+the payload was authoritative only for an unswitched concern and was deleted
+when that concern moved to the native semantic API. Its final deletion proves
+the native model is the implementation rather than decoration.
