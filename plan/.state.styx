@@ -391,4 +391,9 @@ impl_evidence (
         {impl_name native-impl, rule histedit.el-resize-fn}
         {impl_name native-impl, rule histedit.el-set-fn}
     )}
+    {id rust-idiom-self-contained, covered_rules (
+        workspace.self-contained
+    ), covered_claims (
+        {impl_name native-impl, rule workspace.self-contained}
+    )}
 )

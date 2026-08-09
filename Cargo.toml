@@ -18,6 +18,8 @@ repository = "https://github.com/necessary-nu/nshedit"
 authors = ["Brendan Molloy <brendan@necessary.nu>"]
 
 [workspace.dependencies]
+# [spec:nshedit:req:workspace.self-contained]
+bsd = { version = "0.1.1", default-features = false, features = ["vis"] }
 nshedit = { path = "crates/nshedit", version = "0.0.0" }
 # The only crate that issues a syscall. See plan/decisions/platform-layer.md.
 nshedit-plat = { path = "crates/nshedit-plat", version = "0.0.0" }

@@ -28,7 +28,7 @@ name = "nshedit"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-bsd = { version = "0.1", path = "../../../../work/libbsd/crates/bsd" }
+bsd.workspace = true
 nshedit.workspace = true
 nshedit-plat.workspace = true
 nshterm.workspace = true

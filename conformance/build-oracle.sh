@@ -60,10 +60,19 @@ fi
 note "building the oracle"
 # src only. The doc/ subdirectory needs an nroff and builds nothing the
 # harness links against.
-make -C src > build.log 2>&1 \
+#
+# Git does not preserve mtimes, so a fresh checkout can make configure.ac or
+# an m4 input look newer than the committed distribution files generated from
+# it. The oracle consumes those committed files; regenerating them would both
+# require the exact maintainer Autotools versions and change the reference we
+# intend to measure. Empty tool commands let Automake's dependency rules run
+# without rewriting the source tree.
+# [spec:nshedit:req:workspace.self-contained/test]
+maintainer_tools=(ACLOCAL=: AUTOCONF=: AUTOHEADER=: AUTOMAKE=:)
+make -C src "${maintainer_tools[@]}" > build.log 2>&1 \
     || { tail -40 build.log >&2; die "build failed; see $ORACLE_BUILD/build.log"; }
 
-make -C src install > install.log 2>&1 \
+make -C src "${maintainer_tools[@]}" install > install.log 2>&1 \
     || { tail -40 install.log >&2; die "install failed; see $ORACLE_BUILD/install.log"; }
 
 # Loud rather than silent. If any of these is missing the harness must stop,

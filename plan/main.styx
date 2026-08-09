@@ -2951,6 +2951,14 @@ children (
                             native-impl ([spec:nshedit:req:workspace.self-contained])
                         }
                         deps (rust-idiom-contract)
+                        log (
+                            {
+                                at 2026-08-09T12:55:31.117227031Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+                        )
                     }
 
                     {

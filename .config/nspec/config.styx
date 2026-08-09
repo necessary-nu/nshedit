@@ -32,7 +32,7 @@ specs (
         name nshedit,
         include (docs/spec/native/**/*.md),
         impls (
-            {name native-impl, languages (@rust @c @bash), include (crates/**/*.rs), test_include (crates/**/tests/**/*.rs conformance/**/*.c conformance/**/*.sh), exclude (target/**), mode @both}
+            {name native-impl, languages (@rust @c @bash), include (Cargo.toml crates/**/*.rs), test_include (crates/**/tests/**/*.rs conformance/**/*.c conformance/**/*.sh), exclude (target/**), mode @both}
         )
     }
 )

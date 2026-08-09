@@ -9,7 +9,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-bsd = { version = "0.1", path = "../../../../work/libbsd/crates/bsd", optional = true }
+bsd = { workspace = true, optional = true }
 bstr = { version = "1.13.0", default-features = false, features = ["std"] }
 nshedit-plat.workspace = true
 nshterm.workspace = true

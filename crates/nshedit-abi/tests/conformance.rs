@@ -19,7 +19,7 @@
 //!
 //! ```text
 //! ./conformance/run.sh                        # everything, with a report
-//! cargo test -p nshedit-abi --test conformance # the same, through cargo
+//! cargo build && cargo test -p nshedit-abi --test conformance
 //! ./conformance/build-oracle.sh [--clean]     # just the oracle
 //! ./conformance/abi-shape.sh                  # just the symbol comparison
 //! ./conformance/differential.sh [driver]      # just the trace diff

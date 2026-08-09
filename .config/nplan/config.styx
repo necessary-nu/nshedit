@@ -29,26 +29,20 @@
 platforms (
     {
         platform "rust"
-        files (crates/**/*.rs)
+        files (Cargo.toml Cargo.lock .config/**/*.styx crates/**/Cargo.toml crates/**/*.rs conformance/**/*.sh packaging/**/*.sh)
         checks {
-            // Named packages, not `--all`. `cargo fmt --all` is documented
-            // to format workspace members AND their local path-based
-            // dependencies, and `crates/nshedit`'s optional `bsd` dependency
-            // is a path into a sibling checkout somebody else is editing —
-            // so `--all` made this gate a coin flip on their timing, and
-            // "fix" would have rewritten their files. There is no
-            // `cargo fmt --exclude`. `tests/workspace_hygiene.rs` fails if
-            // this list stops matching the workspace members.
+            // The workspace has no path dependency outside this repository,
+            // so Cargo's workspace-wide formatter is both complete and safe.
             format {
-                cmd "cargo fmt -p nshedit -p nshedit-abi -p nshedit-plat -p nshterm -- --check"
-                fix "cargo fmt -p nshedit -p nshedit-abi -p nshedit-plat -p nshterm"
+                cmd "cargo fmt --all -- --check"
+                fix "cargo fmt --all"
             }
             lint {
                 cmd "cargo clippy --workspace --all-targets -- -D warnings"
                 fix "cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged"
             }
             test {
-                cmd "cargo test --workspace"
+                cmd "bash -c \"cargo build --workspace && cargo test --workspace\""
             }
         }
     }

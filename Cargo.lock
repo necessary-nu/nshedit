@@ -70,6 +70,8 @@ checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 [[package]]
 name = "bsd"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "933b8b2f988a179236460d45fda57f2be78137c3dfbb9292122fc8d2683da1b2"
 dependencies = [
  "libc",
 ]
