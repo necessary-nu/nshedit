@@ -263,6 +263,26 @@ impl<T: TerminalControl> Editor<T> {
         self.state.execute(action)
     }
 
+    fn begin_edit_group(&mut self) {
+        self.state.begin_edit_group();
+    }
+
+    fn finish_edit_group(&mut self) {
+        self.state.finish_edit_group();
+    }
+
+    fn finish_all_edit_groups(&mut self) {
+        self.state.finish_all_edit_groups();
+    }
+
+    fn motion_destination(
+        &self,
+        motion: crate::domain::Motion,
+        count: usize,
+    ) -> Result<TextIndex, Error> {
+        self.state.motion_destination(motion, count)
+    }
+
     /// Replace a checked portion of the line as one undoable edit.
     pub fn replace(&mut self, span: TextSpan, replacement: Text) -> Result<(), Error> {
         self.state

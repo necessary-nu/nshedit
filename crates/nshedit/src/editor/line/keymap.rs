@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 
 use crate::domain::{
-    Action, Binding, Direction, EditTarget, InputMode, KeyLookup, KeySequence, KeymapMode, Motion,
-    Refresh, Text, TextTransform, WordKind, YankPlacement,
+    Action, Binding, CharacterSearch, CharacterSearchLanding, CommandSequence, Direction,
+    EditTarget, KeyLookup, KeySequence, KeymapMode, Motion, Refresh, SearchRepetition, Text,
+    TextTransform, ViInsertPlacement, ViOperator, ViSequence, ViSubstitution, WordKind,
+    YankPlacement,
 };
 
 #[derive(Debug)]
@@ -141,6 +143,8 @@ impl Keymaps {
             "\u{7f}",
             Action::Delete(EditTarget::Character(Direction::Previous)),
         );
+        insert_sequence(map, "\u{16}", CommandSequence::QuotedInsert);
+        insert_sequence(map, "\u{1b}", CommandSequence::MetaNext);
         insert(map, "\u{1b}b", word_motion(Direction::Previous));
         insert(
             map,
@@ -176,18 +180,13 @@ impl Keymaps {
                 transform: TextTransform::Uppercase,
             },
         );
+        insert(map, "\u{e2}", word_motion(Direction::Previous));
+        insert(map, "\u{e6}", word_motion(Direction::Next));
     }
 
     fn install_vi_insert(&mut self) {
         let map = &mut self.vi_insert;
-        insert(
-            map,
-            "\u{1b}",
-            Action::SetModes {
-                input: InputMode::Insert,
-                keymap: KeymapMode::ViCommand,
-            },
-        );
+        insert_sequence(map, "\u{1b}", CommandSequence::Vi(ViSequence::CommandMode));
         insert(
             map,
             "\u{8}",
@@ -201,12 +200,15 @@ impl Keymaps {
                 kind: WordKind::Word,
             }),
         );
+        insert_sequence(map, "\u{16}", CommandSequence::QuotedInsert);
         insert(map, "\n", Action::AcceptLine);
         insert(map, "\r", Action::AcceptLine);
     }
 
     fn install_vi_command(&mut self) {
         let map = &mut self.vi_command;
+        insert_sequence(map, "\u{1b}", CommandSequence::MetaNext);
+        insert_sequence(map, "\u{16}", CommandSequence::QuotedInsert);
         insert(map, "0", Action::Move(Motion::StartOfLine));
         insert(map, "$", Action::Move(Motion::EndOfLine));
         insert(
@@ -230,13 +232,25 @@ impl Keymaps {
             "h",
             Action::Move(Motion::Character(Direction::Previous)),
         );
-        insert(
+        insert_sequence(
             map,
             "i",
-            Action::SetModes {
-                input: InputMode::Insert,
-                keymap: KeymapMode::ViInsert,
-            },
+            CommandSequence::Vi(ViSequence::Insert(ViInsertPlacement::AtCursor)),
+        );
+        insert_sequence(
+            map,
+            "a",
+            CommandSequence::Vi(ViSequence::Insert(ViInsertPlacement::AfterCursor)),
+        );
+        insert_sequence(
+            map,
+            "I",
+            CommandSequence::Vi(ViSequence::Insert(ViInsertPlacement::StartOfLine)),
+        );
+        insert_sequence(
+            map,
+            "A",
+            CommandSequence::Vi(ViSequence::Insert(ViInsertPlacement::EndOfLine)),
         );
         insert(map, "l", Action::Move(Motion::Character(Direction::Next)));
         insert(map, "p", Action::Yank(YankPlacement::AfterCursor));
@@ -273,16 +287,74 @@ impl Keymaps {
             Action::Kill(EditTarget::Motion(Motion::EndOfLine)),
         );
         insert(map, "P", Action::Yank(YankPlacement::AtCursor));
-        insert(
+        insert_sequence(map, "R", CommandSequence::Vi(ViSequence::ReplaceMode));
+        insert_sequence(
             map,
-            "R",
-            Action::SetModes {
-                input: InputMode::Replace,
-                keymap: KeymapMode::ViInsert,
-            },
+            "d",
+            CommandSequence::Vi(ViSequence::Operator(ViOperator::Delete)),
         );
-        insert(map, "dd", Action::Kill(EditTarget::Line));
-        insert(map, "\u{12}", Action::Redo);
+        insert_sequence(
+            map,
+            "c",
+            CommandSequence::Vi(ViSequence::Operator(ViOperator::Change)),
+        );
+        insert_sequence(
+            map,
+            "y",
+            CommandSequence::Vi(ViSequence::Operator(ViOperator::Yank)),
+        );
+        insert_sequence(map, "r", CommandSequence::Vi(ViSequence::ReplaceNext));
+        insert_sequence(
+            map,
+            "s",
+            CommandSequence::Vi(ViSequence::Substitute(ViSubstitution::Characters)),
+        );
+        insert_sequence(
+            map,
+            "S",
+            CommandSequence::Vi(ViSequence::Substitute(ViSubstitution::Line)),
+        );
+        insert_sequence(
+            map,
+            "C",
+            CommandSequence::Vi(ViSequence::Substitute(ViSubstitution::ToEndOfLine)),
+        );
+        insert_sequence(
+            map,
+            "f",
+            character_search(Direction::Next, CharacterSearchLanding::OnTarget),
+        );
+        insert_sequence(
+            map,
+            "F",
+            character_search(Direction::Previous, CharacterSearchLanding::OnTarget),
+        );
+        insert_sequence(
+            map,
+            "t",
+            character_search(Direction::Next, CharacterSearchLanding::BeforeTarget),
+        );
+        insert_sequence(
+            map,
+            "T",
+            character_search(Direction::Previous, CharacterSearchLanding::BeforeTarget),
+        );
+        insert_sequence(
+            map,
+            ";",
+            CommandSequence::Vi(ViSequence::RepeatCharacterSearch(
+                SearchRepetition::SameDirection,
+            )),
+        );
+        insert_sequence(
+            map,
+            ",",
+            CommandSequence::Vi(ViSequence::RepeatCharacterSearch(
+                SearchRepetition::OppositeDirection,
+            )),
+        );
+        insert_sequence(map, ".", CommandSequence::Vi(ViSequence::RepeatChange));
+        insert(map, "\u{12}", Action::Refresh(Refresh::Redisplay));
         insert(map, "\n", Action::AcceptLine);
         insert(map, "\r", Action::AcceptLine);
     }
@@ -292,6 +364,18 @@ fn insert(map: &mut BTreeMap<KeySequence, Binding>, sequence: &str, action: Acti
     let sequence = KeySequence::new(Text::from(sequence))
         .expect("built-in key sequences are statically non-empty");
     map.insert(sequence, Binding::Action(action));
+}
+
+fn insert_sequence(map: &mut BTreeMap<KeySequence, Binding>, key: &str, sequence: CommandSequence) {
+    let key =
+        KeySequence::new(Text::from(key)).expect("built-in key sequences are statically non-empty");
+    map.insert(key, Binding::Sequence(sequence));
+}
+
+fn character_search(direction: Direction, landing: CharacterSearchLanding) -> CommandSequence {
+    CommandSequence::Vi(ViSequence::CharacterSearch(CharacterSearch::new(
+        direction, landing,
+    )))
 }
 
 fn word_motion(direction: Direction) -> Action {

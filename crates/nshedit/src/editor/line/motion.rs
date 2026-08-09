@@ -23,6 +23,23 @@ pub(super) fn destination(
     line.index(position)
 }
 
+pub(super) fn repeated_destination(
+    line: &Text,
+    cursor: TextIndex,
+    motion: Motion,
+    count: usize,
+) -> Result<TextIndex, Error> {
+    let mut destination = cursor;
+    for _ in 0..count {
+        let next = self::destination(line, destination, motion)?;
+        if next == destination {
+            break;
+        }
+        destination = next;
+    }
+    Ok(destination)
+}
+
 pub(super) fn target_span(
     line: &Text,
     cursor: TextIndex,

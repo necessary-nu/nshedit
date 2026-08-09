@@ -2815,16 +2815,26 @@ children (
             {
                 id greenfield-command-sequences
                 title "Implement typed multi-step command sequencing"
+                priority 3
                 kind @feat
                 implements {
                     native-impl ([spec:nshedit:req:core.command-sequences])
                 }
                 deps (greenfield-line-commands greenfield-read-driver)
+                log (
+                    {
+                        at 2026-08-09T04:05:28.213452078Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {
                 id greenfield-command-effects
                 title "Implement typed host-dependent command effects"
+                priority 3
                 kind @feat
                 implements {
                     native-impl ([spec:nshedit:req:core.command-effects])
@@ -2840,6 +2850,7 @@ children (
             {
                 id greenfield-binding-dispatch
                 title "Execute every built-in binding through native semantics"
+                priority 3
                 kind @fix
                 implements {
                     native-impl ([spec:nshedit:req:abi.binding-dispatch])

@@ -19,6 +19,12 @@ struct Snapshot {
     input_mode: InputMode,
 }
 
+#[derive(Debug)]
+struct EditGroup {
+    before: Snapshot,
+    depth: usize,
+}
+
 // [spec:nshedit:req:core.line-commands]
 #[derive(Debug)]
 pub(super) struct State {
@@ -32,6 +38,7 @@ pub(super) struct State {
     keymaps: keymap::Keymaps,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
+    edit_group: Option<EditGroup>,
 }
 
 impl State {
@@ -48,6 +55,7 @@ impl State {
             keymaps: keymap::Keymaps::default(),
             undo: Vec::new(),
             redo: Vec::new(),
+            edit_group: None,
         }
     }
 
@@ -59,6 +67,7 @@ impl State {
         self.keymap_mode = initial_keymap(config);
         self.undo.clear();
         self.redo.clear();
+        self.edit_group = None;
     }
 
     pub(super) fn select_editing_mode(&mut self, mode: EditingMode) {
@@ -104,6 +113,48 @@ impl State {
 
     pub(super) fn can_redo(&self) -> bool {
         !self.redo.is_empty()
+    }
+
+    pub(super) fn begin_edit_group(&mut self) {
+        if let Some(group) = &mut self.edit_group {
+            group.depth += 1;
+        } else {
+            self.edit_group = Some(EditGroup {
+                before: self.snapshot(),
+                depth: 1,
+            });
+        }
+    }
+
+    pub(super) fn finish_edit_group(&mut self) {
+        let Some(mut group) = self.edit_group.take() else {
+            return;
+        };
+        group.depth -= 1;
+        if group.depth != 0 {
+            self.edit_group = Some(group);
+        } else if self.line != group.before.line {
+            self.undo.push(group.before);
+            self.redo.clear();
+        }
+    }
+
+    pub(super) fn finish_all_edit_groups(&mut self) {
+        let Some(group) = self.edit_group.take() else {
+            return;
+        };
+        if self.line != group.before.line {
+            self.undo.push(group.before);
+            self.redo.clear();
+        }
+    }
+
+    pub(super) fn motion_destination(
+        &self,
+        motion: Motion,
+        count: usize,
+    ) -> Result<TextIndex, Error> {
+        motion::repeated_destination(&self.line, self.cursor, motion, count)
     }
 
     pub(super) fn bind(
@@ -382,6 +433,7 @@ impl State {
             .transpose()?;
         self.undo.clear();
         self.redo.clear();
+        self.edit_group = None;
         Ok(())
     }
 
@@ -392,7 +444,7 @@ impl State {
         let before = self.snapshot();
         match operation(self) {
             Ok(result) => {
-                if self.line != before.line {
+                if self.line != before.line && self.edit_group.is_none() {
                     self.undo.push(before);
                     self.redo.clear();
                 }

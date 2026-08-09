@@ -2,7 +2,8 @@ use std::io;
 
 use super::*;
 use crate::domain::{
-    CommandName, EditingMode, KeyLookup, NonScalarWide, Refresh, TerminalMode, TextUnit, WordKind,
+    CommandName, CommandSequence, EditingMode, KeyLookup, NonScalarWide, Refresh, TerminalMode,
+    TextUnit, ViOperator, ViSequence, WordKind,
 };
 use crate::editor::{Editor, TerminalControl};
 
@@ -340,7 +341,10 @@ fn keymaps_report_all_match_states() {
         editor.key_binding(&sequence("\u{1}")),
         KeyLookup::Exact(Binding::Action(Action::Move(Motion::StartOfLine)))
     ));
-    assert_eq!(editor.key_binding(&sequence("\u{1b}")), KeyLookup::Prefix);
+    assert_eq!(
+        editor.key_binding(&sequence("\u{1b}")),
+        KeyLookup::Ambiguous(&Binding::Sequence(CommandSequence::MetaNext))
+    );
 
     let escape = sequence("\u{1b}");
     editor.bind(
@@ -390,16 +394,16 @@ fn vi_maps_are_mode_typed() {
     assert_eq!(editor.keymap_mode(), KeymapMode::ViInsert);
     assert!(matches!(
         editor.key_binding(&sequence("\u{1b}")),
-        KeyLookup::Exact(Binding::Action(Action::SetModes {
-            input: InputMode::Insert,
-            keymap: KeymapMode::ViCommand,
-        }))
+        KeyLookup::Exact(Binding::Sequence(CommandSequence::Vi(
+            ViSequence::CommandMode
+        )))
     ));
     apply(&mut editor, Action::SetKeymap(KeymapMode::ViCommand));
-    assert_eq!(editor.key_binding(&sequence("d")), KeyLookup::Prefix);
     assert!(matches!(
-        editor.key_binding(&sequence("dd")),
-        KeyLookup::Exact(Binding::Action(Action::Kill(EditTarget::Line)))
+        editor.key_binding(&sequence("d")),
+        KeyLookup::Exact(Binding::Sequence(CommandSequence::Vi(
+            ViSequence::Operator(ViOperator::Delete)
+        )))
     ));
 }
 

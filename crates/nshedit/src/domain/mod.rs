@@ -12,6 +12,7 @@ mod command;
 mod keymap;
 mod prompt;
 mod screen;
+mod sequence;
 mod terminal;
 mod text;
 
@@ -22,6 +23,10 @@ pub use command::{
 pub use keymap::{Binding, KeyLookup, KeySequence};
 pub use prompt::{Prompt, PromptPart, TerminalLiteral};
 pub use screen::{Screen, ScreenCell, ScreenGlyph, ScreenPosition, ScreenSize};
+pub use sequence::{
+    ArgumentCommand, CharacterSearch, CharacterSearchLanding, CommandSequence, RepeatCount,
+    SearchRepetition, ViInsertPlacement, ViOperator, ViSequence, ViSubstitution,
+};
 pub use terminal::TerminalMode;
 pub use text::{NonScalarWide, Text, TextIndex, TextSpan, TextUnit};
 

@@ -1,8 +1,8 @@
 use std::io;
 
 use crate::domain::{
-    Action, Binding, CommandName, EditingMode, EditorConfig, KeySequence, KeymapMode, Prompt,
-    ScreenSize, Signal, TerminalMode, Text, TextUnit,
+    Action, ArgumentCommand, Binding, CommandName, CommandSequence, EditingMode, EditorConfig,
+    KeySequence, KeymapMode, Motion, Prompt, ScreenSize, Signal, TerminalMode, Text, TextUnit,
 };
 use crate::editor::effect::{HistoryResponse, PromptSide, ReadEffect, ReadOutcome};
 use crate::editor::{CompletionCandidate, CompletionCandidates, TerminalProfile};
@@ -75,6 +75,28 @@ fn input_unit(
             Ok(ReadOutcome::Unit(TextUnit::Scalar(character))),
         )
         .unwrap()
+}
+
+fn send(
+    driver: &mut ReadDriver,
+    editor: &mut Editor<TestTerminal>,
+    step: ReadStep,
+    output: &mut Vec<u8>,
+    character: char,
+) -> ReadStep {
+    let pending = read(settle(driver, editor, step, output));
+    input_unit(driver, editor, &pending, character)
+}
+
+fn vi_with_line(line: &str) -> Editor<TestTerminal> {
+    let config = EditorConfig::default().with_editing_mode(EditingMode::Vi);
+    let mut editor = editor(config);
+    editor.execute(Action::Insert(Text::from(line))).unwrap();
+    editor.execute(Action::Move(Motion::StartOfBuffer)).unwrap();
+    editor
+        .execute(Action::SetKeymap(KeymapMode::ViCommand))
+        .unwrap();
+    editor
 }
 
 // [spec:nshedit:req:core.read-driver/test]
@@ -303,5 +325,185 @@ fn history_completion_and_signal_resume() {
             Signal::Interrupt
         )))
     ));
+    assert_eq!(editor.terminal_mode(), TerminalMode::Cooked);
+}
+
+// [spec:nshedit:req:core.command-sequences/test]
+#[test]
+fn quoted_and_meta() {
+    let mut editor = editor(EditorConfig::default());
+    editor.bind(
+        KeymapMode::Emacs,
+        KeySequence::try_from("4").unwrap(),
+        Binding::Sequence(CommandSequence::Argument(ArgumentCommand::StartDigit)),
+    );
+    editor.bind(
+        KeymapMode::Emacs,
+        KeySequence::try_from("m").unwrap(),
+        Binding::Sequence(CommandSequence::MetaNext),
+    );
+    editor.bind(
+        KeymapMode::Emacs,
+        KeySequence::try_from("á").unwrap(),
+        Binding::Action(Action::Insert(Text::from("Z"))),
+    );
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+
+    let step = send(&mut driver, &mut editor, begin, &mut output, '4');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'm');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'a');
+    let step = settle(&mut driver, &mut editor, step, &mut output);
+    assert_eq!(editor.line(), &Text::from("ZZZZ"));
+
+    let step = send(&mut driver, &mut editor, step, &mut output, '\u{16}');
+    assert!(matches!(step, ReadStep::Read(_)));
+    assert_eq!(editor.terminal_mode(), TerminalMode::Quoted);
+    let step = send(&mut driver, &mut editor, step, &mut output, '\u{4}');
+    let _pending = read(settle(&mut driver, &mut editor, step, &mut output));
+    assert_eq!(editor.terminal_mode(), TerminalMode::Editing);
+    assert_eq!(
+        editor.line().as_units(),
+        &[
+            TextUnit::Scalar('Z'),
+            TextUnit::Scalar('Z'),
+            TextUnit::Scalar('Z'),
+            TextUnit::Scalar('Z'),
+            TextUnit::Scalar('\u{4}'),
+        ]
+    );
+}
+
+// [spec:nshedit:req:core.command-sequences/test]
+#[test]
+fn vi_operator_composition() {
+    let mut editor = vi_with_line("one two three");
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+
+    let step = send(&mut driver, &mut editor, begin, &mut output, '2');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'd');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'w');
+    let step = settle(&mut driver, &mut editor, step, &mut output);
+    assert_eq!(editor.line(), &Text::from("three"));
+    assert_eq!(editor.kill_buffer(), Some(&Text::from("one two ")));
+
+    let step = send(&mut driver, &mut editor, step, &mut output, 'u');
+    let step = settle(&mut driver, &mut editor, step, &mut output);
+    assert_eq!(editor.line(), &Text::from("one two three"));
+
+    let step = send(&mut driver, &mut editor, step, &mut output, 'd');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'd');
+    let _pending = read(settle(&mut driver, &mut editor, step, &mut output));
+    assert!(editor.line().is_empty());
+    assert_eq!(editor.kill_buffer(), Some(&Text::from("one two three")));
+}
+
+// [spec:nshedit:req:core.command-sequences/test]
+#[test]
+fn vi_character_search() {
+    let mut editor = vi_with_line("abacad");
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+
+    let step = send(&mut driver, &mut editor, begin, &mut output, '2');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'f');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'a');
+    let step = settle(&mut driver, &mut editor, step, &mut output);
+    assert_eq!(editor.cursor().get(), 4);
+
+    let step = send(&mut driver, &mut editor, step, &mut output, ',');
+    let step = settle(&mut driver, &mut editor, step, &mut output);
+    assert_eq!(editor.cursor().get(), 2);
+
+    let step = send(&mut driver, &mut editor, step, &mut output, '0');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'd');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'f');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'c');
+    let _pending = read(settle(&mut driver, &mut editor, step, &mut output));
+    assert_eq!(editor.line(), &Text::from("ad"));
+    assert_eq!(editor.kill_buffer(), Some(&Text::from("abac")));
+}
+
+// [spec:nshedit:req:core.command-sequences/test]
+#[test]
+fn vi_substitution_replay() {
+    let mut editor = vi_with_line("abcdef");
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+
+    let step = send(&mut driver, &mut editor, begin, &mut output, '2');
+    let step = send(&mut driver, &mut editor, step, &mut output, 's');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'X');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'Y');
+    let step = send(&mut driver, &mut editor, step, &mut output, '\u{1b}');
+    let step = settle(&mut driver, &mut editor, step, &mut output);
+    assert_eq!(editor.line(), &Text::from("XYcdef"));
+    assert_eq!(editor.keymap_mode(), KeymapMode::ViCommand);
+
+    let step = send(&mut driver, &mut editor, step, &mut output, 'l');
+    let step = send(&mut driver, &mut editor, step, &mut output, '.');
+    let step = settle(&mut driver, &mut editor, step, &mut output);
+    assert_eq!(editor.line(), &Text::from("XYXYef"));
+
+    let step = send(&mut driver, &mut editor, step, &mut output, 'u');
+    let step = settle(&mut driver, &mut editor, step, &mut output);
+    assert_eq!(editor.line(), &Text::from("XYcdef"));
+    let step = send(&mut driver, &mut editor, step, &mut output, 'u');
+    let _pending = read(settle(&mut driver, &mut editor, step, &mut output));
+    assert_eq!(editor.line(), &Text::from("abcdef"));
+}
+
+// [spec:nshedit:req:core.command-sequences/test]
+#[test]
+fn vi_replacement_replay() {
+    let mut editor = vi_with_line("abcdef");
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+
+    let step = send(&mut driver, &mut editor, begin, &mut output, '3');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'r');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'X');
+    let step = settle(&mut driver, &mut editor, step, &mut output);
+    assert_eq!(editor.line(), &Text::from("XXXdef"));
+    assert_eq!(editor.cursor().get(), 2);
+
+    let step = send(&mut driver, &mut editor, step, &mut output, 'l');
+    let step = send(&mut driver, &mut editor, step, &mut output, '.');
+    let _pending = read(settle(&mut driver, &mut editor, step, &mut output));
+    assert_eq!(editor.line(), &Text::from("XXXXXX"));
+    assert_eq!(editor.cursor().get(), 5);
+}
+
+// [spec:nshedit:req:core.command-sequences/test]
+#[test]
+fn semantic_replay_bound() {
+    let mut editor = vi_with_line("abcdef");
+    let mut driver = ReadDriver::default().with_work_limit(NonZeroUsize::new(3).unwrap());
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+
+    let step = send(&mut driver, &mut editor, begin, &mut output, '2');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'x');
+    let step = settle(&mut driver, &mut editor, step, &mut output);
+    assert_eq!(editor.line(), &Text::from("cdef"));
+
+    let step = send(&mut driver, &mut editor, step, &mut output, '2');
+    let pending = read(settle(&mut driver, &mut editor, step, &mut output));
+    let result = driver.resume_read(
+        &mut editor,
+        &pending,
+        Ok(ReadOutcome::Unit(TextUnit::Scalar('.'))),
+    );
+    assert!(matches!(
+        result,
+        Err(DriverError::WorkLimitExceeded { limit: 3 })
+    ));
+    assert_eq!(editor.line(), &Text::from("cdef"));
     assert_eq!(editor.terminal_mode(), TerminalMode::Cooked);
 }

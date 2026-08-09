@@ -1,4 +1,4 @@
-use super::{Action, Error, Text};
+use super::{Action, CommandSequence, Error, Text};
 
 // [spec:nshedit:req:core.line-commands]
 /// A non-empty logical input sequence used as one keymap key.
@@ -47,6 +47,8 @@ impl TryFrom<&str> for KeySequence {
 pub enum Binding {
     /// Run one typed semantic action.
     Action(Action),
+    /// Begin a closed driver-owned interaction protocol.
+    Sequence(CommandSequence),
     /// Reprocess owned logical input through the active keymap.
     Macro(Text),
 }
@@ -54,6 +56,12 @@ pub enum Binding {
 impl From<Action> for Binding {
     fn from(action: Action) -> Self {
         Self::Action(action)
+    }
+}
+
+impl From<CommandSequence> for Binding {
+    fn from(sequence: CommandSequence) -> Self {
+        Self::Sequence(sequence)
     }
 }
 

@@ -36,9 +36,9 @@ consequences {
         "One undo record represents one successful command-level text mutation. Cursor-only commands, mode changes, searches, register copies, and no-ops create no record; a new edit clears redo; an operation error restores its pre-command snapshot."
         "Insert, replace, delete, kill, yank, Unicode case transformation, and transpose preserve raw bytes and non-scalar compatibility values. Marks are revalidated and rebased after every text replacement."
         "Word motion treats Unicode whitespace explicitly, treats alphanumeric scalars plus underscore as ordinary words, and keeps raw bytes, non-scalar wide values, and scalar punctuation in the non-word class. Big-word motion groups every non-whitespace unit."
-        "A KeySequence is non-empty logical Text. Each mode map returns Exact, Ambiguous, Prefix, or Unbound and stores only typed Action or owned macro bindings. Built-in Emacs and Vi maps are native defaults, not transcribed numeric tables."
+        "A KeySequence is non-empty logical Text. Each mode map returns Exact, Ambiguous, Prefix, or Unbound and stores only typed Action, closed CommandSequence, or owned macro bindings. Built-in Emacs and Vi maps are native defaults, not transcribed numeric tables."
         "Pure actions return typed outcomes. Completion, history navigation, and user commands return typed CommandStep requests for the driver to turn into effects; no host operation runs inside line-state code."
-        "The read driver owns repeat counts, macro replay, and key-prefix disambiguation. Multi-key and operator sequences remain typed KeySequence bindings; the ABI adapter translates reference command state and compatibility-only quirks rather than adding C operator fields to the core."
+        "The read driver owns repeat counts, bounded semantic replay, key-prefix disambiguation, and closed continuations. Multi-key bindings remain typed KeySequence values, while Vi operators compose semantic motions with checked anchors; the ABI adapter translates reference quirks rather than adding C operator fields to the core."
     )
     deferred (
         "A native kill ring may replace the single kill register when native consumers require rotating yanks; the drop-in adapter only requires the current register semantics."

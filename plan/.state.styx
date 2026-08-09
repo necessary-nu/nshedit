@@ -362,4 +362,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule abi.history-effects}
     )}
+    {id greenfield-command-sequences, covered_rules (
+        core.command-sequences
+    ), covered_claims (
+        {impl_name native-impl, rule core.command-sequences}
+    )}
 )

@@ -10,7 +10,9 @@ use super::*;
 mod catalog;
 mod codec;
 
-use catalog::{BUILTIN_COMMANDS, TERMINAL_KEYS, action_name, is_builtin, named_action};
+use catalog::{
+    BUILTIN_COMMANDS, TERMINAL_KEYS, action_name, is_builtin, named_binding, sequence_name,
+};
 use codec::{decode_key_sequence, text_bytes, visual_text, wide_bytes};
 
 #[derive(Default)]
@@ -24,8 +26,7 @@ struct BindOptions {
 impl EditLine {
     pub(in crate::adapter) fn initialize_terminal_bindings(&mut self) {
         for (index, key) in TERMINAL_KEYS.iter().enumerate() {
-            self.boundary.terminal_bindings[index] =
-                named_action(key.default_command).map(Binding::Action);
+            self.boundary.terminal_bindings[index] = named_binding(key.default_command);
         }
     }
 
@@ -178,8 +179,8 @@ impl EditLine {
                 self.report_invalid_command(command_name, raw_value);
                 return -1;
             }
-            match named_action(&name) {
-                Some(action) => Binding::Action(action),
+            match named_binding(&name) {
+                Some(binding) => binding,
                 None => Binding::Action(Action::User(
                     CommandName::new(name).expect("validated command names are non-empty"),
                 )),
@@ -413,6 +414,7 @@ fn terminal_key_index(name: &[u32]) -> Option<usize> {
 fn binding_description(binding: &Binding) -> String {
     match binding {
         Binding::Action(action) => action_name(action).unwrap_or("ed-unassigned").to_owned(),
+        Binding::Sequence(sequence) => sequence_name(*sequence).to_owned(),
         Binding::Macro(expansion) => visual_text(expansion, true),
     }
 }
@@ -465,6 +467,11 @@ fn append_named_line(output: &mut Vec<u8>, key: &str, description: &str) {
 
 #[cfg(test)]
 mod tests {
+    use nshedit::domain::{
+        ArgumentCommand, CharacterSearch, CharacterSearchLanding, CommandSequence, Direction,
+        ViOperator, ViSequence, ViSubstitution,
+    };
+
     use super::*;
 
     fn editor() -> Box<EditLine> {
@@ -563,6 +570,37 @@ mod tests {
                 "{} did not resolve",
                 command.name
             );
+        }
+    }
+
+    #[test]
+    fn typed_sequence_projection() {
+        let search = CharacterSearch::new(Direction::Next, CharacterSearchLanding::BeforeTarget);
+        let cases = [
+            ("ed-quoted-insert", CommandSequence::QuotedInsert),
+            (
+                "ed-argument-digit",
+                CommandSequence::Argument(ArgumentCommand::StartDigit),
+            ),
+            ("em-meta-next", CommandSequence::MetaNext),
+            (
+                "vi-delete-meta",
+                CommandSequence::Vi(ViSequence::Operator(ViOperator::Delete)),
+            ),
+            (
+                "vi-substitute-line",
+                CommandSequence::Vi(ViSequence::Substitute(ViSubstitution::Line)),
+            ),
+            (
+                "vi-to-next-char",
+                CommandSequence::Vi(ViSequence::CharacterSearch(search)),
+            ),
+            ("vi-redo", CommandSequence::Vi(ViSequence::RepeatChange)),
+        ];
+
+        for (name, sequence) in cases {
+            assert_eq!(named_binding(name), Some(Binding::Sequence(sequence)));
+            assert_eq!(sequence_name(sequence), name);
         }
     }
 

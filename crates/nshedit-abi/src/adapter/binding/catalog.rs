@@ -1,6 +1,7 @@
 use nshedit::domain::{
-    Action, Direction, EditTarget, InputMode, KeymapMode, Motion, Refresh, TextTransform, WordKind,
-    YankPlacement,
+    Action, ArgumentCommand, Binding, CharacterSearch, CharacterSearchLanding, CommandSequence,
+    Direction, EditTarget, Motion, Refresh, RepeatCount, SearchRepetition, TextTransform,
+    ViInsertPlacement, ViOperator, ViSequence, ViSubstitution, WordKind, YankPlacement,
 };
 
 pub(super) struct CommandHelp {
@@ -281,6 +282,64 @@ pub(super) fn is_builtin(name: &str) -> bool {
     BUILTIN_COMMANDS.iter().any(|command| command.name == name)
 }
 
+pub(super) fn named_binding(name: &str) -> Option<Binding> {
+    named_sequence(name)
+        .map(Binding::Sequence)
+        .or_else(|| named_action(name).map(Binding::Action))
+}
+
+fn named_sequence(name: &str) -> Option<CommandSequence> {
+    let vi = |sequence| CommandSequence::Vi(sequence);
+    let search = |direction, landing| {
+        vi(ViSequence::CharacterSearch(CharacterSearch::new(
+            direction, landing,
+        )))
+    };
+    match name {
+        "ed-quoted-insert" => Some(CommandSequence::QuotedInsert),
+        "ed-digit" => Some(CommandSequence::Argument(ArgumentCommand::DigitOrInsert)),
+        "ed-argument-digit" => Some(CommandSequence::Argument(ArgumentCommand::StartDigit)),
+        "em-universal-argument" => Some(CommandSequence::Argument(ArgumentCommand::Multiply(
+            RepeatCount::new(4).expect("four is non-zero"),
+        ))),
+        "em-meta-next" => Some(CommandSequence::MetaNext),
+        "vi-change-meta" => Some(vi(ViSequence::Operator(ViOperator::Change))),
+        "vi-delete-meta" => Some(vi(ViSequence::Operator(ViOperator::Delete))),
+        "vi-yank" => Some(vi(ViSequence::Operator(ViOperator::Yank))),
+        "vi-insert" => Some(vi(ViSequence::Insert(ViInsertPlacement::AtCursor))),
+        "vi-add" => Some(vi(ViSequence::Insert(ViInsertPlacement::AfterCursor))),
+        "vi-insert-at-bol" => Some(vi(ViSequence::Insert(ViInsertPlacement::StartOfLine))),
+        "vi-add-at-eol" => Some(vi(ViSequence::Insert(ViInsertPlacement::EndOfLine))),
+        "vi-command-mode" => Some(vi(ViSequence::CommandMode)),
+        "vi-replace-char" => Some(vi(ViSequence::ReplaceNext)),
+        "vi-replace-mode" => Some(vi(ViSequence::ReplaceMode)),
+        "vi-substitute-char" => Some(vi(ViSequence::Substitute(ViSubstitution::Characters))),
+        "vi-substitute-line" => Some(vi(ViSequence::Substitute(ViSubstitution::Line))),
+        "vi-change-to-eol" => Some(vi(ViSequence::Substitute(ViSubstitution::ToEndOfLine))),
+        "vi-next-char" => Some(search(Direction::Next, CharacterSearchLanding::OnTarget)),
+        "vi-prev-char" => Some(search(
+            Direction::Previous,
+            CharacterSearchLanding::OnTarget,
+        )),
+        "vi-to-next-char" => Some(search(
+            Direction::Next,
+            CharacterSearchLanding::BeforeTarget,
+        )),
+        "vi-to-prev-char" => Some(search(
+            Direction::Previous,
+            CharacterSearchLanding::BeforeTarget,
+        )),
+        "vi-repeat-next-char" => Some(vi(ViSequence::RepeatCharacterSearch(
+            SearchRepetition::SameDirection,
+        ))),
+        "vi-repeat-prev-char" => Some(vi(ViSequence::RepeatCharacterSearch(
+            SearchRepetition::OppositeDirection,
+        ))),
+        "vi-redo" => Some(vi(ViSequence::RepeatChange)),
+        _ => None,
+    }
+}
+
 pub(super) fn named_action(name: &str) -> Option<Action> {
     named_common_action(name).or_else(|| named_vi_action(name))
 }
@@ -363,25 +422,55 @@ fn named_vi_action(name: &str) -> Option<Action> {
             target: EditTarget::Character(Direction::Next),
             transform: TextTransform::ToggleCase,
         }),
-        "vi-replace-mode" => Some(Action::SetModes {
-            input: InputMode::Replace,
-            keymap: KeymapMode::ViInsert,
-        }),
-        "vi-insert" => Some(Action::SetModes {
-            input: InputMode::Insert,
-            keymap: KeymapMode::ViInsert,
-        }),
         "vi-undo" | "vi-undo-line" => Some(Action::Undo),
-        "vi-redo" => Some(Action::Redo),
-        "vi-command-mode" => Some(Action::SetModes {
-            input: InputMode::Insert,
-            keymap: KeymapMode::ViCommand,
-        }),
         "vi-zero" => Some(Action::Move(Motion::StartOfLine)),
         "vi-kill-line-prev" => Some(Action::Kill(EditTarget::Motion(Motion::StartOfLine))),
         "vi-yank-end" => Some(Action::Copy(EditTarget::Motion(Motion::EndOfLine))),
-        "vi-yank" => Some(Action::Copy(EditTarget::Line)),
         _ => None,
+    }
+}
+
+pub(super) fn sequence_name(sequence: CommandSequence) -> &'static str {
+    match sequence {
+        CommandSequence::Argument(ArgumentCommand::DigitOrInsert) => "ed-digit",
+        CommandSequence::Argument(ArgumentCommand::StartDigit) => "ed-argument-digit",
+        CommandSequence::Argument(ArgumentCommand::Multiply(_)) => "em-universal-argument",
+        CommandSequence::QuotedInsert => "ed-quoted-insert",
+        CommandSequence::MetaNext => "em-meta-next",
+        CommandSequence::Vi(ViSequence::Operator(ViOperator::Delete)) => "vi-delete-meta",
+        CommandSequence::Vi(ViSequence::Operator(ViOperator::Change)) => "vi-change-meta",
+        CommandSequence::Vi(ViSequence::Operator(ViOperator::Yank)) => "vi-yank",
+        CommandSequence::Vi(ViSequence::Insert(ViInsertPlacement::AtCursor)) => "vi-insert",
+        CommandSequence::Vi(ViSequence::Insert(ViInsertPlacement::AfterCursor)) => "vi-add",
+        CommandSequence::Vi(ViSequence::Insert(ViInsertPlacement::StartOfLine)) => {
+            "vi-insert-at-bol"
+        }
+        CommandSequence::Vi(ViSequence::Insert(ViInsertPlacement::EndOfLine)) => "vi-add-at-eol",
+        CommandSequence::Vi(ViSequence::CommandMode) => "vi-command-mode",
+        CommandSequence::Vi(ViSequence::ReplaceNext) => "vi-replace-char",
+        CommandSequence::Vi(ViSequence::ReplaceMode) => "vi-replace-mode",
+        CommandSequence::Vi(ViSequence::Substitute(ViSubstitution::Characters)) => {
+            "vi-substitute-char"
+        }
+        CommandSequence::Vi(ViSequence::Substitute(ViSubstitution::Line)) => "vi-substitute-line",
+        CommandSequence::Vi(ViSequence::Substitute(ViSubstitution::ToEndOfLine)) => {
+            "vi-change-to-eol"
+        }
+        CommandSequence::Vi(ViSequence::CharacterSearch(search)) => {
+            match (search.direction(), search.landing()) {
+                (Direction::Next, CharacterSearchLanding::OnTarget) => "vi-next-char",
+                (Direction::Previous, CharacterSearchLanding::OnTarget) => "vi-prev-char",
+                (Direction::Next, CharacterSearchLanding::BeforeTarget) => "vi-to-next-char",
+                (Direction::Previous, CharacterSearchLanding::BeforeTarget) => "vi-to-prev-char",
+            }
+        }
+        CommandSequence::Vi(ViSequence::RepeatCharacterSearch(SearchRepetition::SameDirection)) => {
+            "vi-repeat-next-char"
+        }
+        CommandSequence::Vi(ViSequence::RepeatCharacterSearch(
+            SearchRepetition::OppositeDirection,
+        )) => "vi-repeat-prev-char",
+        CommandSequence::Vi(ViSequence::RepeatChange) => "vi-redo",
     }
 }
 
@@ -438,7 +527,6 @@ pub(super) fn action_name(action: &Action) -> Option<&str> {
         Action::History(Direction::Previous) => Some("ed-prev-history"),
         Action::History(Direction::Next) => Some("ed-next-history"),
         Action::Undo => Some("vi-undo"),
-        Action::Redo => Some("vi-redo"),
         Action::Refresh(Refresh::Full) => Some("ed-clear-screen"),
         Action::Refresh(Refresh::Redisplay) => Some("ed-redisplay"),
         Action::Refresh(Refresh::Beep) => Some("ed-unassigned"),

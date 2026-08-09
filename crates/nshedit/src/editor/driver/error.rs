@@ -21,6 +21,8 @@ pub enum DriverError {
     UnexpectedTimeout,
     /// A repeat count or macro expansion exceeded the configured work bound.
     WorkLimitExceeded { limit: usize },
+    /// A recorded semantic replay did not match its typed continuation.
+    InvalidSequenceState,
     /// A typed editor-domain operation failed.
     Editor(Error),
     /// The editor rejected an effect suspension or response.
@@ -46,6 +48,9 @@ impl fmt::Display for DriverError {
                     formatter,
                     "one input exceeded the driver work limit of {limit}"
                 )
+            }
+            Self::InvalidSequenceState => {
+                formatter.write_str("a semantic command sequence reached an invalid state")
             }
             Self::Editor(error) => write!(formatter, "editor command failed: {error}"),
             Self::Effect(error) => write!(formatter, "editor effect failed: {error}"),

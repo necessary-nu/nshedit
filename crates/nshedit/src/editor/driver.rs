@@ -2,6 +2,7 @@
 
 mod decode;
 mod error;
+mod sequence;
 
 use std::collections::VecDeque;
 use std::io::Write;
@@ -162,8 +163,16 @@ pub struct ReadDriver {
     replay: VecDeque<TextUnit>,
     key_sequence: Text,
     ambiguous: Option<(Binding, usize, TextUnit)>,
-    repeat_count: Option<usize>,
+    repeat_argument: Option<sequence::RepeatArgument>,
     repetition: Option<Repetition>,
+    pending_unit: Option<sequence::PendingUnit>,
+    pending_operator: Option<sequence::PendingOperator>,
+    meta_next: bool,
+    last_character_search: Option<sequence::StoredCharacterSearch>,
+    change_recording: Option<sequence::ChangeRecording>,
+    last_change: Option<sequence::ChangeReplay>,
+    semantic_replay: VecDeque<sequence::ReplayStep>,
+    replaying_change: bool,
     expanded_units: usize,
     eof_pending: bool,
     beep_pending: bool,
@@ -194,8 +203,16 @@ impl ReadDriver {
             replay: VecDeque::new(),
             key_sequence: Text::default(),
             ambiguous: None,
-            repeat_count: None,
+            repeat_argument: None,
             repetition: None,
+            pending_unit: None,
+            pending_operator: None,
+            meta_next: false,
+            last_character_search: None,
+            change_recording: None,
+            last_change: None,
+            semantic_replay: VecDeque::new(),
+            replaying_change: false,
             expanded_units: 0,
             eof_pending: false,
             beep_pending: false,
@@ -495,6 +512,9 @@ impl ReadDriver {
         if let Some(result) = self.completion.take() {
             return self.complete(editor, result);
         }
+        if let Some(step) = self.advance_semantic_replay(editor) {
+            return step;
+        }
         if let Some(unit) = self.replay.pop_front().or_else(|| self.decoder.pop()) {
             return self.process_unit(editor, unit);
         }
@@ -518,6 +538,10 @@ impl ReadDriver {
         if editor.config().buffering() == Buffering::Character {
             return self.complete(editor, ReadResult::Character(unit));
         }
+        if let Some(step) = self.consume_pending_unit(editor, unit) {
+            return step;
+        }
+        let unit = self.take_meta_unit(unit);
         match self.capture_count(editor.keymap_mode(), unit) {
             Ok(true) => return self.advance(editor),
             Ok(false) => {}
@@ -568,14 +592,11 @@ impl ReadDriver {
                 TextUnit::RawByte(_) | TextUnit::CompatibilityWide(_) => true,
             };
         self.key_sequence.clear();
-        self.repeat_count = None;
+        self.repeat_argument = None;
         if insert {
-            self.dispatch_action(
-                editor,
-                Action::Insert(std::iter::once(unit).collect()),
-                unit,
-                1,
-            )
+            let action = Action::Insert(std::iter::once(unit).collect());
+            self.prepare_action_recording(editor, &action, unit, 1)?;
+            self.dispatch_action(editor, action, unit, 1)
         } else {
             self.schedule_display(editor, DisplayKind::Beep)
         }
@@ -589,7 +610,7 @@ impl ReadDriver {
         if let Some((binding, _, invoking)) = self.ambiguous.take() {
             self.dispatch_binding(editor, binding, invoking)
         } else {
-            self.repeat_count = None;
+            self.repeat_argument = None;
             self.schedule_display(editor, DisplayKind::Beep)
         }
     }
@@ -603,34 +624,9 @@ impl ReadDriver {
             return self.dispatch_binding(editor, binding, invoking);
         }
         self.key_sequence.clear();
-        self.repeat_count = None;
+        self.repeat_argument = None;
+        self.cancel_pending_sequence(editor)?;
         self.complete(editor, ReadResult::EndOfInput)
-    }
-
-    fn capture_count(&mut self, mode: KeymapMode, unit: TextUnit) -> Result<bool, DriverError> {
-        let TextUnit::Scalar(character) = unit else {
-            return Ok(false);
-        };
-        if mode != KeymapMode::ViCommand || !self.key_sequence.is_empty() {
-            return Ok(false);
-        }
-        let Some(digit) = character.to_digit(10).map(|digit| digit as usize) else {
-            return Ok(false);
-        };
-        if digit == 0 && self.repeat_count.is_none() {
-            return Ok(false);
-        }
-        let count = self
-            .repeat_count
-            .unwrap_or(0)
-            .checked_mul(10)
-            .and_then(|count| count.checked_add(digit))
-            .filter(|count| *count <= self.work_limit)
-            .ok_or(DriverError::WorkLimitExceeded {
-                limit: self.work_limit,
-            })?;
-        self.repeat_count = Some(count);
-        Ok(true)
     }
 
     fn dispatch_binding<T: TerminalControl>(
@@ -639,12 +635,32 @@ impl ReadDriver {
         binding: Binding,
         invoking: TextUnit,
     ) -> Result<ReadStep, DriverError> {
-        let repeat = self.repeat_count.take().unwrap_or(1);
         self.key_sequence.clear();
         self.ambiguous = None;
+        self.dispatch_resolved_binding(editor, binding, invoking, None)
+    }
+
+    fn dispatch_resolved_binding<T: TerminalControl>(
+        &mut self,
+        editor: &mut Editor<T>,
+        binding: Binding,
+        invoking: TextUnit,
+        explicit_repeat: Option<usize>,
+    ) -> Result<ReadStep, DriverError> {
         match binding {
-            Binding::Action(action) => self.dispatch_action(editor, action, invoking, repeat),
+            Binding::Action(action) if self.pending_operator.is_some() => {
+                self.dispatch_operator_action(editor, action, invoking, explicit_repeat)
+            }
+            Binding::Action(action) => {
+                let repeat = self.take_repeat(explicit_repeat);
+                self.prepare_action_recording(editor, &action, invoking, repeat)?;
+                self.dispatch_action(editor, action, invoking, repeat)
+            }
+            Binding::Sequence(sequence) => {
+                self.dispatch_sequence(editor, sequence, invoking, explicit_repeat)
+            }
             Binding::Macro(text) => {
+                let repeat = self.take_repeat(explicit_repeat);
                 self.expand_macro(text, repeat)
                     .map_err(|error| self.fail(editor, error))?;
                 self.advance(editor)
@@ -680,6 +696,9 @@ impl ReadDriver {
         repeat: usize,
     ) -> Result<ReadStep, DriverError> {
         self.beep_pending = false;
+        if repeat == 0 {
+            return self.schedule_command_display(editor);
+        }
         self.repetition = Some(Repetition {
             action,
             invoking,
@@ -818,6 +837,7 @@ impl ReadDriver {
         &mut self,
         editor: &mut Editor<T>,
     ) -> Result<ReadStep, DriverError> {
+        self.finish_change_if_complete(editor);
         let kind = if std::mem::take(&mut self.beep_pending) {
             DisplayKind::RefreshAndBeep
         } else {
@@ -973,6 +993,8 @@ impl ReadDriver {
         editor: &mut Editor<T>,
         result: ReadResult,
     ) -> Result<ReadStep, DriverError> {
+        self.finish_change(editor);
+        editor.finish_all_edit_groups();
         let preserve_input = matches!(result, ReadResult::Character(_));
         if !preserve_input {
             if let Err(error) = editor.set_terminal_mode(TerminalMode::Cooked) {
@@ -991,6 +1013,8 @@ impl ReadDriver {
         editor: &mut Editor<T>,
         error: DriverError,
     ) -> DriverError {
+        self.finish_change(editor);
+        editor.finish_all_edit_groups();
         self.phase = Phase::Idle;
         self.clear_transient(false);
         let _ = editor.set_terminal_mode(TerminalMode::Cooked);
@@ -1005,8 +1029,14 @@ impl ReadDriver {
         self.replay.clear();
         self.key_sequence.clear();
         self.ambiguous = None;
-        self.repeat_count = None;
+        self.repeat_argument = None;
         self.repetition = None;
+        self.pending_unit = None;
+        self.pending_operator = None;
+        self.meta_next = false;
+        self.change_recording = None;
+        self.semantic_replay.clear();
+        self.replaying_change = false;
         self.expanded_units = 0;
         self.beep_pending = false;
         self.left_prompt = Prompt::default();

@@ -22,7 +22,7 @@ consequences {
     accepted (
         "Each Pending<E> owns an Editor suspension plus a private driver step token; host work runs with neither Editor nor ReadDriver borrowed, and stale or cross-driver steps are rejected."
         "ReadEffect accepts owned byte chunks, boundary-decoded units, EOF, semantic signals, and explicit key-prefix timeout. The incremental UTF-8 decoder preserves invalid and incomplete bytes as RawByte."
-        "The driver owns key-prefix state, exact-versus-longer disambiguation, bounded repeat counts, bounded macro replay, and lossless reprocessing after an ambiguous fallback. Multi-key operators are typed bindings, not C command-state fields."
+        "The driver owns key-prefix state, exact-versus-longer disambiguation, bounded repeat counts, bounded macro and semantic replay, and lossless reprocessing after an ambiguous fallback. Multi-key bindings use typed sequences, while operators use closed continuations with checked text anchors rather than C command-state fields."
         "Completion, history, prompts, resize, user commands, and signal propagation use their existing typed effects. Rendering alone uses the caller's safe Write so screen state still commits only after emission succeeds."
         "Signals are semantic values rather than platform numbers. Stop and terminating transitions enter Cooked mode before host propagation; resume and resize re-enter Editing and rebuild the display."
         "Accepted, character, EOF, cancelled, and interrupted results are typed. Every error clears driver-local transient state, attempts Cooked mode, and leaves Editor's transactional mode plus RAII restoration valid."
