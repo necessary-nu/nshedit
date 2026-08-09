@@ -16,15 +16,13 @@
 //! `struct editline;`, a forward declaration and nothing more, which is
 //! exactly the C's meaning.
 //!
-//! An incomplete type has no body to agree about. The ABI allocations and
-//! the C's own definitions (`src/el.h`, `src/hist.h`, `src/tokenizer.c`) stay
-//! private; these declaration-only tags exist solely to be spelled in the
-//! installed header. Completed records live beside them in
+//! An incomplete type has no public body to agree about. The ABI allocations
+//! stay private; these declaration-only tags exist solely to be spelled in
+//! the installed header. Completed records live beside them in
 //! [`super::histedit`], never in the core's header input.
 
 // Rust owns the source-level names; cbindgen's checked rename table owns the
-// C tag spellings. `conformance/header-diff.sh` proves that the latter remain
-// exactly the declarations consumers compile against.
+// C tag spellings carried by the committed generated header.
 
 /// C: `struct editline` — the editor, `def:el.editline`.
 pub struct EditlineTag;

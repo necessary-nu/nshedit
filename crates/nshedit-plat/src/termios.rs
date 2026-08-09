@@ -520,10 +520,9 @@ mod tests {
         assert_ne!(h["TAB3"], 0);
     }
 
-    /// The `C_*` control-character defaults, against `<sys/ttydefaults.h>` —
-    /// which glibc copied verbatim from BSD, so unlike the subscripts these
-    /// really are portable — and against `src/tty.h`'s own fallbacks for the
-    /// seven the header does not define.
+    /// The `C_*` control-character defaults, against
+    /// `<sys/ttydefaults.h>`. CEOL2 is nshedit's explicit disabled default
+    /// because the system header does not define it.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn the_control_character_defaults_are_the_ones_the_headers_define() {
@@ -535,7 +534,6 @@ mod tests {
             ("CKILL", CKILL),
             ("CEOF", CEOF),
             ("CEOL", CEOL),
-            ("CEOL2", CEOL2),
             ("CSTART", CSTART),
             ("CSTOP", CSTOP),
             ("CWERASE", CWERASE),
@@ -548,11 +546,9 @@ mod tests {
         ] {
             assert_eq!(h[name], i64::from(ours), "{name}");
         }
+        assert_eq!(CEOL2, VDISABLE);
 
-        // ERR-terminal-43 says `tty.h`'s `CMIN`/`CTIME` fallbacks are the
-        // nonsense `CEOF`/`CEOL`. They are unreachable on any platform that
-        // ships `<sys/ttydefaults.h>`, and this is the assertion that says so:
-        // the header's own values are 1 and 0, which is what we carry.
+        // The system defaults are 1 and 0, which is what we carry.
         assert_eq!((CMIN, CTIME), (1, 0));
     }
 
@@ -689,20 +685,9 @@ mod tests {
         ])
     }
 
-    /// `<sys/ttydefaults.h>` is the authority for eighteen of the `C_*`
-    /// defaults. The other seven — `CEOL2`, `CSWTCH`, `CDSWTCH`, `CERASE2`,
-    /// `CPAGE`, `CPGOFF`, `CKILL2` — no header defines, so `src/tty.h`
-    /// supplies them and is read first, letting the system header win wherever
-    /// both have an opinion. That is exactly the order the C preprocessor sees
-    /// them in, since `tty.h` guards every one with `#ifndef`.
+    /// The platform headers are the authority for the defaults they publish.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn cchar_defines() -> HashMap<String, i64> {
-        let tty_h = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/tty.h");
-        let text =
-            std::fs::read_to_string(&tty_h).unwrap_or_else(|e| panic!("{}: {e}", tty_h.display()));
-        cheader::Defines::new()
-            .read_text(&text)
-            .read(&["bits/posix_opt.h", "sys/ttydefaults.h"])
-            .resolve()
+        cheader::defines(&["bits/posix_opt.h", "sys/ttydefaults.h"])
     }
 }

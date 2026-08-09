@@ -29,10 +29,9 @@ documentation_length = "short"
 # declaration would silently become a pointer to a pointer.
 #
 # These are therefore config text rather than generated text. That is a real
-# cost and it is bounded: `conformance/header-diff.sh` compares every one of
-# them against `src/editline/readline.h` by asking a C compiler whether the
-# types are compatible, so a typo here fails the stage rather than shipping.
-# Nothing else in either header is written out this way.
+# cost and it is bounded: the committed-header freshness test and direct C
+# consumer compile every declaration. Nothing else in either header is
+# written out this way.
 #
 # The rest of this block is the function-like macros, which for the same
 # reason have no Rust counterpart: a Rust `const` is a value, and `CTRL(c)`

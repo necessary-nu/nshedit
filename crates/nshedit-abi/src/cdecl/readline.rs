@@ -98,8 +98,7 @@ pub type HistEntryAlias = HistEntry;
 /// C: `typedef struct { int length; } HISTORY_STATE;`.
 ///
 /// C leaves the record anonymous. cbindgen must emit a tag, so the generator
-/// uses `_history_state`; the header differential records that additive tag
-/// as the sole adjudicated declaration difference.
+/// uses `_history_state` as an implementation spelling.
 pub type HistoryStateAlias = HistoryState;
 
 /// C: `typedef struct _keymap_entry { ... } KEYMAP_ENTRY;`.

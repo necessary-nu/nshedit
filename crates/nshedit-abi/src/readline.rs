@@ -1,8 +1,8 @@
 //! The readline compatibility surface; rules in `docs/spec/port/src/readline.md`
 //! and `docs/spec/port/src/editline/readline.md`.
 //!
-//! `readline.c` is a compatibility layer in the C itself, so this is its
-//! ABI-boundary placement — see `plan/decisions/idiomatic-core.md`.
+//! This compatibility surface belongs at the ABI boundary — see
+//! `plan/decisions/idiomatic-core.md`.
 //! Everything the GNU readline API
 //! exposes and Rust would never choose lives here: the exported mutable
 //! statics, the process-global editor and history pair, and the returned
@@ -27,8 +27,7 @@
 //!
 //! Host facilities used by the layer are kept behind `nshedit-plat` or the
 //! ABI crate's C-interoperability modules. The core is reached only through
-//! safe functions; private linkage in the C implementation does not leak
-//! access to native editor internals here.
+//! safe functions; compatibility details do not leak into editor internals.
 
 use core::cmp::Ordering;
 use core::ffi::{CStr, c_char, c_int, c_uchar, c_ulong, c_void};
@@ -4222,7 +4221,7 @@ mod vis_flags_test {
     /// caught it.
     #[test]
     fn vis_white_is_what_vis_h_says() {
-        // src/vis.h:47-50 — VIS_SP | VIS_TAB | VIS_NL.
+        // VIS_SP | VIS_TAB | VIS_NL.
         assert_eq!(VIS_WHITE, 0x0004 | 0x0008 | 0x0010);
         assert_eq!(VIS_NOSLASH, 0x0040);
     }

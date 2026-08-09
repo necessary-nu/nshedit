@@ -27,12 +27,13 @@ states where those semantics may live and what the native Rust API must be.
 > remain drop-in compatible with the supported libedit and readline ABIs.
 > Rust identifier spelling is not part of this contract.
 
-> [spec:nshedit:req:abi.behavioural-conformance]
-> For every defined input covered by the `libedit` corpus, the ABI MUST match
-> the reference library's return values, errno effects, emitted bytes,
-> stream effects, callback order, pointer validity, and state transitions.
-> Undefined C inputs MUST receive a documented safe result rather than an
-> attempt to reproduce memory unsafety.
+> [spec:nshedit:req:abi.behavioural-conformance+1]
+> The detailed `libedit` corpus and maintained Rust implementation MUST remain
+> mutually consistent. For every defined input the corpus covers, the ABI MUST
+> preserve its specified return values, errno effects, emitted bytes, stream
+> effects, callback order, pointer validity, and state transitions. Undefined C
+> inputs MUST receive a documented safe result rather than an attempt to
+> reproduce memory unsafety.
 
 > [spec:nshedit:req:abi.termcap-view]
 > The in-workspace terminal database layer MUST expose legacy termcap names as
@@ -100,13 +101,13 @@ states where those semantics may live and what the native Rust API must be.
 > MUST be RAII-safe, and the native driver MUST represent delivery and resume as
 > typed state rather than silently accepting every signal effect.
 
-> [spec:nshedit:req:abi.observational-coverage]
+> [spec:nshedit:req:abi.observational-coverage+1]
 > Compatibility tests for an operation that changes state, emits bytes, or
 > invokes callbacks MUST observe that effect and a later dependent operation;
-> matching only the immediate return code is insufficient. The final oracle
-> MUST cover the terminal-control, binding, history-effect, and signal-lifecycle
-> paths through both direct operation codes and editrc entry points where the
-> shipped headers expose both.
+> matching only the immediate return code is insufficient. The maintained
+> compatibility suite MUST cover the terminal-control, binding, history-effect,
+> and signal-lifecycle paths through both direct operation codes and editrc
+> entry points where the shipped headers expose both.
 
 > [spec:nshedit:req:abi.rust-internals]
 > Exported ABI wrappers MAY parse C scalars, varargs, callbacks, pointers,

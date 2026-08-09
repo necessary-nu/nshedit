@@ -4,13 +4,10 @@
 //!
 //! With no argument the headers are written where they are committed,
 //! `crates/nshedit-abi/include/`. With one, they are written under that
-//! directory instead, which is what `conformance/header-diff.sh` does when it
-//! checks the committed copies against a fresh generation.
+//! directory instead.
 //!
-//! The generated header IS the shipped header. libedit's own `src/histedit.h`
-//! and `src/editline/readline.h` are what the harness diffs it against, and
-//! that diff proves the Rust is right rather than proving the header is.
-//! Nothing hand-edits `include/`; regenerate instead.
+//! The generated header is the shipped header. Nothing hand-edits
+//! `include/`; regenerate it from the ABI declarations instead.
 //!
 //! # Generated and committed, not generated at build time
 //!
@@ -21,11 +18,9 @@
 //! would also make `cargo build` write into the source tree and dirty the
 //! working copy on every build.
 //!
-//! Committing them has one cost, that a generated file can go stale, and it
-//! is paid twice: `tests/headers.rs` fails if the committed copy is not what
-//! this program produces — with no C toolchain needed, so it runs in the
-//! ordinary `cargo test` — and `conformance/header-diff.sh` regenerates
-//! before it compares.
+//! Committing them has one cost: a generated file can go stale.
+//! `tests/headers.rs` fails if the committed copy is not what this program
+//! produces, and the direct C acceptance fixture proves consumers can use it.
 //!
 //! cbindgen is a `[dev-dependencies]` entry rather than something to
 //! `cargo install`, so its version is pinned by `Cargo.lock` and the same

@@ -1,22 +1,13 @@
 /*
- * conformance-header-diff, the consumer proof.
+ * Consumer proof for the committed generated headers.
  *
- * The claim this stage makes is that the generated headers ARE the shipped
- * headers — that a program which does `#include <histedit.h>` and
- * `#include <editline/readline.h>`, and links `libnshedit.so`, compiles and
- * runs. Everything else in the stage compares declarations; this compiles
- * one. It is the only part that can fail for a reason nothing else would
- * catch, so it is deliberately a real program and not a link stub: it reads
- * the fields of every record both headers complete, calls through both
- * surfaces, and prints what it found.
+ * This is a real program rather than a link stub: it reads every completed
+ * record shape exposed by the headers, calls both compatibility surfaces,
+ * and runs against libnshedit. It is compiled with -Werror because a header
+ * that consumers cannot include cleanly is not shippable.
  *
- * It includes OUR headers and never the oracle's — the whole point — and it
- * is compiled with the same warnings as the differential drivers, plus
- * -Werror, because a header that a consumer cannot build cleanly against is
- * a header that will be patched by its consumers.
- *
- * Headless and deterministic: no terminal, no address, no path, no time. The
- * three streams are /dev/null. argv[1] is a writable directory.
+ * Headless and deterministic: no terminal, address, path, or clock appears
+ * in its output. The three editor streams are /dev/null.
  */
 
 #include <stdio.h>
@@ -115,13 +106,8 @@ int main(int argc, char **argv) {
     ok("fopen /dev/null", devnull != NULL);
     el = el_init("header_consumer", devnull, devnull, devnull);
     ok("el_init", el != NULL);
-    /*
-     * Through the variadic declaration, which is what `histedit.h` declares
-     * and what the implementation now is (plan node abi-varargs). The WIDE
-     * dispatch: the narrow `el_set`/`el_get` still answer -1 for every op —
-     * a registered gap, covered by conformance-differential, and nothing to
-     * do with the header, which declares both identically.
-     */
+    /* Exercise a variadic operation and its pointer-valued result through
+     * the exact declarations shipped to C consumers. */
     ok("el_wset(EL_CLIENTDATA)", el_wset(el, EL_CLIENTDATA, (void *)el) == 0);
     clientdata = NULL;
     ok("el_wget(EL_CLIENTDATA)", el_wget(el, EL_CLIENTDATA, &clientdata) == 0 &&

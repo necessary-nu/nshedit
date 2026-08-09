@@ -132,9 +132,7 @@ pub(crate) mod cheader {
     /// Preprocessor conditionals are ignored and the last definition of a name
     /// wins — both within a file and across the ones read into the same set,
     /// in the order they were read. That is safe for the headers here, whose
-    /// `#if` arms select between platforms rather than between values, and it
-    /// gives a system header the last word over the port's own `#ifndef`
-    /// fallbacks, which is the order the preprocessor sees them in too.
+    /// `#if` arms select between platforms rather than between values.
     #[derive(Default)]
     pub(crate) struct Defines {
         raw: HashMap<String, String>,
@@ -154,14 +152,6 @@ pub(crate) mod cheader {
                     .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
                 self.absorb(&text);
             }
-            self
-        }
-
-        /// A header that is not the system's — the C original in this tree,
-        /// whose `#ifndef` fallbacks are the authority for the names no
-        /// platform header defines.
-        pub(crate) fn read_text(mut self, text: &str) -> Self {
-            self.absorb(text);
             self
         }
 

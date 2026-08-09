@@ -3268,7 +3268,7 @@ children (
 
             {
                 id macos-acceptance
-                title "Prove the suite and differential conformance on macOS hardware"
+                title "Prove the suite and native ABI acceptance on macOS hardware"
                 kind @test
                 implements {
                     native-impl ([spec:nshedit:req:abi.darwin-drop-in])
@@ -3322,12 +3322,27 @@ children (
         title "Remove the in-tree C oracle and legacy Autotools distribution"
         kind @chore
         deps (greenfield-core conformance)
+        sealed true
         log (
             {
                 at 2026-08-09T22:12:10.539370359Z
                 author "brendan@necessary.nu"
                 kind @decision
                 text "Scope: delete the upstream implementation sources, headers, generated or maintainer Autotools distribution inputs, and the C-oracle build and differential stages. Replace oracle-dependent gates and documentation with the Rust-owned ABI contract and platform acceptance evidence. Preserve only minimal C consumer and driver fixtures that compile and exercise the exported C ABI; those are interface tests, not the retired implementation oracle."
+            }
+
+            {
+                at 2026-08-09T22:20:56.263575232Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-09T22:48:20.117912108Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }

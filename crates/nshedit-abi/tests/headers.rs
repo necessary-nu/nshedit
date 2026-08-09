@@ -6,12 +6,8 @@
 //! The cost of committing a generated file is that it can go stale, and this
 //! is the gate for that: it regenerates in memory and compares.
 //!
-//! Not `#[ignore]`d, unlike `conformance.rs`. Nothing here needs a C compiler
-//! or the oracle build — cbindgen reads Rust source and that is all — so it
-//! runs in the ordinary `cargo test --workspace`, which is where a stale
-//! header should be caught. The *comparison against libedit's own headers* is
-//! a different question and lives in `conformance/header-diff.sh`, which does
-//! need a toolchain.
+//! Nothing here needs a C compiler: cbindgen reads Rust source and that is
+//! all. A separate direct-C acceptance test compiles the committed result.
 //!
 //! On failure: regenerate, never edit.
 //!
@@ -44,9 +40,7 @@ fn committed_headers_are_freshly_generated() {
 /// The generator's own inputs exist and are the ones a reader would expect:
 /// a header is generated from the modules that own its surface, and from no
 /// others. A source file silently dropped from the list would take its
-/// declarations out of the shipped header, and `header-diff.sh` would then
-/// report them missing against libedit's — but only where a C toolchain is
-/// available, which is why the list is checked here too.
+/// declarations out of the shipped header, so the list is checked here too.
 #[test]
 fn every_generator_input_exists() {
     let workspace = crate_dir().join("../..");

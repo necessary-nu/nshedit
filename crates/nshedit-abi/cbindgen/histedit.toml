@@ -1,10 +1,7 @@
 # cbindgen configuration for the shipped `histedit.h`.
 #
-# The generated header IS the shipped header; `src/histedit.h` is what
-# `conformance/header-diff.sh` diffs the result against, and that diff proves
-# the Rust is right rather than proving the header is. So a rendering
-# difference here is a bug in THIS FILE, not an entry on an allow-list: see
-# the correction on the `abi-headers` plan node.
+# The generated header is the shipped header. A rendering difference is a bug
+# in this file; the freshness test and direct C consumer gate the result.
 
 language = "C"
 
@@ -92,7 +89,7 @@ exclude = [
 "HistEventWide" = "HistEventW"
 
 # Rust source keeps idiomatic identifiers; these mappings preserve the exact
-# public C spellings and are verified by the header differential.
+# public C spellings in the committed header.
 "EditlineTag" = "editline"
 "HistoryTag" = "history"
 "HistoryWideTag" = "historyW"

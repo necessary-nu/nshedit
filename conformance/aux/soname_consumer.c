@@ -1,18 +1,7 @@
 /*
- * A consumer of libedit, compiled against libedit's OWN header, for the
- * soname stage to link three different ways.
- *
- * The point of this program is what it is linked against, not what it does.
- * It is built once against Debian's libedit.so.2, once against the in-tree
- * oracle's libedit.so.0, and once against our own install — and then all
- * three are run with only the nshedit install on the library path. The first
- * two are what a binary already on someone's disk looks like; if they load
- * and work, the compat symlinks carry real consumers.
- *
- * So it deliberately includes <histedit.h> rather than our generated header,
- * uses only the narrow (char) surface a pre-existing binary would have been
- * built against, and touches nothing that needs a terminal. Every symbol it
- * calls is in the 205 the port exports.
+ * A fresh C consumer for the installed headers, pkg-config metadata, shared
+ * object, and runtime search path. It uses the narrow character surface and
+ * touches nothing that needs a terminal.
  *
  * Exit 0 and one line of output on success; non-zero and a reason otherwise.
  */

@@ -58,8 +58,7 @@ fn unused_comparator_uses_strcoll() {
         assert!(_rl_qsort_string_compare(&raw mut apples, &raw mut apple) > 0);
 
         // The test process starts in the C locale, where byte ordering puts
-        // uppercase ASCII before lowercase. Other locales are covered by the
-        // differential conformance matrix.
+        // uppercase ASCII before lowercase.
         assert!(_rl_qsort_string_compare(&raw mut upper, &raw mut apple) < 0);
     }
 }

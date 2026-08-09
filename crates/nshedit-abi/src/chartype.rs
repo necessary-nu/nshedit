@@ -12,9 +12,8 @@
 //!
 //! # The caller's `ct_buffer_t`
 //!
-//! `chartype.h` is not installed (`src/Makefile.am:55` installs `histedit.h`
-//! and `editline/readline.h` and nothing else), so a caller reaching these
-//! two symbols declared them itself, and what it declared is the C's
+//! `chartype.h` is not one of the committed public headers, so a caller
+//! reaching these two symbols declared them itself, and what it declared is the
 //! four-word struct. [`CtBufferC`] is that struct; the owning buffers live
 //! *in it*, exactly as the C's `el_realloc`ed blocks do, so a caller can read
 //! `conv.cbuff` back and find the same pointer the call returned.

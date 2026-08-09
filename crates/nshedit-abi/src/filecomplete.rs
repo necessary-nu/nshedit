@@ -1,13 +1,12 @@
 //! The exported entry points of `filecomplete.c`; rules in
 //! `docs/spec/port/src/filecomplete.md`.
 //!
-//! `filecomplete.h` is not installed (`src/Makefile.am:55`), and only
+//! `filecomplete.h` is not one of the committed public headers, and only
 //! `_el_fn_complete` and `_el_fn_sh_complete` — which live in
 //! [`crate::histedit`] with the rest of `histedit.h` — are declared to
 //! applications. The five below are declared nowhere a consumer can include,
-//! and are exported all the same: none carries `libedit_private`, our oracle
-//! exports all five, and so does Debian's `libedit.so.2`. The symbol table is
-//! the contract, so a consumer that declared them itself and links against us
+//! and are exported all the same. The committed export manifest carries that
+//! contract, so a consumer that declared them itself and links against us
 //! must find them.
 //!
 //! `completion_matches` is the sixth name in that header. It is readline's,

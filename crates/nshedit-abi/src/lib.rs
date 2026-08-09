@@ -35,8 +35,8 @@
 // their linked `sem` rules separately freeze the reference implementation's
 // observable behaviour.
 // [spec:nshedit:req:abi.complete-surface+1]
-// [spec:nshedit:req:abi.behavioural-conformance]
-// [spec:nshedit:req:abi.observational-coverage]
+// [spec:nshedit:req:abi.behavioural-conformance+1]
+// [spec:nshedit:req:abi.observational-coverage+1]
 
 // The C spelling every exported symbol needs is carried by `no_mangle` and
 // the generated headers; no private item is named for it, and no lint is

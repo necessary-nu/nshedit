@@ -6,9 +6,9 @@ tokenization, completion, terminal rendering, and the `histedit.h` C API.
 
 The Rust-native editor is the implementation. C representations, callbacks,
 and lifetime obligations are isolated in a separate ABI adapter; operating
-system calls are isolated in a small platform crate. The original C sources
-remain in this repository as the behavioural oracle for differential tests,
-but Cargo does not build or link them into the Rust product.
+system calls are isolated in a small platform crate. The detailed
+compatibility corpus is retained under `docs/spec/port`; there is no second C
+implementation in the repository.
 
 ## Status
 
@@ -71,6 +71,9 @@ On Linux this produces `target/release/libnshedit.so` and
 - [`crates/nshedit-abi/include/histedit.h`](crates/nshedit-abi/include/histedit.h)
 - [`crates/nshedit-abi/include/editline/readline.h`](crates/nshedit-abi/include/editline/readline.h)
 
+The committed ELF export contract is
+[`crates/nshedit-abi/exports.txt`](crates/nshedit-abi/exports.txt).
+
 The Linux installer lays out the versioned library, headers, `pkg-config`
 metadata, and—unless `--no-compat` is supplied—the `libedit.so`,
 `libedit.so.0`, and `libedit.so.2` compatibility names. Preview a staged
@@ -101,9 +104,9 @@ first, inspect the printed links, and use `--no-compat` when only
 | [`nshedit-plat`](crates/nshedit-plat) | Typed platform boundary for terminal, signal, and user database operations |
 | [`nshterm`](crates/nshterm) | Pure-Rust terminfo discovery, parsing, capability lookup, and parameter expansion |
 
-The top-level [`src`](src) and related Autotools files are the exact C source
-used as the compatibility oracle. They are reference and test input, not a
-second production backend.
+The detailed libedit compatibility rules live in
+[`docs/spec/port`](docs/spec/port). They document the contract implemented by
+the Rust crates and exercised through the generated C interface.
 
 ## Testing
 
@@ -116,9 +119,10 @@ cargo build --workspace
 cargo test --workspace
 ```
 
-The ABI tests run by default. They build the C oracle from this checkout and
-compare exported symbols, generated headers, deterministic behaviour traces,
-history encoding, undefined-input handling, and loader compatibility.
+The Linux ABI tests run by default. They compare the built symbol table with
+the committed export contract, compile direct C consumers against the
+generated headers, exercise defined handling of historically unsafe inputs,
+and verify the staged installer and loader layout.
 
 For the same checks with a stage-by-stage report:
 
@@ -126,10 +130,9 @@ For the same checks with a stage-by-stage report:
 ./conformance/run.sh
 ```
 
-The full conformance harness is currently Linux/x86-64-oriented. It expects a
-C compiler, `make`, standard ELF/binutils tools, installed terminfo entries,
-and the Debian/Ubuntu paths for `libedit.so.2` and `libreadline.so.8` used by
-the ABI report.
+The full conformance harness is currently Linux-oriented. It expects a C
+compiler, `pkg-config`, standard ELF/binutils tools, and installed terminfo
+entries. It does not require Autotools or a system libedit.
 
 From a Linux development host, compile every workspace crate and test target
 for both supported Darwin architectures with:
@@ -143,9 +146,11 @@ native macOS acceptance run.
 
 ## Compatibility policy
 
-Behaviour is compared against the in-tree libedit source at the same upstream
-revision. Reference-defined no-ops and unsupported Readline operations remain
-compatible no-ops. Deliberate safety fixes and divergences are recorded in
+The source of truth is the detailed compatibility corpus plus the actual Rust
+implementation. Generated headers and the export manifest freeze the C-facing
+shape; Rust tests and direct C consumers exercise maintained behaviour.
+Reference-defined no-ops and unsupported Readline operations remain compatible
+no-ops. Deliberate safety fixes and divergences are recorded in
 [`docs/errata.md`](docs/errata.md).
 
 The architecture and compatibility decisions are kept under
@@ -154,7 +159,7 @@ The architecture and compatibility decisions are kept under
 
 ## License
 
-`nshedit`, `nshedit-abi`, `nshedit-plat`, and the libedit-derived sources are
+`nshedit`, `nshedit-abi`, `nshedit-plat`, and the libedit-derived Rust code are
 available under the [BSD 3-Clause License](COPYING).
 
 `nshterm` is derived from Rust's `term` crate and remains dual-licensed under

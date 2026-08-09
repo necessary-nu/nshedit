@@ -1,21 +1,7 @@
 /*
- * The undefined-behaviour corpus: calls the C has no defined answer for.
- *
- * This is NOT a differential driver, and it deliberately does not live in
- * `driver/`. The other three prove the port and the oracle agree; here they
- * are *expected* to disagree, because the whole point of a `disposition:
- * define` entry in `docs/errata.md` is that the C is undefined and the port
- * is not. Diffing the traces would report every success as a failure.
- *
- * So the shape is one-sided, and `conformance/ub.sh` reads it that way:
- *
- *   the PORT must survive every case.   That is the pass condition.
- *   the ORACLE is run too, and whatever it does is reported.
- *
- * Running the oracle is not decoration. A case the C also survives is a case
- * that proves nothing — it might be an invented hazard rather than a real
- * one — and the report says which is which, so the corpus can be judged
- * rather than trusted.
+ * Direct C probes for public inputs that historically reached undefined
+ * behaviour. The maintained contract is one-sided: nshedit must give every
+ * call a defined result without a signal or hang.
  *
  * # Every case is forked
  *
@@ -27,10 +13,8 @@
  *
  * # Provenance
  *
- * Every case cites the errata id it came from. The register is the source of
- * the corpus, not my imagination: `docs/errata.md` holds 120 UB entries, 25
- * of which say in their own `reach:` line that they are reachable across the
- * public C ABI, and these are the ones reachable without a terminal.
+ * Every registered case cites its errata id. The register records the
+ * historical defect and the safe disposition this library maintains.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -218,23 +202,20 @@ static void ub_gets_null_count(void)
 	(void)el_gets(el, NULL);
 }
 
-/* No erratum: the register has no entry for a NULL out-parameter here, and
- * the C stores through it unconditionally. Found by running this corpus. */
+/* No erratum: this NULL out-parameter was found while exercising the API. */
 static void ub_history_expand_null_out(void)
 {
 	char line[] = "!!";
 	(void)history_expand(line, NULL);
 }
 
-/* No erratum: `_rl_abort_internal` does not return in the C — it longjmps or
- * exits — so a differential driver cannot call it without losing the rest of
- * its own trace. Moved here from readline_api.c after it did exactly that. */
+/* No erratum: isolate the non-returning abort hook from the other probes. */
 static void ub_abort_internal(void)
 {
 	(void)_rl_abort_internal();
 }
 
-/* No erratum either. `tilde_expand(NULL)` reaches `strlen` in the C. */
+/* No erratum: NULL still needs a defined answer at this public boundary. */
 static void ub_tilde_null(void)
 {
 	free(tilde_expand(NULL));

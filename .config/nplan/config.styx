@@ -1,31 +1,3 @@
-// No format gate on the C tree. It is the porting reference, held
-// byte-faithful to upstream NetBSD apart from the spec annotations, so
-// that diffing against a new upstream release stays meaningful. A
-// clang-format pass would rewrite all of it in a style it was never
-// written in and destroy exactly that property.
-//
-// Two deliberate exceptions, and they are the whole list. Keep it that way,
-// and carry it forward at the next upstream merge:
-//
-//   src/wcsdup.c    `#include "config.h"` moved above `#ifndef HAVE_WCSDUP`
-//   src/reallocarr.c  same, above `#if !HAVE_REALLOCARR`
-//
-// Both guards were evaluated before the macro they test could exist, so both
-// were unconditionally true and the bundled implementations always compiled.
-// Measured before the fix: the oracle's config.h said `#define HAVE_WCSDUP 1`
-// and `nm -D` on its .so still showed `T wcsdup` at default visibility, so
-// libedit's copy shadowed glibc's for anything linking it ahead of libc.
-// src/strlcpy.c, src/strlcat.c, src/vis.c and src/unvis.c all get the
-// ordering right, which is why they are not exported and these two were.
-//
-// The fix is not cosmetic and the two symbols answer differently, which is
-// the point: glibc has wcsdup, so the corrected guard is false and the oracle
-// stops exporting it — matching Debian's libedit.so.2, which imports
-// wcsdup@GLIBC_2.2.5. glibc has no reallocarr, so that guard is genuinely
-// true and it is still compiled and exported. One was an accident, the other
-// was accidentally right.
-//
-// Worth sending to NetBSD rather than carrying forever.
 platforms (
     {
         platform "rust"
@@ -61,12 +33,13 @@ comment-smells {
     allow ("(?i)\\bphase [1-4]\\b")
 }
 
+annotations {
+    mode @both
+}
+
 quality {
     // Structural code gates operate on product source, not the plan,
-    // specifications, their configuration, or the executable C oracle.
-    // `conformance/**` is entirely test infrastructure; counting its drivers
-    // as production makes adding effect assertions lower the reported test
-    // ratio instead of raising it.
+    // specifications, their configuration, or C ABI test fixtures.
     exempt-paths (.config/** docs/** plan/** conformance/**)
 
     // The gate bounds how much production code one file carries. It was
@@ -106,5 +79,5 @@ commit {
 }
 
 adoption {
-    scope "porting"
+    scope "maintenance"
 }

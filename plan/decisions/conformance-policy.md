@@ -1,6 +1,6 @@
 ---
 id [dec:libedit:conformance-policy]
-epitome "The C ABI remains reference-compatible for defined inputs; native Rust semantics may differ behind that boundary."
+epitome "The detailed compatibility corpus and maintained Rust code jointly define C ABI behaviour."
 state @decided
 category @executive
 scope {
@@ -20,31 +20,28 @@ scope {
 author "brendan@necessary.nu"
 alternatives (
     {
-        option "Fix any reference defect encountered while replacing the core."
-        rejected_because "A C caller did not opt into new semantics. Combining a rewrite with observable corrections destroys the oracle needed to distinguish architectural regressions from deliberate changes."
+        option "Keep the imported C implementation as an executable oracle."
+        rejected_because "A second implementation is stale maintenance weight after the Rust port is complete. Compatibility evidence must exercise what ships."
+    }
+    {
+        option "Fix any historical reference defect encountered in the ABI."
+        rejected_because "A C caller did not opt into new semantics. Consumer-visible corrections require an explicit decision and versioned rule."
     }
     {
         option "Reproduce undefined behaviour as well as defined behaviour."
         rejected_because "Memory unsafety is not a compatibility property. Undefined inputs receive an explicit safe definition instead."
     }
-    {
-        option "Freeze the current Rust port, including known compatibility gaps, as the oracle."
-        rejected_because "The deliverable is a drop-in libedit/readline implementation. Existing port-only stand-ins and missing operations are defects to close before their internals become a migration baseline."
-    }
 )
 consequences {
     accepted (
-        "The detailed libedit corpus remains the behavioural authority for the ABI: return values, errno, emitted bytes, stream effects, callback ordering, pointer validity, and state transitions are observable."
-        "A compatibility probe counts as evidence only when it observes the effect the reference operation promises. A matching success code cannot prove a state mutation, emitted sequence, callback, or handler transition."
-        "State-changing probes include a dependent observation after the mutation, so an unconditional stand-in cannot satisfy the oracle by returning the reference status."
-        "The final oracle reaches terminal controls, bindings, and history effects through direct operation codes, el_parse, and el_source, then observes the resulting state, bytes, or callback-owned storage. Signal policy has no editrc command and is instead proven through EL_SIGNAL reads and disposition restoration."
-        "Binding-dispatch evidence installs and executes every advertised built-in in both editing maps, with and without a repeat count, and compares the returned line plus post-command line and cursor against the oracle."
-        "Signal evidence observes disabled-policy preservation, resize and resume rearming, cooked terminal state before caller propagation, buffered-read and handle-destruction restoration, and unbuffered ownership across calls."
+        "The detailed libedit corpus and the maintained Rust implementation are the source of truth together. A mismatch is resolved by reviewing both, not by executing a retired implementation."
+        "The committed generated headers and export manifest freeze the C-facing shape. Direct C consumers verify that those artifacts compile, link, install, and run."
+        "A compatibility probe counts as evidence only when it observes the effect the operation promises. A matching success code cannot prove a state mutation, emitted sequence, callback, or handler transition."
+        "State-changing probes include a dependent observation after the mutation, so an unconditional stand-in cannot satisfy the contract by returning the expected status."
         "Generated execution claims are replaced from current instrumentation rather than accumulated across deleted implementations; a lower measured count is preferable to stale proof."
-        "The compatibility oracle is strengthened before structural replacement. A missing implementation, unconditional error, or documented stand-in is fixed before it can be treated as baseline behaviour whenever the reference performs real work; reference-defined unsupported and no-op behaviour remains compatible."
-        "Defined defects in the reference are preserved unless a separate decided record and a versioned rule change authorize a C-visible divergence. Idiomatization is not automatic permission to change them."
-        "Existing intentional divergences are re-proven by the oracle and remain only where a rule explicitly defines them."
+        "Defined historical behaviour is preserved unless a separate decided record and a versioned rule change authorize a C-visible divergence."
         "Undefined C constructs receive deterministic safe behaviour recorded in the corresponding rule; unsafe emulation is forbidden."
+        "The imported C and Autotools trees are retired. Git history retains their provenance; they are not build, test, or distribution inputs."
         "The core is not representation- or API-compatible with C. It may expose cleaner native semantics so long as the ABI adapter reconstructs the required observations."
     )
     deferred (
@@ -70,35 +67,20 @@ codifies (
 
 ## Rationale
 
-Drop-in compatibility is a boundary property. A C consumer observes the
-headers and symbols, but also the bytes written to a terminal, the order in
-which its callbacks run, how long a returned pointer remains valid, which
-stream owns buffered output, and what errno contains on failure. Those
-observations remain tied to the reference implementation and the detailed
-rules extracted from it.
+Drop-in compatibility is a boundary property. A C consumer observes headers
+and symbols, but also bytes written to a terminal, callback order, pointer
+lifetime, stream ownership, errno, and state transitions. The detailed corpus
+records those obligations; the Rust implementation and its maintained tests
+show how the shipped library satisfies them.
 
-Return-code-only comparisons are particularly weak for editrc commands: a
-stub can return zero for `bind`, `settc`, `history`, or signal preparation and
-look identical until a later read, query, callback, or emitted terminal byte
-is inspected. The oracle therefore couples each mutating operation to an
-observable consequence. This is part of defining compatibility evidence, not
-an expansion of the C contract.
+An executable copy of the imported implementation no longer improves that
+contract. It duplicates thousands of lines the product does not build,
+requires a separate Autotools pipeline, and turns an abandoned implementation
+into a permanent release input. The useful evidence is now owned directly:
+generated headers, a committed export set, Rust behaviour tests, focused C
+consumers, and native platform acceptance.
 
-`el_parse` and `el_source` are independent public routes through the editrc
-surface. Where an operation also has an `EL_*` code, all three routes belong
-in the oracle. Signal policy is the exception because editrc exposes no signal
-command; its dependent observations are actual interrupted and resumed reads,
-terminal geometry, caller-handler ordering, and disposition restoration.
-
-The greenfield core changes the mechanism, not that contract. Port-only
-compatibility gaps already documented by the ABI are therefore closed and
-captured by the oracle before the core representation is replaced. Otherwise
-the rewrite would faithfully preserve omissions that were never part of
-libedit. Conversely, an intentional no-op in the reference is an ABI
-observation to preserve, not an implementation gap to invent away.
-
-The old reproduce-then-fix policy served a staged port but is unsafe as a
-standing policy for a shipped compatibility library. A defect fix can still
-be worthwhile; it simply needs its own decision, rule change, and tests so a
-consumer-visible change is intentional and reviewable. Undefined behaviour
-is the exception because there is no sound observation to preserve.
+Return-code-only checks remain too weak for editrc commands and callbacks. A
+stub can return success for a mutation while doing nothing, so maintained
+tests must observe a later effect. Undefined inputs are different: there is no
+sound historical result to preserve, and the ABI must define one safely.

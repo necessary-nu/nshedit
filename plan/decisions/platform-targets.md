@@ -1,6 +1,6 @@
 ---
 id [dec:libedit:platform-targets]
-epitome "Linux is proven, macOS is a supported target now, Windows is a planned target for the native surface only; the C ABI skin stays ELF."
+epitome "Linux and macOS are supported POSIX targets; Windows is planned for the native Rust surface only."
 state @decided
 category @executive
 scope {
@@ -25,9 +25,9 @@ consequences {
     accepted (
         "nshedit-plat grows true Darwin arms: passwd and sigaction/sigset layouts, spelled from the stable Darwin ABI and self-checked with target-gated layout assertions."
         "nshedit-abi grows the Darwin stdio data symbols (__stdinp/__stdoutp/__stderrp) and a Mach-O export/install-name story; the ELF shape gates gain Mach-O counterparts."
-        "Final macOS proof (test suite, oracle build, differential traces) requires macOS hardware or CI; until then Darwin support is compile-proven from Linux via a cross-check gate."
+        "Final macOS proof (native test suite, direct C consumer, Mach-O exports, install names, and runtime linking) requires macOS hardware or CI; until then Darwin support is compile-proven from Linux via a cross-check gate."
         "Windows support is scoped to the native surface: a console backend behind nshedit-plat (VT modes via ConPTY), a builtin VT capability profile in nshterm that bypasses terminfo discovery, and console-event delivery into the driver's signal model. nshedit-abi is explicitly out of scope on Windows."
-        "posix-only-scope is unaffected: it governs which C sources were ported, not which platforms the Rust product targets. Its 'the target is POSIX' reading is narrowed to the C ABI skin by this decision."
+        "posix-only-scope records the completed source-port boundary, not which platforms the maintained Rust product targets. Its 'the target is POSIX' reading is narrowed to the C ABI by this decision."
         "macOS drop-in is source and link compatibility, not replacement of the system library: we ship libnshedit.0.dylib under our own install name with the libedit link names beside it, and never claim /usr/lib/libedit.3.dylib, which is served from the dyld shared cache and protected by System Integrity Protection. Recorded as [spec:nshedit:req:abi.darwin-drop-in]; this is the deferred install-name question, decided in macos-contract."
         "The Darwin termios projection is Darwin's own shape — NCCS 20, a 64-bit tcflag_t, the BSD V* subscripts, separate c_ispeed/c_ospeed — and not glibc's NCCS 32, because a macOS caller's struct termios is Darwin's. A terminal behaviour Darwin does not define leaves the platform representation table rather than resolving to a Linux bit. Recorded as [spec:nshedit:req:platform.darwin-termios]."
     )
@@ -65,8 +65,9 @@ no Windows counterpart, and it stays behind.
 beside it — `libedit.so`, `libedit.so.0`, `libedit.so.2` — because on ELF the
 SONAME a consumer recorded is a *filename the loader searches for*, so a
 symlink is all it takes to serve a binary built before we existed.
-`conformance/soname.sh` is the proof: it links a consumer against a real
-libedit and runs it against our install alone.
+`conformance/soname.sh` verifies the installer, compatibility names,
+pkg-config metadata, recorded SONAME, and a direct C consumer against the
+staged library.
 
 Neither mechanism exists on macOS. Mach-O records the dependency's **install
 name**, which for the system library is the absolute path

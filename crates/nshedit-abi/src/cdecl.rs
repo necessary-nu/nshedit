@@ -1,8 +1,7 @@
 //! The C declarations the shipped headers are generated from.
 //!
 //! `histedit.h` and `editline/readline.h` are generated from this crate by
-//! `cbindgen` and committed under `include/`. The reference headers in `src/`
-//! are the independent oracle used by the header differential.
+//! `cbindgen` and committed under `include/`.
 //!
 //! Almost everything in the two headers falls out of exported functions and
 //! statics. This module owns the remaining declarations and every completed
@@ -20,8 +19,8 @@
 //!   `HISTORY_STATE`.
 //!
 //! Boundary code constructs the completed records field by field; it never
-//! casts a core record into one. The layouts here are independently
-//! authoritative and are verified by the generated-header differential.
+//! casts a core record into one. These layouts are authoritative and are
+//! exercised by the direct C consumer.
 
 // [spec:nshedit:req:abi.surface-stability]
 pub mod handles;

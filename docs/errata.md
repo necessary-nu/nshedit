@@ -1,12 +1,12 @@
 # libedit defects register (errata)
 
-This file is the single collected list of defects in the C source of libedit.
-Most entries come from the Wave 1 markup pass, and each of those is derived from
-something a `sem` rule under `docs/spec/port/src/*.md` actually says; where a
-rule was ambiguous about whether something is a defect or a deliberate design
-quirk, the entry is included and the ambiguity is noted. The rest were found
-during Wave 2 translation, when writing the code made an abstract rule concrete,
-and those name the C directly.
+This file is the single collected list of defects found in the imported
+libedit C source during the port. That source tree was retired after the Rust
+implementation was completed; source paths below are stable provenance
+references available in Git history. Most entries come from the Wave 1 markup
+pass and are derived from a `sem` rule under
+`docs/spec/port/src/*.md`. The rest were found during translation, when
+writing the Rust made an abstract rule concrete.
 
 Wave 2 is complete, so every entry has been reconciled against the Rust: the
 `status:` line says whether the disposition was actually carried out and cites

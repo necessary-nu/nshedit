@@ -18,12 +18,9 @@
 # WHY BOTH libedit.so.0 AND libedit.so.2. A shared object's SONAME is copied
 # into every program that links it, as DT_NEEDED, and the loader then looks for
 # a file with exactly that name — so the compat set has to cover every name
-# libedit has ever presented itself under. libedit's own is libedit.so.0, from
-# `AC_SUBST(LT_VERSION, [0:75:0])` in configure.ac, and that is what a
-# from-source build, Fedora, Arch and the BSDs all record. Debian and Ubuntu
-# carry a one-line patch, debian/patches/update-soname.diff, that makes it
-# 2:75:0 and therefore libedit.so.2. Shipping only one of the two would leave
-# the other population unable to load us at all.
+# libedit has presented itself under. Upstream and several distributions use
+# libedit.so.0; Debian and Ubuntu use libedit.so.2. Shipping only one would
+# leave the other population unable to load us at all.
 #
 # WHY NOT libreadline.so.8. We export 149 of its 736 symbols. A program needing
 # any of the other 587 would fail at LOAD time with an unresolved symbol, which
