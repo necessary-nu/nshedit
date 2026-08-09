@@ -3316,4 +3316,19 @@ children (
             }
         )
     }
+
+    {
+        id retire-c
+        title "Remove the in-tree C oracle and legacy Autotools distribution"
+        kind @chore
+        deps (greenfield-core conformance)
+        log (
+            {
+                at 2026-08-09T22:12:10.539370359Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "Scope: delete the upstream implementation sources, headers, generated or maintainer Autotools distribution inputs, and the C-oracle build and differential stages. Replace oracle-dependent gates and documentation with the Rust-owned ABI contract and platform acceptance evidence. Preserve only minimal C consumer and driver fixtures that compile and exercise the exported C ABI; those are interface tests, not the retired implementation oracle."
+            }
+        )
+    }
 )
