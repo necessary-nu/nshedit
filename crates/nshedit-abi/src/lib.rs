@@ -79,11 +79,8 @@ mod errno {
         safe fn errno_location() -> *mut c_int;
     }
 
-    // Darwin and the FreeBSD line spell the same accessor `__error`. The port
-    // targets Linux (`plan/decisions/posix-only-scope.md`), so this arm is
-    // what keeps the crate building elsewhere rather than a claim of support;
-    // NetBSD and OpenBSD spell it `__errno` and would need an arm of their own.
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    // Darwin publishes the thread-local slot through `__error`.
+    #[cfg(target_os = "macos")]
     unsafe extern "C" {
         #[link_name = "__error"]
         safe fn errno_location() -> *mut c_int;
@@ -209,10 +206,9 @@ pub(crate) mod cstdio {
         ) -> c_int;
     }
 
-    // Linux exposes the standard streams as writable `FILE *` data symbols.
-    // They are read, never reassigned. Another supported system ABI must
-    // supply its documented data symbols or accessor functions here.
-    #[cfg(target_os = "linux")]
+    // GNU and Bionic expose the standard streams as writable `FILE *` data
+    // symbols. They are read, never reassigned.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe extern "C" {
         #[link_name = "stdin"]
         static mut STDIN: *mut c_void;
@@ -222,22 +218,33 @@ pub(crate) mod cstdio {
         static mut STDERR: *mut c_void;
     }
 
+    // Darwin exposes the same pointers under its documented data-symbol
+    // names. The Rust names stay shared so every consumer below reaches the
+    // process's actual libc stream on either supported operating system.
+    // [spec:nshedit:req:abi.darwin-runtime]
+    #[cfg(target_os = "macos")]
+    unsafe extern "C" {
+        #[link_name = "__stdinp"]
+        static mut STDIN: *mut c_void;
+        #[link_name = "__stdoutp"]
+        static mut STDOUT: *mut c_void;
+        #[link_name = "__stderrp"]
+        static mut STDERR: *mut c_void;
+    }
+
     /// The process's actual standard input stream.
-    #[cfg(target_os = "linux")]
     pub(crate) fn standard_input() -> CFile {
         // SAFETY: reading the libc-owned pointer does not mutate the stream.
         unsafe { STDIN }
     }
 
     /// The process's actual standard output stream.
-    #[cfg(target_os = "linux")]
     pub(crate) fn standard_output() -> CFile {
         // SAFETY: as [`standard_input`].
         unsafe { STDOUT }
     }
 
     /// The process's actual standard error stream.
-    #[cfg(target_os = "linux")]
     pub(crate) fn standard_error() -> CFile {
         // SAFETY: as [`standard_input`].
         unsafe { STDERR }
@@ -394,8 +401,8 @@ pub(crate) mod cstdio {
 ///
 /// The native core deliberately returns an owned `OsString`; the readline
 /// ABI additionally promises that its default `rl_terminal_name` aliases the
-/// environment's own storage. Linux `secure_getenv` is the only sound way to
-/// preserve both that lifetime and the loader's secure-execution check.
+/// environment's own storage. Each supported libc accessor below returns
+/// process-owned storage with that identity and lifetime.
 mod cenv {
     use core::ffi::{CStr, c_char};
 
@@ -411,10 +418,18 @@ mod cenv {
         unsafe { secure_getenv(name.as_ptr()) }
     }
 
-    #[cfg(not(target_os = "linux"))]
-    pub(crate) fn get(_: &CStr) -> *mut c_char {
-        // No non-Linux system ABI is supported yet.
-        core::ptr::null_mut()
+    // Darwin has no `secure_getenv`; its libc supplies the POSIX `getenv`
+    // operation used by the reference implementation.
+    #[cfg(target_os = "macos")]
+    unsafe extern "C" {
+        fn getenv(name: *const c_char) -> *mut c_char;
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn get(name: &CStr) -> *mut c_char {
+        // SAFETY: as the Linux arm; Darwin owns the returned environment
+        // storage and the caller only borrows it.
+        unsafe { getenv(name.as_ptr()) }
     }
 }
 

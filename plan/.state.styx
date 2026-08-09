@@ -520,6 +520,11 @@ impl_evidence (
         {impl_name native-impl, rule platform.darwin-termios}
         {impl_name native-impl, rule platform.per-os-layouts}
     )}
+    {id macos-abi, covered_rules (
+        abi.darwin-runtime
+    ), covered_claims (
+        {impl_name native-impl, rule abi.darwin-runtime}
+    )}
 )
 
 walk_frontier (

@@ -3238,6 +3238,14 @@ children (
                     native-impl ([spec:nshedit:req:abi.darwin-runtime])
                 }
                 deps (macos-contract)
+                log (
+                    {
+                        at 2026-08-09T21:26:13.552845628Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {
