@@ -34,13 +34,39 @@ states where those semantics may live and what the native Rust API must be.
 > Undefined C inputs MUST receive a documented safe result rather than an
 > attempt to reproduce memory unsafety.
 
-> [spec:nshedit:req:abi.terminal-controls]
+> [spec:nshedit:req:abi.termcap-view]
+> The in-workspace terminal database layer MUST expose legacy termcap names as
+> an explicit projection of typed terminfo data. The projection MUST preserve
+> defined provider compatibility semantics that are not a simple name lookup,
+> including an `me` reset that does not unexpectedly leave the caller's
+> alternate character set, and MUST NOT require process-global terminal or
+> output state.
+
+> [spec:nshedit:req:abi.terminal-session]
+> Each C editor handle MUST own one compatibility view of the selected terminal
+> name, boolean, numeric, and stable C-string capability values. Database
+> geometry MUST be overridden only by a non-zero kernel window size; baud-rate
+> padding and capability mutation MUST reconfigure the native terminal profile
+> through typed Rust values. Native rendering reached from the C ABI MUST write
+> through the caller's `FILE *` buffering without placing that pointer in the
+> native editor.
+
+> [spec:nshedit:req:abi.tty-modes]
+> The compatibility adapter MUST retain cooked, editing, and quoted terminal
+> snapshots plus independent named flag and control-character overrides for
+> each mode. `setty` mutation and listing MUST match the detailed tty rules, and
+> a mutation of the active mode MUST be applied through the safe platform
+> boundary while inactive-mode mutations remain deferred until activation.
+
+> [spec:nshedit:req:abi.terminal-controls+1]
 > Terminal capability and tty commands reached through `el_get`, `el_set`,
 > `el_parse`, and `el_source` MUST perform the query, mutation, byte emission,
 > listing, and diagnostic behaviour assigned by the detailed terminal and tty
 > rules. `gettc`, `settc`, `telltc`, `echotc`, and `setty` MUST share one
 > ABI-owned compatibility view of the native terminal profile and platform tty
-> state; unconditional success is forbidden where the reference performs work.
+> state by composing `abi.termcap-view`, `abi.terminal-session`, and
+> `abi.tty-modes`; unconditional success is forbidden where the reference
+> performs work.
 
 > [spec:nshedit:req:abi.bindings]
 > The compatibility `bind` command MUST implement the defined editing-map,
@@ -152,6 +178,15 @@ states where those semantics may live and what the native Rust API must be.
 > C-shaped terminal, tty, prompt, and refresh machinery MAY remain only in
 > those existing compatibility modules; `core.no-compat-internals` governs
 > its final removal.
+
+> [spec:nshedit:req:core.incremental-render]
+> Native rendering MUST plan deterministic terminal operations from the
+> committed typed screen and cursor to the next complete frame. Unchanged
+> cells MUST NOT force a complete redraw; the planner MUST use only capabilities
+> present in the selected profile, MUST support a one-line terminal through
+> carriage return, backspace, forward text, and explicit erasure, and MUST
+> commit the new screen, cursor, capability variables, and damage state only
+> after the complete byte plan is written and flushed successfully.
 
 > [spec:nshedit:req:core.read-driver]
 > Input preparation, decoding, key dispatch, signal transitions, and editing

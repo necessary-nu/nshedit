@@ -12,6 +12,7 @@ scope {
         [spec:libedit:def:terminal.tgetnum-fn]
         [spec:libedit:def:terminal.tgoto-fn]
         [spec:libedit:def:terminal.tputs-fn]
+        [spec:nshedit:req:abi.termcap-view]
     )
 }
 author "brendan@necessary.nu"
@@ -36,7 +37,8 @@ alternatives (
 consequences {
     accepted (
         "nshterm is an in-workspace pure-Rust crate containing the terminfo database parser, searcher, parameter expansion, and compatibility name data."
-        "The terminal layer uses typed terminfo capabilities internally while the compatibility boundary resolves the termcap names accepted by libedit."
+        "The terminal layer uses typed terminfo capabilities internally and owns the explicit termcap-name projection accepted by libedit; the ABI boundary owns only per-handle capability state and C representation."
+        "The termcap projection preserves provider-level compatibility that a name table alone cannot express, including removing terminfo-only alternate-character-set resets from the legacy me capability."
         "Padding markers survive parameter expansion and are emitted by the Rust tputs implementation according to output speed and affected lines; no global putc destination is required."
         "TERMINFO, TERMINFO_DIRS, and HOME-derived search paths are ignored for a privileged process according to the secure environment guard."
         "Filesystem terminfo trees are the supported database layout. The current Linux package matrix does not require ncurses' opt-in hashed layout, so nshterm does not probe or parse it."
@@ -52,6 +54,7 @@ edges {
 codifies (
     [spec:libedit:def:terminal.tgetent-fn]
     [spec:libedit:def:terminal.tputs-fn]
+    [spec:nshedit:req:abi.termcap-view]
 )
 establishes ([arch:libedit:terminal-caps])
 ---
@@ -64,10 +67,12 @@ expansion machinery now lives in `nshterm`, which the workspace owns and can
 shape around the editor's actual contract.
 
 Internal capability identity and compatibility input spelling are separate
-concerns. Typed terminfo names are appropriate inside the renderer; the ABI
-must still accept the two-letter termcap names deployed callers pass. Padding
-is similarly preserved as structured information until `tputs` knows the
-writer speed, avoiding the C provider's global callback destination.
+concerns. Typed terminfo names are appropriate inside the renderer; `nshterm`
+projects the two-letter termcap names deployed callers pass, including the
+few provider semantics that are not plain aliases. The ABI stores the result
+per handle. Padding is similarly preserved as structured information until
+`tputs` knows the writer speed, avoiding the C provider's global callback
+destination.
 
 Secure environment discovery and the compatibility name table are settled.
 The database-format survey was resolved on 2026-08-09 against the only

@@ -2589,7 +2589,22 @@ children (
                 implements {
                     native-impl ([spec:nshedit:req:abi.terminal-controls])
                 }
-                deps (greenfield-terminal-render greenfield-abi-adapter)
+                deps (greenfield-terminal-session greenfield-tty-modes)
+                log (
+                    {
+                        at 2026-08-09T01:11:16.919818416Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T02:03:41.699833465Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Decomposed terminal compatibility by real dependency: pure terminfo-to-termcap projection feeds a per-handle terminal-session bridge; the tty-mode override layer then depends on that bridge; observable terminal commands join the session and tty results. This keeps termcap, C stdio and setty protocols out of the native Editor while making the critical path explicit."
+                    }
+                )
             }
 
             {
@@ -2649,6 +2664,61 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "Acceptance auditing found return-code-only coverage around terminal/tty commands, binding mutations, foreign history effects, and signal handling. Those behaviours are now explicit prerequisite nodes. The four repairs are independent after their existing native-core and ABI dependencies; final acceptance joins them and must observe downstream state, output, callback, and signal effects rather than immediate statuses alone."
+                    }
+                )
+            }
+
+            {
+                id greenfield-termcap-view
+                title "Project typed terminfo into legacy termcap-visible capabilities"
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:abi.termcap-view])
+                }
+                deps (nshterm-hashed-db)
+            }
+
+            {
+                id greenfield-terminal-session
+                title "Bridge per-handle terminal state into the native renderer"
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:abi.terminal-session])
+                }
+                deps (greenfield-termcap-view greenfield-incremental-render greenfield-abi-adapter)
+            }
+
+            {
+                id greenfield-tty-modes
+                title "Implement named tty-mode overrides through the platform boundary"
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:abi.tty-modes])
+                }
+                deps (greenfield-terminal-session)
+            }
+
+            {
+                id greenfield-incremental-render
+                title "Plan deterministic incremental terminal transitions"
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:core.incremental-render])
+                }
+                deps (greenfield-terminal-render)
+                log (
+                    {
+                        at 2026-08-09T02:15:26.706068023Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T02:15:26.706068023Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "single-flight overridden: started while greenfield-terminal-compat had uncommitted WIP"
                     }
                 )
             }
