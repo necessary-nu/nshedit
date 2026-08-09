@@ -246,7 +246,7 @@ fn write_text(output: &mut dyn Write, text: &Text) -> io::Result<()> {
                 output.write_all(character.encode_utf8(&mut encoded).as_bytes())?;
             }
             TextUnit::RawByte(byte) => output.write_all(&[*byte])?,
-            TextUnit::CompatibilityWide(_) => output.write_all("�".as_bytes())?,
+            TextUnit::OpaqueCodePoint(_) => output.write_all("�".as_bytes())?,
         }
     }
     Ok(())
@@ -257,7 +257,7 @@ fn scalar_string(text: &Text) -> Option<String> {
         .iter()
         .map(|unit| match unit {
             TextUnit::Scalar(character) => Some(*character),
-            TextUnit::RawByte(_) | TextUnit::CompatibilityWide(_) => None,
+            TextUnit::RawByte(_) | TextUnit::OpaqueCodePoint(_) => None,
         })
         .collect()
 }

@@ -33,7 +33,7 @@ impl BoundaryChar for c_char {
         match unit {
             TextUnit::Scalar(character) => u32::from(character) as u8 as c_char,
             TextUnit::RawByte(byte) => byte as c_char,
-            TextUnit::CompatibilityWide(value) => value.get() as u8 as c_char,
+            TextUnit::OpaqueCodePoint(value) => value.get() as u8 as c_char,
         }
     }
 }
@@ -42,14 +42,14 @@ impl BoundaryChar for u32 {
     const NUL: Self = 0;
 
     fn into_unit(self) -> TextUnit {
-        TextUnit::from_wide(self)
+        TextUnit::from_code_point(self)
     }
 
     fn from_unit(unit: TextUnit) -> Self {
         match unit {
             TextUnit::Scalar(character) => u32::from(character),
             TextUnit::RawByte(byte) => u32::from(byte),
-            TextUnit::CompatibilityWide(value) => value.get(),
+            TextUnit::OpaqueCodePoint(value) => value.get(),
         }
     }
 }

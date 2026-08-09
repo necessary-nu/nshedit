@@ -49,7 +49,7 @@ fn native_core_surface_is_safe() {
         .collect();
     assert_eq!(
         public_modules,
-        ["domain", "editor", "histfile", "history", "tokenizer"],
+        ["domain", "editor", "history", "history_file", "tokenizer"],
         "the native facade exposed a module outside the semantic Rust API"
     );
 }

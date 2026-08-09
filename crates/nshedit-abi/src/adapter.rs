@@ -382,7 +382,7 @@ pub(crate) fn unit_to_wide(unit: TextUnit) -> u32 {
     match unit {
         TextUnit::Scalar(character) => u32::from(character),
         TextUnit::RawByte(byte) => u32::from(byte),
-        TextUnit::CompatibilityWide(value) => value.get(),
+        TextUnit::OpaqueCodePoint(value) => value.get(),
     }
 }
 

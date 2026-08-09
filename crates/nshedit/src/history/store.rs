@@ -6,7 +6,7 @@ use std::num::NonZeroUsize;
 
 use crate::domain::{Direction, Text};
 
-/// Stable identity of one native history entry.
+/// Stable identity of one history entry.
 ///
 /// The numeric value is opaque ordering information, not a sentinel or a
 /// position in the store. Removing or evicting other entries never changes it.
@@ -27,7 +27,7 @@ impl fmt::Display for HistoryId {
     }
 }
 
-/// One owned native history record.
+/// One owned history record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryEntry<M = ()> {
     id: HistoryId,
@@ -42,7 +42,7 @@ impl<M> HistoryEntry<M> {
         self.id
     }
 
-    /// The complete logical line, including preserved raw or wide units.
+    /// The complete logical line, including raw bytes and opaque code points.
     #[must_use]
     pub fn line(&self) -> &Text {
         &self.line
@@ -367,7 +367,7 @@ impl<M> Default for HistoryStore<M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{NonScalarWide, TextUnit};
+    use crate::domain::{OpaqueCodePoint, TextUnit};
 
     fn inserted<M>(result: PushResult<M>) -> HistoryId {
         match result {
@@ -383,7 +383,7 @@ mod tests {
         let line: Text = [
             TextUnit::Scalar('x'),
             TextUnit::RawByte(0xff),
-            TextUnit::CompatibilityWide(NonScalarWide::new(0xd800).unwrap()),
+            TextUnit::OpaqueCodePoint(OpaqueCodePoint::new(0xd800).unwrap()),
         ]
         .into_iter()
         .collect();

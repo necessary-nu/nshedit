@@ -479,7 +479,7 @@ fn the_two_completion_commands_are_one_behaviour_under_two_symbols() {
             .filter_map(|unit| match unit {
                 TextUnit::Scalar(character) => Some(*character),
                 TextUnit::RawByte(byte) => Some(char::from(*byte)),
-                TextUnit::CompatibilityWide(value) => char::from_u32(value.get()),
+                TextUnit::OpaqueCodePoint(value) => char::from_u32(value.get()),
             })
             .collect();
         done(el);

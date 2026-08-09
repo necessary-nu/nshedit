@@ -676,7 +676,7 @@ pub unsafe extern "C" fn el_source(el: *mut EditLine, fname: *const c_char) -> c
             .position(|unit| match unit {
                 TextUnit::Scalar(character) => !character.is_whitespace(),
                 TextUnit::RawByte(byte) => !byte.is_ascii_whitespace(),
-                TextUnit::CompatibilityWide(_) => true,
+                TextUnit::OpaqueCodePoint(_) => true,
             })
             .unwrap_or(decoded.len());
         let content = &decoded.as_units()[first..];

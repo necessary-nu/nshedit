@@ -234,7 +234,7 @@ fn text_bytes(text: &Text) -> Vec<u8> {
                 bytes.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
             }
             TextUnit::RawByte(byte) => bytes.push(*byte),
-            TextUnit::CompatibilityWide(_) => bytes.extend_from_slice("\u{fffd}".as_bytes()),
+            TextUnit::OpaqueCodePoint(_) => bytes.extend_from_slice("\u{fffd}".as_bytes()),
         }
     }
     bytes
@@ -422,7 +422,7 @@ pub(crate) fn complete_native(
         .iter()
         .chain(special_prefixes.into_iter().flatten())
         .copied()
-        .map(TextUnit::from_wide)
+        .map(TextUnit::from_code_point)
         .collect();
     let tokenizer = NativeTokenizer::new(separators);
     let Ok(query) = el.native().completion_query(&tokenizer) else {

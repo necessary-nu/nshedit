@@ -568,7 +568,7 @@ impl ReadDriver {
             && editor.keymap_mode() != KeymapMode::ViCommand
             && match unit {
                 TextUnit::Scalar(character) => !character.is_control(),
-                TextUnit::RawByte(_) | TextUnit::CompatibilityWide(_) => true,
+                TextUnit::RawByte(_) | TextUnit::OpaqueCodePoint(_) => true,
             };
         self.key_sequence.clear();
         if insert {
@@ -1210,7 +1210,7 @@ fn write_echo(unit: TextUnit, output: &mut dyn Write) -> Result<(), RenderError>
                 output.write_all(&[byte])?;
             }
         }
-        TextUnit::CompatibilityWide(_) => output.write_all("\u{fffd}".as_bytes())?,
+        TextUnit::OpaqueCodePoint(_) => output.write_all("\u{fffd}".as_bytes())?,
     }
     output.flush()?;
     Ok(())

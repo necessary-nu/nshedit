@@ -59,7 +59,7 @@ pub enum ScreenCell {
     Blank,
     /// A printable glyph anchored at this column.
     Glyph(ScreenGlyph),
-    /// A column occupied by the tail of a preceding wide glyph.
+    /// A column occupied by the tail of a preceding multi-column glyph.
     Continuation,
     /// A column deliberately skipped at a terminal edge during layout.
     Padding,
@@ -188,11 +188,12 @@ impl Screen {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{NonScalarWide, TerminalLiteral, TextUnit};
+    use crate::domain::{OpaqueCodePoint, TerminalLiteral, TextUnit};
 
+    // [spec:nshedit:req:core.text-screen-model+1/test]
     #[test]
     fn display_values_have_distinct_types() {
-        let logical = TextUnit::CompatibilityWide(NonScalarWide::new(0xD800).unwrap());
+        let logical = TextUnit::OpaqueCodePoint(OpaqueCodePoint::new(0xD800).unwrap());
         let literal = TerminalLiteral::from(&b"\x1b[31m"[..]);
         let glyph = ScreenGlyph::from_scalar('x').unwrap();
         let cells = [
@@ -202,7 +203,7 @@ mod tests {
             ScreenCell::Blank,
         ];
 
-        assert_eq!(logical, TextUnit::from_wide(0xD800));
+        assert_eq!(logical, TextUnit::from_code_point(0xD800));
         assert_eq!(literal.as_bytes(), b"\x1b[31m");
         assert_ne!(cells[1], cells[2]);
     }

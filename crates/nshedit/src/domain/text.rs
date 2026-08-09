@@ -2,21 +2,26 @@ use std::ops::Range;
 
 use super::Error;
 
-/// A compatibility-wide value that is deliberately not a Unicode scalar.
+// [spec:nshedit:req:core.text-screen-model+1]
+/// An opaque numeric code point that is deliberately not a Unicode scalar.
+///
+/// Host boundaries can receive values that Rust's [`char`] cannot represent.
+/// This type preserves such a value without naming or imposing its transport.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct NonScalarWide(u32);
+pub struct OpaqueCodePoint(u32);
 
-impl NonScalarWide {
-    /// Construct a non-scalar wide value without duplicating a [`char`].
-    pub fn new(value: u32) -> Result<Self, Error> {
+impl OpaqueCodePoint {
+    /// Construct an opaque value without duplicating a [`char`].
+    #[must_use]
+    pub fn new(value: u32) -> Option<Self> {
         if char::from_u32(value).is_some() {
-            Err(Error::ScalarWideValue(value))
+            None
         } else {
-            Ok(Self(value))
+            Some(Self(value))
         }
     }
 
-    /// Recover the compatibility value for boundary conversion.
+    /// Recover the preserved numeric value.
     #[must_use]
     pub const fn get(self) -> u32 {
         self.0
@@ -31,18 +36,17 @@ pub enum TextUnit {
     Scalar(char),
     /// One byte that could not be decoded under the boundary's active locale.
     RawByte(u8),
-    /// A wide compatibility value that Rust's [`char`] cannot represent.
-    CompatibilityWide(NonScalarWide),
+    /// An opaque code point that Rust's [`char`] cannot represent.
+    OpaqueCodePoint(OpaqueCodePoint),
 }
 
 impl TextUnit {
-    /// Preserve a wide boundary value, using [`Scalar`](Self::Scalar) exactly
-    /// when Rust can represent it as a Unicode scalar.
+    /// Classify a numeric code point without losing non-scalar values.
     #[must_use]
-    pub fn from_wide(value: u32) -> Self {
+    pub fn from_code_point(value: u32) -> Self {
         match char::from_u32(value) {
             Some(character) => Self::Scalar(character),
-            None => Self::CompatibilityWide(NonScalarWide(value)),
+            None => Self::OpaqueCodePoint(OpaqueCodePoint(value)),
         }
     }
 }
@@ -235,14 +239,15 @@ impl TextSpan {
 mod tests {
     use super::*;
 
+    // [spec:nshedit:req:core.text-screen-model+1/test]
     #[test]
-    fn wide_values_keep_their_kind() {
-        assert_eq!(TextUnit::from_wide(0x41), TextUnit::Scalar('A'));
+    fn code_points_keep_their_kind() {
+        assert_eq!(TextUnit::from_code_point(0x41), TextUnit::Scalar('A'));
         assert_eq!(
-            TextUnit::from_wide(0xD800),
-            TextUnit::CompatibilityWide(NonScalarWide::new(0xD800).unwrap())
+            TextUnit::from_code_point(0xD800),
+            TextUnit::OpaqueCodePoint(OpaqueCodePoint::new(0xD800).unwrap())
         );
-        assert_eq!(NonScalarWide::new(0x41), Err(Error::ScalarWideValue(0x41)));
+        assert_eq!(OpaqueCodePoint::new(0x41), None);
     }
 
     #[test]

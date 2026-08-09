@@ -84,7 +84,11 @@ impl EditLine {
         if input.is_empty() {
             return -1;
         }
-        let text = input.iter().copied().map(TextUnit::from_wide).collect();
+        let text = input
+            .iter()
+            .copied()
+            .map(TextUnit::from_code_point)
+            .collect();
         match self.native.insert_untracked(text) {
             Ok(()) => 0,
             Err(_) => -1,
@@ -95,7 +99,11 @@ impl EditLine {
         if input.is_empty() {
             return -1;
         }
-        let text = input.iter().copied().map(TextUnit::from_wide).collect();
+        let text = input
+            .iter()
+            .copied()
+            .map(TextUnit::from_code_point)
+            .collect();
         match self.native.replace_line_untracked(text) {
             Ok(()) => 0,
             Err(_) => -1,
@@ -224,9 +232,13 @@ impl EditLine {
         if self.boundary.pushback.len() >= 10 {
             return false;
         }
-        self.boundary
-            .pushback
-            .push_back(input.iter().copied().map(TextUnit::from_wide).collect());
+        self.boundary.pushback.push_back(
+            input
+                .iter()
+                .copied()
+                .map(TextUnit::from_code_point)
+                .collect(),
+        );
         true
     }
 

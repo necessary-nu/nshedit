@@ -324,7 +324,7 @@ impl EditLine {
         let policy = characters
             .iter()
             .copied()
-            .map(TextUnit::from_wide)
+            .map(TextUnit::from_code_point)
             .collect();
         self.native.set_word_policy(WordPolicy::new(policy));
         let mut characters = characters.to_vec();
@@ -354,7 +354,11 @@ impl EditLine {
         self.boundary.commands.push(HostCommand {
             name,
             callback,
-            help: help.iter().copied().map(TextUnit::from_wide).collect(),
+            help: help
+                .iter()
+                .copied()
+                .map(TextUnit::from_code_point)
+                .collect(),
         });
         true
     }

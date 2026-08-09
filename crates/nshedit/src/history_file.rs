@@ -1,4 +1,4 @@
-//! The native history file: a container, not a schema.
+//! The nshedit history file: a container, not a schema.
 //!
 //! # What a record is
 //!
@@ -61,7 +61,7 @@
 //!
 //! The header is a frame like any other, so a reader that does not care about
 //! it can skip one frame rather than a magic number of bytes. It carries
-//! [`MAGIC`] and a format version, and it exists so that a native file is
+//! [`MAGIC`] and a format version, and it exists so that an nshedit file is
 //! *positively identified* rather than being whatever failed to look like
 //! something else.
 
@@ -70,7 +70,7 @@ use bstr::BString;
 use bstr::ByteSlice;
 use std::io::{self, Write};
 
-/// Identifies a native history file. Checked, not assumed: a file that does
+/// Identifies an nshedit history file. Checked, not assumed: a file that does
 /// not open with this is not ours, and we would rather say so than decode
 /// somebody else's bytes into somebody's history.
 pub const MAGIC: &[u8] = b"nshedit-history";
@@ -82,7 +82,7 @@ pub const VERSION: u8 = 1;
 
 /// The frame delimiter. COBS guarantees an encoded frame contains no zero
 /// byte, which is what makes this scannable.
-const DELIM: u8 = 0;
+const DELIMITER: u8 = 0;
 
 /// One history entry: what was typed, and whatever the application attached.
 ///
@@ -117,7 +117,7 @@ impl Record {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
     /// The file does not open with a header frame naming [`MAGIC`].
-    NotNativeFormat,
+    NotNsheditFormat,
     /// The header names a container version this build does not implement.
     /// The version is reported so the message can say which.
     UnsupportedVersion(u8),
@@ -125,7 +125,7 @@ pub enum Error {
     /// Carries the zero-based index of the record, counting the header as 0.
     BadRecord(usize),
     /// The last frame has no terminator: the file was truncated mid-write.
-    /// Everything before it is still returned — see [`read_all`].
+    /// Everything before it is still returned — see [`read_nshedit`].
     Truncated,
     /// The file carries neither format's signature. Reported rather than
     /// guessed at: see [`Format::Unknown`].
@@ -135,7 +135,7 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::NotNativeFormat => f.write_str("not an nshedit history file"),
+            Error::NotNsheditFormat => f.write_str("not an nshedit history file"),
             Error::UnsupportedVersion(v) => {
                 write!(f, "history container version {v} is newer than this build")
             }
@@ -148,12 +148,12 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// True if `head` is the start of a native history file.
+/// True if `head` is the start of an nshedit history file.
 ///
 /// Give it at least [`sniff_len`] bytes; fewer is not an error, it just
 /// answers `false`, because a file too short to hold a header cannot be one.
-pub fn is_native(head: &[u8]) -> bool {
-    let Some(frame) = head.split(|&b| b == DELIM).next() else {
+pub fn is_nshedit(head: &[u8]) -> bool {
+    let Some(frame) = head.split(|&b| b == DELIMITER).next() else {
         return false;
     };
     // A frame that is still being written has no delimiter yet, and
@@ -167,16 +167,16 @@ pub fn is_native(head: &[u8]) -> bool {
     }
 }
 
-/// Enough bytes for [`is_native`] to reach a verdict: the header frame, its
+/// Enough bytes for [`is_nshedit`] to reach a verdict: the header frame, its
 /// COBS overhead and its delimiter.
 pub fn sniff_len() -> usize {
     MAGIC.len() + 8
 }
 
 /// libedit's own file starts with this, and has since it was V1.
-/// Signature line used by libedit's legacy V2 history files.
+/// Signature line used by libedit V2 history files.
 ///
-/// This is public because compatibility adapters can read and write the
+/// This is public because format adapters can read and write the
 /// format without importing libedit's C-shaped history implementation.
 pub const LIBEDIT_V2_HEADER: &[u8] = b"_HiStOrY_V2_\n";
 
@@ -188,8 +188,8 @@ pub const LIBEDIT_V2_HEADER: &[u8] = b"_HiStOrY_V2_\n";
 /// guessing wrong here means presenting one user's file as another's history.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
-    /// Ours: COBS-framed records behind a [`MAGIC`] header frame.
-    Native,
+    /// The nshedit format: COBS-framed records behind a [`MAGIC`] header.
+    Nshedit,
     /// libedit's `_HiStOrY_V2_`: one vis-encoded entry per line.
     LibeditV2,
     /// Neither signature is present. A GNU readline file lands here, since
@@ -206,8 +206,8 @@ pub enum Format {
 pub fn detect(head: &[u8]) -> Format {
     if head.starts_with(LIBEDIT_V2_HEADER) {
         Format::LibeditV2
-    } else if is_native(head) {
-        Format::Native
+    } else if is_nshedit(head) {
+        Format::Nshedit
     } else {
         Format::Unknown
     }
@@ -215,11 +215,11 @@ pub fn detect(head: &[u8]) -> Format {
 
 /// Reads a history file of whichever format it turns out to be.
 ///
-/// Same contract as [`read_all`]: whatever could be read, plus whatever
+/// Same contract as [`read_nshedit`]: whatever could be read, plus whatever
 /// stopped it, because a partial history beats none.
-pub fn read_any(bytes: &[u8]) -> (Vec<Record>, Option<Error>) {
+pub fn read(bytes: &[u8]) -> (Vec<Record>, Option<Error>) {
     match detect(bytes) {
-        Format::Native => read_all(bytes),
+        Format::Nshedit => read_nshedit(bytes),
         #[cfg(feature = "bsd")]
         Format::LibeditV2 => read_libedit(bytes),
         #[cfg(not(feature = "bsd"))]
@@ -246,7 +246,7 @@ fn read_libedit(bytes: &[u8]) -> (Vec<Record>, Option<Error>) {
         }
         match unvis_line(line) {
             Some(text) => out.push(Record::new(text)),
-            // Local, like the native reader's: one unreadable line costs one
+            // Local, like the nshedit reader's: one unreadable line costs one
             // entry. The C is even more forgiving — `history.c:869` casts
             // `strunvis`'s return to void and enters whatever it produced —
             // but entering a half-decoded line is worse than saying so.
@@ -266,24 +266,24 @@ fn unvis_line(line: &[u8]) -> Option<Vec<u8>> {
 
 /// Writes the header frame. Call once, when creating the file; appending to
 /// an existing one must not repeat it.
-pub fn write_header<W: Write>(w: &mut W) -> io::Result<()> {
+pub fn write_header<W: Write>(writer: &mut W) -> io::Result<()> {
     let mut head = MAGIC.to_vec();
     head.push(VERSION);
-    write_frame(w, &head)
+    write_frame(writer, &head)
 }
 
 /// Appends one record. Emits a single `write_all`, so that under `O_APPEND`
 /// two shells writing at once interleave whole records rather than bytes.
-pub fn append<W: Write>(w: &mut W, rec: &Record) -> io::Result<()> {
-    let body = postcard::to_stdvec(&(rec.text.as_slice(), rec.blob.as_slice()))
+pub fn append_record<W: Write>(writer: &mut W, record: &Record) -> io::Result<()> {
+    let body = postcard::to_stdvec(&(record.text.as_slice(), record.blob.as_slice()))
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    write_frame(w, &body)
+    write_frame(writer, &body)
 }
 
-fn write_frame<W: Write>(w: &mut W, body: &[u8]) -> io::Result<()> {
+fn write_frame<W: Write>(writer: &mut W, body: &[u8]) -> io::Result<()> {
     let mut frame = cobs_encode(body);
-    frame.push(DELIM);
-    w.write_all(&frame)
+    frame.push(DELIMITER);
+    writer.write_all(&frame)
 }
 
 /// Reads every record in `bytes`.
@@ -293,22 +293,22 @@ fn write_frame<W: Write>(w: &mut W, body: &[u8]) -> io::Result<()> {
 /// being killed mid-write, and losing the other nine hundred entries over it
 /// would be the wrong answer; so would silently pretending the file was
 /// complete.
-pub fn read_all(bytes: &[u8]) -> (Vec<Record>, Option<Error>) {
-    let mut frames = bytes.split(|&b| b == DELIM);
+pub fn read_nshedit(bytes: &[u8]) -> (Vec<Record>, Option<Error>) {
+    let mut frames = bytes.split(|&b| b == DELIMITER);
 
     let Some(header) = frames.next() else {
-        return (Vec::new(), Some(Error::NotNativeFormat));
+        return (Vec::new(), Some(Error::NotNsheditFormat));
     };
     let Some(header) = cobs_decode(header) else {
-        return (Vec::new(), Some(Error::NotNativeFormat));
+        return (Vec::new(), Some(Error::NotNsheditFormat));
     };
     let Some(rest) = header.strip_prefix(MAGIC) else {
-        return (Vec::new(), Some(Error::NotNativeFormat));
+        return (Vec::new(), Some(Error::NotNsheditFormat));
     };
     match rest.first() {
         Some(&VERSION) => {}
         Some(&v) => return (Vec::new(), Some(Error::UnsupportedVersion(v))),
-        None => return (Vec::new(), Some(Error::NotNativeFormat)),
+        None => return (Vec::new(), Some(Error::NotNsheditFormat)),
     }
 
     let mut out = Vec::new();
@@ -322,7 +322,7 @@ pub fn read_all(bytes: &[u8]) -> (Vec<Record>, Option<Error>) {
         }
         // A frame that reaches the end of the input without a delimiter was
         // still being written.
-        if frame.as_ptr_range().end == bytes.as_ptr_range().end && !bytes.ends_with(&[DELIM]) {
+        if frame.as_ptr_range().end == bytes.as_ptr_range().end && !bytes.ends_with(&[DELIMITER]) {
             fault = Some(Error::Truncated);
             break;
         }
@@ -416,8 +416,8 @@ mod test {
     fn file(records: &[Record]) -> Vec<u8> {
         let mut out = Vec::new();
         write_header(&mut out).unwrap();
-        for r in records {
-            append(&mut out, r).unwrap();
+        for record in records {
+            append_record(&mut out, record).unwrap();
         }
         out
     }
@@ -450,7 +450,7 @@ mod test {
                 blob: vec![0, 1, 2, 0, 0, 255],
             },
         ];
-        let (back, fault) = read_all(&file(&awkward));
+        let (back, fault) = read_nshedit(&file(&awkward));
         assert_eq!(fault, None);
         assert_eq!(back, awkward);
     }
@@ -499,7 +499,7 @@ mod test {
         ]);
         // Cut inside the last record.
         let cut = whole.len() - 3;
-        let (back, fault) = read_all(&whole[..cut]);
+        let (back, fault) = read_nshedit(&whole[..cut]);
         assert_eq!(fault, Some(Error::Truncated));
         assert_eq!(back.len(), 2);
         assert_eq!(back[0].text, b"first");
@@ -522,7 +522,7 @@ mod test {
             .expect("the record should be verbatim in the file");
         bytes[at - 1] = 200;
 
-        let (back, fault) = read_all(&bytes);
+        let (back, fault) = read_nshedit(&bytes);
         assert_eq!(fault, Some(Error::BadRecord(2)));
         assert_eq!(back.len(), 2, "should have kept the two good records");
         assert_eq!(back[0].text, b"before");
@@ -532,25 +532,25 @@ mod test {
     #[test]
     fn a_libedit_file_is_not_mistaken_for_ours() {
         let libedit = b"_HiStOrY_V2_\necho\\040plain\n";
-        assert!(!is_native(libedit));
-        assert_eq!(read_all(libedit).1, Some(Error::NotNativeFormat));
+        assert!(!is_nshedit(libedit));
+        assert_eq!(read_nshedit(libedit).1, Some(Error::NotNsheditFormat));
 
         // Nor is a readline file, which has no header at all.
         let readline = b"echo plain\necho other\n";
-        assert!(!is_native(readline));
-        assert_eq!(read_all(readline).1, Some(Error::NotNativeFormat));
+        assert!(!is_nshedit(readline));
+        assert_eq!(read_nshedit(readline).1, Some(Error::NotNsheditFormat));
     }
 
     #[test]
     fn our_own_file_is_recognised_from_the_first_few_bytes() {
         let bytes = file(&[Record::new(&b"anything"[..])]);
-        assert!(is_native(&bytes));
+        assert!(is_nshedit(&bytes));
         assert!(
-            is_native(&bytes[..sniff_len().min(bytes.len())]),
+            is_nshedit(&bytes[..sniff_len().min(bytes.len())]),
             "sniff_len() must be enough to reach a verdict"
         );
-        // A header still being written is not yet a native file.
-        assert!(!is_native(&bytes[..4]));
+        // A header still being written is not yet an nshedit file.
+        assert!(!is_nshedit(&bytes[..4]));
     }
 
     #[test]
@@ -558,20 +558,20 @@ mod test {
         let mut bytes = file(&[Record::new(&b"x"[..])]);
         // The version byte sits at the end of the header frame's payload,
         // which is the byte before the first delimiter.
-        let delim = bytes.iter().position(|&b| b == DELIM).unwrap();
+        let delim = bytes.iter().position(|&b| b == DELIMITER).unwrap();
         bytes[delim - 1] = VERSION + 1;
         assert_eq!(
-            read_all(&bytes).1,
+            read_nshedit(&bytes).1,
             Some(Error::UnsupportedVersion(VERSION + 1))
         );
     }
 
     #[test]
     fn an_empty_file_is_a_clear_answer_not_a_panic() {
-        assert_eq!(read_all(b"").1, Some(Error::NotNativeFormat));
+        assert_eq!(read_nshedit(b"").1, Some(Error::NotNsheditFormat));
         let mut header = Vec::new();
         write_header(&mut header).unwrap();
-        let (back, fault) = read_all(&header);
+        let (back, fault) = read_nshedit(&header);
         assert_eq!(fault, None);
         assert!(back.is_empty());
     }
@@ -590,7 +590,7 @@ mod test {
             echo\\040trailing\\040space\\040\n";
 
         assert_eq!(detect(libedit), Format::LibeditV2);
-        let (back, fault) = read_any(libedit);
+        let (back, fault) = read(libedit);
         assert_eq!(fault, None);
         let texts: Vec<&[u8]> = back.iter().map(|r| r.text.as_slice()).collect();
         assert_eq!(
@@ -612,38 +612,38 @@ mod test {
     /// as a newline, inside a single entry rather than splitting it in two.
     #[test]
     #[cfg(feature = "bsd")]
-    fn the_embedded_newline_survives_the_legacy_path() {
+    fn libedit_v2_preserves_embedded_newlines() {
         let libedit: &[u8] = b"_HiStOrY_V2_\necho\\040two\\012lines\n";
-        let (back, _) = read_any(libedit);
+        let (back, _) = read(libedit);
         assert_eq!(back.len(), 1, "one entry, not two");
         assert_eq!(back[0].text, b"echo two\nlines");
     }
 
     #[test]
     fn each_format_is_recognised_by_its_own_signature() {
-        let native = file(&[Record::new(&b"x"[..])]);
-        assert_eq!(detect(&native), Format::Native);
+        let nshedit = file(&[Record::new(&b"x"[..])]);
+        assert_eq!(detect(&nshedit), Format::Nshedit);
         assert_eq!(detect(b"_HiStOrY_V2_\nfoo\n"), Format::LibeditV2);
 
         // A GNU readline file is raw lines with nothing identifying them, so
         // it is Unknown rather than being decoded as either.
         assert_eq!(detect(b"echo plain\necho other\n"), Format::Unknown);
         assert_eq!(detect(b""), Format::Unknown);
-        assert_eq!(read_any(b"echo plain\n").1, Some(Error::UnrecognisedFormat));
+        assert_eq!(read(b"echo plain\n").1, Some(Error::UnrecognisedFormat));
     }
 
-    /// The simplest legacy file: no escapes, so nothing to undo.
+    /// The simplest libedit V2 file: no escapes, so nothing to undo.
     #[test]
     #[cfg(feature = "bsd")]
-    fn an_unescaped_legacy_file_reads_back() {
+    fn unescaped_libedit_v2_reads_back() {
         let libedit: &[u8] = b"_HiStOrY_V2_\nls\npwd\n";
-        let (back, fault) = read_any(libedit);
+        let (back, fault) = read(libedit);
         assert_eq!(fault, None);
         assert_eq!(back.len(), 2);
         assert_eq!(back[0].text, b"ls");
     }
 
-    /// A bad escape costs one entry, matching the native reader. libedit
+    /// A bad escape costs one entry, matching the nshedit reader. libedit
     /// itself is looser — `history.c:869` casts `strunvis`'s return to void
     /// and enters whatever came out — but a half-decoded command is worse
     /// than a reported gap.
@@ -658,7 +658,7 @@ mod test {
     #[cfg(feature = "bsd")]
     fn a_bad_escape_costs_one_entry() {
         let libedit: &[u8] = b"_HiStOrY_V2_\ngood\\040one\n\\M!bad\ngood\\040two\n";
-        let (back, fault) = read_any(libedit);
+        let (back, fault) = read(libedit);
         assert!(matches!(fault, Some(Error::BadRecord(_))), "{fault:?}");
         let texts: Vec<&[u8]> = back.iter().map(|r| r.text.as_slice()).collect();
         assert_eq!(texts, vec![&b"good one"[..], &b"good two"[..]]);
@@ -667,9 +667,9 @@ mod test {
     /// build does not read.
     #[test]
     #[cfg(not(feature = "bsd"))]
-    fn a_legacy_file_is_unreadable_without_the_bsd_feature() {
+    fn libedit_v2_requires_bsd_decoder() {
         let libedit: &[u8] = b"_HiStOrY_V2_\nls\necho\\040plain\n";
-        let (back, fault) = read_any(libedit);
+        let (back, fault) = read(libedit);
         assert_eq!(fault, Some(Error::UnrecognisedFormat));
         assert!(back.is_empty());
     }

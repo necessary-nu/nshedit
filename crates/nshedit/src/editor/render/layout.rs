@@ -120,7 +120,7 @@ impl Builder {
             }
             TextUnit::Scalar(character) => self.put_scalar(character),
             TextUnit::RawByte(byte) => self.put_escape(&format!("\\x{byte:02X}")),
-            TextUnit::CompatibilityWide(value) => {
+            TextUnit::OpaqueCodePoint(value) => {
                 self.put_escape(&format!("\\u{{{:X}}}", value.get()));
             }
         }
@@ -313,7 +313,7 @@ fn viewport(size: ScreenSize, rows: Vec<Row>, cursor: (usize, usize)) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{NonScalarWide, TerminalLiteral};
+    use crate::domain::{OpaqueCodePoint, TerminalLiteral};
 
     fn size(rows: usize, columns: usize) -> ScreenSize {
         ScreenSize::new(rows, columns).unwrap()
@@ -341,7 +341,7 @@ mod tests {
     fn compatibility_units_render_as_escapes() {
         let line: Text = [
             TextUnit::RawByte(0xff),
-            TextUnit::CompatibilityWide(NonScalarWide::new(0xd800).unwrap()),
+            TextUnit::OpaqueCodePoint(OpaqueCodePoint::new(0xd800).unwrap()),
         ]
         .into_iter()
         .collect();

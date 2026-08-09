@@ -28,7 +28,7 @@ pub use sequence::{
     SearchRepetition, ViInsertPlacement, ViOperator, ViSequence, ViSubstitution,
 };
 pub use terminal::TerminalMode;
-pub use text::{NonScalarWide, Text, TextIndex, TextSpan, TextUnit};
+pub use text::{OpaqueCodePoint, Text, TextIndex, TextSpan, TextUnit};
 
 use std::fmt;
 
@@ -136,7 +136,6 @@ pub enum Error {
     StaleCompletionResponse,
     MarkNotSet,
     TextLengthOverflow,
-    ScalarWideValue(u32),
     TextIndexOutOfBounds {
         index: usize,
         len: usize,
@@ -175,9 +174,6 @@ impl fmt::Display for Error {
             Self::MarkNotSet => formatter.write_str("no line mark has been set"),
             Self::TextLengthOverflow => {
                 formatter.write_str("the resulting logical text length cannot be represented")
-            }
-            Self::ScalarWideValue(value) => {
-                write!(formatter, "U+{value:04X} is a Unicode scalar value")
             }
             Self::TextIndexOutOfBounds { index, len } => {
                 write!(formatter, "text index {index} exceeds length {len}")

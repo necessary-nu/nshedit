@@ -51,7 +51,7 @@ fn terminal_bytes(units: &[TextUnit]) -> Vec<u8> {
                 bytes.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
             }
             TextUnit::RawByte(byte) => bytes.push(*byte),
-            TextUnit::CompatibilityWide(value) => {
+            TextUnit::OpaqueCodePoint(value) => {
                 bytes.extend_from_slice("\u{fffd}".as_bytes());
                 let _ = value;
             }
@@ -91,7 +91,7 @@ fn prompt_from_units(units: &[TextUnit], escape: u32) -> Prompt {
     if escape == 0 {
         return Prompt::from(units.iter().copied().collect::<Text>());
     }
-    let marker = TextUnit::from_wide(escape);
+    let marker = TextUnit::from_code_point(escape);
     let mut prompt = Prompt::default();
     let mut literal = false;
     for part in units.split(|unit| *unit == marker) {
@@ -116,7 +116,7 @@ unsafe fn host_prompt(el: *mut EditLine, side: PromptSide) -> Prompt {
                 .unwrap_or(&[])
                 .iter()
                 .copied()
-                .map(TextUnit::from_wide)
+                .map(TextUnit::from_code_point)
                 .collect()
         }
         PromptCallback::Narrow(callback) => {
@@ -147,7 +147,7 @@ unsafe fn host_read(
         let result = unsafe { callback(el, &raw mut value) };
         let _ = unsafe { signals.resume_pending_direct(el) }?;
         return match result {
-            result if result > 0 => Ok(ReadOutcome::Unit(TextUnit::from_wide(value))),
+            result if result > 0 => Ok(ReadOutcome::Unit(TextUnit::from_code_point(value))),
             0 => Ok(ReadOutcome::EndOfInput),
             _ => Err(HostFailure::Failed("input callback failed".into())),
         };
@@ -323,7 +323,7 @@ unsafe fn history_item(el: *mut EditLine, operation: c_int) -> Option<HistoryIte
         let line = crate::conversion::decode_bytes(Some(bytes), &mut conversion)?
             .iter()
             .copied()
-            .map(TextUnit::from_wide)
+            .map(TextUnit::from_code_point)
             .collect();
         (event.num, line)
     } else {
@@ -345,7 +345,7 @@ unsafe fn history_item(el: *mut EditLine, operation: c_int) -> Option<HistoryIte
         let line = unsafe { wstr(event.str) }?
             .iter()
             .copied()
-            .map(TextUnit::from_wide)
+            .map(TextUnit::from_code_point)
             .collect();
         (event.num, line)
     };
@@ -481,7 +481,7 @@ unsafe fn read_host_text(
             0 => return Err(HostFailure::Cancelled),
             _ => return Err(HostFailure::Failed("command input failed".into())),
         }
-        let unit = TextUnit::from_wide(value);
+        let unit = TextUnit::from_code_point(value);
         match unit {
             TextUnit::Scalar('\r' | '\n') => {
                 unsafe { (&*el).write_compatibility_stream(1, b"\n") };
@@ -697,7 +697,7 @@ fn is_history_space(unit: &TextUnit) -> bool {
     match unit {
         TextUnit::Scalar(character) => character.is_whitespace(),
         TextUnit::RawByte(byte) => byte.is_ascii_whitespace(),
-        TextUnit::CompatibilityWide(_) => false,
+        TextUnit::OpaqueCodePoint(_) => false,
     }
 }
 
@@ -934,7 +934,7 @@ pub(super) unsafe fn read_unedited(el: *mut EditLine) -> Result<bool, ()> {
             let delivery = unsafe { signals.resume_pending_direct(el) }.map_err(|_| ())?;
             match result {
                 result if result > 0 => {
-                    let unit = TextUnit::from_wide(value);
+                    let unit = TextUnit::from_code_point(value);
                     line.push(unit);
                     if unbuffered || matches!(unit, TextUnit::Scalar('\r' | '\n')) {
                         break;

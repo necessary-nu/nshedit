@@ -37,21 +37,21 @@ pub(super) fn load<C: HistoryChar>(history: &mut HistoryHandle<C>, path: &Path) 
         return -1;
     };
     let mut input = BufReader::new(file);
-    let native = matches!(
+    let nshedit_format = matches!(
         input.fill_buf(),
-        Ok(head) if nshedit::histfile::detect(head) == nshedit::histfile::Format::Native
+        Ok(head) if nshedit::history_file::detect(head) == nshedit::history_file::Format::Nshedit
     );
-    if native {
-        load_native(history, &mut input)
+    if nshedit_format {
+        load_nshedit(history, &mut input)
     } else {
         load_libedit(history, &mut input)
     }
 }
 
-fn load_native<C: HistoryChar>(history: &mut HistoryHandle<C>, input: &mut dyn Read) -> c_int {
+fn load_nshedit<C: HistoryChar>(history: &mut HistoryHandle<C>, input: &mut dyn Read) -> c_int {
     let mut bytes = Vec::new();
     let mut failed = input.read_to_end(&mut bytes).is_err();
-    let (records, fault) = nshedit::histfile::read_all(&bytes);
+    let (records, fault) = nshedit::history_file::read_nshedit(&bytes);
     failed |= fault.is_some();
     let mut conversion = ConversionBuffer::default();
     let mut event = empty_event();
@@ -128,7 +128,7 @@ fn load_libedit<C: HistoryChar>(history: &mut HistoryHandle<C>, input: &mut dyn 
 
 fn cookie_prefix_matches(line: &[u8]) -> bool {
     for (index, &byte) in line.iter().enumerate() {
-        let expected = nshedit::histfile::LIBEDIT_V2_HEADER
+        let expected = nshedit::history_file::LIBEDIT_V2_HEADER
             .get(index)
             .copied()
             .unwrap_or(0);
@@ -160,7 +160,7 @@ fn save_to<C: HistoryChar>(
 ) -> c_int {
     if at_start
         && output
-            .write_all(nshedit::histfile::LIBEDIT_V2_HEADER)
+            .write_all(nshedit::history_file::LIBEDIT_V2_HEADER)
             .is_err()
     {
         return -1;

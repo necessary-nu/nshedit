@@ -25,12 +25,12 @@ pub(super) fn decode_key_sequence(input: &[u32]) -> Option<Text> {
             } else {
                 next & 0x9f
             };
-            output.push(TextUnit::from_wide(value));
+            output.push(TextUnit::from_code_point(value));
             index += 2;
             continue;
         }
         if current != b'\\' as u32 {
-            output.push(TextUnit::from_wide(current));
+            output.push(TextUnit::from_code_point(current));
             index += 1;
             continue;
         }
@@ -48,7 +48,7 @@ pub(super) fn decode_key_sequence(input: &[u32]) -> Option<Text> {
             _ => None,
         };
         if let Some(value) = named {
-            output.push(TextUnit::from_wide(value));
+            output.push(TextUnit::from_code_point(value));
             index += 2;
             continue;
         }
@@ -68,7 +68,7 @@ pub(super) fn decode_key_sequence(input: &[u32]) -> Option<Text> {
             if value > 0xff {
                 return None;
             }
-            output.push(TextUnit::from_wide(value));
+            output.push(TextUnit::from_code_point(value));
             index += 1 + digits;
             continue;
         }
@@ -92,11 +92,11 @@ pub(super) fn decode_key_sequence(input: &[u32]) -> Option<Text> {
             if value > 0x10ffff {
                 return None;
             }
-            output.push(TextUnit::from_wide(value));
+            output.push(TextUnit::from_code_point(value));
             index += 3 + count;
             continue;
         }
-        output.push(TextUnit::from_wide(escaped));
+        output.push(TextUnit::from_code_point(escaped));
         index += 2;
     }
     Some(output)
@@ -126,7 +126,7 @@ pub(super) fn visual_text(text: &Text, quoted: bool) -> String {
             TextUnit::Scalar('\\') => output.push_str("\\\\"),
             TextUnit::Scalar(character) => output.push(character),
             TextUnit::RawByte(byte) => output.push_str(&format!("\\{byte:03o}")),
-            TextUnit::CompatibilityWide(value) => {
+            TextUnit::OpaqueCodePoint(value) => {
                 output.push_str(&format!("\\U+{:05X}", value.get()));
             }
         }
@@ -146,14 +146,20 @@ pub(super) fn text_bytes(text: &Text) -> Vec<u8> {
                 output.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
             }
             TextUnit::RawByte(byte) => output.push(byte),
-            TextUnit::CompatibilityWide(_) => output.extend_from_slice("�".as_bytes()),
+            TextUnit::OpaqueCodePoint(_) => output.extend_from_slice("�".as_bytes()),
         }
     }
     output
 }
 
 pub(super) fn wide_bytes(input: &[u32]) -> Vec<u8> {
-    text_bytes(&input.iter().copied().map(TextUnit::from_wide).collect())
+    text_bytes(
+        &input
+            .iter()
+            .copied()
+            .map(TextUnit::from_code_point)
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -245,7 +251,7 @@ mod tests {
         );
         assert_eq!(
             decode("\\U+D800"),
-            Some(Text::from_iter([TextUnit::from_wide(0xd800)]))
+            Some(Text::from_iter([TextUnit::from_code_point(0xd800)]))
         );
         assert_eq!(decode("\\U+123"), None);
         assert_eq!(decode("\\U-0041"), None);
@@ -283,7 +289,7 @@ mod tests {
             TextUnit::Scalar('"'),
             TextUnit::Scalar('\\'),
             TextUnit::RawByte(0xff),
-            TextUnit::from_wide(0xd800),
+            TextUnit::from_code_point(0xd800),
             TextUnit::Scalar('é'),
         ]);
 
@@ -297,7 +303,7 @@ mod tests {
             TextUnit::Scalar('\u{1b}'),
             TextUnit::Scalar('A'),
             TextUnit::RawByte(0xff),
-            TextUnit::from_wide(0xd800),
+            TextUnit::from_code_point(0xd800),
         ]);
         let visual = visual_text(&original, false);
 
@@ -307,7 +313,7 @@ mod tests {
                 TextUnit::Scalar('\u{1b}'),
                 TextUnit::Scalar('A'),
                 TextUnit::Scalar('\u{ff}'),
-                TextUnit::from_wide(0xd800),
+                TextUnit::from_code_point(0xd800),
             ]))
         );
     }
@@ -318,7 +324,7 @@ mod tests {
             TextUnit::Scalar('A'),
             TextUnit::Scalar('é'),
             TextUnit::RawByte(0xff),
-            TextUnit::from_wide(0xd800),
+            TextUnit::from_code_point(0xd800),
         ]);
 
         assert_eq!(

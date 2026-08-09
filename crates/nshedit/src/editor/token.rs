@@ -384,7 +384,7 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::NonScalarWide;
+    use crate::domain::OpaqueCodePoint;
 
     // [spec:nshedit:req:core.token-completion+1/test]
     #[test]
@@ -417,7 +417,7 @@ mod tests {
             TextUnit::Scalar('\''),
             TextUnit::Scalar('\''),
             TextUnit::RawByte(b' '),
-            TextUnit::CompatibilityWide(NonScalarWide::new(0xd800).unwrap()),
+            TextUnit::OpaqueCodePoint(OpaqueCodePoint::new(0xd800).unwrap()),
         ]
         .into_iter()
         .collect();

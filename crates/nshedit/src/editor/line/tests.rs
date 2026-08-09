@@ -2,7 +2,7 @@ use std::io;
 
 use super::*;
 use crate::domain::{
-    CommandSequence, EditingMode, ImmediateCommand, KeyLookup, NonScalarWide, Refresh,
+    CommandSequence, EditingMode, ImmediateCommand, KeyLookup, OpaqueCodePoint, Refresh,
     TerminalMode, TextUnit, ViOperator, ViSequence, WordKind, WordTraversal,
 };
 use crate::editor::{Editor, TerminalControl};
@@ -106,7 +106,7 @@ fn non_unicode_units_keep_word_class() {
         TextUnit::RawByte(0xff),
         TextUnit::Scalar('.'),
         TextUnit::Scalar(' '),
-        TextUnit::CompatibilityWide(NonScalarWide::new(0xd800).unwrap()),
+        TextUnit::OpaqueCodePoint(OpaqueCodePoint::new(0xd800).unwrap()),
     ]
     .into_iter()
     .collect();
@@ -237,7 +237,7 @@ fn transforms_preserve_text_unit_kinds() {
     let text: Text = [
         TextUnit::Scalar('ß'),
         TextUnit::RawByte(0xff),
-        TextUnit::CompatibilityWide(NonScalarWide::new(0xd800).unwrap()),
+        TextUnit::OpaqueCodePoint(OpaqueCodePoint::new(0xd800).unwrap()),
     ]
     .into_iter()
     .collect();
@@ -253,7 +253,7 @@ fn transforms_preserve_text_unit_kinds() {
         TextUnit::Scalar('S'),
         TextUnit::Scalar('S'),
         TextUnit::RawByte(0xff),
-        TextUnit::CompatibilityWide(NonScalarWide::new(0xd800).unwrap()),
+        TextUnit::OpaqueCodePoint(OpaqueCodePoint::new(0xd800).unwrap()),
     ]
     .into_iter()
     .collect();
@@ -263,7 +263,7 @@ fn transforms_preserve_text_unit_kinds() {
     let transposed: Text = [
         TextUnit::Scalar('S'),
         TextUnit::Scalar('S'),
-        TextUnit::CompatibilityWide(NonScalarWide::new(0xd800).unwrap()),
+        TextUnit::OpaqueCodePoint(OpaqueCodePoint::new(0xd800).unwrap()),
         TextUnit::RawByte(0xff),
     ]
     .into_iter()

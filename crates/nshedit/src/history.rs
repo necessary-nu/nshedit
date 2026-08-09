@@ -1,9 +1,9 @@
-//! Native history storage and editor traversal.
+//! Owned history storage and editor traversal.
 
 // [spec:nshedit:req:core.history+1]
-mod native;
+mod store;
 
-pub use native::{
+pub use store::{
     DuplicatePolicy, HistoryCursor, HistoryEntry, HistoryId, HistoryStore, Navigation, PushError,
     PushResult,
 };

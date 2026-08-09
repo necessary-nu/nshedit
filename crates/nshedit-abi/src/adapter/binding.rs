@@ -290,7 +290,7 @@ impl EditLine {
         let Some(&first) = raw_name.first() else {
             return;
         };
-        let key = Text::from_iter([TextUnit::from_wide(first & 0xff)]);
+        let key = Text::from_iter([TextUnit::from_code_point(first & 0xff)]);
         if let Ok(key) = KeySequence::new(key) {
             self.replace_legacy_binding(mode, key, Binding::Action(Action::Refresh(Refresh::Beep)));
         }

@@ -2969,6 +2969,14 @@ children (
                             native-impl ([spec:nshedit:req:core.text-screen-model])
                         }
                         deps (rust-idiom-contract)
+                        log (
+                            {
+                                at 2026-08-09T13:19:51.843956862Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+                        )
                     }
 
                     {

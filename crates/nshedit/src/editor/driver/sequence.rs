@@ -108,7 +108,7 @@ impl ReadDriver {
         }
         match unit {
             TextUnit::Scalar(character) if (character as u32) < 0x100 => {
-                TextUnit::from_wide((character as u32) | 0x80)
+                TextUnit::from_code_point((character as u32) | 0x80)
             }
             TextUnit::RawByte(byte) => TextUnit::RawByte(byte | 0x80),
             other => other,
@@ -891,7 +891,7 @@ fn decimal_digit(unit: TextUnit) -> Option<usize> {
     let value = match unit {
         TextUnit::Scalar(character) if (character as u32) < 0x100 => character as u32,
         TextUnit::RawByte(byte) => u32::from(byte),
-        TextUnit::Scalar(_) | TextUnit::CompatibilityWide(_) => return None,
+        TextUnit::Scalar(_) | TextUnit::OpaqueCodePoint(_) => return None,
     };
     char::from_u32(value & 0x7f)?
         .to_digit(10)

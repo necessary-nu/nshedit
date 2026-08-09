@@ -396,4 +396,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule workspace.self-contained}
     )}
+    {id rust-idiom-text, covered_rules (
+        core.text-screen-model
+    ), covered_claims (
+        {impl_name native-impl, rule core.text-screen-model}
+    )}
 )

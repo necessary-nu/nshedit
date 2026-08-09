@@ -608,7 +608,7 @@ fn delimiter(unit: TextUnit) -> Option<(TextUnit, TextUnit, Direction)> {
         TextUnit::Scalar(']') => Some((scalar('['), scalar(']'), Direction::Previous)),
         TextUnit::Scalar('{') => Some((scalar('{'), scalar('}'), Direction::Next)),
         TextUnit::Scalar('}') => Some((scalar('{'), scalar('}'), Direction::Previous)),
-        TextUnit::Scalar(_) | TextUnit::RawByte(_) | TextUnit::CompatibilityWide(_) => None,
+        TextUnit::Scalar(_) | TextUnit::RawByte(_) | TextUnit::OpaqueCodePoint(_) => None,
     }
 }
 
