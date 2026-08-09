@@ -3059,6 +3059,14 @@ children (
                             native-impl ([spec:nshedit:req:abi.typed-session])
                         }
                         deps (rust-idiom-text rust-idiom-platform)
+                        log (
+                            {
+                                at 2026-08-09T16:26:45.385165542Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+                        )
                     }
 
                     {

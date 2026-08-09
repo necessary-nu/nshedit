@@ -5,6 +5,8 @@ use nshedit::editor::effect::{HostFailure, ResizeEffect};
 use nshedit_plat::signal::{BlockedSignals, Signal as PlatformSignal, SignalError, SignalHandlers};
 
 use crate::adapter::EditLine;
+#[cfg(test)]
+use crate::adapter::SessionInit;
 
 // [spec:nshedit:req:abi.signal-lifecycle]
 /// Signal ownership associated with one ABI read invocation.
@@ -229,16 +231,8 @@ mod tests {
     use super::*;
 
     fn editor() -> Box<EditLine> {
-        EditLine::new(
-            "signal-adapter-test",
-            core::ptr::null_mut(),
-            core::ptr::null_mut(),
-            core::ptr::null_mut(),
-            -1,
-            -1,
-            -1,
-        )
-        .expect("construct an editor over inert descriptors")
+        EditLine::new(SessionInit::inert("signal-adapter-test"))
+            .expect("construct an editor over inert descriptors")
     }
 
     #[test]

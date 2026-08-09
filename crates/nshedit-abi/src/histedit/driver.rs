@@ -107,8 +107,7 @@ fn prompt_from_units(units: &[TextUnit], escape: u32) -> Prompt {
 
 /// Invoke a prompt callback with no live Rust borrow of its editor.
 unsafe fn host_prompt(el: *mut EditLine, side: PromptSide) -> Prompt {
-    let right = side == PromptSide::Right;
-    let (callback, escape) = unsafe { (&*el).prompt_callback(right) };
+    let (callback, escape) = unsafe { (&*el).prompt(side) };
     let units: Vec<TextUnit> = match callback {
         PromptCallback::Wide(callback) => {
             let pointer = unsafe { callback(el) };
@@ -153,7 +152,7 @@ unsafe fn host_read(
         };
     }
 
-    if unsafe { (&*el).descriptor(0) }.is_none_or(|descriptor| descriptor < 0) {
+    if unsafe { (&*el).descriptor(StreamKind::Input) } < 0 {
         let _ = unsafe { signals.resume_pending_direct(el) }?;
         return Ok(ReadOutcome::EndOfInput);
     }
@@ -425,7 +424,9 @@ unsafe fn read_host_text(
     prompt: &Text,
     cancel_on_escape: bool,
 ) -> Result<Text, HostFailure> {
-    unsafe { (&*el).write_compatibility_stream(1, &terminal_bytes(prompt.as_units())) };
+    unsafe {
+        (&*el).write_compatibility_stream(StreamKind::Output, &terminal_bytes(prompt.as_units()))
+    };
     let mut text = Text::default();
     loop {
         let mut value = 0;
@@ -437,7 +438,7 @@ unsafe fn read_host_text(
         let unit = TextUnit::from_code_point(value);
         match unit {
             TextUnit::Scalar('\r' | '\n') => {
-                unsafe { (&*el).write_compatibility_stream(1, b"\n") };
+                unsafe { (&*el).write_compatibility_stream(StreamKind::Output, b"\n") };
                 return Ok(text);
             }
             TextUnit::Scalar('\u{1b}') if cancel_on_escape => {
@@ -453,7 +454,7 @@ unsafe fn read_host_text(
                     let _removed = text
                         .remove(span)
                         .expect("the checked final-unit span remains valid");
-                    unsafe { (&*el).write_compatibility_stream(1, b"\x08 \x08") };
+                    unsafe { (&*el).write_compatibility_stream(StreamKind::Output, b"\x08 \x08") };
                 }
             }
             unit => {
@@ -461,7 +462,9 @@ unsafe fn read_host_text(
                     return Err(HostFailure::Failed("command input is too long".into()));
                 }
                 text.push(unit);
-                unsafe { (&*el).write_compatibility_stream(1, &terminal_bytes(&[unit])) };
+                unsafe {
+                    (&*el).write_compatibility_stream(StreamKind::Output, &terminal_bytes(&[unit]))
+                };
             }
         }
     }
@@ -501,7 +504,12 @@ unsafe fn host_history_search(
                 Direction::Previous => Text::from("\nbck: "),
                 Direction::Next => Text::from("\nfwd: "),
             };
-            unsafe { (&*el).write_compatibility_stream(1, &terminal_bytes(prompt.as_units())) };
+            unsafe {
+                (&*el).write_compatibility_stream(
+                    StreamKind::Output,
+                    &terminal_bytes(prompt.as_units()),
+                )
+            };
             let mut value = 0;
             match unsafe { read_wide_character(el, &raw mut value) } {
                 1 if unsafe { (&mut *el).push_input(&[value]) } => {
@@ -593,7 +601,7 @@ unsafe fn host_history_line(
         unsafe { (&mut *el).save_history_live_line() };
     }
     if let HistoryPosition::Number(number) = request.position()
-        && unsafe { (&*el).narrow_history() }
+        && unsafe { (&*el).history_encoding() == HistoryEncoding::Narrow }
     {
         if number == RepeatCount::ONE {
             unsafe { (&mut *el).set_history_depth(0) };
@@ -658,12 +666,12 @@ unsafe fn host_alias(
     el: *mut EditLine,
     request: &AliasEffect,
 ) -> Result<AliasResponse, HostFailure> {
-    let Some((callback, cookie)) = (unsafe { (&*el).alias_callback() }) else {
+    let Some(registration) = (unsafe { (&*el).alias_callback() }) else {
         return Err(HostFailure::Unavailable);
     };
     let name = CString::new(terminal_bytes(request.name.as_units()))
         .map_err(|_| HostFailure::Failed("alias name contains a null byte".into()))?;
-    let expansion = unsafe { callback(cookie, name.as_ptr()) };
+    let expansion = unsafe { (registration.callback)(registration.cookie, name.as_ptr()) };
     let Some(bytes) = (unsafe { cbytes(expansion) }) else {
         return Ok(AliasResponse::Missing);
     };
@@ -735,7 +743,7 @@ unsafe fn host_command(
     };
     let result = unsafe { callback(el, crate::adapter::unit_to_wide(invoking)) };
     Ok(match result {
-        CC_NEWLINE => Outcome::Accepted(unsafe { (&*el).native().line().clone() }),
+        CC_NEWLINE => Outcome::Accepted(unsafe { (&*el).editor().line().clone() }),
         CC_EOF => Outcome::EndOfInput,
         crate::cdecl::histedit::CC_REFRESH => Outcome::Refresh(Refresh::Redraw),
         CC_REDISPLAY => Outcome::Refresh(Refresh::Redisplay),
@@ -749,77 +757,77 @@ pub(super) unsafe fn drive_read(el: *mut EditLine) -> Result<ReadResult, ()> {
     let mut signals = unsafe { ReadSignals::edited(el) }?;
 
     let mut step = {
-        let (editor, driver) = unsafe { (&mut *el).split_driver() };
+        let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
         driver.begin(editor).map_err(|_| ())?
     };
     loop {
         step = match step {
             ReadStep::Prompt(pending) => {
                 let prompt = unsafe { host_prompt(el, pending.request().side) };
-                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .resume_prompt(editor, &pending, Ok(prompt))
                     .map_err(|_| ())?
             }
             ReadStep::Resize(pending) => {
                 let response = unsafe { signals.resize(el, *pending.request()) };
-                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .resume_resize(editor, &pending, response)
                     .map_err(|_| ())?
             }
             ReadStep::Read(pending) => {
                 let response = unsafe { host_read(el, &mut signals) };
-                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .resume_read(editor, &pending, response)
                     .map_err(|_| ())?
             }
             ReadStep::History(pending) => {
                 let response = unsafe { host_history(el, pending.request()) };
-                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .resume_history(editor, &pending, response)
                     .map_err(|_| ())?
             }
             ReadStep::HistorySearch(pending) => {
                 let response = unsafe { host_history_search(el, pending.request()) };
-                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .resume_history_search(editor, &pending, response)
                     .map_err(|_| ())?
             }
             ReadStep::HistoryLine(pending) => {
                 let response = unsafe { host_history_line(el, pending.request()) };
-                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .resume_history_line(editor, &pending, response)
                     .map_err(|_| ())?
             }
             ReadStep::HistoryWord(pending) => {
                 let response = unsafe { host_history_word(el, pending.request()) };
-                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .resume_history_word(editor, &pending, response)
                     .map_err(|_| ())?
             }
             ReadStep::Alias(pending) => {
                 let response = unsafe { host_alias(el, pending.request()) };
-                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .resume_alias(editor, &pending, response)
                     .map_err(|_| ())?
             }
             ReadStep::EditorCommand(pending) => {
                 let response = unsafe { host_editor_command(el, pending.request()) };
-                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .resume_editor_command(editor, &pending, response)
                     .map_err(|_| ())?
             }
             ReadStep::ExternalEdit(pending) => {
                 let response = unsafe { host_external_edit(el, pending.request()) };
-                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .resume_external_edit(editor, &pending, response)
                     .map_err(|_| ())?
@@ -828,7 +836,7 @@ pub(super) unsafe fn drive_read(el: *mut EditLine) -> Result<ReadResult, ()> {
                 // libedit returns an accepted line to the application and
                 // leaves H_ENTER to that caller. The native effect is still
                 // resumed explicitly so the core retains one typed protocol.
-                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .resume_history_record(editor, &pending, Ok(()))
                     .map_err(|_| ())?
@@ -837,7 +845,7 @@ pub(super) unsafe fn drive_read(el: *mut EditLine) -> Result<ReadResult, ()> {
                 let response = Ok(crate::filecomplete::builtin_candidates(
                     &pending.request().query,
                 ));
-                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .resume_completion(editor, &pending, response)
                     .map_err(|_| ())?
@@ -845,22 +853,22 @@ pub(super) unsafe fn drive_read(el: *mut EditLine) -> Result<ReadResult, ()> {
             ReadStep::UserCommand(pending) => {
                 let request = pending.request();
                 let response = unsafe { host_command(el, &request.name, request.invoking) };
-                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .resume_user_command(editor, &pending, response)
                     .map_err(|_| ())?
             }
             ReadStep::Signal(pending) => {
                 let response = unsafe { signals.propagate(el, pending.request().signal) };
-                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .resume_signal(editor, &pending, response)
                     .map_err(|_| ())?
             }
             ReadStep::Display(display) => {
-                let stream = unsafe { (&*el).stream(1) }.unwrap_or(core::ptr::null_mut());
+                let stream = unsafe { (&*el).stream(StreamKind::Output) };
                 let mut output = CompatibilityOutput::new(stream);
-                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .display(editor, &display, &mut output)
                     .map_err(|_| ())?

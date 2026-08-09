@@ -236,10 +236,11 @@ impl EditLine {
     }
 
     fn terminal_flags(&self) -> (bool, bool, bool, bool) {
-        let capabilities = &self.boundary.terminal_capabilities;
+        let capabilities = &self.boundary.terminal.capabilities;
         let physical_tabs = self
             .boundary
             .terminal
+            .state
             .borrow()
             .original
             .as_ref()
@@ -256,7 +257,7 @@ impl EditLine {
     }
 
     fn tell_terminal_capabilities(&self) -> c_int {
-        let capabilities = &self.boundary.terminal_capabilities;
+        let capabilities = &self.boundary.terminal.capabilities;
         let (tabs, meta, automatic_margins, magic_margins) = self.terminal_flags();
         let mut output = Vec::new();
         writeln!(output, "\n\tYour terminal has the").expect("Vec writes cannot fail");
@@ -313,7 +314,7 @@ impl EditLine {
                 .expect("Vec writes cannot fail");
         }
         output.push(b'\n');
-        self.write_compatibility_stream(1, &output);
+        self.write_compatibility_stream(StreamKind::Output, &output);
         0
     }
 
@@ -335,15 +336,16 @@ impl EditLine {
 
         if let Some(capname) = local_string_capability_name(name_text) {
             if value.is_empty() {
-                self.boundary.terminal_capabilities.strings.remove(capname);
+                self.boundary.terminal.capabilities.strings.remove(capname);
             } else {
                 let value = CString::new(value).expect("wide input contains no NUL");
                 self.boundary
-                    .terminal_capabilities
+                    .terminal
+                    .capabilities
                     .strings
                     .insert(capname, value);
             }
-            self.boundary.terminal_capabilities.refresh_derived_flags();
+            self.boundary.terminal.capabilities.refresh_derived_flags();
             self.configure_terminal_display();
             return 0;
         }
@@ -352,20 +354,22 @@ impl EditLine {
             let mut diagnostic = format!("{command}: Bad capability `").into_bytes();
             diagnostic.extend_from_slice(&name);
             diagnostic.extend_from_slice(b"'.\n");
-            self.write_compatibility_stream(2, &diagnostic);
+            self.write_compatibility_stream(StreamKind::Diagnostics, &diagnostic);
             return -1;
         };
         match kind {
             CapabilityValueKind::Boolean => match value.as_slice() {
                 b"yes" => {
                     self.boundary
-                        .terminal_capabilities
+                        .terminal
+                        .capabilities
                         .bools
                         .insert(capname, true);
                 }
                 b"no" => {
                     self.boundary
-                        .terminal_capabilities
+                        .terminal
+                        .capabilities
                         .bools
                         .insert(capname, false);
                 }
@@ -379,12 +383,14 @@ impl EditLine {
                     return self.bad_terminal_value(&command, "value", &value);
                 };
                 self.boundary
-                    .terminal_capabilities
+                    .terminal
+                    .capabilities
                     .numbers
                     .insert(capname, number);
                 if BOOL_NAMES.contains(&capname) {
                     self.boundary
-                        .terminal_capabilities
+                        .terminal
+                        .capabilities
                         .bools
                         .insert(capname, number != 0);
                 }
@@ -395,7 +401,7 @@ impl EditLine {
                             .filter(|&rows| rows >= 1)
                             .unwrap_or(24)
                     } else {
-                        self.boundary.terminal_capabilities.rows
+                        self.boundary.terminal.capabilities.rows
                     };
                     let columns = if name_text == "co" {
                         usize::try_from(number)
@@ -403,14 +409,14 @@ impl EditLine {
                             .filter(|&columns| columns >= 2)
                             .unwrap_or(80)
                     } else {
-                        self.boundary.terminal_capabilities.columns
+                        self.boundary.terminal.capabilities.columns
                     };
-                    self.boundary.terminal_capabilities.set_size(rows, columns);
+                    self.boundary.terminal.capabilities.set_size(rows, columns);
                 }
             }
         }
         if matches!(kind, CapabilityValueKind::Boolean) {
-            self.boundary.terminal_capabilities.refresh_derived_flags();
+            self.boundary.terminal.capabilities.refresh_derived_flags();
         }
         self.configure_terminal_display();
         0
@@ -420,7 +426,7 @@ impl EditLine {
         let mut diagnostic = format!("{command}: Bad {noun} `").into_bytes();
         diagnostic.extend_from_slice(value);
         diagnostic.extend_from_slice(b"'.\n");
-        self.write_compatibility_stream(2, &diagnostic);
+        self.write_compatibility_stream(StreamKind::Diagnostics, &diagnostic);
         -1
     }
 
@@ -436,7 +442,7 @@ impl EditLine {
         let Ok(name) = core::str::from_utf8(name) else {
             return -1;
         };
-        let capabilities = &self.boundary.terminal_capabilities;
+        let capabilities = &self.boundary.terminal.capabilities;
         if let Some(capname) = local_string_capability_name(name) {
             let value = capabilities
                 .strings
@@ -486,7 +492,7 @@ impl EditLine {
         if name.is_empty() {
             return 0;
         }
-        let capabilities = &self.boundary.terminal_capabilities;
+        let capabilities = &self.boundary.terminal.capabilities;
         let (tabs, _, automatic_margins, magic_margins) = self.terminal_flags();
         let pseudo = match name.as_str() {
             "tabs" => Some(if tabs {
@@ -505,6 +511,7 @@ impl EditLine {
                 let speed = self
                     .boundary
                     .terminal
+                    .state
                     .borrow()
                     .original
                     .as_ref()
@@ -518,7 +525,7 @@ impl EditLine {
             _ => None,
         };
         if let Some(pseudo) = pseudo {
-            self.write_compatibility_stream(1, pseudo.as_bytes());
+            self.write_compatibility_stream(StreamKind::Output, pseudo.as_bytes());
             return 0;
         }
 
@@ -535,7 +542,7 @@ impl EditLine {
         let Some(sequence) = sequence.filter(|sequence| !sequence.to_bytes().is_empty()) else {
             if !silent {
                 self.write_compatibility_stream(
-                    2,
+                    StreamKind::Diagnostics,
                     format!("echotc: Termcap parameter `{name}' not found.\n").as_bytes(),
                 );
             }
@@ -549,7 +556,7 @@ impl EditLine {
         if values.len() > needed && values.get(needed).is_some_and(|value| !value.is_empty()) {
             if !silent {
                 self.write_compatibility_stream(
-                    2,
+                    StreamKind::Diagnostics,
                     format!("echotc: Warning: Extra argument `{}`.\n", values[needed]).as_bytes(),
                 );
             }
@@ -557,7 +564,10 @@ impl EditLine {
         }
         if values.len() < needed || values.iter().take(needed).any(String::is_empty) {
             if !silent {
-                self.write_compatibility_stream(2, b"echotc: Warning: Missing argument.\n");
+                self.write_compatibility_stream(
+                    StreamKind::Diagnostics,
+                    b"echotc: Warning: Missing argument.\n",
+                );
             }
             return -1;
         }
@@ -571,7 +581,7 @@ impl EditLine {
                         "cols"
                     };
                     self.write_compatibility_stream(
-                        2,
+                        StreamKind::Diagnostics,
                         format!("echotc: Bad value `{value}' for {dimension}.\n").as_bytes(),
                     );
                 }
@@ -581,7 +591,7 @@ impl EditLine {
         }
         if needed > 2 && verbose {
             self.write_compatibility_stream(
-                2,
+                StreamKind::Diagnostics,
                 format!("echotc: Warning: Too many required arguments ({needed}).\n").as_bytes(),
             );
         }
@@ -606,7 +616,7 @@ impl EditLine {
         let Ok(bytes) = bytes else {
             return -1;
         };
-        self.write_compatibility_stream(1, &bytes);
+        self.write_compatibility_stream(StreamKind::Output, &bytes);
         0
     }
 }

@@ -1,7 +1,10 @@
+use core::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicUsize, Ordering::Relaxed};
 use std::sync::{Mutex, MutexGuard};
 
 use nshedit::domain::Text;
+
+use crate::cdecl::readline::RlCommandFuncT;
 
 use super::*;
 
@@ -146,11 +149,12 @@ fn rl_abort_is_inert_and_leaves_rl_done_alone() {
 #[test]
 fn the_internal_abort_raises_a_flag_where_the_c_jumps() {
     let _g = globals();
-    // SAFETY: single-threaded under the lock; `E` is NULL here, so the
-    // `el_beep` the C issues with no guard is skipped.
+    // SAFETY: single-threaded under the lock. Clearing the runtime first means
+    // the `el_beep` the C issues with no guard is skipped.
     unsafe {
+        release_runtime_session();
         rl_done = 0;
-        ABORT_PENDING.store(false, Relaxed);
+        READLINE_RUNTIME.abort_pending.store(false, Relaxed);
 
         // The C's declared `int` is never produced — it cannot return at
         // all — so 0 is the port's own answer.
@@ -161,7 +165,7 @@ fn the_internal_abort_raises_a_flag_where_the_c_jumps() {
         // Raised with no `readline()` running it simply waits to be
         // consumed by the next one, which is the port's definition of the
         // C's dead jump.
-        assert!(ABORT_PENDING.swap(false, Relaxed));
+        assert!(READLINE_RUNTIME.abort_pending.swap(false, Relaxed));
 
         rl_done = 0;
     }
@@ -207,10 +211,14 @@ fn erasing_the_entire_line_erases_nothing() {
 fn full_line_kill_keeps_position_globals() {
     let _g = globals();
     let _ed = Piped::install();
-    // SAFETY: single-threaded under the lock; `E` is the fixture's editor.
+    // SAFETY: single-threaded under the lock; the runtime owns the fixture's
+    // editor.
     unsafe {
-        assert_eq!(crate::eln::el_insertstr(E, c"some text".as_ptr()), 0);
-        assert_eq!((&*E).native().line().len(), 9);
+        assert_eq!(
+            crate::eln::el_insertstr(runtime_editor(), c"some text".as_ptr()),
+            0
+        );
+        assert_eq!((&*runtime_editor()).editor().line().len(), 9);
         rl_point = 3;
         rl_end = 9;
 
@@ -220,9 +228,12 @@ fn full_line_kill_keeps_position_globals() {
         let (point, end) = (rl_point, rl_end);
         assert_eq!(point, 3);
         assert_eq!(end, 9);
-        assert_eq!((&*E).native().cursor().get(), 0);
-        assert!((&*E).native().line().is_empty());
-        assert_eq!((&*E).native().kill_buffer(), Some(&Text::from("some text")));
+        assert_eq!((&*runtime_editor()).editor().cursor().get(), 0);
+        assert!((&*runtime_editor()).editor().line().is_empty());
+        assert_eq!(
+            (&*runtime_editor()).editor().kill_buffer(),
+            Some(&Text::from("some text"))
+        );
 
         rl_point = 0;
         rl_end = 0;
@@ -497,6 +508,7 @@ fn append_character_projects_into_core_text() {
 static BOUND_COUNT: AtomicI32 = AtomicI32::new(-1);
 static BOUND_KEY: AtomicI32 = AtomicI32::new(-1);
 static BOUND_SETS_DONE: AtomicBool = AtomicBool::new(false);
+static REENTRANT_BIND_RESULT: AtomicI32 = AtomicI32::new(c_int::MIN);
 
 /// Stands in for an application command installed by `rl_add_defun`.
 unsafe extern "C" fn recording_command(count: c_int, key: c_int) -> c_int {
@@ -508,6 +520,18 @@ unsafe extern "C" fn recording_command(count: c_int, key: c_int) -> c_int {
     }
     // A failure return, which the wrapper discards.
     -1
+}
+
+unsafe extern "C" fn reentrant_binding_command(_: c_int, _: c_int) -> c_int {
+    let result = unsafe {
+        rl_add_defun(
+            c"reentrant-command".as_ptr(),
+            Some(recording_command),
+            c_int::from(b'y'),
+        )
+    };
+    REENTRANT_BIND_RESULT.store(result, Relaxed);
+    result
 }
 
 /// The wrapper is what stands between EditLine's keystroke dispatch and a
@@ -525,14 +549,14 @@ fn the_bind_wrapper_hardcodes_a_count_of_one_and_discards_the_result() {
     // `rl_done` are restored below. `_rl_update_pos` returns early on the
     // NULL editor, so no line state is needed.
     unsafe {
-        let saved = MAP[key as usize];
+        let saved = READLINE_RUNTIME.access(|runtime| runtime.commands[key as usize]);
 
         // An unbound byte is CC_ERROR and the table is not consulted
         // further — this is the only failure the wrapper can report.
-        MAP[key as usize] = None;
+        READLINE_RUNTIME.access(|runtime| runtime.commands[key as usize] = None);
         assert_eq!(rl_bind_wrapper(ptr::null_mut(), key), CC_ERROR);
 
-        MAP[key as usize] = Some(recording_command);
+        READLINE_RUNTIME.access(|runtime| runtime.commands[key as usize] = Some(recording_command));
         BOUND_COUNT.store(-1, Relaxed);
         BOUND_KEY.store(-1, Relaxed);
         BOUND_SETS_DONE.store(false, Relaxed);
@@ -547,9 +571,48 @@ fn the_bind_wrapper_hardcodes_a_count_of_one_and_discards_the_result() {
         BOUND_SETS_DONE.store(true, Relaxed);
         assert_eq!(rl_bind_wrapper(ptr::null_mut(), key), CC_EOF);
 
-        MAP[key as usize] = saved;
+        READLINE_RUNTIME.access(|runtime| runtime.commands[key as usize] = saved);
         BOUND_SETS_DONE.store(false, Relaxed);
         rl_done = 0;
+    }
+}
+
+// [spec:nshedit:req:abi.typed-session/test]
+#[test]
+fn command_callback_can_reenter_the_runtime() {
+    let _g = globals();
+    let _editor = Piped::install();
+    let invoking = b'x';
+    let nested = b'y';
+    // SAFETY: the global test lock serializes the runtime. The callback is
+    // copied out before invocation, so its nested registration cannot overlap
+    // a borrow of the command table.
+    unsafe {
+        let saved_invoking = READLINE_RUNTIME.access(|runtime| runtime.commands[invoking as usize]);
+        let saved_nested = READLINE_RUNTIME.access(|runtime| runtime.commands[nested as usize]);
+        READLINE_RUNTIME.access(|runtime| {
+            runtime.commands[invoking as usize] = Some(reentrant_binding_command);
+        });
+        REENTRANT_BIND_RESULT.store(c_int::MIN, Relaxed);
+
+        assert_eq!(
+            rl_bind_wrapper(runtime_editor(), invoking),
+            CC_NORM,
+            "the outer dispatch completes normally"
+        );
+        assert_eq!(REENTRANT_BIND_RESULT.load(Relaxed), 0);
+        assert!(
+            READLINE_RUNTIME
+                .access(|runtime| runtime.commands[nested as usize])
+                .is_some_and(|callback| {
+                    core::ptr::fn_addr_eq(callback, recording_command as RlCommandFuncT)
+                })
+        );
+
+        READLINE_RUNTIME.access(|runtime| {
+            runtime.commands[invoking as usize] = saved_invoking;
+            runtime.commands[nested as usize] = saved_nested;
+        });
     }
 }
 
@@ -617,7 +680,8 @@ impl Piped {
         // holds. The descriptors outlive the editor because `Drop` ends it
         // before the fields are closed.
         unsafe {
-            E = crate::histedit::el_init_fd(
+            release_runtime_session();
+            let editor = crate::histedit::el_init_fd(
                 c"nshedit-test".as_ptr(),
                 ptr::null_mut(),
                 ptr::null_mut(),
@@ -626,9 +690,9 @@ impl Piped {
                 out_write.as_raw_fd(),
                 out_write.as_raw_fd(),
             );
-            assert!(!E.is_null(), "el_init_fd");
-            H = crate::histedit::history_init();
-            assert!(!H.is_null(), "history_init");
+            let editor = NonNull::new(editor).expect("el_init_fd");
+            let history = NonNull::new(crate::histedit::history_init()).expect("history_init");
+            READLINE_RUNTIME.install(editor, history);
         }
         Self {
             input: Some(input),
@@ -664,9 +728,9 @@ impl Piped {
     /// this does not.
     fn next_key(&self) -> u8 {
         let mut buf = [0 as c_char; 2];
-        // SAFETY: the caller holds the test lock and `E` is this
+        // SAFETY: the caller holds the test lock and the runtime owns this
         // fixture's editor.
-        let rc = unsafe { crate::eln::el_getc(E, buf.as_mut_ptr()) };
+        let rc = unsafe { crate::eln::el_getc(runtime_editor(), buf.as_mut_ptr()) };
         assert_eq!(rc, 1, "expected a queued character");
         buf[0] as u8
     }
@@ -680,7 +744,7 @@ impl Piped {
     /// work at all — see `next_key`.
     fn assert_no_more_input(&mut self) {
         // SAFETY: as `next_key`.
-        unsafe { crate::eln::el_push(E, c"\x1f".as_ptr()) };
+        unsafe { crate::eln::el_push(runtime_editor(), c"\x1f".as_ptr()) };
         assert_eq!(self.next_key(), 0x1f, "input was left in the queue");
     }
 }
@@ -689,12 +753,7 @@ impl Drop for Piped {
     fn drop(&mut self) {
         // SAFETY: the descriptors are still open — the fields drop after
         // this — and the caller still holds the test lock.
-        unsafe {
-            crate::histedit::el_end(E);
-            E = ptr::null_mut();
-            crate::histedit::history_end(H);
-            H = ptr::null_mut();
-        }
+        unsafe { release_runtime_session() }
     }
 }
 
@@ -728,12 +787,12 @@ fn messages_format_and_truncate() {
 fn rl_insert_pushes_the_key_back_instead_of_inserting_it() {
     let _g = globals();
     let mut ed = Piped::install();
-    // SAFETY: single-threaded under the lock; `E` is the fixture's.
+    // SAFETY: single-threaded under the lock; the runtime owns the fixture.
     unsafe {
         assert_eq!(rl_insert(3, c_int::from(b'x')), 0);
 
         // The line is untouched, which is the whole divergence.
-        let li = crate::eln::el_line(E);
+        let li = crate::eln::el_line(runtime_editor());
         assert_eq!((*li).lastchar, (*li).buffer);
 
         // A non-positive count pushes nothing at all rather than once.
@@ -806,12 +865,12 @@ fn reading_a_key_answers_the_status_and_throws_the_key_away() {
     let _ed = Piped::install();
     // SAFETY: single-threaded under the lock.
     unsafe {
-        crate::eln::el_push(E, c"z".as_ptr());
+        crate::eln::el_push(runtime_editor(), c"z".as_ptr());
         assert_eq!(rl_read_key(), 1);
 
         // Not 'z' (0x7a), and not 0x1b either — the same 1 comes back for
         // a different key.
-        crate::eln::el_push(E, c"\x1b".as_ptr());
+        crate::eln::el_push(runtime_editor(), c"\x1b".as_ptr());
         assert_eq!(rl_read_key(), 1);
 
         // With the queue empty this is 0, and it would be 0 with a
@@ -839,14 +898,14 @@ fn resetting_the_terminal_ignores_the_name_and_keeps_pending_input() {
     let ed = Piped::install();
     // SAFETY: single-threaded under the lock.
     unsafe {
-        assert!(crate::eln::el_insertstr(E, c"abc".as_ptr()) >= 0);
-        crate::eln::el_push(E, c"z".as_ptr());
+        assert!(crate::eln::el_insertstr(runtime_editor(), c"abc".as_ptr()) >= 0);
+        crate::eln::el_push(runtime_editor(), c"z".as_ptr());
 
         assert_eq!(rl_reset_terminal(c"no-such-terminal-anywhere".as_ptr()), 0);
 
         // The line is empty again — the old text is still in the buffer,
         // but above `lastchar`, so nothing reads it.
-        let li = crate::eln::el_line(E);
+        let li = crate::eln::el_line(runtime_editor());
         assert_eq!((*li).lastchar, (*li).buffer);
 
         // The pushed key survived.
@@ -880,7 +939,7 @@ fn inhibited_completion_inserts_the_invoking_key_literally() {
 
         // Inserted into the line, not pushed back — the opposite of what
         // `rl_insert` does with its argument.
-        let li = crate::eln::el_line(E);
+        let li = crate::eln::el_line(runtime_editor());
         assert_eq!(c_bytes((*li).buffer), b"\t");
 
         rl_inhibit_completion = saved;
@@ -923,7 +982,7 @@ fn redisplaying_pushes_the_reprint_key_back_as_input() {
     let mut ed = Piped::install();
     // SAFETY: single-threaded under the lock.
     unsafe {
-        let reprint = (&*E).control_reprint();
+        let reprint = (&*runtime_editor()).control_reprint();
 
         rl_redisplay();
 
@@ -977,7 +1036,7 @@ fn installing_a_callback_handler_replaces_rather_than_stacks() {
         assert_eq!(c_bytes(prompt), b"cb> ");
         let installed = rl_linefunc.map(|f| f as usize);
         assert_eq!(installed, Some(recording_linefunc as *const () as usize));
-        assert!((&*E).unbuffered());
+        assert!((&*runtime_editor()).unbuffered());
 
         // The second install overwrites both without a word.
         rl_callback_handler_install(c"two> ".as_ptr(), Some(other_linefunc));
@@ -1006,7 +1065,7 @@ fn removing_a_callback_handler_leaves_the_prompt_behind() {
 
         let installed = rl_linefunc.map(|f| f as usize);
         assert_eq!(installed, None);
-        assert!(!(&*E).unbuffered());
+        assert!(!(&*runtime_editor()).unbuffered());
 
         // Still the callback prompt, so a program alternating between
         // callback mode and `readline()` carries it across.
@@ -1093,8 +1152,8 @@ fn the_callback_reader_takes_one_key_per_call_and_fires_on_the_newline() {
             .clone()
     };
 
-    // SAFETY: single-threaded under the lock; `E` is the fixture's and is
-    // put back before the fixture tears it down.
+    // SAFETY: single-threaded under the lock; the runtime session is restored
+    // before the fixture tears it down.
     unsafe {
         CALLBACK_LINES
             .lock()
@@ -1119,10 +1178,11 @@ fn the_callback_reader_takes_one_key_per_call_and_fires_on_the_newline() {
         // C hands the NULL editor straight to `el_gets` (ERR-readline-11)
         // and the port returns instead. The handler is still installed, so
         // a call that got past the guard would show up as a fourth line.
-        let saved = E;
-        E = ptr::null_mut();
+        let saved = READLINE_RUNTIME.take_session();
         rl_callback_read_char();
-        E = saved;
+        if let RuntimeSession::Ready { editor, history } = saved {
+            READLINE_RUNTIME.install(editor, history);
+        }
         assert_eq!(seen().len(), 1);
 
         rl_callback_handler_remove();
@@ -1167,7 +1227,7 @@ fn the_word_break_hook_sees_stale_positions_and_is_asked_every_time() {
 
         // A prefix nothing on disk can complete, so the attempt finds no
         // match and returns without displaying a list or asking anything.
-        assert!(crate::eln::el_insertstr(E, c"zzqqnosuchprefix".as_ptr()) >= 0);
+        assert!(crate::eln::el_insertstr(runtime_editor(), c"zzqqnosuchprefix".as_ptr()) >= 0);
         rl_point = -1;
         rl_end = -1;
 

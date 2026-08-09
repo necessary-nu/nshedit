@@ -11,7 +11,7 @@ use nshedit::editor::{
     Tokenizer as NativeTokenizer,
 };
 
-use crate::adapter::EditLine;
+use crate::adapter::{CompletionInvocation, EditLine};
 
 use super::{
     BREAK_CHARACTERS, FilenameCompletionState, collect_candidates, completion_suffix,
@@ -95,12 +95,6 @@ impl CompletionPolicy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CompletionInvocation {
-    Insert,
-    List,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CompletionPositions {
     pub(crate) cursor: usize,
     pub(crate) line_end: usize,
@@ -114,18 +108,14 @@ pub(crate) struct CompletionSnapshot {
 }
 
 pub(crate) fn observe_completion(editor: &mut EditLine, separators: Text) -> CompletionSnapshot {
-    let invocation = if editor.begin_completion() {
-        CompletionInvocation::List
-    } else {
-        CompletionInvocation::Insert
-    };
+    let invocation = editor.begin_completion();
     let positions = CompletionPositions {
-        cursor: editor.native().cursor().get(),
-        line_end: editor.native().line().len(),
+        cursor: editor.editor().cursor().get(),
+        line_end: editor.editor().line().len(),
     };
     let columns = editor.screen_size().map_or(80, |size| size.columns());
     let query = editor
-        .native()
+        .editor()
         .completion_query(&NativeTokenizer::new(separators));
     CompletionSnapshot {
         query,
@@ -432,7 +422,7 @@ pub(crate) fn complete_filename(editor: &mut EditLine) -> CompletionCommand {
     let snapshot = observe_completion(editor, separators);
     let report = {
         let mut apply = |query: &CompletionQuery, candidates: CompletionCandidates| {
-            editor.native_mut().apply_completion(query, candidates)
+            editor.editor_mut().apply_completion(query, candidates)
         };
         resolve_completion(CompletionRequest::new(
             snapshot,

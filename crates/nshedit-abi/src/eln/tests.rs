@@ -52,7 +52,7 @@ fn feed(el: *mut EditLine, content: &[u8]) -> std::fs::File {
     let file = std::fs::File::open(&path).unwrap();
     let _ = std::fs::remove_file(&path);
     // SAFETY: `el` is live.
-    unsafe { (&mut *el).set_stream(0, ptr::null_mut(), file.as_raw_fd()) };
+    unsafe { (&mut *el).set_stream(StreamKind::Input, ptr::null_mut(), file.as_raw_fd()) };
     file
 }
 
@@ -272,7 +272,7 @@ fn the_narrow_line_view_calls_the_resize_hook_once_and_survives_re_entry() {
     assert_eq!(CALLBACK_HANDLE.with(std::cell::Cell::get), el);
     // SAFETY: `el` is live.
     assert!(
-        !unsafe { (&*el).publishing_narrow_line() },
+        unsafe { (&*el).published_line_encoding() == BoundaryEncoding::Wide },
         "the guard is cleared on the way out"
     );
     done(el);
@@ -369,13 +369,13 @@ fn the_narrow_setter_decodes_and_records_that_it_was_narrow() {
         let p: ElPfuncT = never_called;
         assert_eq!(el_set(el, EL_PROMPT, p), 0);
         assert!(matches!(
-            (&*el).prompt_callback(false).0,
+            (&*el).prompt(PromptSide::Left).0,
             crate::adapter::PromptCallback::Narrow(_)
         ));
         let wide_prompt: crate::adapter::WidePromptCallback = never_called_wide;
         assert_eq!(crate::histedit::el_wset(el, EL_PROMPT, wide_prompt), 0);
         assert!(matches!(
-            (&*el).prompt_callback(false).0,
+            (&*el).prompt(PromptSide::Left).0,
             crate::adapter::PromptCallback::Wide(_)
         ));
     }
@@ -409,13 +409,13 @@ fn installing_history_through_the_narrow_setter_pins_the_bridge_narrow() {
     // called with; the function is never invoked here.
     unsafe {
         assert_eq!(el_set(el, EL_HIST, f, ptr::dangling_mut::<c_void>()), 0);
-        assert!((&*el).narrow_history());
+        assert_eq!((&*el).history_encoding(), HistoryEncoding::Narrow);
 
         assert_eq!(
             crate::histedit::el_wset(el, EL_HIST, f, ptr::dangling_mut::<c_void>()),
             0
         );
-        let cleared = !(&*el).narrow_history();
+        let cleared = (&*el).history_encoding() == HistoryEncoding::Wide;
         assert_eq!(
             cleared,
             crate::conversion::max_multibyte_length() == 1,

@@ -5,26 +5,21 @@ use super::*;
 mod signal;
 
 impl EditLine {
-    pub(crate) fn new(
-        program: &str,
-        input: CFile,
-        output: CFile,
-        diagnostics: CFile,
-        input_descriptor: c_int,
-        output_descriptor: c_int,
-        diagnostics_descriptor: c_int,
-    ) -> Option<Box<Self>> {
-        let program = CString::new(program).ok()?;
+    pub(crate) fn new(init: SessionInit<'_>) -> Result<Box<Self>, SessionInitError> {
+        let SessionInit { program, streams } = init;
+        let program = CString::new(program).map_err(SessionInitError::ProgramName)?;
         let terminal_name = secure_environment("TERM")
             .and_then(|name| CString::new(name).ok())
             .unwrap_or_else(|| c"dumb".to_owned());
-        let (terminal, terminal_state) = AbiTerminal::new(input_descriptor, output_descriptor);
+        let (terminal, terminal_state) =
+            AbiTerminal::new(streams.input.descriptor, streams.output.descriptor);
         let config = EditorConfig::default().with_signal_policy(SignalPolicy::Ignore);
-        let mut native = Editor::new(config, terminal).ok()?;
-        let _ = native.execute(Action::SetMark);
-        let _ = native.set_terminal_mode(TerminalMode::Cooked);
+        let mut session_editor =
+            Editor::new(config, terminal).map_err(SessionInitError::Terminal)?;
+        let _ = session_editor.execute(Action::SetMark);
+        let _ = session_editor.set_terminal_mode(TerminalMode::Cooked);
         let lookup = nshterm::TermInfo::from_name(terminal_name.to_str().unwrap_or("dumb"));
-        let window_size = with_borrowed_descriptor(input_descriptor, terminal::screen_size)
+        let window_size = with_borrowed_descriptor(streams.input.descriptor, terminal::screen_size)
             .and_then(Result::ok)
             .filter(|(rows, columns)| *rows != 0 && *columns != 0);
         let terminal_capabilities = TerminalCapabilities::new(
@@ -35,17 +30,14 @@ impl EditLine {
         let rows = terminal_capabilities.rows;
         let columns = terminal_capabilities.columns;
         let profile = terminal_capabilities.profile(None);
-        let size = ScreenSize::new(rows, columns).ok()?;
-        native.configure_display(profile, size);
+        let size = ScreenSize::new(rows, columns).map_err(SessionInitError::Display)?;
+        session_editor.configure_display(profile, size);
         let mut editor = Box::new(Self {
-            native,
+            editor: session_editor,
             driver: ReadDriver::default(),
             boundary: EditLineBoundary::new(
                 program,
-                Streams {
-                    files: [input, output, diagnostics],
-                    descriptors: [input_descriptor, output_descriptor, diagnostics_descriptor],
-                },
+                streams,
                 terminal_state,
                 terminal_name.clone(),
                 terminal_capabilities,
@@ -55,27 +47,27 @@ impl EditLine {
             editor.report_terminal_lookup_failure(terminal_name.as_c_str(), error);
         }
         editor.initialize_terminal_bindings();
-        editor.reset_compatibility_bindings(EditingMode::Emacs);
-        Some(editor)
+        editor.reset_bindings(EditingMode::Emacs);
+        Ok(editor)
     }
 
-    pub(crate) fn native(&self) -> &Editor<AbiTerminal> {
-        &self.native
+    pub(crate) fn editor(&self) -> &Editor<AbiTerminal> {
+        &self.editor
     }
 
-    pub(crate) fn native_mut(&mut self) -> &mut Editor<AbiTerminal> {
-        &mut self.native
+    pub(crate) fn editor_mut(&mut self) -> &mut Editor<AbiTerminal> {
+        &mut self.editor
     }
 
-    pub(crate) fn split_driver(&mut self) -> (&mut Editor<AbiTerminal>, &mut ReadDriver) {
-        (&mut self.native, &mut self.driver)
+    pub(crate) fn split_editor_driver(&mut self) -> (&mut Editor<AbiTerminal>, &mut ReadDriver) {
+        (&mut self.editor, &mut self.driver)
     }
 
     pub(crate) fn reset_line(&mut self) {
-        self.native.reset_line();
-        let _ = self.native.execute(Action::SetMark);
-        self.boundary.history_depth = 0;
-        self.boundary.history_live_line.clear();
+        self.editor.reset_line();
+        let _ = self.editor.execute(Action::SetMark);
+        self.boundary.history.depth = 0;
+        self.boundary.history.live_line.clear();
     }
 
     pub(crate) fn reconfigure(&mut self) {
@@ -85,26 +77,18 @@ impl EditLine {
             } else {
                 EditingMode::Emacs
             })
-            .with_signal_policy(if self.boundary.policy.handle_signals {
-                SignalPolicy::Handle
-            } else {
-                SignalPolicy::Ignore
-            })
-            .with_buffering(if self.boundary.policy.unbuffered {
-                Buffering::Command
-            } else {
-                Buffering::Line
-            });
-        self.native.reconfigure(config);
+            .with_signal_policy(self.boundary.policy.signals)
+            .with_buffering(self.boundary.policy.buffering);
+        self.editor.reconfigure(config);
     }
 
     pub(crate) fn set_editor(&mut self, mode: EditingMode) {
-        self.reset_compatibility_bindings(mode);
+        self.reset_bindings(mode);
         self.boundary.word_characters = None;
     }
 
     pub(crate) fn editor_is_vi(&self) -> bool {
-        self.native.config().editing_mode() == EditingMode::Vi
+        self.editor.config().editing_mode() == EditingMode::Vi
     }
 
     pub(crate) fn program(&self) -> &std::ffi::CStr {
@@ -112,121 +96,102 @@ impl EditLine {
     }
 
     pub(crate) fn handle_signals(&self) -> bool {
-        self.boundary.policy.handle_signals
+        self.boundary.policy.signals == SignalPolicy::Handle
     }
 
     pub(crate) fn editing_enabled(&self) -> bool {
-        self.boundary.policy.editing_enabled
+        self.boundary.policy.availability == EditingAvailability::Enabled
     }
 
     pub(crate) fn set_editing_enabled(&mut self, enabled: bool) {
-        self.boundary.policy.editing_enabled = enabled;
+        self.boundary.policy.availability = if enabled {
+            EditingAvailability::Enabled
+        } else {
+            EditingAvailability::Disabled
+        };
     }
 
     pub(crate) fn unbuffered(&self) -> bool {
-        self.boundary.policy.unbuffered
+        self.boundary.policy.buffering == Buffering::Command
     }
 
     pub(crate) fn set_unbuffered(&mut self, enabled: bool) {
-        self.boundary.policy.unbuffered = enabled;
+        self.boundary.policy.buffering = if enabled {
+            Buffering::Command
+        } else {
+            Buffering::Line
+        };
         self.reconfigure();
     }
 
     pub(crate) fn safe_read(&self) -> bool {
-        self.boundary.policy.safe_read
+        self.boundary.policy.interrupted_read == InterruptedRead::Retry
     }
 
     pub(crate) fn set_safe_read(&mut self, enabled: bool) {
-        self.boundary.policy.safe_read = enabled;
+        self.boundary.policy.interrupted_read = if enabled {
+            InterruptedRead::Retry
+        } else {
+            InterruptedRead::Report
+        };
     }
 
-    pub(crate) fn narrow_history(&self) -> bool {
-        self.boundary.policy.narrow_history
+    pub(crate) fn history_encoding(&self) -> HistoryEncoding {
+        self.boundary.history.encoding
     }
 
-    pub(crate) fn set_narrow_history(&mut self, enabled: bool) {
-        self.boundary.policy.narrow_history = enabled;
+    pub(crate) fn set_history_encoding(&mut self, encoding: HistoryEncoding) {
+        self.boundary.history.encoding = encoding;
     }
 
-    pub(crate) fn publishing_narrow_line(&self) -> bool {
-        self.boundary.policy.publishing_narrow_line
+    pub(crate) fn published_line_encoding(&self) -> BoundaryEncoding {
+        self.boundary.lines.published
     }
 
-    pub(crate) fn set_publishing_narrow_line(&mut self, active: bool) {
-        self.boundary.policy.publishing_narrow_line = active;
+    pub(crate) fn set_published_line_encoding(&mut self, encoding: BoundaryEncoding) {
+        self.boundary.lines.published = encoding;
     }
 
     pub(crate) fn set_prompt_wide(
         &mut self,
-        right: bool,
+        side: PromptSide,
         callback: Option<WidePromptCallback>,
         escape: u32,
     ) {
-        let callback = callback.unwrap_or(if right {
-            default_right_prompt
-        } else {
-            default_left_prompt
+        let callback = callback.unwrap_or(match side {
+            PromptSide::Left => default_left_prompt,
+            PromptSide::Right => default_right_prompt,
         });
-        self.boundary.prompts[usize::from(right)] = PromptSpec {
-            callback: PromptCallback::Wide(callback),
-            escape,
-        };
+        self.boundary.prompts.set(
+            side,
+            PromptSpec {
+                callback: PromptCallback::Wide(callback),
+                escape,
+            },
+        );
     }
 
     pub(crate) fn set_prompt_narrow(
         &mut self,
-        right: bool,
+        side: PromptSide,
         callback: Option<NarrowPromptCallback>,
         escape: u32,
     ) {
-        let callback = callback.unwrap_or_else(|| {
-            // C function pointers of these two signatures have the same
-            // representation; the prompt's width tag decides how to read
-            // the returned storage.
-            unsafe {
-                core::mem::transmute::<WidePromptCallback, NarrowPromptCallback>(if right {
-                    default_right_prompt
-                } else {
-                    default_left_prompt
-                })
-            }
+        let callback = callback.unwrap_or(match side {
+            PromptSide::Left => default_left_prompt_narrow,
+            PromptSide::Right => default_right_prompt_narrow,
         });
-        self.boundary.prompts[usize::from(right)] = PromptSpec {
-            callback: PromptCallback::Narrow(callback),
-            escape,
-        };
+        self.boundary.prompts.set(
+            side,
+            PromptSpec {
+                callback: PromptCallback::Narrow(callback),
+                escape,
+            },
+        );
     }
 
-    pub(crate) fn prompt_wide(&self, right: bool) -> (WidePromptCallback, u32) {
-        let prompt = self.boundary.prompts[usize::from(right)];
-        let callback = match prompt.callback {
-            PromptCallback::Wide(callback) => callback,
-            PromptCallback::Narrow(callback) => {
-                // See [`Self::set_prompt_narrow`].
-                unsafe {
-                    core::mem::transmute::<NarrowPromptCallback, WidePromptCallback>(callback)
-                }
-            }
-        };
-        (callback, prompt.escape)
-    }
-
-    pub(crate) fn prompt_narrow(&self, right: bool) -> (NarrowPromptCallback, u32) {
-        let prompt = self.boundary.prompts[usize::from(right)];
-        let callback = match prompt.callback {
-            PromptCallback::Narrow(callback) => callback,
-            PromptCallback::Wide(callback) => {
-                // See [`Self::set_prompt_narrow`].
-                unsafe {
-                    core::mem::transmute::<WidePromptCallback, NarrowPromptCallback>(callback)
-                }
-            }
-        };
-        (callback, prompt.escape)
-    }
-
-    pub(crate) fn prompt_callback(&self, right: bool) -> (PromptCallback, u32) {
-        let prompt = self.boundary.prompts[usize::from(right)];
+    pub(crate) fn prompt(&self, side: PromptSide) -> (PromptCallback, u32) {
+        let prompt = self.boundary.prompts.get(side);
         (prompt.callback, prompt.escape)
     }
 
@@ -235,10 +200,11 @@ impl EditLine {
         callback: Option<ResizeCallback>,
         cookie: *mut c_void,
     ) {
-        self.boundary.callbacks.resize = callback.map(|callback| (callback, cookie));
+        self.boundary.callbacks.resize =
+            callback.map(|callback| CallbackRegistration { callback, cookie });
     }
 
-    pub(crate) fn resize_callback(&self) -> Option<(ResizeCallback, *mut c_void)> {
+    pub(crate) fn resize_callback(&self) -> Option<CallbackRegistration<ResizeCallback>> {
         self.boundary.callbacks.resize
     }
 
@@ -247,10 +213,11 @@ impl EditLine {
         callback: Option<AliasCallback>,
         cookie: *mut c_void,
     ) {
-        self.boundary.callbacks.alias = callback.map(|callback| (callback, cookie));
+        self.boundary.callbacks.alias =
+            callback.map(|callback| CallbackRegistration { callback, cookie });
     }
 
-    pub(crate) fn alias_callback(&self) -> Option<(AliasCallback, *mut c_void)> {
+    pub(crate) fn alias_callback(&self) -> Option<CallbackRegistration<AliasCallback>> {
         self.boundary.callbacks.alias
     }
 
@@ -266,48 +233,45 @@ impl EditLine {
         &mut self,
         callback: Option<HistoryCallback>,
         cookie: *mut c_void,
-        narrow: bool,
-    ) -> bool {
+        encoding: HistoryEncoding,
+    ) -> Result<(), HistoryRegistrationError> {
         if callback.is_none() && !cookie.is_null() {
-            return false;
+            return Err(HistoryRegistrationError::CallbackMissing);
         }
-        let encoding = if narrow {
-            HistoryEncoding::Narrow
-        } else {
-            HistoryEncoding::Wide
-        };
-        self.boundary.callbacks.history =
+        self.boundary.history.source =
             callback.map(|callback| HistorySource::new(callback, cookie, encoding));
-        self.boundary.policy.narrow_history = narrow;
-        true
+        self.boundary.history.encoding = encoding;
+        Ok(())
     }
 
     pub(crate) fn history_source(&self) -> Option<HistorySource> {
-        self.boundary.callbacks.history
+        self.boundary.history.source
     }
 
     pub(crate) fn history_depth(&self) -> usize {
-        self.boundary.history_depth
+        self.boundary.history.depth
     }
 
     pub(crate) fn set_history_depth(&mut self, depth: usize) {
-        self.boundary.history_depth = depth;
+        self.boundary.history.depth = depth;
     }
 
     pub(crate) fn save_history_live_line(&mut self) {
-        self.boundary.history_live_line = self.native.line().clone();
+        self.boundary.history.live_line = self.editor.line().clone();
     }
 
     pub(crate) fn history_live_line(&self) -> &Text {
-        &self.boundary.history_live_line
+        &self.boundary.history.live_line
     }
 
-    pub(crate) fn begin_completion(&mut self) -> bool {
-        std::mem::replace(&mut self.boundary.completion_pending_listing, true)
+    pub(crate) fn begin_completion(&mut self) -> CompletionInvocation {
+        let invocation = self.boundary.completion.next;
+        self.boundary.completion.next = CompletionInvocation::List;
+        invocation
     }
 
     pub(crate) fn clear_completion_pending_listing(&mut self) {
-        self.boundary.completion_pending_listing = false;
+        self.boundary.completion.next = CompletionInvocation::Insert;
     }
 
     pub(crate) fn set_environment_callback(&mut self, callback: Option<EnvironmentCallback>) {
@@ -332,7 +296,7 @@ impl EditLine {
             .copied()
             .map(TextUnit::from_code_point)
             .collect();
-        self.native.set_word_policy(WordPolicy::new(policy));
+        self.editor.set_word_policy(WordPolicy::new(policy));
         let mut characters = characters.to_vec();
         characters.push(0);
         self.boundary.word_characters = Some(characters);
@@ -381,8 +345,8 @@ impl EditLine {
         let unit = TextUnit::Scalar(char::from(byte));
         let text = Text::from_iter([unit]);
         if let Ok(key) = KeySequence::new(text) {
-            self.native.bind(
-                self.native.keymap_mode(),
+            self.editor.bind(
+                self.editor.keymap_mode(),
                 key,
                 Binding::Action(Action::Insert(Text::from_iter([unit]))),
             );

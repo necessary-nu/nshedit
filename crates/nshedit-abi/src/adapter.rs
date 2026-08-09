@@ -16,12 +16,14 @@ use std::os::fd::{BorrowedFd, FromRawFd};
 use std::rc::Rc;
 
 use nshedit::domain::{
-    Action, Binding, Buffering, CommandName, EditTarget, EditingMode, EditorConfig, KeySequence,
-    KeymapMode, Motion, ScreenSize, SignalPolicy, TerminalMode, Text, TextUnit, WordPolicy,
+    Action, Binding, Buffering, CommandName, EditTarget, EditingMode, EditorConfig, Error,
+    KeySequence, KeymapMode, Motion, ScreenSize, SignalPolicy, TerminalMode, Text, TextUnit,
+    WordPolicy,
 };
+use nshedit::editor::effect::PromptSide;
 use nshedit::editor::{
-    BaudRate, Continuation, Editor, QuoteStyle, ReadDriver, TerminalControl, TerminalProfile,
-    Tokenization, Tokenizer as NativeTokenizer,
+    BaudRate, Continuation, Editor, QuoteStyle, ReadDriver, StartError, TerminalControl,
+    TerminalProfile, Tokenization, Tokenizer as NativeTokenizer,
 };
 use nshedit_plat::signal::SignalHandlers;
 use nshedit_plat::terminal::{
@@ -50,19 +52,121 @@ pub(crate) type ReadCallback = unsafe extern "C" fn(*mut EditLine, *mut u32) -> 
 pub(crate) type WidePromptCallback = unsafe extern "C" fn(*mut EditLine) -> *mut u32;
 pub(crate) type NarrowPromptCallback = unsafe extern "C" fn(*mut EditLine) -> *mut c_char;
 
-#[derive(Clone, Copy)]
-struct Streams {
-    files: [CFile; 3],
-    descriptors: [c_int; 3],
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StreamKind {
+    Input,
+    Output,
+    Diagnostics,
 }
 
-struct Policy {
-    handle_signals: bool,
-    editing_enabled: bool,
-    unbuffered: bool,
-    safe_read: bool,
-    narrow_history: bool,
-    publishing_narrow_line: bool,
+impl TryFrom<c_int> for StreamKind {
+    type Error = ();
+
+    fn try_from(value: c_int) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Input),
+            1 => Ok(Self::Output),
+            2 => Ok(Self::Diagnostics),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct StreamEndpoint {
+    pub(crate) file: CFile,
+    pub(crate) descriptor: c_int,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SessionStreams {
+    pub(crate) input: StreamEndpoint,
+    pub(crate) output: StreamEndpoint,
+    pub(crate) diagnostics: StreamEndpoint,
+}
+
+impl SessionStreams {
+    fn endpoint(&self, kind: StreamKind) -> &StreamEndpoint {
+        match kind {
+            StreamKind::Input => &self.input,
+            StreamKind::Output => &self.output,
+            StreamKind::Diagnostics => &self.diagnostics,
+        }
+    }
+
+    fn endpoint_mut(&mut self, kind: StreamKind) -> &mut StreamEndpoint {
+        match kind {
+            StreamKind::Input => &mut self.input,
+            StreamKind::Output => &mut self.output,
+            StreamKind::Diagnostics => &mut self.diagnostics,
+        }
+    }
+}
+
+// [spec:nshedit:req:abi.typed-session]
+pub(crate) struct SessionInit<'a> {
+    pub(crate) program: &'a str,
+    pub(crate) streams: SessionStreams,
+}
+
+#[cfg(test)]
+impl<'a> SessionInit<'a> {
+    pub(crate) fn inert(program: &'a str) -> Self {
+        let inert = StreamEndpoint {
+            file: core::ptr::null_mut(),
+            descriptor: -1,
+        };
+        Self {
+            program,
+            streams: SessionStreams {
+                input: inert,
+                output: inert,
+                diagnostics: inert,
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum SessionInitError {
+    ProgramName(std::ffi::NulError),
+    Terminal(StartError),
+    Display(Error),
+}
+
+impl std::fmt::Display for SessionInitError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ProgramName(error) => write!(formatter, "invalid program name: {error}"),
+            Self::Terminal(error) => write!(formatter, "terminal initialization failed: {error}"),
+            Self::Display(error) => write!(formatter, "invalid initial display: {error:?}"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EditingAvailability {
+    Enabled,
+    Disabled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InterruptedRead {
+    Report,
+    Retry,
+}
+
+struct EditingPolicy {
+    signals: SignalPolicy,
+    availability: EditingAvailability,
+    buffering: Buffering,
+    interrupted_read: InterruptedRead,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BoundaryEncoding {
+    Narrow,
+    Wide,
 }
 
 #[derive(Clone, Copy)]
@@ -71,19 +175,136 @@ pub(crate) enum PromptCallback {
     Narrow(NarrowPromptCallback),
 }
 
+const _: () = {
+    assert!(
+        core::mem::size_of::<Option<WidePromptCallback>>()
+            == core::mem::size_of::<Option<NarrowPromptCallback>>()
+    );
+    assert!(
+        core::mem::align_of::<Option<WidePromptCallback>>()
+            == core::mem::align_of::<Option<NarrowPromptCallback>>()
+    );
+};
+
+impl PromptCallback {
+    /// Project the stored callback into the wide C API's function-pointer slot.
+    ///
+    /// A callback installed through the narrow API remains observable through
+    /// the wide getter. In that cross-encoding case only its address is copied;
+    /// Rust never constructs or invokes it with the wrong signature.
+    pub(crate) unsafe fn write_wide(self, output: *mut c_void) -> bool {
+        if output.is_null() {
+            return false;
+        }
+        match self {
+            Self::Wide(callback) => unsafe {
+                *output.cast::<Option<WidePromptCallback>>() = Some(callback);
+            },
+            Self::Narrow(callback) => unsafe {
+                let callback = Some(callback);
+                copy_prompt_address(core::ptr::from_ref(&callback).cast(), output.cast());
+            },
+        }
+        true
+    }
+
+    /// Project the stored callback into the narrow C API's function-pointer slot.
+    pub(crate) unsafe fn write_narrow(self, output: *mut c_void) -> bool {
+        if output.is_null() {
+            return false;
+        }
+        match self {
+            Self::Narrow(callback) => unsafe {
+                *output.cast::<Option<NarrowPromptCallback>>() = Some(callback);
+            },
+            Self::Wide(callback) => unsafe {
+                let callback = Some(callback);
+                copy_prompt_address(core::ptr::from_ref(&callback).cast(), output.cast());
+            },
+        }
+        true
+    }
+}
+
+unsafe fn copy_prompt_address(source: *const u8, destination: *mut u8) {
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            source,
+            destination,
+            core::mem::size_of::<Option<WidePromptCallback>>(),
+        );
+    }
+}
+
 #[derive(Clone, Copy)]
 struct PromptSpec {
     callback: PromptCallback,
     escape: u32,
 }
 
+struct PromptRegistry {
+    left: PromptSpec,
+    right: PromptSpec,
+}
+
+impl PromptRegistry {
+    fn get(&self, side: PromptSide) -> PromptSpec {
+        match side {
+            PromptSide::Left => self.left,
+            PromptSide::Right => self.right,
+        }
+    }
+
+    fn set(&mut self, side: PromptSide, prompt: PromptSpec) {
+        match side {
+            PromptSide::Left => self.left = prompt,
+            PromptSide::Right => self.right = prompt,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct CallbackRegistration<F> {
+    pub(crate) callback: F,
+    pub(crate) cookie: *mut c_void,
+}
+
 #[derive(Clone, Copy)]
 struct HostCallbacks {
-    resize: Option<(ResizeCallback, *mut c_void)>,
-    alias: Option<(AliasCallback, *mut c_void)>,
+    resize: Option<CallbackRegistration<ResizeCallback>>,
+    alias: Option<CallbackRegistration<AliasCallback>>,
     read: Option<ReadCallback>,
-    history: Option<HistorySource>,
     environment: Option<EnvironmentCallback>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HistoryRegistrationError {
+    CallbackMissing,
+}
+
+struct HistoryBridge {
+    source: Option<HistorySource>,
+    encoding: HistoryEncoding,
+    depth: usize,
+    live_line: Text,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CompletionInvocation {
+    Insert,
+    List,
+}
+
+struct CompletionBridge {
+    next: CompletionInvocation,
+}
+
+struct LineViews {
+    published: BoundaryEncoding,
+    narrow_conversion: ConversionBuffer,
+    narrow_line: Box<LineInfo>,
+    wide_storage: Vec<u32>,
+    wide_line: Box<LineInfoW>,
 }
 
 struct HostCommand {
@@ -130,6 +351,13 @@ struct TerminalState {
     active_mode: TerminalMode,
     overrides: [TtyFlagOverrides; 3],
     restoration_due: bool,
+}
+
+struct TerminalBoundary {
+    state: Rc<RefCell<TerminalState>>,
+    capabilities: TerminalCapabilities,
+    name: CString,
+    bindings: [Option<Binding>; 7],
 }
 
 #[derive(Clone)]
@@ -334,6 +562,8 @@ fn apply_terminal_attributes(
 
 static DEFAULT_LEFT_WIDE: [u32; 3] = [b'?' as u32, b' ' as u32, 0];
 static DEFAULT_RIGHT_WIDE: [u32; 1] = [0];
+static DEFAULT_LEFT_NARROW: [c_char; 3] = [b'?' as c_char, b' ' as c_char, 0];
+static DEFAULT_RIGHT_NARROW: [c_char; 1] = [0];
 
 unsafe extern "C" fn default_left_prompt(_: *mut EditLine) -> *mut u32 {
     DEFAULT_LEFT_WIDE.as_ptr().cast_mut()
@@ -343,34 +573,35 @@ unsafe extern "C" fn default_right_prompt(_: *mut EditLine) -> *mut u32 {
     DEFAULT_RIGHT_WIDE.as_ptr().cast_mut()
 }
 
+unsafe extern "C" fn default_left_prompt_narrow(_: *mut EditLine) -> *mut c_char {
+    DEFAULT_LEFT_NARROW.as_ptr().cast_mut()
+}
+
+unsafe extern "C" fn default_right_prompt_narrow(_: *mut EditLine) -> *mut c_char {
+    DEFAULT_RIGHT_NARROW.as_ptr().cast_mut()
+}
+
 struct EditLineBoundary {
     program: CString,
-    streams: Streams,
-    policy: Policy,
-    prompts: [PromptSpec; 2],
+    streams: SessionStreams,
+    policy: EditingPolicy,
+    prompts: PromptRegistry,
     callbacks: HostCallbacks,
     commands: Vec<HostCommand>,
-    terminal_bindings: [Option<Binding>; 7],
     pushback: VecDeque<VecDeque<TextUnit>>,
     signal_handlers: Option<SignalHandlers>,
-    terminal: Rc<RefCell<TerminalState>>,
-    terminal_capabilities: TerminalCapabilities,
-    narrow_conversion: ConversionBuffer,
-    narrow_line: Box<LineInfo>,
-    wide_storage: Vec<u32>,
-    wide_line: Box<LineInfoW>,
-    terminal_name: CString,
+    terminal: TerminalBoundary,
+    lines: LineViews,
     word_characters: Option<Vec<u32>>,
     client_data: *mut c_void,
-    history_depth: usize,
-    history_live_line: Text,
-    completion_pending_listing: bool,
+    history: HistoryBridge,
+    completion: CompletionBridge,
 }
 
 impl EditLineBoundary {
     fn new(
         program: CString,
-        streams: Streams,
+        streams: SessionStreams,
         terminal: Rc<RefCell<TerminalState>>,
         terminal_name: CString,
         terminal_capabilities: TerminalCapabilities,
@@ -378,55 +609,63 @@ impl EditLineBoundary {
         Self {
             program,
             streams,
-            policy: Policy {
-                handle_signals: false,
-                editing_enabled: true,
-                unbuffered: false,
-                safe_read: false,
-                narrow_history: false,
-                publishing_narrow_line: false,
+            policy: EditingPolicy {
+                signals: SignalPolicy::Ignore,
+                availability: EditingAvailability::Enabled,
+                buffering: Buffering::Line,
+                interrupted_read: InterruptedRead::Report,
             },
-            prompts: [
-                PromptSpec {
+            prompts: PromptRegistry {
+                left: PromptSpec {
                     callback: PromptCallback::Wide(default_left_prompt),
                     escape: 0,
                 },
-                PromptSpec {
+                right: PromptSpec {
                     callback: PromptCallback::Wide(default_right_prompt),
                     escape: 0,
                 },
-            ],
+            },
             callbacks: HostCallbacks {
                 resize: None,
                 alias: None,
                 read: None,
-                history: None,
                 environment: None,
             },
             commands: Vec::new(),
-            terminal_bindings: std::array::from_fn(|_| None),
             pushback: VecDeque::new(),
             signal_handlers: None,
-            terminal,
-            terminal_capabilities,
-            narrow_conversion: ConversionBuffer::default(),
-            narrow_line: Box::new(LineInfo {
-                buffer: core::ptr::null(),
-                cursor: core::ptr::null(),
-                lastchar: core::ptr::null(),
-            }),
-            wide_storage: Vec::new(),
-            wide_line: Box::new(LineInfoW {
-                buffer: core::ptr::null(),
-                cursor: core::ptr::null(),
-                lastchar: core::ptr::null(),
-            }),
-            terminal_name,
+            terminal: TerminalBoundary {
+                state: terminal,
+                capabilities: terminal_capabilities,
+                name: terminal_name,
+                bindings: std::array::from_fn(|_| None),
+            },
+            lines: LineViews {
+                published: BoundaryEncoding::Wide,
+                narrow_conversion: ConversionBuffer::default(),
+                narrow_line: Box::new(LineInfo {
+                    buffer: core::ptr::null(),
+                    cursor: core::ptr::null(),
+                    lastchar: core::ptr::null(),
+                }),
+                wide_storage: Vec::new(),
+                wide_line: Box::new(LineInfoW {
+                    buffer: core::ptr::null(),
+                    cursor: core::ptr::null(),
+                    lastchar: core::ptr::null(),
+                }),
+            },
             word_characters: Some(vec![b'_' as u32, 0]),
             client_data: core::ptr::null_mut(),
-            history_depth: 0,
-            history_live_line: Text::default(),
-            completion_pending_listing: false,
+            history: HistoryBridge {
+                source: None,
+                encoding: HistoryEncoding::Wide,
+                depth: 0,
+                live_line: Text::default(),
+            },
+            completion: CompletionBridge {
+                next: CompletionInvocation::Insert,
+            },
         }
     }
 }
@@ -437,7 +676,7 @@ impl EditLineBoundary {
 /// The native [`Editor`] is the sole editing and terminal-restoration owner.
 /// Every other field exists only to adapt an explicit C ABI obligation.
 pub struct EditLine {
-    native: Editor<AbiTerminal>,
+    editor: Editor<AbiTerminal>,
     driver: ReadDriver,
     boundary: EditLineBoundary,
 }

@@ -53,16 +53,8 @@ fn wide_line(line: &str) -> Vec<u32> {
 }
 
 fn editor() -> Box<EditLine> {
-    EditLine::new(
-        "effect-test",
-        core::ptr::null_mut(),
-        core::ptr::null_mut(),
-        core::ptr::null_mut(),
-        -1,
-        -1,
-        -1,
-    )
-    .expect("construct an editor over inert descriptors")
+    EditLine::new(SessionInit::inert("effect-test"))
+        .expect("construct an editor over inert descriptors")
 }
 
 // [spec:nshedit:req:core.command-effects/test]
@@ -74,7 +66,13 @@ fn history_effect_adapter() {
         cursor: 0,
     });
     let cookie = Box::into_raw(history);
-    assert!(editor.set_history_callback(Some(history_callback), cookie.cast::<c_void>(), false,));
+    editor
+        .set_history_callback(
+            Some(history_callback),
+            cookie.cast::<c_void>(),
+            HistoryEncoding::Wide,
+        )
+        .expect("register a complete history source");
 
     let search = HistorySearchEffect {
         input: HistorySearchInput::Pattern(Text::from("car")),

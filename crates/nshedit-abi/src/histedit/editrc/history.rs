@@ -2,7 +2,7 @@
 
 use core::ffi::c_int;
 
-use crate::adapter::{EditLine, HistoryPolicy};
+use crate::adapter::{EditLine, HistoryPolicy, StreamKind};
 use crate::conversion::{ConversionBuffer, encode_wide};
 use crate::history::HistoryMove;
 
@@ -87,7 +87,7 @@ unsafe fn list(el: *mut EditLine) -> c_int {
         let mut output = format!("{number}\t").into_bytes();
         output.extend_from_slice(&visible);
         output.push(b'\n');
-        unsafe { (&*el).write_compatibility_stream(1, &output) };
+        unsafe { (&*el).write_compatibility_stream(StreamKind::Output, &output) };
         number += 1;
         movement = HistoryMove::Newer;
     }

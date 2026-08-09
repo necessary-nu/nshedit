@@ -7,11 +7,12 @@ use crate::history::{
     HistoryReply, HistoryRequest, HistoryResult,
 };
 
-use super::H;
+use super::runtime_history;
 
 unsafe fn owner() -> Result<&'static mut HistoryOwner, HistoryErrorKind> {
     // SAFETY: readline serializes access to its process-global history owner.
-    unsafe { H.cast::<HistoryHandle<c_char>>().as_mut() }.ok_or(HistoryErrorKind::Unknown)
+    unsafe { runtime_history().cast::<HistoryHandle<c_char>>().as_mut() }
+        .ok_or(HistoryErrorKind::Unknown)
 }
 
 pub(super) unsafe fn execute(request: HistoryRequest<'_, c_char>) -> HistoryResult<c_char> {

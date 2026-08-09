@@ -184,22 +184,21 @@ impl EditLine {
             self.set_editing_enabled(false);
         }
         let result = nshterm::TermInfo::from_name(name.to_str().unwrap_or("dumb"));
-        let window_size = self
-            .descriptor(0)
-            .and_then(|descriptor| with_borrowed_descriptor(descriptor, terminal::screen_size))
-            .and_then(Result::ok)
-            .filter(|(rows, columns)| *rows != 0 && *columns != 0);
+        let window_size =
+            with_borrowed_descriptor(self.descriptor(StreamKind::Input), terminal::screen_size)
+                .and_then(Result::ok)
+                .filter(|(rows, columns)| *rows != 0 && *columns != 0);
         let mut capabilities = TerminalCapabilities::new(
             name.to_str().unwrap_or("dumb"),
             result.as_ref().ok(),
             window_size,
         );
         if let Err(error) = &result {
-            capabilities.preserve_failed_lookup_values(&self.boundary.terminal_capabilities);
+            capabilities.preserve_failed_lookup_values(&self.boundary.terminal.capabilities);
             self.report_terminal_lookup_failure(name.as_c_str(), error);
         }
-        self.boundary.terminal_capabilities = capabilities;
-        self.boundary.terminal_name = name;
+        self.boundary.terminal.capabilities = capabilities;
+        self.boundary.terminal.name = name;
         self.configure_terminal_display();
         self.install_terminal_bindings();
         if result.is_ok() { 0 } else { -1 }
@@ -219,12 +218,13 @@ impl EditLine {
             b"Cannot read termcap database;\n".to_vec()
         };
         diagnostic.extend_from_slice(b"using dumb terminal settings.\n");
-        let _ = crate::cstdio::write(self.stream(2).unwrap_or(core::ptr::null_mut()), &diagnostic);
+        let _ = crate::cstdio::write(self.stream(StreamKind::Diagnostics), &diagnostic);
     }
 
     pub(super) fn terminal_baud_rate(&self) -> Option<BaudRate> {
         self.boundary
             .terminal
+            .state
             .borrow()
             .original
             .as_ref()
@@ -236,10 +236,10 @@ impl EditLine {
     }
 
     pub(super) fn configure_terminal_display(&mut self) {
-        let capabilities = &self.boundary.terminal_capabilities;
+        let capabilities = &self.boundary.terminal.capabilities;
         let size = ScreenSize::new(capabilities.rows, capabilities.columns)
             .expect("terminal compatibility sizes are normalized");
         let profile = capabilities.profile(self.terminal_baud_rate());
-        self.native.configure_display(profile, size);
+        self.editor.configure_display(profile, size);
     }
 }

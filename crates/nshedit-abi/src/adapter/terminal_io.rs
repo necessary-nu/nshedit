@@ -8,14 +8,13 @@ mod tty;
 
 impl EditLine {
     pub(crate) fn set_terminal_mode(&mut self, mode: TerminalMode) -> io::Result<()> {
-        self.native.set_terminal_mode(mode)
+        self.editor.set_terminal_mode(mode)
     }
 
     pub(crate) fn resize_display(&mut self) {
-        let Some((rows, columns)) = self
-            .descriptor(0)
-            .and_then(|descriptor| with_borrowed_descriptor(descriptor, terminal::screen_size))
-            .and_then(Result::ok)
+        let Some((rows, columns)) =
+            with_borrowed_descriptor(self.descriptor(StreamKind::Input), terminal::screen_size)
+                .and_then(Result::ok)
         else {
             return;
         };
@@ -23,24 +22,25 @@ impl EditLine {
             return;
         };
         self.boundary
-            .terminal_capabilities
+            .terminal
+            .capabilities
             .set_size(size.rows(), size.columns());
-        let _ = self.native.resize_display(size);
+        let _ = self.editor.resize_display(size);
     }
 
     pub(crate) fn beep(&mut self) {
         let mut bytes = Vec::new();
-        if self.native.beep(&mut bytes).is_ok() {
-            let _ = crate::cstdio::write(self.stream(1).unwrap_or(core::ptr::null_mut()), &bytes);
+        if self.editor.beep(&mut bytes).is_ok() {
+            let _ = crate::cstdio::write(self.stream(StreamKind::Output), &bytes);
         }
     }
 
     pub(crate) fn write_output(&self, bytes: &[u8]) -> io::Result<()> {
-        crate::cstdio::write(self.stream(1).unwrap_or(core::ptr::null_mut()), bytes)
+        crate::cstdio::write(self.stream(StreamKind::Output), bytes)
     }
 
     pub(crate) fn flush_output(&self) -> io::Result<()> {
-        crate::cstdio::flush(self.stream(1).unwrap_or(core::ptr::null_mut()))
+        crate::cstdio::flush(self.stream(StreamKind::Output))
     }
 
     pub(crate) fn write_wide(&self, value: u32) -> io::Result<()> {
@@ -54,33 +54,33 @@ impl EditLine {
     }
 
     pub(crate) fn read_input(&self, output: &mut [u8]) -> io::Result<usize> {
-        DescriptorInput::new(self.descriptor(0).unwrap_or(-1)).read(output)
+        DescriptorInput::new(self.descriptor(StreamKind::Input)).read(output)
     }
 
     pub(crate) fn screen_size(&self) -> Option<ScreenSize> {
-        let capabilities = &self.boundary.terminal_capabilities;
+        let capabilities = &self.boundary.terminal.capabilities;
         ScreenSize::new(capabilities.rows, capabilities.columns).ok()
     }
 
-    pub(crate) fn write_compatibility_stream(&self, index: usize, bytes: &[u8]) {
-        let _ = crate::cstdio::write(self.stream(index).unwrap_or(core::ptr::null_mut()), bytes);
+    pub(crate) fn write_compatibility_stream(&self, stream: StreamKind, bytes: &[u8]) {
+        let _ = crate::cstdio::write(self.stream(stream), bytes);
     }
 
     pub(crate) fn move_cursor(&mut self, delta: c_int) -> c_int {
-        let current = self.native.cursor().get();
+        let current = self.editor.cursor().get();
         let destination = if delta < 0 {
             current.saturating_sub(delta.unsigned_abs() as usize)
         } else {
             current
                 .saturating_add(delta as usize)
-                .min(self.native.line().len())
+                .min(self.editor.line().len())
         };
         let index = self
-            .native
+            .editor
             .line()
             .index(destination)
             .expect("the cursor destination is clamped to the line");
-        let _ = self.native.execute(Action::Move(Motion::Absolute(index)));
+        let _ = self.editor.execute(Action::Move(Motion::Absolute(index)));
         c_int::try_from(destination).unwrap_or(c_int::MAX)
     }
 
@@ -93,7 +93,7 @@ impl EditLine {
             .copied()
             .map(TextUnit::from_code_point)
             .collect();
-        match self.native.insert_untracked(text) {
+        match self.editor.insert_untracked(text) {
             Ok(()) => 0,
             Err(_) => -1,
         }
@@ -108,7 +108,7 @@ impl EditLine {
             .copied()
             .map(TextUnit::from_code_point)
             .collect();
-        match self.native.replace_line_untracked(text) {
+        match self.editor.replace_line_untracked(text) {
             Ok(()) => 0,
             Err(_) => -1,
         }
@@ -116,15 +116,15 @@ impl EditLine {
 
     pub(crate) fn replace_line(&mut self, line: Text) -> bool {
         let span = self
-            .native
+            .editor
             .line()
-            .span(0..self.native.line().len())
+            .span(0..self.editor.line().len())
             .expect("the complete line is a valid span");
-        self.native.replace(span, line).is_ok()
+        self.editor.replace(span, line).is_ok()
     }
 
     pub(crate) fn finish_accepted_line(&mut self, mut line: Text) -> bool {
-        let cursor = self.native.cursor().get();
+        let cursor = self.editor.cursor().get();
         if line.as_units().last() != Some(&TextUnit::Scalar('\n')) {
             line.push(TextUnit::Scalar('\n'));
         }
@@ -132,17 +132,17 @@ impl EditLine {
             return false;
         }
         let position = self
-            .native
+            .editor
             .line()
-            .index(cursor.min(self.native.line().len()))
+            .index(cursor.min(self.editor.line().len()))
             .expect("a clamped accepted-line cursor is valid");
-        self.native
+        self.editor
             .execute(Action::Move(Motion::Absolute(position)))
             .is_ok()
     }
 
     pub(crate) fn append_end_of_input(&mut self) -> bool {
-        let mut line = self.native.line().clone();
+        let mut line = self.editor.line().clone();
         line.push(TextUnit::Scalar('\u{4}'));
         self.replace_line(line)
     }
@@ -151,78 +151,78 @@ impl EditLine {
         let Ok(count) = usize::try_from(count) else {
             return;
         };
-        let cursor = self.native.cursor().get();
+        let cursor = self.editor.cursor().get();
         let Some(start) = cursor.checked_sub(count) else {
             return;
         };
         let span = self
-            .native
+            .editor
             .line()
             .span(start..cursor)
             .expect("cursor-derived deletion is within the line");
-        let _ = self.native.replace(span, Text::default());
+        let _ = self.editor.replace(span, Text::default());
     }
 
     pub(crate) fn kill_line(&mut self) {
-        let _ = self.native.execute(Action::Kill(EditTarget::Buffer));
+        let _ = self.editor.execute(Action::Kill(EditTarget::Buffer));
     }
 
     pub(crate) fn delete_range(&mut self, start: c_int, end: c_int) -> c_int {
         let (Ok(start), Ok(end)) = (usize::try_from(start), usize::try_from(end)) else {
             return 0;
         };
-        if end <= start || end >= self.native.line().len() {
+        if end <= start || end >= self.editor.line().len() {
             return 0;
         }
         let requested = end - start;
-        let copied = requested.min(self.native.line().len() - end);
-        let mut result = self.native.line().as_units().to_vec();
+        let copied = requested.min(self.editor.line().len() - end);
+        let mut result = self.editor.line().as_units().to_vec();
         result.copy_within(end..end + copied, start);
         result.truncate(result.len() - copied);
         let span = self
-            .native
+            .editor
             .line()
-            .span(0..self.native.line().len())
+            .span(0..self.editor.line().len())
             .expect("the complete line is a valid span");
-        let _ = self.native.replace(span, result.into_iter().collect());
+        let _ = self.editor.replace(span, result.into_iter().collect());
         c_int::try_from(requested).unwrap_or(c_int::MAX)
     }
 
     pub(crate) fn narrow_conversion_mut(&mut self) -> &mut ConversionBuffer {
-        &mut self.boundary.narrow_conversion
+        &mut self.boundary.lines.narrow_conversion
     }
 
     pub(crate) fn narrow_line_ptr(&mut self) -> *mut LineInfo {
-        core::ptr::from_mut(self.boundary.narrow_line.as_mut())
+        core::ptr::from_mut(self.boundary.lines.narrow_line.as_mut())
     }
 
     pub(crate) fn publish_wide_line(&mut self) -> *const LineInfoW {
-        self.boundary.wide_storage.clear();
-        self.boundary.wide_storage.extend(
-            self.native
+        self.boundary.lines.wide_storage.clear();
+        self.boundary.lines.wide_storage.extend(
+            self.editor
                 .line()
                 .as_units()
                 .iter()
                 .copied()
                 .map(unit_to_wide),
         );
-        let used = self.boundary.wide_storage.len();
-        self.boundary.wide_storage.push(0);
-        let buffer = self.boundary.wide_storage.as_ptr();
-        *self.boundary.wide_line = LineInfoW {
+        let used = self.boundary.lines.wide_storage.len();
+        self.boundary.lines.wide_storage.push(0);
+        let buffer = self.boundary.lines.wide_storage.as_ptr();
+        *self.boundary.lines.wide_line = LineInfoW {
             buffer,
             // SAFETY: the cursor is a checked logical boundary and the
             // storage has one element for every logical unit.
-            cursor: unsafe { buffer.add(self.native.cursor().get()) },
+            cursor: unsafe { buffer.add(self.editor.cursor().get()) },
             // SAFETY: `used` is the one-past-used boundary and a terminator
             // was appended at that index.
             lastchar: unsafe { buffer.add(used) },
         };
-        core::ptr::from_ref(self.boundary.wide_line.as_ref())
+        core::ptr::from_ref(self.boundary.lines.wide_line.as_ref())
     }
 
     pub(crate) fn terminal_name_ptr(&self) -> *const c_char {
-        self.boundary.terminal_name.as_ptr()
+        self.boundary.terminal.name.as_ptr()
     }
 
     pub(crate) fn publish_word_characters(&mut self) -> *const u32 {
@@ -259,39 +259,35 @@ impl EditLine {
         }
     }
 
-    pub(crate) fn stream(&self, index: usize) -> Option<CFile> {
-        self.boundary.streams.files.get(index).copied()
+    pub(crate) fn stream(&self, kind: StreamKind) -> CFile {
+        self.boundary.streams.endpoint(kind).file
     }
 
-    pub(crate) fn descriptor(&self, index: usize) -> Option<c_int> {
-        self.boundary.streams.descriptors.get(index).copied()
+    pub(crate) fn descriptor(&self, kind: StreamKind) -> c_int {
+        self.boundary.streams.endpoint(kind).descriptor
     }
 
-    pub(crate) fn set_stream(&mut self, index: usize, stream: CFile, descriptor: c_int) -> bool {
-        let (Some(file), Some(fd)) = (
-            self.boundary.streams.files.get_mut(index),
-            self.boundary.streams.descriptors.get_mut(index),
-        ) else {
-            return false;
+    pub(crate) fn set_stream(&mut self, kind: StreamKind, stream: CFile, descriptor: c_int) {
+        *self.boundary.streams.endpoint_mut(kind) = StreamEndpoint {
+            file: stream,
+            descriptor,
         };
-        *file = stream;
-        *fd = descriptor;
-        let mut terminal = self.boundary.terminal.borrow_mut();
-        match index {
-            0 => terminal.input = descriptor,
-            1 => terminal.output = descriptor,
-            _ => {}
+        let mut terminal = self.boundary.terminal.state.borrow_mut();
+        match kind {
+            StreamKind::Input => terminal.input = descriptor,
+            StreamKind::Output => terminal.output = descriptor,
+            StreamKind::Diagnostics => {}
         }
-        true
     }
 
     pub(crate) fn is_tty(&self) -> bool {
-        self.boundary.terminal.borrow().original.is_some()
+        self.boundary.terminal.state.borrow().original.is_some()
     }
 
     pub(crate) fn control_eof(&self) -> u8 {
         self.boundary
             .terminal
+            .state
             .borrow()
             .original
             .as_ref()
@@ -304,6 +300,7 @@ impl EditLine {
     pub(crate) fn control_reprint(&self) -> u8 {
         self.boundary
             .terminal
+            .state
             .borrow()
             .original
             .as_ref()

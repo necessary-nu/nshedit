@@ -34,9 +34,14 @@
 use core::ffi::{CStr, c_char, c_int, c_void};
 use core::ptr;
 
+use nshedit::editor::effect::PromptSide;
+
+#[cfg(test)]
+use crate::adapter::StreamKind;
 use crate::adapter::{
-    AliasCallback as ElAfuncT, CommandCallback as ElFuncT, EditLine, HistoryCallback as HistFunT,
-    NarrowPromptCallback as ElPfuncT, ResizeCallback as ElZfuncT,
+    AliasCallback as ElAfuncT, BoundaryEncoding, CommandCallback as ElFuncT, EditLine,
+    HistoryCallback as HistFunT, HistoryEncoding, NarrowPromptCallback as ElPfuncT,
+    ResizeCallback as ElZfuncT,
 };
 use crate::cdecl::histedit::LineInfo;
 use crate::conversion::{decode_bytes, encode_one, encode_wide, encoded_width};
@@ -545,11 +550,9 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         // it whichever entry point set the history, and the narrow store's -1
         // comes from the NARROW_HISTORY check ahead of it rather than from an
         // absent hook.
-        return if el.set_history_callback(f, ptr, true) {
-            0
-        } else {
-            -1
-        };
+        return el
+            .set_history_callback(f, ptr, HistoryEncoding::Narrow)
+            .map_or(-1, |()| 0);
     }
 
     if op == crate::histedit::EL_ADDFN {
@@ -602,7 +605,12 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         } else {
             0
         };
-        el.set_prompt_narrow(op == EL_RPROMPT || op == EL_RPROMPT_ESC, f, esc);
+        let side = if op == EL_RPROMPT || op == EL_RPROMPT_ESC {
+            PromptSide::Right
+        } else {
+            PromptSide::Left
+        };
+        el.set_prompt_narrow(side, f, esc);
         return 0;
     }
 
@@ -706,12 +714,14 @@ unsafe fn el_get_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         EL_PROMPT | EL_RPROMPT => {
             // SAFETY: the selected operation takes an `el_pfunc_t *`.
             let out = unsafe { ap.next_arg::<*mut c_void>() };
-            let callback = unsafe { out.cast::<Option<ElPfuncT>>().as_mut() };
-            let Some(callback) = callback else {
-                return -1;
+            let side = if op == EL_PROMPT {
+                PromptSide::Left
+            } else {
+                PromptSide::Right
             };
-            let (value, _) = el.prompt_narrow(op != EL_PROMPT);
-            *callback = Some(value);
+            if !unsafe { el.prompt(side).0.write_narrow(out) } {
+                return -1;
+            }
             0
         }
 
@@ -721,13 +731,16 @@ unsafe fn el_get_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         EL_PROMPT_ESC | EL_RPROMPT_ESC => {
             // SAFETY: the operation takes `el_pfunc_t *` then `char *`.
             let out = unsafe { ap.next_arg::<*mut c_void>() };
-            let callback = unsafe { out.cast::<Option<ElPfuncT>>().as_mut() };
             let escape_out = unsafe { ap.next_arg::<*mut c_void>() }.cast::<c_char>();
-            let Some(callback) = callback else {
-                return -1;
+            let side = if op == EL_PROMPT {
+                PromptSide::Left
+            } else {
+                PromptSide::Right
             };
-            let (value, escape) = el.prompt_narrow(op != EL_PROMPT);
-            *callback = Some(value);
+            let (callback, escape) = el.prompt(side);
+            if !unsafe { callback.write_narrow(out) } {
+                return -1;
+            }
             if !escape_out.is_null() {
                 // SAFETY: a non-null `char *` is the operation's out slot.
                 unsafe { *escape_out = escape as c_char };
@@ -796,10 +809,10 @@ pub unsafe extern "C" fn el_line(el: *mut EditLine) -> *const LineInfo {
     // exactly when the application's resize callback calls back in, and
     // returns `info` with whatever it already holds, converting nothing and
     // not re-entering the callback.
-    if unsafe { (&*el).publishing_narrow_line() } {
+    if unsafe { (&*el).published_line_encoding() == BoundaryEncoding::Narrow } {
         return info;
     }
-    unsafe { (&mut *el).set_publishing_narrow_line(true) };
+    unsafe { (&mut *el).set_published_line_encoding(BoundaryEncoding::Narrow) };
 
     let (buffer, cursor, lastchar) =
         unsafe { ((*winfo).buffer, (*winfo).cursor, (*winfo).lastchar) };
@@ -852,16 +865,16 @@ pub unsafe extern "C" fn el_line(el: *mut EditLine) -> *const LineInfo {
     // fully populated, and a nested `el_line` from inside it takes the step-2
     // shortcut and receives exactly this `info`.
     let resize = unsafe { (&*el).resize_callback() };
-    if let Some((f, arg)) = resize {
+    if let Some(resize) = resize {
         // SAFETY: `f` and `arg` were installed together by
         // `el_set(EL_RESIZE, f, arg)` against this very handle, and
         // `def:chared.el-zfunc-t-edit-line-void` makes `f` a C function taking
         // it. `el` is the caller's live `EditLine`.
-        unsafe { f(el, arg) };
+        unsafe { (resize.callback)(el, resize.cookie) };
     }
 
     // Step 6.
-    unsafe { (&mut *el).set_publishing_narrow_line(false) };
+    unsafe { (&mut *el).set_published_line_encoding(BoundaryEncoding::Wide) };
     info
 }
 

@@ -26,14 +26,14 @@ struct BindOptions {
 impl EditLine {
     pub(in crate::adapter) fn initialize_terminal_bindings(&mut self) {
         for (index, key) in TERMINAL_KEYS.iter().enumerate() {
-            self.boundary.terminal_bindings[index] = named_binding(key.default_command);
+            self.boundary.terminal.bindings[index] = named_binding(key.default_command);
         }
     }
 
-    pub(in crate::adapter) fn reset_compatibility_bindings(&mut self, mode: EditingMode) {
-        self.native.reset_bindings(mode);
+    pub(in crate::adapter) fn reset_bindings(&mut self, mode: EditingMode) {
+        self.editor.reset_bindings(mode);
         if mode == EditingMode::Emacs {
-            self.native.clear_bindings(KeymapMode::ViCommand);
+            self.editor.clear_bindings(KeymapMode::ViCommand);
             self.apply_locale_meta_overrides();
         }
         self.install_terminal_bindings();
@@ -54,9 +54,9 @@ impl EditLine {
             if character.is_control() || crate::conversion::encoded_width(value) == 0 {
                 let binding =
                     named_binding(command).expect("compatibility meta commands are built in");
-                self.native.bind(KeymapMode::Emacs, sequence, binding);
+                self.editor.bind(KeymapMode::Emacs, sequence, binding);
             } else {
-                self.native.unbind(KeymapMode::Emacs, &sequence);
+                self.editor.unbind(KeymapMode::Emacs, &sequence);
             }
         }
     }
@@ -76,7 +76,8 @@ impl EditLine {
                 .collect();
             if let Some(capability) = self
                 .boundary
-                .terminal_capabilities
+                .terminal
+                .capabilities
                 .string(terminal_key.capability)
             {
                 let sequence: Text = capability
@@ -89,7 +90,7 @@ impl EditLine {
                     sequences.push(sequence);
                 }
             }
-            projected.push((sequences, self.boundary.terminal_bindings[index].clone()));
+            projected.push((sequences, self.boundary.terminal.bindings[index].clone()));
         }
 
         for (sequences, binding) in projected {
@@ -99,10 +100,10 @@ impl EditLine {
                 };
                 match &binding {
                     Some(binding) => {
-                        self.native.bind(mode, sequence, binding.clone());
+                        self.editor.bind(mode, sequence, binding.clone());
                     }
                     None => {
-                        self.native.unbind(mode, &sequence);
+                        self.editor.unbind(mode, &sequence);
                     }
                 }
             }
@@ -153,7 +154,7 @@ impl EditLine {
         if options.remove {
             if options.terminal_key {
                 if let Some(index) = terminal_key_index(raw_key) {
-                    self.boundary.terminal_bindings[index] = None;
+                    self.boundary.terminal.bindings[index] = None;
                 }
                 return -1;
             }
@@ -164,7 +165,7 @@ impl EditLine {
             let Ok(sequence) = KeySequence::new(sequence) else {
                 return -1;
             };
-            self.remove_legacy_binding(mode, &sequence);
+            self.remove_binding(mode, &sequence);
             return 0;
         }
 
@@ -219,7 +220,7 @@ impl EditLine {
             let Some(terminal_index) = terminal_key_index(raw_key) else {
                 return 0;
             };
-            self.boundary.terminal_bindings[terminal_index] = Some(binding);
+            self.boundary.terminal.bindings[terminal_index] = Some(binding);
             if options.macro_binding {
                 self.clobber_terminal_name_lead(mode, raw_key);
             }
@@ -255,7 +256,7 @@ impl EditLine {
     ) {
         let units = sequence.as_text().as_units();
         let conflicts: Vec<KeySequence> = self
-            .native
+            .editor
             .bindings(mode)
             .filter_map(|(candidate, _)| {
                 let candidate_units = candidate.as_text().as_units();
@@ -265,15 +266,15 @@ impl EditLine {
             })
             .collect();
         for conflict in conflicts {
-            self.native.unbind(mode, &conflict);
+            self.editor.unbind(mode, &conflict);
         }
-        self.native.bind(mode, sequence, binding);
+        self.editor.bind(mode, sequence, binding);
     }
 
-    fn remove_legacy_binding(&mut self, mode: KeymapMode, sequence: &KeySequence) {
+    fn remove_binding(&mut self, mode: KeymapMode, sequence: &KeySequence) {
         let units = sequence.as_text().as_units();
         let removals: Vec<KeySequence> = self
-            .native
+            .editor
             .bindings(mode)
             .filter_map(|(candidate, _)| {
                 let remove = candidate == sequence
@@ -282,7 +283,7 @@ impl EditLine {
             })
             .collect();
         for removal in removals {
-            self.native.unbind(mode, &removal);
+            self.editor.unbind(mode, &removal);
         }
     }
 
@@ -310,25 +311,25 @@ impl EditLine {
             output.extend_from_slice(&text_bytes(&command.help));
             output.push(b'\n');
         }
-        self.write_compatibility_stream(1, &output);
+        self.write_compatibility_stream(StreamKind::Output, &output);
     }
 
     fn print_all_bindings(&self) {
         let normal = self.binding_mode(false);
         let alternate = self.binding_mode(true);
         let mut output = b"Standard key bindings\n".to_vec();
-        append_single_bindings(&mut output, self.native(), normal);
+        append_single_bindings(&mut output, self.editor(), normal);
         output.extend_from_slice(b"Alternative key bindings\n");
-        append_single_bindings(&mut output, self.native(), alternate);
+        append_single_bindings(&mut output, self.editor(), alternate);
         output.extend_from_slice(b"Multi-character bindings\n");
-        append_multi_bindings(&mut output, self.native(), normal, alternate);
+        append_multi_bindings(&mut output, self.editor(), normal, alternate);
         output.extend_from_slice(b"Arrow key bindings\n");
         for (index, key) in TERMINAL_KEYS.iter().enumerate() {
-            if let Some(binding) = &self.boundary.terminal_bindings[index] {
+            if let Some(binding) = &self.boundary.terminal.bindings[index] {
                 append_binding_line(&mut output, key.name, binding);
             }
         }
-        self.write_compatibility_stream(1, &output);
+        self.write_compatibility_stream(StreamKind::Output, &output);
     }
 
     fn print_key_binding(&self, mode: KeymapMode, sequence: &Text) {
@@ -336,21 +337,21 @@ impl EditLine {
             return;
         };
         if sequence.len() <= 1 {
-            if let Some(binding) = self.native.binding(mode, &key) {
+            if let Some(binding) = self.editor.binding(mode, &key) {
                 let rendered = visual_text(sequence, false);
                 let description = match binding {
                     Binding::Macro(_) => "ed-sequence-lead-in".to_owned(),
                     _ => binding_description(binding),
                 };
                 let line = format!("{rendered}\t->\t{description}\n");
-                self.write_compatibility_stream(1, line.as_bytes());
+                self.write_compatibility_stream(StreamKind::Output, line.as_bytes());
             }
             return;
         }
 
         let mut matches = 0;
         let mut output = Vec::new();
-        for (candidate, binding) in self.native.bindings(mode) {
+        for (candidate, binding) in self.editor.bindings(mode) {
             if candidate
                 .as_text()
                 .as_units()
@@ -369,9 +370,9 @@ impl EditLine {
                 "Unbound extended key \"{}\"\n",
                 visual_text(sequence, false)
             );
-            self.write_compatibility_stream(2, line.as_bytes());
+            self.write_compatibility_stream(StreamKind::Diagnostics, line.as_bytes());
         } else {
-            self.write_compatibility_stream(1, &output);
+            self.write_compatibility_stream(StreamKind::Output, &output);
         }
     }
 
@@ -379,12 +380,12 @@ impl EditLine {
         let Some(index) = terminal_key_index(raw_name) else {
             return;
         };
-        let Some(binding) = &self.boundary.terminal_bindings[index] else {
+        let Some(binding) = &self.boundary.terminal.bindings[index] else {
             return;
         };
         let mut output = Vec::new();
         append_binding_line(&mut output, TERMINAL_KEYS[index].name, binding);
-        self.write_compatibility_stream(1, &output);
+        self.write_compatibility_stream(StreamKind::Output, &output);
     }
 
     fn report_invalid_switch(&self, command: &[u32], invalid: u32) {
@@ -392,7 +393,7 @@ impl EditLine {
         output.extend_from_slice(b": Invalid switch `");
         output.extend_from_slice(&wide_bytes(&[invalid]));
         output.extend_from_slice(b"'.\n");
-        self.write_compatibility_stream(2, &output);
+        self.write_compatibility_stream(StreamKind::Diagnostics, &output);
     }
 
     fn report_bad_binding_escape(&self, command: &[u32], input: bool) {
@@ -402,7 +403,7 @@ impl EditLine {
         } else {
             b": Invalid \\ or ^ in outstring.\n"
         });
-        self.write_compatibility_stream(2, &output);
+        self.write_compatibility_stream(StreamKind::Diagnostics, &output);
     }
 
     fn report_invalid_command(&self, command: &[u32], value: &[u32]) {
@@ -410,7 +411,7 @@ impl EditLine {
         output.extend_from_slice(b": Invalid command `");
         output.extend_from_slice(&wide_bytes(value));
         output.extend_from_slice(b"'.\n");
-        self.write_compatibility_stream(2, &output);
+        self.write_compatibility_stream(StreamKind::Diagnostics, &output);
     }
 }
 
@@ -487,16 +488,8 @@ mod tests {
     use super::*;
 
     fn editor() -> Box<EditLine> {
-        EditLine::new(
-            "binding-test",
-            core::ptr::null_mut(),
-            core::ptr::null_mut(),
-            core::ptr::null_mut(),
-            -1,
-            -1,
-            -1,
-        )
-        .expect("construct an editor over inert descriptors")
+        EditLine::new(SessionInit::inert("binding-test"))
+            .expect("construct an editor over inert descriptors")
     }
 
     fn bind(editor: &mut EditLine, arguments: &[&str]) -> c_int {
@@ -542,7 +535,7 @@ mod tests {
         assert_eq!(bind(&mut editor, &["bind", "-s", "^Z", "hello"]), 0);
         let control_z = KeySequence::try_from("\u{1a}").unwrap();
         assert_eq!(
-            editor.native().binding(KeymapMode::Emacs, &control_z),
+            editor.editor().binding(KeymapMode::Emacs, &control_z),
             Some(&Binding::Macro(Text::from("hello")))
         );
 
@@ -552,21 +545,21 @@ mod tests {
         );
         let control_a = KeySequence::try_from("\u{1}").unwrap();
         assert!(matches!(
-            editor.native().binding(KeymapMode::ViCommand, &control_a),
+            editor.editor().binding(KeymapMode::ViCommand, &control_a),
             Some(Binding::Action(Action::Move(Motion::EndOfBuffer)))
         ));
 
         assert_eq!(bind(&mut editor, &["bind", "-r", "^Z"]), 0);
         assert!(
             editor
-                .native()
+                .editor()
                 .binding(KeymapMode::Emacs, &control_z)
                 .is_none()
         );
         assert_eq!(bind(&mut editor, &["bind", "-e"]), 0);
         assert!(
             editor
-                .native()
+                .editor()
                 .binding(KeymapMode::ViCommand, &control_a)
                 .is_none()
         );
@@ -693,7 +686,7 @@ mod tests {
         assert_eq!(bind(&mut editor, &["bind", "-e"]), 0);
         let up = KeySequence::try_from("\u{1b}[A").unwrap();
         assert!(matches!(
-            editor.native().binding(KeymapMode::Emacs, &up),
+            editor.editor().binding(KeymapMode::Emacs, &up),
             Some(Binding::Action(Action::Move(Motion::EndOfBuffer)))
         ));
         assert_eq!(bind(&mut editor, &["bind", "-k", "-r", "up"]), -1);

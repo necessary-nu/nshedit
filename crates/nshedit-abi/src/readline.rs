@@ -34,20 +34,19 @@ use core::cmp::Ordering;
 use core::ffi::{CStr, c_char, c_int, c_uchar, c_ulong, c_void};
 use core::ptr;
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::{Cell, RefCell};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
+use std::sync::atomic::Ordering as AtomicOrdering;
 
-use crate::filecomplete::{self, FilenameCompletionState};
+use crate::filecomplete;
 use std::os::fd::AsRawFd;
 
-use crate::adapter::EditLine;
-use crate::cdecl::handles::History;
+use crate::adapter::{EditLine, StreamKind};
 use crate::cdecl::histedit::{CC_EOF, CC_ERROR, CC_NORM, CC_REFRESH};
 use crate::cdecl::readline::{
-    CFile, HistEntry, HistdataT, HistoryState, KEYMAP_SIZE, Keymap, KeymapEntry, RlCommandFuncT,
+    CFile, HistEntry, HistdataT, HistoryState, KEYMAP_SIZE, Keymap, KeymapEntry,
 };
-use crate::conversion::{ConversionBuffer, decode_bytes};
+use crate::conversion::decode_bytes;
 use crate::history::{
     DataAccess, DeleteMode, EntryData, EventNumber, HistoryMove, HistoryReply, HistoryRequest,
     SeekDirection,
@@ -61,6 +60,11 @@ use completion::readline_completion_suffix;
 mod bridge;
 mod completion;
 mod history;
+mod runtime;
+
+use runtime::{READLINE_RUNTIME, runtime_editor, runtime_history};
+#[cfg(test)]
+use runtime::{RuntimeSession, release_runtime_session};
 
 // ---------------------------------------------------------------------------
 // Constants `readline.c` gets from its public and private C headers.
@@ -615,98 +619,6 @@ pub static mut rl_completion_append_character: c_int = b' ' as c_int;
 // The module-private state `readline.c` keeps in file-statics.
 // ---------------------------------------------------------------------------
 
-/// C: `static History *h = NULL;` — the readline layer's own history.
-static mut H: *mut History = ptr::null_mut();
-
-/// C: `static EditLine *e = NULL;` — the readline layer's own editor.
-static mut E: *mut EditLine = ptr::null_mut();
-
-/// C: `static rl_command_func_t *map[256];` — `rl_add_defun`'s dispatch
-/// table, consulted by `rl_bind_wrapper`.
-static mut MAP: [Option<RlCommandFuncT>; KEYMAP_SIZE] = [None; KEYMAP_SIZE];
-
-thread_local! {
-    /// C: `static HIST_ENTRY rl_he;` — the shared entry `current_history`
-    /// (and therefore `previous_history` and `next_history`) hands back.
-    ///
-    /// A `thread_local` rather than a `static mut` because the value is
-    /// owned Rust that this file hands a pointer to; the readline layer is
-    /// single-threaded throughout, which the C's own use of an unsynchronized
-    /// static already assumes.
-    static RL_HE: Cell<HistEntry> = const {
-        Cell::new(HistEntry { line: ptr::null(), data: ptr::null_mut() })
-    };
-
-    /// C: `static HIST_ENTRY she;` inside `history_get` — a second, distinct
-    /// static entry.
-    static SHE: Cell<HistEntry> = const {
-        Cell::new(HistEntry { line: ptr::null(), data: ptr::null_mut() })
-    };
-
-    /// C: `static char *last_search_pat;` — the last `!?pat?` pattern.
-    /// Owned here and dropped properly; the C never frees it
-    /// (ERR-readline-17).
-    static LAST_SEARCH_PAT: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
-
-    /// C: `static char *last_search_match;` — what the last `?pat?` matched,
-    /// which the `:%` word designator expands to.
-    static LAST_SEARCH_MATCH: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
-
-    /// C: `static HIST_ENTRY *_history_list;` — the entry array
-    /// `history_list` hands out, invalidated by the next call.
-    static HISTORY_LIST: RefCell<Vec<HistEntry>> = const { RefCell::new(Vec::new()) };
-
-    /// C: `static HIST_ENTRY **_history_listp;` — the NULL-terminated
-    /// pointer array over [`HISTORY_LIST`].
-    static HISTORY_LISTP: RefCell<Vec<*mut HistEntry>> = const { RefCell::new(Vec::new()) };
-
-    /// The file-statics inside `fn_filename_completion_function`, which the
-    /// core made an explicit state object; presenting the C's one
-    /// process-wide scan is this crate's job.
-    static FILENAME_SCAN: RefCell<Option<FilenameCompletionState>> = const { RefCell::new(None) };
-
-    /// The scoped platform user-name scan used by the compatibility generator.
-    static PASSWD_SCAN: RefCell<Option<nshedit_plat::passwd::UserNames>> =
-        const { RefCell::new(None) };
-
-    /// C: `static ct_buffer_t wbreak_conv, sprefix_conv;` inside
-    /// `rl_complete` — the wide forms of the two break-character strings,
-    /// grown as needed and never freed (ERR-encoding-11).
-    static WBREAK_CONV: RefCell<ConversionBuffer> = const {
-        RefCell::new(ConversionBuffer::new())
-    };
-    static SPREFIX_CONV: RefCell<ConversionBuffer> = const {
-        RefCell::new(ConversionBuffer::new())
-    };
-}
-
-/// C: `static char *from` inside `_history_expand_command` — the last
-/// `s///` pattern, reused across calls and reallocated by `getfrom`. It is a
-/// C-owned block because `getfrom` takes its address as `char **`.
-static mut EXPAND_FROM: *mut c_char = ptr::null_mut();
-
-/// C: `static char *to` inside `_history_expand_command`.
-static mut EXPAND_TO: *mut c_char = ptr::null_mut();
-
-/// C: `static int used_event_hook;` inside `readline()`.
-static mut USED_EVENT_HOOK: c_int = 0;
-
-/// C: `static char *path;` inside `_default_history_file` — the cached
-/// `$HOME/.history`, deliberately never freed.
-static mut DEFAULT_HISTORY_FILE: *mut c_char = ptr::null_mut();
-
-/// The replacement for `readline()`'s `setjmp`/`longjmp` pair.
-///
-/// Rust has no `longjmp`, and a panic cannot cross the `extern "C"` boundary
-/// `_rl_abort_internal` sits on. `sem:readline.rl-abort-internal-fn` calls
-/// the jump undefined whenever no `readline()` frame is live, so the port
-/// defines the mechanism instead: `_rl_abort_internal` raises this flag and
-/// ends the editor loop, and `readline()` — the only frame the C could
-/// legally have jumped into — sees it, drops the line and re-runs everything
-/// its `setjmp` sat above. Raised with no `readline()` active it is simply
-/// consumed by the next one. See ERR-readline-10.
-static ABORT_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 // ---------------------------------------------------------------------------
 // The variadic C entry points this file drives the editor and history with.
 //
@@ -936,11 +848,8 @@ fn rl_out_write(msg: &[u8]) {
 ///
 /// Reaches the module statics, so it inherits `rl_initialize`'s contract.
 unsafe fn lazy_init() {
-    // SAFETY: single-threaded module state, as the C's own statics assume.
-    unsafe {
-        if H.is_null() || E.is_null() {
-            rl_initialize();
-        }
+    if !unsafe { READLINE_RUNTIME.session().is_ready() } {
+        unsafe { rl_initialize() };
     }
 }
 
@@ -1049,8 +958,9 @@ fn _default_history_file() -> *const c_char {
     // SAFETY: single-threaded module state, as the C's unsynchronized static
     // already assumes.
     unsafe {
-        if !DEFAULT_HISTORY_FILE.is_null() {
-            return DEFAULT_HISTORY_FILE;
+        let cached = READLINE_RUNTIME.access(|runtime| runtime.default_history_file);
+        if !cached.is_null() {
+            return cached;
         }
         // `getpwuid(getuid())`, so `$HOME` is ignored — the observable part,
         // reproduced (ERR-readline-21). NULL when there is no passwd entry;
@@ -1062,8 +972,9 @@ fn _default_history_file() -> *const c_char {
         // Cached for the lifetime of the process and never freed, which is
         // what the C's function-static does. On allocation failure the cache
         // is left NULL so a later call retries.
-        DEFAULT_HISTORY_FILE = c_dup(&dir);
-        DEFAULT_HISTORY_FILE
+        let path = c_dup(&dir);
+        READLINE_RUNTIME.access(|runtime| runtime.default_history_file = path);
+        path
     }
 }
 
@@ -1159,235 +1070,7 @@ pub unsafe extern "C" fn rl_restore_prompt() {
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn rl_initialize() -> c_int {
-    // SAFETY: single-threaded module state; every editor call below is the
-    // one `readline.c` makes, in its order.
-    unsafe {
-        if !E.is_null() {
-            crate::histedit::el_end(E);
-        }
-        if !H.is_null() {
-            crate::histedit::history_end(H);
-        }
-        // The C clears neither static, so a failure below leaves one or both
-        // dangling and every later entry point dereferences freed memory
-        // (ERR-readline-19, UB). Defined here by clearing them first.
-        E = ptr::null_mut();
-        H = ptr::null_mut();
-
-        rl_readline_state &= !RL_STATE_DONE;
-
-        // Step 3. These must be the libc's actual stream objects: a caller can
-        // observe both pointer identity and their userspace buffering.
-        if rl_instream.is_null() {
-            rl_instream = cstdio::standard_input();
-        }
-        if rl_outstream.is_null() {
-            rl_outstream = cstdio::standard_output();
-        }
-        let error_stream = cstdio::standard_error();
-        let fdin = cstdio::fileno_of(rl_instream);
-        let fdout = cstdio::fileno_of(rl_outstream);
-        let fderr = cstdio::fileno_of(error_stream);
-
-        // Step 4's `tcgetattr(fileno(rl_instream))` test for a clear `ECHO`,
-        // both halves of which are answerable now — `fileno` through
-        // `crate::cstdio` and `tcgetattr` through `nshedit-plat`. A terminal
-        // that is not echoing is one something else is driving, so readline
-        // declines to edit on it. A failing `tcgetattr` leaves `editmode` at
-        // 1, which is what the C does with its uninitialised `t`: the branch
-        // is only entered on success.
-        let editmode = match crate::adapter::with_borrowed_descriptor(
-            fdin,
-            nshedit_plat::terminal::read_attributes,
-        )
-        .and_then(Result::ok)
-        {
-            Some(attributes) => {
-                c_int::from(attributes.flag(nshedit_plat::terminal::TerminalFlag::EchoInput))
-            }
-            None => 1,
-        };
-
-        let Some(program_bytes) = c_bytes_opt(rl_readline_name) else {
-            return -1;
-        };
-        let Ok(program) = core::str::from_utf8(program_bytes) else {
-            return -1;
-        };
-        E = EditLine::new(
-            program,
-            rl_instream,
-            rl_outstream,
-            error_stream,
-            fdin,
-            fdout,
-            fderr,
-        )
-        .map_or(ptr::null_mut(), Box::into_raw);
-
-        if editmode == 0 {
-            el_set_va(E.cast(), EL_EDITMODE, 0);
-        }
-
-        H = crate::histedit::history_init();
-        if E.is_null() || H.is_null() {
-            return -1;
-        }
-
-        let _ = history::execute(HistoryRequest::SetSize(c_int::MAX as usize));
-        history_length = 0;
-        max_input_history = c_int::MAX;
-        el_set_va(
-            E.cast(),
-            EL_HIST,
-            crate::histedit::history as *const c_void,
-            H,
-        );
-
-        /* Setup resize function */
-        el_set_va(
-            E.cast(),
-            EL_RESIZE,
-            _resize_fun as *const c_void,
-            &raw mut rl_line_buffer,
-        );
-
-        /* setup getc function if valid */
-        // Sampled once, and only for non-NULL-ness: setting `rl_getc_function`
-        // afterwards has no effect until the next `rl_initialize`
-        // (ERR-readline-31, reproduced).
-        let getc_hook = rl_getc_function;
-        if getc_hook.is_some() {
-            el_set_va(E.cast(), EL_GETCFN, _getc_function as *const c_void);
-        }
-
-        /* for proper prompt printing in readline() */
-        if rl_set_prompt(c"".as_ptr()) == -1 {
-            crate::histedit::history_end(H);
-            crate::histedit::el_end(E);
-            H = ptr::null_mut();
-            E = ptr::null_mut();
-            return -1;
-        }
-        el_set_va(
-            E.cast(),
-            EL_PROMPT_ESC,
-            _get_prompt as *const c_void,
-            RL_PROMPT_START_IGNORE as c_int,
-        );
-        el_set_va(E.cast(), EL_SIGNAL, rl_catch_signals);
-
-        /* set default mode to "emacs"-style and read setting afterwards */
-        /* so this can be overridden */
-        el_set_va(E.cast(), EL_EDITOR, c"emacs".as_ptr());
-        if !rl_terminal_name.is_null() {
-            el_set_va(E.cast(), EL_TERMINAL, rl_terminal_name);
-        } else {
-            // `terminal_set` keeps this exact pointer in the C. The native
-            // core owns its terminal name, so restore the ABI's observable
-            // alias explicitly: environment storage for a non-empty TERM,
-            // otherwise the adapter's read-only `"dumb"` literal.
-            let term = cenv::get(c"TERM");
-            rl_terminal_name = if term.is_null() || *term == 0 {
-                c"dumb".as_ptr().cast_mut()
-            } else {
-                term
-            };
-        }
-
-        /*
-         * Word completion - this has to go AFTER rebinding keys
-         * to emacs-style.
-         */
-        el_set_va(
-            E.cast(),
-            EL_ADDFN,
-            c"rl_complete".as_ptr(),
-            c"ReadLine compatible completion function".as_ptr(),
-            _el_rl_complete as *const c_void,
-        );
-        el_set_va(
-            E.cast(),
-            EL_BIND,
-            c"^I".as_ptr(),
-            c"rl_complete".as_ptr(),
-            ptr::null::<c_char>(),
-        );
-
-        /*
-         * Send TSTP when ^Z is pressed.
-         */
-        el_set_va(
-            E.cast(),
-            EL_ADDFN,
-            c"rl_tstp".as_ptr(),
-            c"ReadLine compatible suspend function".as_ptr(),
-            _el_rl_tstp as *const c_void,
-        );
-        el_set_va(
-            E.cast(),
-            EL_BIND,
-            c"^Z".as_ptr(),
-            c"rl_tstp".as_ptr(),
-            ptr::null::<c_char>(),
-        );
-
-        /*
-         * Set some readline compatible key-bindings.
-         */
-        el_set_va(
-            E.cast(),
-            EL_BIND,
-            c"^R".as_ptr(),
-            c"em-inc-search-prev".as_ptr(),
-            ptr::null::<c_char>(),
-        );
-
-        /*
-         * Allow the use of Home/End keys, of Delete/Insert, and of
-         * Ctrl-left-arrow and Ctrl-right-arrow for word moving.
-         */
-        for (keyseq, cmd) in [
-            (c"\\e[1~", c"ed-move-to-beg"),
-            (c"\\e[4~", c"ed-move-to-end"),
-            (c"\\e[7~", c"ed-move-to-beg"),
-            (c"\\e[8~", c"ed-move-to-end"),
-            (c"\\e[H", c"ed-move-to-beg"),
-            (c"\\e[F", c"ed-move-to-end"),
-            (c"\\e[3~", c"ed-delete-next-char"),
-            (c"\\e[2~", c"em-toggle-overwrite"),
-            (c"\\e[1;5C", c"em-next-word"),
-            (c"\\e[1;5D", c"ed-prev-word"),
-            (c"\\e[5C", c"em-next-word"),
-            (c"\\e[5D", c"ed-prev-word"),
-            (c"\\e\\e[C", c"em-next-word"),
-            (c"\\e\\e[D", c"ed-prev-word"),
-        ] {
-            el_set_va(
-                E.cast(),
-                EL_BIND,
-                keyseq.as_ptr(),
-                cmd.as_ptr(),
-                ptr::null::<c_char>(),
-            );
-        }
-
-        /* read settings from configuration file */
-        // `$EDITRC` or `~/.editrc`; readline's own `~/.inputrc` is not read
-        // (ERR-readline-46).
-        crate::histedit::el_source(E, ptr::null());
-
-        /*
-         * Unfortunately, some applications really do use rl_point
-         * and rl_line_buffer directly.
-         */
-        _resize_fun(E, (&raw mut rl_line_buffer).cast());
-        _rl_update_pos();
-
-        tty_end(E, TCSADRAIN);
-
-        0
-    }
+    unsafe { runtime::initialize_readline() }.map_or(-1, |()| 0)
 }
 
 // [spec:libedit:def:readline.readline-fn]
@@ -1399,7 +1082,7 @@ pub unsafe extern "C" fn readline(p: *const c_char) -> *mut c_char {
     let mut buf: *mut c_char;
     // SAFETY: single-threaded module state.
     unsafe {
-        if E.is_null() || H.is_null() {
+        if runtime_editor().is_null() || runtime_history().is_null() {
             // The return value is not checked, so a failed initialization is
             // not detected here.
             rl_initialize();
@@ -1407,13 +1090,16 @@ pub unsafe extern "C" fn readline(p: *const c_char) -> *mut c_char {
         if let Some(hook) = rl_startup_hook {
             hook();
         }
-        tty_init(E);
+        tty_init(runtime_editor());
 
         rl_done = 0;
 
-        // The C's `setjmp(topbuf)` lands here; see `ABORT_PENDING`.
+        // The C's `setjmp(topbuf)` lands here; the runtime's abort flag
+        // carries the same control signal without crossing an FFI boundary.
         loop {
-            ABORT_PENDING.store(false, std::sync::atomic::Ordering::Relaxed);
+            READLINE_RUNTIME
+                .abort_pending
+                .store(false, AtomicOrdering::Relaxed);
             buf = ptr::null_mut();
 
             /* update prompt accordingly to what has been passed */
@@ -1430,24 +1116,33 @@ pub unsafe extern "C" fn readline(p: *const c_char) -> *mut c_char {
             // application using both hooks loses the getc hook permanently
             // (ERR-readline-31, reproduced).
             let event_hook = rl_event_hook;
-            if event_hook.is_some() && !E.is_null() && (&*E).is_tty() {
-                el_set_va(E.cast(), EL_GETCFN, _rl_event_read_char as *const c_void);
-                USED_EVENT_HOOK = 1;
+            if event_hook.is_some() && !runtime_editor().is_null() && (&*runtime_editor()).is_tty()
+            {
+                el_set_va(
+                    runtime_editor().cast(),
+                    EL_GETCFN,
+                    _rl_event_read_char as *const c_void,
+                );
+                READLINE_RUNTIME.access(|runtime| runtime.used_event_hook = true);
             }
-            if event_hook.is_none() && USED_EVENT_HOOK != 0 {
-                el_set_va(E.cast(), EL_GETCFN, EL_BUILTIN_GETCFN);
-                USED_EVENT_HOOK = 0;
+            let used_event_hook = READLINE_RUNTIME.access(|runtime| runtime.used_event_hook);
+            if event_hook.is_none() && used_event_hook {
+                el_set_va(runtime_editor().cast(), EL_GETCFN, EL_BUILTIN_GETCFN);
+                READLINE_RUNTIME.access(|runtime| runtime.used_event_hook = false);
             }
 
             rl_already_prompted = 0;
 
             /* get one line from input stream */
             let mut count: c_int = 0;
-            let ret = crate::eln::el_gets(E, &mut count);
+            let ret = crate::eln::el_gets(runtime_editor(), &mut count);
 
             // `_rl_abort_internal` ran: drop the line and re-execute
             // everything the C's `setjmp` sat above.
-            if ABORT_PENDING.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            if READLINE_RUNTIME
+                .abort_pending
+                .swap(false, AtomicOrdering::Relaxed)
+            {
                 continue;
             }
 
@@ -1478,7 +1173,7 @@ pub unsafe extern "C" fn readline(p: *const c_char) -> *mut c_char {
             break;
         }
 
-        tty_end(E, TCSADRAIN);
+        tty_end(runtime_editor(), TCSADRAIN);
         buf
     }
 }
@@ -1633,12 +1328,16 @@ pub unsafe extern "C" fn get_history_event(
         // copied; the C tells the two apart by pointer identity, which is
         // what `pat_is_last` stands for.
         let mut pat_is_last = false;
-        let pat: Vec<u8> = if sub
-            && len == 0
-            && LAST_SEARCH_PAT.with_borrow(|p| p.as_ref().is_some_and(|p| !p.is_empty()))
-        {
+        let last_search_pattern = READLINE_RUNTIME.access(|runtime| {
+            runtime
+                .last_search_pattern
+                .as_ref()
+                .filter(|pattern| !pattern.is_empty())
+                .cloned()
+        });
+        let pat: Vec<u8> = if sub && len == 0 && last_search_pattern.is_some() {
             pat_is_last = true;
-            LAST_SEARCH_PAT.with_borrow(|p| p.clone().unwrap_or_default())
+            last_search_pattern.unwrap_or_default()
         } else if len == 0 {
             return ptr::null();
         } else {
@@ -1661,7 +1360,7 @@ pub unsafe extern "C" fn get_history_event(
 
         let ret = if sub {
             if !pat_is_last {
-                LAST_SEARCH_PAT.with_borrow_mut(|p| *p = Some(pat.clone()));
+                READLINE_RUNTIME.access(|runtime| runtime.last_search_pattern = Some(pat.clone()));
             }
             history_search(cpat, -1)
         } else {
@@ -1680,7 +1379,7 @@ pub unsafe extern "C" fn get_history_event(
 
         // What the `:%` word designator later expands to.
         if sub && len != 0 {
-            LAST_SEARCH_MATCH.with_borrow_mut(|m| *m = Some(pat.clone()));
+            READLINE_RUNTIME.access(|runtime| runtime.last_search_match = Some(pat.clone()));
         }
 
         c_free_str(cpat);
@@ -1945,7 +1644,9 @@ fn _history_expand_command(
         if at(s, cmd) == b'%' {
             /* last word matched by ?pat? */
             // The C does not check this `strdup`.
-            tmp = LAST_SEARCH_MATCH.with_borrow(|m| c_dup(m.as_deref().unwrap_or(b"")));
+            let matched = READLINE_RUNTIME
+                .access(|runtime| runtime.last_search_match.as_deref().unwrap_or(b"").to_vec());
+            tmp = c_dup(&matched);
         } else if strchr(b"^*$-0123456789", at(s, cmd)) {
             let mut start: c_int = -1;
             let mut end: c_int = -1;
@@ -2058,7 +1759,9 @@ fn _history_expand_command(
                     // repeat the previous substitution the way GNU readline's
                     // does, and a bare `!!:&` reads NUL as the delimiter and
                     // errors out (ERR-readline-51, reproduced).
-                    if c == b'&' && (EXPAND_FROM.is_null() || EXPAND_TO.is_null()) {
+                    let (expansion_from, expansion_to) = READLINE_RUNTIME
+                        .access(|runtime| (runtime.expansion_from, runtime.expansion_to));
+                    if c == b'&' && (expansion_from.is_null() || expansion_to.is_null()) {
                         cmd += 1;
                         continue 'modifiers;
                     }
@@ -2076,12 +1779,16 @@ fn _history_expand_command(
                     }
 
                     let mut cmdp = command.add(cmd);
-                    ev = getfrom(&mut cmdp, &raw mut EXPAND_FROM, search, delim as c_int);
+                    let from_slot =
+                        READLINE_RUNTIME.access(|runtime| &raw mut runtime.expansion_from);
+                    ev = getfrom(&mut cmdp, from_slot, search, delim as c_int);
                     if ev != 1 {
                         failed = true;
                         break 'modifiers;
                     }
-                    ev = getto(&mut cmdp, &raw mut EXPAND_TO, EXPAND_FROM, delim as c_int);
+                    let expansion_from = READLINE_RUNTIME.access(|runtime| runtime.expansion_from);
+                    let to_slot = READLINE_RUNTIME.access(|runtime| &raw mut runtime.expansion_to);
+                    ev = getto(&mut cmdp, to_slot, expansion_from, delim as c_int);
                     if ev != 1 {
                         failed = true;
                         break 'modifiers;
@@ -2090,7 +1797,9 @@ fn _history_expand_command(
 
                     // An allocation failure inside `_rl_compat_sub` silently
                     // leaves `tmp` unsubstituted.
-                    let aptr = _rl_compat_sub(tmp, EXPAND_FROM, EXPAND_TO, g_on);
+                    let (expansion_from, expansion_to) = READLINE_RUNTIME
+                        .access(|runtime| (runtime.expansion_from, runtime.expansion_to));
+                    let aptr = _rl_compat_sub(tmp, expansion_from, expansion_to, g_on);
                     if !aptr.is_null() {
                         c_free_str(tmp);
                         tmp = aptr;
@@ -2481,7 +2190,7 @@ pub unsafe extern "C" fn unstifle_history() -> c_int {
         // startup" (ERR-readline-11, UB). Defined here by skipping the
         // history call; the mirror is still swapped, which is all the return
         // value reports.
-        if !H.is_null() {
+        if !runtime_history().is_null() {
             let _ = history::execute(HistoryRequest::SetSize(c_int::MAX as usize));
         }
         let omax = max_input_history;
@@ -2532,7 +2241,7 @@ pub unsafe extern "C" fn history_get(num: c_int) -> *mut HistEntry {
         };
         let curr_num = current.number;
 
-        let she = SHE.with(Cell::as_ptr);
+        let she = READLINE_RUNTIME.access(|runtime| &raw mut runtime.lookup_entry);
         let mut ok = false;
         /*
          * use H_DELDATA to set to nth history (without delete) by passing
@@ -2754,7 +2463,7 @@ pub unsafe extern "C" fn history_list() -> *mut *mut HistEntry {
     // line strings are all borrowed; the whole result is invalidated by the
     // next call, and there is no lazy-init guard, as in the C.
     unsafe {
-        let Some(mut event) = (!H.is_null())
+        let Some(mut event) = (!runtime_history().is_null())
             .then(|| history::execute(HistoryRequest::Move(HistoryMove::Oldest)))
             .transpose()
             .ok()
@@ -2771,30 +2480,31 @@ pub unsafe extern "C" fn history_list() -> *mut *mut HistEntry {
         // library (ERR-readline-03, UB). Defined here by sizing to what the
         // walk actually finds: no out-of-bounds write, no `abort`, and no
         // truncation either.
-        HISTORY_LIST.with_borrow_mut(|list| {
-            list.clear();
-            loop {
-                list.push(HistEntry {
-                    line: history::boundary_text(&event),
-                    data: ptr::null_mut(),
-                });
-                let Some(next) = history::execute(HistoryRequest::Move(HistoryMove::Newer))
-                    .ok()
-                    .and_then(history::event)
-                else {
-                    break;
-                };
-                event = next;
+        let mut entries = Vec::new();
+        loop {
+            entries.push(HistEntry {
+                line: history::boundary_text(&event),
+                data: ptr::null_mut(),
+            });
+            let Some(next) = history::execute(HistoryRequest::Move(HistoryMove::Newer))
+                .ok()
+                .and_then(history::event)
+            else {
+                break;
+            };
+            event = next;
+        }
+        READLINE_RUNTIME.access(|runtime| {
+            runtime.history_list = entries;
+            runtime.history_list_pointers.clear();
+            runtime
+                .history_list_pointers
+                .reserve(runtime.history_list.len() + 1);
+            for entry in &mut runtime.history_list {
+                runtime.history_list_pointers.push(ptr::from_mut(entry));
             }
-            HISTORY_LISTP.with_borrow_mut(|listp| {
-                listp.clear();
-                listp.reserve(list.len() + 1);
-                for entry in list.iter_mut() {
-                    listp.push(ptr::from_mut(entry));
-                }
-                listp.push(ptr::null_mut());
-                listp.as_mut_ptr()
-            })
+            runtime.history_list_pointers.push(ptr::null_mut());
+            runtime.history_list_pointers.as_mut_ptr()
         })
         // The cursor is left at the newest entry, not restored.
     }
@@ -2814,7 +2524,7 @@ pub unsafe extern "C" fn current_history() -> *mut HistEntry {
         // The lookup implies an identity between a zero-based readline offset
         // and a one-based libedit event number, which holds only while event
         // numbering is dense and starts at 1 (ERR-readline-39).
-        let Some(event) = (!H.is_null())
+        let Some(event) = (!runtime_history().is_null())
             .then(|| {
                 history::execute(HistoryRequest::Seek {
                     direction: SeekDirection::Newer,
@@ -2829,7 +2539,7 @@ pub unsafe extern "C" fn current_history() -> *mut HistEntry {
             return ptr::null_mut();
         };
 
-        let he = RL_HE.with(Cell::as_ptr);
+        let he = READLINE_RUNTIME.access(|runtime| &raw mut runtime.navigation_entry);
         // Borrowed, including whatever trailing newline the entry was stored
         // with; the entry's real `histdata_t` is never surfaced here.
         (*he).line = history::boundary_text(&event);
@@ -2847,7 +2557,7 @@ pub unsafe extern "C" fn history_total_bytes() -> c_int {
     unsafe {
         // No lazy-init guard, as in the C (ERR-readline-11, UB): a NULL
         // history takes the documented -1 return instead of faulting.
-        let Some(current) = (!H.is_null())
+        let Some(current) = (!runtime_history().is_null())
             .then(|| history::execute(HistoryRequest::Move(HistoryMove::Current)))
             .transpose()
             .ok()
@@ -2926,7 +2636,9 @@ pub unsafe extern "C" fn previous_history() -> *mut HistEntry {
         }
 
         // No lazy-init guard, as in the C (ERR-readline-11, UB).
-        if H.is_null() || history::execute(HistoryRequest::Move(HistoryMove::Oldest)).is_err() {
+        if runtime_history().is_null()
+            || history::execute(HistoryRequest::Move(HistoryMove::Oldest)).is_err()
+        {
             return ptr::null_mut();
         }
 
@@ -2948,7 +2660,9 @@ pub unsafe extern "C" fn next_history() -> *mut HistEntry {
 
         // The H_LAST-then-scan pattern makes every navigation step O(n)
         // (ERR-readline-39).
-        if H.is_null() || history::execute(HistoryRequest::Move(HistoryMove::Oldest)).is_err() {
+        if runtime_history().is_null()
+            || history::execute(HistoryRequest::Move(HistoryMove::Oldest)).is_err()
+        {
             return ptr::null_mut();
         }
 
@@ -2964,7 +2678,7 @@ pub unsafe extern "C" fn next_history() -> *mut HistEntry {
 pub unsafe extern "C" fn history_search(str_: *const c_char, direction: c_int) -> c_int {
     // SAFETY: `str_` is a NUL-terminated string; single-threaded module state.
     unsafe {
-        let Some(mut event) = (!H.is_null())
+        let Some(mut event) = (!runtime_history().is_null())
             .then(|| history::execute(HistoryRequest::Move(HistoryMove::Current)))
             .transpose()
             .ok()
@@ -3027,7 +2741,7 @@ pub unsafe extern "C" fn history_search_prefix(str_: *const c_char, direction: c
         // and discarded. 0 when a match was found, -1 when not — which is
         // neither GNU readline's offset nor `history_search`'s
         // (ERR-readline-49).
-        if H.is_null() {
+        if runtime_history().is_null() {
             return -1;
         }
         let prefix = crate::history::input(str_);
@@ -3062,7 +2776,7 @@ pub unsafe extern "C" fn history_search_pos(
         let off = if pos > 0 { pos } else { -pos };
         let pos = if pos > 0 { 1 } else { -1 };
 
-        let Some(current) = (!H.is_null())
+        let Some(current) = (!runtime_history().is_null())
             .then(|| history::execute(HistoryRequest::Move(HistoryMove::Current)))
             .transpose()
             .ok()
@@ -3171,15 +2885,13 @@ pub unsafe extern "C" fn username_completion_function(
         // so it exits after a single `getpwent()` and returns the next
         // database entry regardless of whether it starts with `text`. No
         // prefix matching happens at all (ERR-readline-24, reproduced).
-        let found = PASSWD_SCAN.with(|scan| {
-            let mut scan = scan.borrow_mut();
-            if state == 0 || scan.is_none() {
-                drop(scan.take());
-                *scan = Some(nshedit_plat::passwd::UserNames::open());
+        let found = READLINE_RUNTIME.access(|runtime| {
+            if state == 0 || runtime.passwd_scan.is_none() {
+                runtime.passwd_scan = Some(nshedit_plat::passwd::UserNames::open());
             }
             loop {
-                let Some(name) = scan.as_mut().and_then(Iterator::next) else {
-                    *scan = None;
+                let Some(name) = runtime.passwd_scan.as_mut().and_then(Iterator::next) else {
+                    runtime.passwd_scan = None;
                     return None;
                 };
                 let name = name.as_bytes();
@@ -3259,10 +2971,10 @@ pub unsafe extern "C" fn rl_bind_key(
             if !(0..256).contains(&c) {
                 return -1;
             }
-            if E.is_null() {
+            if runtime_editor().is_null() {
                 return -1;
             }
-            (&mut *E).bind_byte_to_insert(c as u8);
+            (&mut *runtime_editor()).bind_byte_to_insert(c as u8);
             retval = 0;
         }
         retval
@@ -3284,7 +2996,7 @@ pub unsafe extern "C" fn rl_read_key() -> c_int {
         // what comes back is `el_getc`'s *status*, so this yields 1 for every
         // successful read regardless of which key was pressed, 0 at EOF and -1
         // on error (ERR-readline-23, reproduced).
-        crate::eln::el_getc(E, fooarr.as_mut_ptr())
+        crate::eln::el_getc(runtime_editor(), fooarr.as_mut_ptr())
     }
 }
 
@@ -3299,7 +3011,7 @@ pub unsafe extern "C" fn rl_reset_terminal(p: *const c_char) -> c_int {
     // SAFETY: single-threaded module state.
     unsafe {
         lazy_init();
-        crate::histedit::el_reset(E);
+        crate::histedit::el_reset(runtime_editor());
         0
     }
 }
@@ -3321,7 +3033,7 @@ pub unsafe extern "C" fn rl_insert(count: c_int, c: c_int) -> c_int {
         // inserts into the line instead; the two are swapped relative to
         // readline (ERR-readline-42, reproduced).
         for _ in 0..count {
-            crate::eln::el_push(E, arr.as_ptr());
+            crate::eln::el_push(runtime_editor(), arr.as_ptr());
         }
 
         0
@@ -3342,7 +3054,7 @@ pub unsafe extern "C" fn rl_insert_text(text: *const c_char) -> c_int {
 
         lazy_init();
 
-        if crate::eln::el_insertstr(E, text) < 0 {
+        if crate::eln::el_insertstr(runtime_editor(), text) < 0 {
             return 0;
         }
         // The number of *bytes*, not of characters, so under a multibyte
@@ -3377,7 +3089,7 @@ fn rl_bind_wrapper(el: *mut EditLine, c: c_uchar) -> c_uchar {
     let _ = el;
     // SAFETY: single-threaded module state.
     unsafe {
-        let Some(f) = MAP[c as usize] else {
+        let Some(f) = READLINE_RUNTIME.access(|runtime| runtime.commands[c as usize]) else {
             return CC_ERROR;
         };
 
@@ -3418,12 +3130,12 @@ pub unsafe extern "C" fn rl_add_defun(
         }
         // Any previous entry for that byte is silently overwritten, and `fun`
         // is stored raw: the caller must keep the function alive.
-        MAP[c as usize] = fun;
+        READLINE_RUNTIME.access(|runtime| runtime.commands[c as usize] = fun);
         // There is no lazy `rl_initialize()` here, so the C hands a NULL
         // editor to `el_set` and crashes (ERR-readline-11, UB); `el_set`
         // taking the NULL is the port's definition of it.
         el_set_va(
-            E.cast(),
+            runtime_editor().cast(),
             EL_ADDFN,
             name,
             name,
@@ -3440,7 +3152,7 @@ pub unsafe extern "C" fn rl_add_defun(
             *slot = b as c_char;
         }
         el_set_va(
-            E.cast(),
+            runtime_editor().cast(),
             EL_BIND,
             dest.as_ptr(),
             name,
@@ -3460,7 +3172,7 @@ pub unsafe extern "C" fn rl_callback_read_char() {
     // SAFETY: single-threaded module state; `e` must already have been set up
     // by `rl_callback_handler_install`.
     unsafe {
-        if E.is_null() {
+        if runtime_editor().is_null() {
             // No lazy-initialization guard in the C (ERR-readline-11, UB).
             return;
         }
@@ -3469,9 +3181,9 @@ pub unsafe extern "C" fn rl_callback_read_char() {
         // Happens *before* unbuffered mode is re-asserted, so the very first
         // call after installation behaves like a blocking line read
         // (ERR-readline-37).
-        let buf = crate::eln::el_gets(E, &mut count);
+        let buf = crate::eln::el_gets(runtime_editor(), &mut count);
 
-        el_set_va(E.cast(), EL_UNBUFFERED, 1);
+        el_set_va(runtime_editor().cast(), EL_UNBUFFERED, 1);
         count -= 1;
         if buf.is_null() || count < 0 {
             return;
@@ -3479,7 +3191,7 @@ pub unsafe extern "C" fn rl_callback_read_char() {
         let bytes = c_bytes(buf);
         let last = count as usize;
 
-        if count == 0 && !bytes.is_empty() && bytes[0] == (&*E).control_eof() {
+        if count == 0 && !bytes.is_empty() && bytes[0] == (&*runtime_editor()).control_eof() {
             /* a lone EOF keystroke on an empty line */
             done = 1;
         }
@@ -3490,7 +3202,7 @@ pub unsafe extern "C" fn rl_callback_read_char() {
 
         let linefunc = rl_linefunc;
         if done != 0 && linefunc.is_some() {
-            el_set_va(E.cast(), EL_UNBUFFERED, 0);
+            el_set_va(runtime_editor().cast(), EL_UNBUFFERED, 0);
             let wbuf = if done == 2 {
                 let w = c_dup(bytes);
                 if !w.is_null() {
@@ -3523,7 +3235,7 @@ pub unsafe extern "C" fn rl_callback_handler_install(
     // SAFETY: single-threaded module state.
     unsafe {
         // Note the guard tests only `e`, unlike every other lazy-init site.
-        if E.is_null() {
+        if runtime_editor().is_null() {
             rl_initialize();
         }
         // Return value discarded, so an allocation failure goes unreported.
@@ -3531,7 +3243,7 @@ pub unsafe extern "C" fn rl_callback_handler_install(
         // Installing a second handler simply overwrites this; there is no
         // stack of handlers.
         rl_linefunc = linefunc;
-        el_set_va(E.cast(), EL_UNBUFFERED, 1);
+        el_set_va(runtime_editor().cast(), EL_UNBUFFERED, 1);
     }
 }
 
@@ -3546,7 +3258,7 @@ pub unsafe extern "C" fn rl_callback_handler_remove() {
         // Nothing else happens: the prompt is not restored or freed, no
         // partially typed line is discarded, the terminal is not deprepped and
         // the display is left as it is.
-        el_set_va(E.cast(), EL_UNBUFFERED, 0);
+        el_set_va(runtime_editor().cast(), EL_UNBUFFERED, 0);
         rl_linefunc = None;
     }
 }
@@ -3558,7 +3270,7 @@ pub unsafe extern "C" fn rl_callback_handler_remove() {
 pub unsafe extern "C" fn rl_redisplay() {
     // SAFETY: single-threaded module state.
     unsafe {
-        if E.is_null() {
+        if runtime_editor().is_null() {
             return;
         }
         // The reprint character is *pushed as input*, so the redraw happens
@@ -3566,8 +3278,8 @@ pub unsafe extern "C" fn rl_redisplay() {
         // consumed and runs whatever is bound to it (ERR-readline-26). With no
         // reprint character configured a NUL byte is pushed, which `el_push`
         // treats as an empty push.
-        let a = [(&*E).control_reprint() as c_char, 0];
-        crate::eln::el_push(E, a.as_ptr());
+        let a = [(&*runtime_editor()).control_reprint() as c_char, 0];
+        crate::eln::el_push(runtime_editor(), a.as_ptr());
         rl_forced_update_display();
     }
 }
@@ -3584,7 +3296,7 @@ pub unsafe extern "C" fn rl_get_previous_history(count: c_int, key: c_int) -> c_
         // history, so it only works if `key` is bound to a history-recall
         // command; no history global is touched (ERR-readline-44).
         for _ in 0..count {
-            crate::eln::el_push(E, a.as_ptr());
+            crate::eln::el_push(runtime_editor(), a.as_ptr());
         }
         0
     }
@@ -3599,7 +3311,7 @@ pub unsafe extern "C" fn rl_prep_terminal(meta_flag: c_int) {
     let _ = meta_flag;
     // SAFETY: single-threaded module state; no lazy-init guard, as in the C.
     unsafe {
-        el_set_va(E.cast(), EL_PREP_TERM, 1);
+        el_set_va(runtime_editor().cast(), EL_PREP_TERM, 1);
     }
 }
 
@@ -3610,7 +3322,7 @@ pub unsafe extern "C" fn rl_prep_terminal(meta_flag: c_int) {
 pub unsafe extern "C" fn rl_deprep_terminal() {
     // SAFETY: single-threaded module state; no lazy-init guard, as in the C.
     unsafe {
-        el_set_va(E.cast(), EL_PREP_TERM, 0);
+        el_set_va(runtime_editor().cast(), EL_PREP_TERM, 0);
     }
 }
 
@@ -3625,7 +3337,7 @@ pub unsafe extern "C" fn rl_read_init_file(s: *const c_char) -> c_int {
     // The grammar is libedit's `.editrc`, not readline's `.inputrc`, so almost
     // every line of a readline init file is rejected, and the failure encoding
     // is `el_source`'s -1 rather than an errno (ERR-readline-46).
-    unsafe { crate::histedit::el_source(E, s) }
+    unsafe { crate::histedit::el_source(runtime_editor(), s) }
 }
 
 // [spec:libedit:def:readline.rl-parse-and-bind-fn]
@@ -3653,7 +3365,7 @@ pub unsafe extern "C" fn rl_parse_and_bind(line: *const c_char) -> c_int {
         let argc = if argv.is_null() {
             1
         } else {
-            crate::eln::el_parse(E, argc, argv)
+            crate::eln::el_parse(runtime_editor(), argc, argv)
         };
         crate::histedit::tok_end(tok);
         c_int::from(argc != 0)
@@ -3676,7 +3388,7 @@ pub unsafe extern "C" fn rl_variable_bind(var: *const c_char, value: *const c_ch
     unsafe {
         c_int::from(
             el_set_va(
-                E.cast(),
+                runtime_editor().cast(),
                 EL_BIND,
                 c"".as_ptr(),
                 var,
@@ -3700,7 +3412,7 @@ pub unsafe extern "C" fn rl_stuff_char(c: c_int) -> c_int {
         // A `c` of 0 makes the string empty and inserts nothing, and the
         // return never reports failure.
         let buf = [c as c_char, 0];
-        crate::eln::el_insertstr(E, buf.as_ptr());
+        crate::eln::el_insertstr(runtime_editor(), buf.as_ptr());
         1
     }
 }
@@ -3724,7 +3436,7 @@ fn _rl_event_read_char(el: *mut EditLine, wc: *mut u32) -> c_int {
             }
             // The successful zero result is not EOF: it means no byte can be
             // read without blocking, so the busy loop invokes the hook again.
-            let descriptor = (&*el).descriptor(0).unwrap_or(-1);
+            let descriptor = (&*el).descriptor(StreamKind::Input);
             let Some(Ok(ready)) = crate::adapter::with_borrowed_descriptor(
                 descriptor,
                 nshedit_plat::terminal::bytes_ready,
@@ -3796,10 +3508,10 @@ fn _rl_update_pos() {
     // a NULL editor or line buffer is UB, defined here as leaving the globals
     // alone.
     unsafe {
-        if E.is_null() {
+        if runtime_editor().is_null() {
             return;
         }
-        let li = crate::eln::el_line(E);
+        let li = crate::eln::el_line(runtime_editor());
         if li.is_null() {
             return;
         }
@@ -3823,7 +3535,7 @@ pub unsafe extern "C" fn rl_copy_text(from: c_int, to: c_int) -> *mut c_char {
     unsafe {
         lazy_init();
 
-        let li = crate::eln::el_line(E);
+        let li = crate::eln::el_line(runtime_editor());
         if li.is_null() {
             return ptr::null_mut();
         }
@@ -3889,7 +3601,7 @@ pub unsafe extern "C" fn rl_replace_line(text: *const c_char, clear_undo: c_int)
         // The result is discarded, so a line-too-long or decoding failure is
         // invisible, and none of `rl_point`/`rl_end`/`rl_line_buffer` is
         // refreshed.
-        crate::eln::el_replacestr(E, text);
+        crate::eln::el_replacestr(runtime_editor(), text);
     }
 }
 
@@ -3907,7 +3619,7 @@ pub unsafe extern "C" fn rl_delete_text(start: c_int, end: c_int) -> c_int {
         // application computes do not correspond to what is deleted
         // (ERR-readline-35). 0 for the rejected cases and 0 on success, so the
         // two are indistinguishable.
-        crate::histedit::el_deletestr1(E, start, end)
+        crate::histedit::el_deletestr1(runtime_editor(), start, end)
     }
 }
 
@@ -3922,10 +3634,10 @@ pub unsafe extern "C" fn rl_get_screen_size(rows: *mut c_int, cols: *mut c_int) 
         // Neither result is checked, so on failure the caller's variables keep
         // whatever they held: this function does not initialize them.
         if !rows.is_null() {
-            el_get_va(E.cast(), EL_GETTC, c"li".as_ptr(), rows);
+            el_get_va(runtime_editor().cast(), EL_GETTC, c"li".as_ptr(), rows);
         }
         if !cols.is_null() {
-            el_get_va(E.cast(), EL_GETTC, c"co".as_ptr(), cols);
+            el_get_va(runtime_editor().cast(), EL_GETTC, c"co".as_ptr(), cols);
         }
     }
 }
@@ -3968,7 +3680,7 @@ pub unsafe extern "C" fn rl_set_screen_size(rows: c_int, cols: c_int) {
         // arrays are not resized the way `el_resize` would resize them.
         let buf = format!("{rows}\0");
         el_set_va(
-            E.cast(),
+            runtime_editor().cast(),
             EL_SETTC,
             c"li".as_ptr(),
             buf.as_ptr(),
@@ -3976,7 +3688,7 @@ pub unsafe extern "C" fn rl_set_screen_size(rows: c_int, cols: c_int) {
         );
         let buf = format!("{cols}\0");
         el_set_va(
-            E.cast(),
+            runtime_editor().cast(),
             EL_SETTC,
             c"co".as_ptr(),
             buf.as_ptr(),
@@ -4110,7 +3822,7 @@ pub unsafe extern "C" fn rl_forced_update_display() {
     // `rl_redisplay_function` is never consulted, so a custom redisplay
     // routine has no effect.
     unsafe {
-        el_set_va(E.cast(), EL_REFRESH);
+        el_set_va(runtime_editor().cast(), EL_REFRESH);
     }
 }
 
@@ -4121,8 +3833,8 @@ pub unsafe extern "C" fn rl_forced_update_display() {
 pub unsafe extern "C" fn _rl_abort_internal() -> c_int {
     // SAFETY: single-threaded module state.
     unsafe {
-        if !E.is_null() {
-            crate::histedit::el_beep(E);
+        if !runtime_editor().is_null() {
+            crate::histedit::el_beep(runtime_editor());
         }
         // The C `longjmp`s into `readline()`'s frame and never returns; with
         // no live `readline()` the jump lands in a dead frame, and nested
@@ -4132,7 +3844,9 @@ pub unsafe extern "C" fn _rl_abort_internal() -> c_int {
         // the flag `readline()` checks after `el_gets`, and end the editor
         // loop so it is checked promptly. Raised with no `readline()` running,
         // it is simply consumed by the next one.
-        ABORT_PENDING.store(true, std::sync::atomic::Ordering::Relaxed);
+        READLINE_RUNTIME
+            .abort_pending
+            .store(true, AtomicOrdering::Relaxed);
         rl_done = 1;
         // The C's declared `int` is never produced; 0 is the port's.
         0
@@ -4188,7 +3902,7 @@ pub unsafe extern "C" fn rl_kill_full_line(count: c_int, key: c_int) -> c_int {
         // `em-yank` — not merely discarded, and it does not land in readline's
         // kill ring, which this layer does not implement at all. The CC_*
         // return is discarded and none of the position globals is refreshed.
-        em_kill_line(E);
+        em_kill_line(runtime_editor());
         0
     }
 }
@@ -4330,7 +4044,7 @@ pub unsafe extern "C" fn rl_resize_terminal() {
         // Re-queries the window size, rebuilds the display arrays and
         // repaints. Not async-signal-safe: a SIGWINCH handler should set a
         // flag and call this from the main loop.
-        crate::histedit::el_resize(E);
+        crate::histedit::el_resize(runtime_editor());
     }
 }
 
@@ -4358,14 +4072,14 @@ pub unsafe extern "C" fn rl_reset_after_signal() {
 pub unsafe extern "C" fn rl_echo_signal_char(sig: c_int) {
     // SAFETY: single-threaded module state; no NULL guard on `e` in the C.
     unsafe {
-        let c = tty_get_signal_character(E, sig);
+        let c = tty_get_signal_character(runtime_editor(), sig);
         if c == -1 {
             return;
         }
         // The raw control byte is deposited in the virtual display, where GNU
         // readline echoes `^C` to `rl_outstream`; libedit's is what crosses
         // the ABI (ERR-readline-25, reproduced).
-        re_putc(E, c as u32);
+        re_putc(runtime_editor(), c as u32);
     }
 }
 
@@ -4380,7 +4094,7 @@ pub unsafe extern "C" fn rl_crlf() -> c_int {
         // without advancing it and without reaching the terminal: nothing is
         // flushed and the character becomes visible only if a later refresh
         // renders that cell (ERR-readline-25, reproduced).
-        re_putc(E, u32::from(b'\n'));
+        re_putc(runtime_editor(), u32::from(b'\n'));
         0
     }
 }
@@ -4395,7 +4109,7 @@ pub unsafe extern "C" fn rl_ding() -> c_int {
         // Notably *not* `el_beep(e)`, which is what actually emits the bell,
         // so this is close to a no-op and can leave a stray BEL byte in the
         // virtual display (ERR-readline-25, reproduced).
-        re_putc(E, 0x07);
+        re_putc(runtime_editor(), 0x07);
         0
     }
 }

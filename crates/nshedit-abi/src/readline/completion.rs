@@ -24,8 +24,9 @@ pub(super) unsafe fn display_match_list(matches: *mut *mut c_char, len: c_int, m
     // common prefix and 1..=len are the entries shown. Nothing here is freed
     // and ownership stays with the caller.
     unsafe {
+        let editor = runtime_editor();
         // No lazy-initialization guard in the C, so `e` must already exist.
-        if E.is_null() || matches.is_null() {
+        if editor.is_null() || matches.is_null() {
             return;
         }
         // The C widens both counts to `size_t` with no range check, so a
@@ -64,14 +65,14 @@ pub(super) unsafe fn display_match_list(matches: *mut *mut c_char, len: c_int, m
             }
             owned.push(String::from_utf8_lossy(c_bytes(p)).into_owned());
         }
-        let columns = (&*E).screen_size().map_or(80, |size| size.columns());
+        let columns = (&*editor).screen_size().map_or(80, |size| size.columns());
         let output = filecomplete::format_match_list(
             &mut owned[1..],
             max as usize,
             columns,
             &mut readline_completion_suffix,
         );
-        let _ = (&*E).write_output(&output);
+        let _ = (&*editor).write_output(&output);
 
         crate::filecomplete::permute_to_match(matches, &owned);
     }
@@ -86,7 +87,7 @@ pub(super) unsafe fn complete(ignore: c_int, invoking_key: c_int) -> c_int {
         if rl_inhibit_completion != 0 {
             // A disabled Tab inserts a literal Tab.
             let arr = [invoking_key as c_char, 0];
-            crate::eln::el_insertstr(E, arr.as_ptr());
+            crate::eln::el_insertstr(runtime_editor(), arr.as_ptr());
             return c_int::from(CC_REFRESH);
         }
 
@@ -101,29 +102,35 @@ pub(super) unsafe fn complete(ignore: c_int, invoking_key: c_int) -> c_int {
 
         _rl_update_pos();
 
-        if E.is_null() {
+        let editor = runtime_editor();
+        if editor.is_null() {
             return c_int::from(CC_ERROR);
         }
 
         // Copy both conversion buffers before any user callback runs. The
         // word-break hook's result remains the special-prefix input, preserving
         // ERR-readline-50 without retaining a dynamic borrow across re-entry.
-        let word_break = WBREAK_CONV.with_borrow_mut(|buffer| {
-            decode_bytes(c_bytes_opt(rl_basic_word_break_characters), buffer)
-                .unwrap_or(&[])
-                .to_vec()
-        });
-        let special = SPREFIX_CONV.with_borrow_mut(|buffer| {
-            decode_bytes(c_bytes_opt(breakchars), buffer)
-                .unwrap_or(&[])
-                .to_vec()
+        let (word_break, special) = READLINE_RUNTIME.access(|runtime| {
+            let word_break = decode_bytes(
+                c_bytes_opt(rl_basic_word_break_characters),
+                &mut runtime.word_break_conversion,
+            )
+            .unwrap_or(&[])
+            .to_vec();
+            let special = decode_bytes(
+                c_bytes_opt(breakchars),
+                &mut runtime.special_prefix_conversion,
+            )
+            .unwrap_or(&[])
+            .to_vec();
+            (word_break, special)
         });
         let separators = word_break
             .into_iter()
             .chain(special)
             .map(nshedit::domain::TextUnit::from_code_point)
             .collect();
-        let snapshot = filecomplete::observe_completion(&mut *E, separators);
+        let snapshot = filecomplete::observe_completion(&mut *editor, separators);
         let invocation = snapshot.invocation();
         let positions = snapshot.positions();
         rl_completion_type = match invocation {
@@ -197,12 +204,12 @@ pub(super) unsafe fn complete(ignore: c_int, invoking_key: c_int) -> c_int {
             None
         };
         let mut suffix = readline_completion_suffix;
-        let target = E;
+        let target = editor;
         let mut apply =
             move |query: &nshedit::editor::CompletionQuery,
                   candidates: nshedit::editor::CompletionCandidates| {
                 (&mut *target)
-                    .native_mut()
+                    .editor_mut()
                     .apply_completion(query, candidates)
             };
         let providers = filecomplete::CompletionProviders::new(generator)
@@ -228,7 +235,7 @@ pub(super) unsafe fn complete(ignore: c_int, invoking_key: c_int) -> c_int {
         if report.attempted_state() == filecomplete::AttemptedState::Reset {
             rl_attempted_completion_over = 0;
         }
-        report.apply_effects(&mut *E);
+        report.apply_effects(&mut *editor);
 
         // A libedit CC_* code, not readline's 0/non-zero status, because the
         // function doubles as an EditLine command through `_el_rl_complete`.

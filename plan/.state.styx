@@ -421,4 +421,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule abi.typed-history}
     )}
+    {id rust-idiom-session, covered_rules (
+        abi.typed-session
+    ), covered_claims (
+        {impl_name native-impl, rule abi.typed-session}
+    )}
 )

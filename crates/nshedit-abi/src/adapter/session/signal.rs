@@ -5,7 +5,11 @@ use nshedit_plat::signal::Signal;
 
 impl EditLine {
     pub(crate) fn set_handle_signals(&mut self, enabled: bool) {
-        self.boundary.policy.handle_signals = enabled;
+        self.boundary.policy.signals = if enabled {
+            SignalPolicy::Handle
+        } else {
+            SignalPolicy::Ignore
+        };
         if enabled && self.unbuffered() {
             let _ = self.arm_persistent_signal_handlers();
         } else if !enabled {

@@ -66,12 +66,12 @@ fn output_of(el: *mut EditLine, tag: &str, body: impl FnOnce(*mut EditLine)) -> 
     assert!(!stream.is_null());
     let descriptor = crate::cstdio::fileno_of(stream);
     // SAFETY: `el` is live for the whole of this function.
-    let saved_stream = unsafe { (&*el).stream(1).unwrap() };
-    let saved_descriptor = unsafe { (&*el).descriptor(1).unwrap() };
-    unsafe { (&mut *el).set_stream(1, stream, descriptor) };
+    let saved_stream = unsafe { (&*el).stream(StreamKind::Output) };
+    let saved_descriptor = unsafe { (&*el).descriptor(StreamKind::Output) };
+    unsafe { (&mut *el).set_stream(StreamKind::Output, stream, descriptor) };
     body(el);
     crate::cstdio::flush(stream).unwrap();
-    unsafe { (&mut *el).set_stream(1, saved_stream, saved_descriptor) };
+    unsafe { (&mut *el).set_stream(StreamKind::Output, saved_stream, saved_descriptor) };
     // SAFETY: `stream` came from `fopen` and is no longer installed in `el`.
     assert_eq!(unsafe { fclose(stream) }, 0);
     let bytes = std::fs::read(&path).unwrap();
@@ -99,12 +99,12 @@ fn resetting_empties_the_line_but_keeps_the_pushed_back_input() {
     let pushed = wcs("xy");
     unsafe { el_wpush(el, pushed.as_ptr()) };
 
-    assert_eq!(unsafe { (&*el).native().line() }, &Text::from("hello"));
+    assert_eq!(unsafe { (&*el).editor().line() }, &Text::from("hello"));
 
     unsafe { el_reset(el) };
 
     let e = unsafe { &mut *el };
-    assert!(e.native().line().is_empty());
+    assert!(e.editor().line().is_empty());
     assert_eq!(
         e.pop_input().map(crate::adapter::unit_to_wide),
         Some(u32::from(b'x'))
@@ -130,7 +130,7 @@ fn bell_uses_output_stream() {
     let el = editline();
     let out = output_of(el, "beep", |el| unsafe { el_beep(el) });
     assert_eq!(out, [0x07]);
-    assert!(unsafe { (&*el).native().line().is_empty() });
+    assert!(unsafe { (&*el).editor().line().is_empty() });
     done(el);
 }
 
@@ -419,7 +419,7 @@ fn the_stream_ops_carry_the_streams_and_nothing_else() {
             el_wset(el, EL_SETFP, 2 as c_int, core::ptr::null::<c_void>()),
             0
         );
-        assert_eq!((&*el).descriptor(2), Some(-1));
+        assert_eq!((&*el).descriptor(StreamKind::Diagnostics), -1);
         assert_eq!(el_wget(el, EL_GETFP, 2 as c_int, &raw mut back), 0);
         assert!(back.is_null());
 
@@ -473,7 +473,7 @@ fn the_two_completion_commands_are_one_behaviour_under_two_symbols() {
         assert_eq!(unsafe { el_insertstr(el, prefix.as_ptr()) }, 0);
         // SAFETY: `el` is live; the second argument is ignored.
         let rv = unsafe { f(el, 0) };
-        let line: String = unsafe { (&*el).native().line() }
+        let line: String = unsafe { (&*el).editor().line() }
             .as_units()
             .iter()
             .filter_map(|unit| match unit {

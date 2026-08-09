@@ -252,7 +252,7 @@ impl EditLine {
                 b'q' => mode = 2,
                 switch => {
                     self.write_compatibility_stream(
-                        2,
+                        StreamKind::Diagnostics,
                         format!("{command}: Unknown switch `{}'.\n", char::from(switch)).as_bytes(),
                     );
                     return -1;
@@ -262,9 +262,9 @@ impl EditLine {
         }
 
         if index == words.len() {
-            let state = self.boundary.terminal.borrow();
+            let state = self.boundary.terminal.state.borrow();
             let overrides = &state.overrides[mode];
-            let columns = self.boundary.terminal_capabilities.columns;
+            let columns = self.boundary.terminal.capabilities.columns;
             let mut output = Vec::new();
             for (group, header) in ["iflag:", "oflag:", "cflag:", "lflag:"]
                 .into_iter()
@@ -294,7 +294,7 @@ impl EditLine {
             append_tty_listing_group(&mut output, "chars:", characters, columns, false);
             output.push(b'\n');
             drop(state);
-            self.write_compatibility_stream(1, &output);
+            self.write_compatibility_stream(StreamKind::Output, &output);
             return 0;
         }
 
@@ -313,7 +313,7 @@ impl EditLine {
                     return -1;
                 };
                 let byte = parse_tty_character(value);
-                let mut state = self.boundary.terminal.borrow_mut();
+                let mut state = self.boundary.terminal.state.borrow_mut();
                 if let Some(attributes) = tty_attributes_mut(&mut state, mode) {
                     attributes.set_control_character(character.character, byte);
                 }
@@ -321,7 +321,7 @@ impl EditLine {
             }
 
             if let Some(flag) = TTY_FLAGS.iter().find(|flag| flag.name == body) {
-                let overrides = &mut self.boundary.terminal.borrow_mut().overrides[mode];
+                let overrides = &mut self.boundary.terminal.state.borrow_mut().overrides[mode];
                 match sign {
                     Some(true) => {
                         overrides.flags.insert(flag.flag, TtyOverride::Enable);
@@ -339,7 +339,7 @@ impl EditLine {
                 .iter()
                 .find(|character| character.name == body)
             {
-                let overrides = &mut self.boundary.terminal.borrow_mut().overrides[mode];
+                let overrides = &mut self.boundary.terminal.state.borrow_mut().overrides[mode];
                 match sign {
                     Some(true) => {
                         overrides
@@ -361,7 +361,7 @@ impl EditLine {
             return -1;
         }
 
-        let mut state = self.boundary.terminal.borrow_mut();
+        let mut state = self.boundary.terminal.state.borrow_mut();
         let overrides = state.overrides[mode].clone();
         if let Some(attributes) = tty_attributes_mut(&mut state, mode) {
             apply_tty_overrides(attributes, &overrides);
@@ -380,7 +380,7 @@ impl EditLine {
 
     fn invalid_tty_argument(&self, command: &str, argument: &str) {
         self.write_compatibility_stream(
-            2,
+            StreamKind::Diagnostics,
             format!("{command}: Invalid argument `{argument}'.\n").as_bytes(),
         );
     }

@@ -30,6 +30,8 @@ use nshedit::domain::{Text, TextUnit};
 use nshedit::editor::{CompletionCandidate, CompletionCandidates, CompletionQuery};
 
 use crate::adapter::EditLine;
+#[cfg(test)]
+use crate::adapter::SessionInit;
 use crate::cdecl::histedit::{CC_ERROR, CC_NORM, CC_REDISPLAY, CC_REFRESH};
 use crate::readline::{c_bytes, c_bytes_opt, c_dup, c_free_array, c_free_str};
 
@@ -255,11 +257,11 @@ pub(crate) fn format_match_list(
 
 mod completion;
 
+pub(crate) use crate::adapter::CompletionInvocation;
 pub(crate) use completion::{
     AttemptedCompletion, AttemptedFallback, AttemptedProvider, AttemptedState, CandidateGenerator,
-    CompletionCommand, CompletionInvocation, CompletionPolicy, CompletionProviders,
-    CompletionRequest, SuffixProvider, UniqueSuffix, complete_filename, observe_completion,
-    resolve_completion,
+    CompletionCommand, CompletionPolicy, CompletionProviders, CompletionRequest, SuffixProvider,
+    UniqueSuffix, complete_filename, observe_completion, resolve_completion,
 };
 #[cfg(test)]
 use completion::{CompletionListing, CompletionPositions};
@@ -469,7 +471,7 @@ pub unsafe extern "C" fn fn_complete2(
         // callbacks have returned. The borrow lasts only for the core apply.
         unsafe {
             (&mut *target)
-                .native_mut()
+                .editor_mut()
                 .apply_completion(query, candidates)
         }
     };
@@ -765,16 +767,8 @@ mod tests {
     use nshedit::editor::CompletionOutcome;
 
     fn editor() -> EditLine {
-        *EditLine::new(
-            "completion-test",
-            core::ptr::null_mut(),
-            core::ptr::null_mut(),
-            core::ptr::null_mut(),
-            -1,
-            -1,
-            -1,
-        )
-        .expect("construct an editor over inert descriptors")
+        *EditLine::new(SessionInit::inert("completion-test"))
+            .expect("construct an editor over inert descriptors")
     }
 
     fn text(value: &str) -> Text {
@@ -800,7 +794,7 @@ mod tests {
         let mut apply = move |query: &CompletionQuery, candidates: CompletionCandidates| {
             apply_editor
                 .borrow_mut()
-                .native_mut()
+                .editor_mut()
                 .apply_completion(query, candidates)
         };
         let report = resolve_completion(CompletionRequest::new(
@@ -813,7 +807,7 @@ mod tests {
         assert_eq!(report.command(), CompletionCommand::Error);
         assert_eq!(report.listing(), CompletionListing::Pending);
         assert!(report.outcome().is_none());
-        assert_eq!(editor.borrow().native().line(), &text("changed"));
+        assert_eq!(editor.borrow().editor().line(), &text("changed"));
     }
 
     #[test]
@@ -833,7 +827,7 @@ mod tests {
         let mut apply = move |query: &CompletionQuery, candidates: CompletionCandidates| {
             apply_editor
                 .borrow_mut()
-                .native_mut()
+                .editor_mut()
                 .apply_completion(query, candidates)
         };
         let report = resolve_completion(CompletionRequest::new(
@@ -857,7 +851,7 @@ mod tests {
         };
         assert_eq!(candidate.suffix(), Some(&text("/")));
         assert_eq!(&*observed.borrow(), &["folder"]);
-        assert_eq!(editor.borrow().native().line(), &text("folder/"));
+        assert_eq!(editor.borrow().editor().line(), &text("folder/"));
     }
 
     /// A POSIX path is bytes, so the ABI's copy-through route must not insert

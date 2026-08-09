@@ -80,8 +80,9 @@ use nshedit_plat::signal::{BlockedSignals, Signal as PlatformSignal};
 // them; see the note on `LineInfoWide`.
 use crate::adapter::{
     AliasCallback as ElAfuncT, BoundaryContinuation, CommandCallback as ElFuncT, EditLine,
-    EnvironmentCallback as FuncT, HistoryCallback as HistFunT, PromptCallback,
-    ReadCallback as ElRfuncT, ResizeCallback as ElZfuncT, TokenizeOutcome, Tokenizer, TokenizerW,
+    EnvironmentCallback as FuncT, HistoryCallback as HistFunT, HistoryEncoding, PromptCallback,
+    ReadCallback as ElRfuncT, ResizeCallback as ElZfuncT, SessionInit, SessionStreams,
+    StreamEndpoint, StreamKind, TokenizeOutcome, Tokenizer, TokenizerW,
     WidePromptCallback as ElPfuncT,
 };
 use crate::cdecl::handles::{History, HistoryW};
@@ -249,9 +250,18 @@ pub(crate) unsafe fn fn_arg<F: Copy>(ap: &mut VaList<'_>) -> Option<F> {
     assert_eq!(size_of::<Option<F>>(), size_of::<*mut c_void>());
     // SAFETY: the caller's contract, above.
     let p = unsafe { ap.next_arg::<*mut c_void>() };
-    // SAFETY: the size is checked above and the caller guarantees `F` is a
-    // function-pointer type, whose `Option` is null-niche optimised.
-    unsafe { core::mem::transmute_copy::<*mut c_void, Option<F>>(&p) }
+    let mut callback = core::mem::MaybeUninit::<Option<F>>::uninit();
+    // SAFETY: the sizes match and the caller guarantees the slot contains
+    // this exact declared function-pointer type. Copying its representation
+    // avoids ever constructing a callback with some other signature.
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            core::ptr::from_ref(&p).cast::<u8>(),
+            callback.as_mut_ptr().cast::<u8>(),
+            size_of::<Option<F>>(),
+        );
+        callback.assume_init()
+    }
 }
 
 /// The C's `const wchar_t *`: a NUL-terminated wide string, or `NULL`.
@@ -488,15 +498,23 @@ pub unsafe extern "C" fn el_init(
     // the compatibility engine cannot do itself. The evaluation order of the
     // three calls is unspecified in C and has no observable consequence;
     // left to right here.
-    EditLine::new(
-        prog,
-        fin,
-        fout,
-        ferr,
-        cstdio::fileno_of(fin),
-        cstdio::fileno_of(fout),
-        cstdio::fileno_of(ferr),
-    )
+    EditLine::new(SessionInit {
+        program: prog,
+        streams: SessionStreams {
+            input: StreamEndpoint {
+                file: fin,
+                descriptor: cstdio::fileno_of(fin),
+            },
+            output: StreamEndpoint {
+                file: fout,
+                descriptor: cstdio::fileno_of(fout),
+            },
+            diagnostics: StreamEndpoint {
+                file: ferr,
+                descriptor: cstdio::fileno_of(ferr),
+            },
+        },
+    })
     .map_or(core::ptr::null_mut(), Box::into_raw)
 }
 
@@ -517,8 +535,24 @@ pub unsafe extern "C" fn el_init_fd(
     let Some(prog) = (unsafe { prog_name(prog) }) else {
         return core::ptr::null_mut();
     };
-    EditLine::new(prog, fin, fout, ferr, fdin, fdout, fderr)
-        .map_or(core::ptr::null_mut(), Box::into_raw)
+    EditLine::new(SessionInit {
+        program: prog,
+        streams: SessionStreams {
+            input: StreamEndpoint {
+                file: fin,
+                descriptor: fdin,
+            },
+            output: StreamEndpoint {
+                file: fout,
+                descriptor: fdout,
+            },
+            diagnostics: StreamEndpoint {
+                file: ferr,
+                descriptor: fderr,
+            },
+        },
+    })
+    .map_or(core::ptr::null_mut(), Box::into_raw)
 }
 
 // [spec:libedit:def:histedit.el-end-fn]
@@ -974,7 +1008,7 @@ pub unsafe extern "C" fn el_wgets(el: *mut EditLine, nread: *mut c_int) -> *cons
             }
         }
         ReadResult::Command => {
-            if unsafe { (&*el).native().line().is_empty() } {
+            if unsafe { (&*el).editor().line().is_empty() } {
                 *nread = -1;
                 return core::ptr::null();
             }
@@ -1090,7 +1124,12 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
         EL_PROMPT | EL_RPROMPT => {
             // SAFETY: the op's argument is an `el_pfunc_t`, per the header.
             let p = unsafe { fn_arg::<ElPfuncT>(&mut ap) };
-            el.set_prompt_wide(op == EL_RPROMPT, p, 0);
+            let side = if op == EL_RPROMPT {
+                PromptSide::Right
+            } else {
+                PromptSide::Left
+            };
+            el.set_prompt_wide(side, p, 0);
             0
         }
 
@@ -1105,7 +1144,12 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // reinterpreted, which is what the core's `u32` holds.
             // SAFETY: the op's second argument is an `int`.
             let c = unsafe { ap.next_arg::<c_int>() };
-            el.set_prompt_wide(op == EL_RPROMPT_ESC, p, c as u32);
+            let side = if op == EL_RPROMPT_ESC {
+                PromptSide::Right
+            } else {
+                PromptSide::Left
+            };
+            el.set_prompt_wide(side, p, c as u32);
             0
         }
 
@@ -1253,15 +1297,17 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // ERR-history-04, defined by the core: a NULL function with a
             // non-NULL handle is -1 here rather than the C's armed NULL
             // indirect call. Every other combination is the C's 0.
-            let narrow = el.narrow_history() && crate::conversion::max_multibyte_length() != 1;
-            let rv = if el.set_history_callback(f, ptr, narrow) {
-                0
+            let encoding = if el.history_encoding() == HistoryEncoding::Narrow
+                && crate::conversion::max_multibyte_length() != 1
+            {
+                HistoryEncoding::Narrow
             } else {
-                -1
+                HistoryEncoding::Wide
             };
+            let rv = el.set_history_callback(f, ptr, encoding).map_or(-1, |()| 0);
             // The flag clear is not conditional on `rv` in the C either.
             if crate::conversion::max_multibyte_length() == 1 {
-                el.set_narrow_history(false);
+                el.set_history_encoding(HistoryEncoding::Wide);
             }
             rv
         }
@@ -1357,11 +1403,11 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // SAFETY: the op's arguments are an `int` then a `FILE *`.
             let what = unsafe { ap.next_arg::<c_int>() };
             let fp = unsafe { ap.next_arg::<*mut c_void>() };
-            if (0..=2).contains(&what) && el.set_stream(what as usize, fp, cstdio::fileno_of(fp)) {
-                0
-            } else {
-                -1
-            }
+            let Ok(kind) = StreamKind::try_from(what) else {
+                return -1;
+            };
+            el.set_stream(kind, fp, cstdio::fileno_of(fp));
+            0
         }
 
         // No further arguments: clear the recorded display, redraw prompt and
@@ -1451,15 +1497,20 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // the same object: `Option` of a function pointer is null-niche
             // optimised, which [`fn_arg`] asserts for the reverse direction.
             let p = unsafe { ap.next_arg::<*mut c_void>() };
-            let prf = unsafe { p.cast::<Option<ElPfuncT>>().as_mut() };
             // The C passes a NULL escape-character pointer here, which is why
             // `el_prompt.p_ignore` has no route out of the library at all
             // (the other half of ERR-core-api-14).
-            let Some(prf) = prf else {
+            if !unsafe {
+                el.prompt(if op == EL_PROMPT {
+                    PromptSide::Left
+                } else {
+                    PromptSide::Right
+                })
+                .0
+                .write_wide(p)
+            } {
                 return -1;
-            };
-            let (callback, _) = el.prompt_wide(op != EL_PROMPT);
-            *prf = Some(callback);
+            }
             0
         }
 
@@ -1472,17 +1523,20 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
         EL_PROMPT_ESC | EL_RPROMPT_ESC => {
             // SAFETY: as above.
             let p = unsafe { ap.next_arg::<*mut c_void>() };
-            let prf = unsafe { p.cast::<Option<ElPfuncT>>().as_mut() };
             // SAFETY: the op's second argument is a `wchar_t *`, which the
             // rule allows to be NULL; the store is then skipped. It is read
             // before `prompt_get` runs, as in the C.
             let c = unsafe { ap.next_arg::<*mut c_void>() };
             let c = unsafe { c.cast::<u32>().as_mut() };
-            let Some(prf) = prf else {
-                return -1;
+            let side = if op == EL_PROMPT {
+                PromptSide::Left
+            } else {
+                PromptSide::Right
             };
-            let (callback, escape) = el.prompt_wide(op != EL_PROMPT);
-            *prf = Some(callback);
+            let (callback, escape) = el.prompt(side);
+            if !unsafe { callback.write_wide(p) } {
+                return -1;
+            }
             if let Some(c) = c {
                 *c = escape;
             }
@@ -1617,14 +1671,11 @@ pub(crate) unsafe fn el_wget_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // SAFETY: the op's arguments are an `int` then a `FILE **`.
             let what = unsafe { ap.next_arg::<c_int>() };
             let out = unsafe { ap.next_arg::<*mut c_void>() };
-            let Some(fp) = usize::try_from(what)
-                .ok()
-                .and_then(|index| el.stream(index))
-            else {
+            let Ok(kind) = StreamKind::try_from(what) else {
                 return -1;
             };
             // SAFETY: the out-pointer read above.
-            unsafe { *out.cast::<CFile>() = fp };
+            unsafe { *out.cast::<CFile>() = el.stream(kind) };
             0
         }
 
