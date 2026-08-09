@@ -17,7 +17,50 @@
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
+
+use crate::Result;
+
+/// Whether the environment may steer terminfo database discovery.
+//
+// [spec:nshedit:req:terminal.typed-api]
+///
+/// `TERMINFO`, `TERMINFO_DIRS` and `HOME` each name a directory a compiled
+/// terminfo entry will be loaded from, and such an entry is a set of escape
+/// sequences that get written to a terminal. Honouring them in a set-uid
+/// process lets whoever started it choose those bytes, so the decision is a
+/// value the caller passes rather than something discovery assumes.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum EnvironmentTrust {
+    /// Read the environment: the process runs with its invoker's privileges.
+    Honoured,
+    /// Ignore it, leaving the compiled-in locations alone — which is exactly
+    /// what ncurses does through `use_terminfo_vars()`; see
+    /// `ncurses/tinfo/db_iterator.c:226,327` and `home_terminfo.c:52`, each
+    /// of which gates the same three sources.
+    Ignored,
+}
+
+impl EnvironmentTrust {
+    /// What this process may do, from whether it is running elevated.
+    ///
+    /// libedit already routed `TERM` through `secure_getenv`, so before this
+    /// the terminal *type* was guarded and the *database it was looked up in*
+    /// was not, which is the wrong half.
+    #[must_use]
+    pub fn for_process() -> Self {
+        if nshedit_plat::is_elevated() {
+            Self::Ignored
+        } else {
+            Self::Honoured
+        }
+    }
+
+    fn honoured(self) -> bool {
+        self == Self::Honoured
+    }
+}
 
 // The default terminfo location should be /usr/lib/terminfo but that's not guaranteed, so we check
 // a few more locations. See https://tldp.org/HOWTO/Text-Terminal-HOWTO-16.html#ss16.2
@@ -28,37 +71,29 @@ const DEFAULT_LOCATIONS: &[&str] = &[
     "/lib/terminfo",
 ];
 
-/// Return path to database entry for `term`
+// [spec:nshedit:req:terminal.typed-api]
+/// The database entry for `term`, if the search path holds one.
 ///
-/// # The environment is not trusted when the process is elevated
-///
-/// `TERMINFO`, `TERMINFO_DIRS` and `HOME` each name a directory this function
-/// will load a compiled terminfo entry from, and a terminfo entry is a set of
-/// escape sequences that get written to a terminal. Honouring them in a
-/// set-uid process lets whoever started it choose those bytes.
-///
-/// So they are read only when [`nshedit_plat::is_elevated`] says the process
-/// is running with the privileges of its invoker. Otherwise the search is the
-/// compiled-in [`DEFAULT_LOCATIONS`] alone, which is exactly what ncurses does
-/// through `use_terminfo_vars()` — see `ncurses/tinfo/db_iterator.c:226,327`
-/// and `home_terminfo.c:52`, each of which gates the same three sources.
-///
-/// libedit already routed `TERM` through `secure_getenv`, so before this the
-/// terminal *type* was guarded and the *database it was looked up in* was not,
-/// which is the wrong half.
-///
-pub fn get_dbpath_for_term(term: &str) -> Option<PathBuf> {
-    get_dbpath_for_term_with(term, !nshedit_plat::is_elevated(), |name| env::var_os(name))
+/// `Ok(None)` is a terminal the readable parts of the database do not
+/// describe. A directory or entry that exists and cannot be read is an
+/// [`Io`][crate::Error::Io] failure instead: it is a database the caller was
+/// meant to be able to read, and reporting it as an absent terminal would
+/// blame the terminal type for a permission problem.
+pub fn database_path(term: &str, environment: EnvironmentTrust) -> Result<Option<PathBuf>> {
+    search(term, environment, |name| env::var_os(name))
 }
 
-fn get_dbpath_for_term_with(
+fn search(
     term: &str,
-    trust_env: bool,
+    trust_env: EnvironmentTrust,
     environment: impl Fn(&str) -> Option<OsString>,
-) -> Option<PathBuf> {
+) -> Result<Option<PathBuf>> {
+    let trust_env = trust_env.honoured();
     let mut dirs_to_search = Vec::new();
     let mut default_locations = DEFAULT_LOCATIONS.iter().map(PathBuf::from);
-    let first_char = term.chars().next()?;
+    let Some(first_char) = term.chars().next() else {
+        return Ok(None);
+    };
 
     // From the manual.
     //
@@ -104,30 +139,45 @@ fn get_dbpath_for_term_with(
 
     // Look for the terminal in all of the search directories
     for mut p in dirs_to_search {
-        if fs::metadata(&p).is_ok() {
-            p.push(first_char.to_string());
-            p.push(term);
-            if fs::metadata(&p).is_ok() {
-                return Some(p);
-            }
-            p.pop();
-            p.pop();
+        if !exists(&p)? {
+            continue;
+        }
+        p.push(first_char.to_string());
+        p.push(term);
+        if exists(&p)? {
+            return Ok(Some(p));
+        }
+        p.pop();
+        p.pop();
 
-            // on some installations the dir is named after the hex of the char
-            // (e.g. OS X)
-            p.push(format!("{:x}", first_char as usize));
-            p.push(term);
-            if fs::metadata(&p).is_ok() {
-                return Some(p);
-            }
+        // on some installations the dir is named after the hex of the char
+        // (e.g. OS X)
+        p.push(format!("{:x}", first_char as usize));
+        p.push(term);
+        if exists(&p)? {
+            return Ok(Some(p));
         }
     }
-    None
+    Ok(None)
+}
+
+/// Whether `path` names something, reporting anything other than its absence.
+///
+/// A search path is a list of places an entry may be; a directory that is not
+/// there is the ordinary case and not a failure. A directory that is there
+/// and refuses to answer is one, and it is the one that must not be silently
+/// read as "this terminal does not exist".
+fn exists(path: &Path) -> Result<bool> {
+    match fs::metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(crate::Error::Io(error)),
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{DEFAULT_LOCATIONS, get_dbpath_for_term, get_dbpath_for_term_with};
+    use super::{DEFAULT_LOCATIONS, EnvironmentTrust, database_path, search};
 
     /// The guard is a property of the process, and this test process is not
     /// elevated, so what can be asserted here is that the trusted path still
@@ -140,8 +190,9 @@ mod test {
     /// inspectable instead of testable.
     #[test]
     fn terminfo_is_honoured_when_the_process_is_not_elevated() {
-        assert!(
-            !nshedit_plat::is_elevated(),
+        assert_eq!(
+            EnvironmentTrust::for_process(),
+            EnvironmentTrust::Honoured,
             "the test runner is set-uid; this test cannot say anything"
         );
 
@@ -152,20 +203,27 @@ mod test {
         std::fs::write(sub.join("fakevt100"), b"not a real entry").unwrap();
 
         let environment = |name: &str| (name == "TERMINFO").then(|| dir.clone().into_os_string());
-        let found = get_dbpath_for_term_with("fakevt100", true, environment);
-        let untrusted = get_dbpath_for_term_with("fakevt100", false, environment);
+        let found = search("fakevt100", EnvironmentTrust::Honoured, environment);
+        let untrusted = search("fakevt100", EnvironmentTrust::Ignored, environment);
         std::fs::remove_dir_all(&dir).ok();
 
-        assert_eq!(found.as_deref(), Some(sub.join("fakevt100").as_path()));
-        assert_eq!(untrusted, None);
+        assert_eq!(
+            found.unwrap().as_deref(),
+            Some(sub.join("fakevt100").as_path())
+        );
+        assert_eq!(untrusted.unwrap(), None);
     }
 
     /// A terminal that exists nowhere resolves to nothing rather than to
     /// whatever happened to be next in the search path.
     #[test]
     fn an_unknown_terminal_finds_nothing() {
-        assert_eq!(get_dbpath_for_term("nshedit-no-such-terminal"), None);
-        assert_eq!(get_dbpath_for_term(""), None);
+        let trust = EnvironmentTrust::for_process();
+        assert_eq!(
+            database_path("nshedit-no-such-terminal", trust).unwrap(),
+            None
+        );
+        assert_eq!(database_path("", trust).unwrap(), None);
     }
 
     /// The compiled-in list is what an elevated process is left with, so it
@@ -178,6 +236,39 @@ mod test {
         for loc in DEFAULT_LOCATIONS {
             assert!(loc.starts_with('/'), "{loc} is not absolute");
         }
+    }
+
+    /// A directory that is on the search path and refuses to answer is a
+    /// database the caller was meant to read. Reporting it as an absent
+    /// terminal would blame the terminal type for a permission problem, and
+    /// would leave the caller with no way to learn what actually happened.
+    // [spec:nshedit:req:terminal.typed-api/test]
+    #[test]
+    fn an_unreadable_directory_is_reported() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().join("blocked");
+        let sub = dir.join("f");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("fakevt100"), b"not a real entry").unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let readable_anyway = std::fs::read_dir(&dir).is_ok();
+        let environment = |name: &str| (name == "TERMINFO").then(|| dir.clone().into_os_string());
+        let found = search("fakevt100", EnvironmentTrust::Honoured, environment);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+
+        if readable_anyway {
+            // The permission bits do not apply to this user, so the search
+            // simply found the entry; there is nothing to assert.
+            assert_eq!(found.unwrap(), Some(sub.join("fakevt100")));
+            return;
+        }
+        assert!(
+            matches!(found, Err(crate::Error::Io(_))),
+            "expected the permission failure, got {found:?}"
+        );
     }
 
     fn tempdir() -> std::path::PathBuf {

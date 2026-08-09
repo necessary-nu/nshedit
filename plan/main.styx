@@ -3077,6 +3077,14 @@ children (
                             native-impl ([spec:nshedit:req:terminal.typed-api])
                         }
                         deps (rust-idiom-contract)
+                        log (
+                            {
+                                at 2026-08-09T18:13:05.390516102Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+                        )
                     }
 
                     {

@@ -381,12 +381,11 @@ fn mutations_reconfigure_native_profile() {
 // [spec:nshedit:req:abi.terminal-session/test]
 #[test]
 fn geometry_prefers_kernel_size() {
-    let entry = nshterm::TermInfo {
-        names: vec!["sized".to_owned()],
-        bools: HashMap::new(),
-        numbers: HashMap::from([("lines", 17), ("cols", 63)]),
-        strings: HashMap::new(),
-    };
+    let entry = nshterm::TermInfoBuilder::default()
+        .named("sized")
+        .number("lines", 17)
+        .number("cols", 63)
+        .build();
     let database = TerminalCapabilities::new("sized", Some(&entry), None);
     let kernel = TerminalCapabilities::new("sized", Some(&entry), Some((41, 109)));
 

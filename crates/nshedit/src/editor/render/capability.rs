@@ -1,7 +1,7 @@
 use std::num::NonZeroU32;
 
-use nshterm::TermInfo;
 use nshterm::parm::{Error as ExpansionError, Param, Variables, expand};
+use nshterm::{CapabilityName, TermInfo};
 
 /// A real line speed in transmitted bits per second.
 ///
@@ -132,15 +132,13 @@ impl TerminalProfile {
     pub fn from_terminfo(entry: &TermInfo) -> Self {
         let cap = |name| {
             entry
-                .strings
-                .get(name)
+                .string(CapabilityName::Terminfo(name))
                 .filter(|bytes| !bytes.is_empty())
-                .cloned()
-                .map(|bytes| Capability::from(bytes.into_boxed_slice()))
+                .map(|bytes| Capability::from(bytes.into_owned().into_boxed_slice()))
         };
         Self {
             name: entry
-                .names
+                .names()
                 .first()
                 .map_or_else(|| Box::<str>::from("terminfo"), |name| name.clone().into()),
             clear_screen: cap("clear"),
@@ -150,11 +148,12 @@ impl TerminalProfile {
             carriage_return: cap("cr").unwrap_or_else(|| Capability::from(&b"\r"[..])),
             cursor_left: cap("cub1").unwrap_or_else(|| Capability::from(&b"\x08"[..])),
             pad_byte: entry
-                .strings
-                .get("pad")
+                .string(CapabilityName::Terminfo("pad"))
                 .and_then(|bytes| bytes.first().copied())
                 .unwrap_or(0),
-            flow_controlled: entry.bools.get("xon").copied().unwrap_or(false),
+            flow_controlled: entry
+                .boolean(CapabilityName::Terminfo("xon"))
+                .unwrap_or(false),
             baud_rate: None,
         }
     }
@@ -304,20 +303,15 @@ fn parse_delay(body: &[u8]) -> Option<Delay> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
+    use nshterm::TermInfoBuilder;
 
     #[test]
     fn terminfo_profile_owns_capabilities() {
-        let mut strings = HashMap::new();
-        strings.insert("cup", b"[%p1%d,%p2%d]".to_vec());
-        let entry = TermInfo {
-            names: vec!["test".into()],
-            bools: HashMap::new(),
-            numbers: HashMap::new(),
-            strings,
-        };
+        let entry = TermInfoBuilder::default()
+            .named("test")
+            .string("cup", b"[%p1%d,%p2%d]")
+            .build();
         let profile = TerminalProfile::from_terminfo(&entry);
         assert_eq!(profile.name(), "test");
         assert!(profile.has_cursor_address());

@@ -431,4 +431,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule abi.rust-internals}
     )}
+    {id rust-idiom-terminal, covered_rules (
+        terminal.typed-api
+    ), covered_claims (
+        {impl_name native-impl, rule terminal.typed-api}
+    )}
 )

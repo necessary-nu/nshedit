@@ -213,22 +213,22 @@ fn without_padding(sequence: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
+    use crate::{CapabilityName, TermInfoBuilder};
 
-    fn entry(sgr0: &[u8], sgr: &[u8], smacs: &[u8], rmacs: &[u8]) -> TermInfo {
-        TermInfo {
-            names: vec!["test".to_owned()],
-            bools: HashMap::new(),
-            numbers: HashMap::new(),
-            strings: HashMap::from([
-                ("sgr0", sgr0.to_vec()),
-                ("sgr", sgr.to_vec()),
-                ("smacs", smacs.to_vec()),
-                ("rmacs", rmacs.to_vec()),
-            ]),
-        }
+    fn entry(sgr0: &[u8], sgr: &[u8], smacs: &[u8], rmacs: &[u8]) -> TermInfoBuilder {
+        TermInfoBuilder::default()
+            .named("test")
+            .string("sgr0", sgr0)
+            .string("sgr", sgr)
+            .string("smacs", smacs)
+            .string("rmacs", rmacs)
+    }
+
+    /// What `tgetstr` would answer for `code`.
+    fn termcap(term: &TermInfo, code: &str) -> Option<Vec<u8>> {
+        term.string(CapabilityName::Termcap(code))
+            .map(std::borrow::Cow::into_owned)
     }
 
     // [spec:nshedit:req:abi.termcap-view/test]
@@ -239,8 +239,9 @@ mod tests {
             b"%?%p9%t\x1b(0%e\x1b(B%;\x1b[0m",
             b"\x1b(0",
             b"\x1b(B",
-        );
-        assert_eq!(term.termcap_string("me"), Some(b"\x1b[0m".to_vec()));
+        )
+        .build();
+        assert_eq!(termcap(&term, "me"), Some(b"\x1b[0m".to_vec()));
     }
 
     #[test]
@@ -250,8 +251,9 @@ mod tests {
             b"\x1b[0;10%?%p9%t;11%;m",
             b"\x1b[11m",
             b"\x1b[10m",
-        );
-        assert_eq!(term.termcap_string("me"), Some(b"\x1b[0m".to_vec()));
+        )
+        .build();
+        assert_eq!(termcap(&term, "me"), Some(b"\x1b[0m".to_vec()));
     }
 
     #[test]
@@ -261,16 +263,18 @@ mod tests {
             b"\x1b[0;10m%?%p9%t\x0e%e\x0f%;",
             b"\x0e",
             b"\x0f",
-        );
-        assert_eq!(term.termcap_string("me"), Some(b"\x1b[m\x0f".to_vec()));
+        )
+        .build();
+        assert_eq!(termcap(&term, "me"), Some(b"\x1b[m\x0f".to_vec()));
     }
 
     #[test]
     fn ordinary_strings_map_directly() {
-        let mut term = entry(b"reset", b"attributes", b"in", b"out");
-        term.strings.insert("bel", b"bell".to_vec());
-        assert_eq!(term.termcap_string("bl"), Some(b"bell".to_vec()));
-        assert_eq!(term.termcap_string("zz"), None);
+        let term = entry(b"reset", b"attributes", b"in", b"out")
+            .string("bel", b"bell")
+            .build();
+        assert_eq!(termcap(&term, "bl"), Some(b"bell".to_vec()));
+        assert_eq!(termcap(&term, "zz"), None);
     }
 
     #[test]

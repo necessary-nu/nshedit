@@ -14,8 +14,8 @@
 
 use std::path::PathBuf;
 
-use nshterm::TermInfo;
 use nshterm::parm::{Error, Param, Variables, expand};
+use nshterm::{CapabilityName, TermInfo};
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -76,8 +76,7 @@ pub fn fixture_names() -> Vec<String> {
 /// Fetch a capability from a fixture, failing loudly if the entry lacks it —
 /// a silently-absent capability would turn a real assertion into a no-op.
 pub fn cap(term: &TermInfo, capname: &str) -> Vec<u8> {
-    term.strings
-        .get(capname)
-        .unwrap_or_else(|| panic!("fixture {:?} has no {capname}", term.names[0]))
-        .clone()
+    term.string(CapabilityName::Terminfo(capname))
+        .unwrap_or_else(|| panic!("fixture {:?} has no {capname}", term.names()[0]))
+        .into_owned()
 }

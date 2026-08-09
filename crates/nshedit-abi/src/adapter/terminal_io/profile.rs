@@ -36,6 +36,16 @@ pub(super) fn local_value_capability(code: &str) -> Option<(CapabilityValueKind,
     Some((kind, name))
 }
 
+/// A capability's bytes up to its first NUL, which is where a C caller's view
+/// of it ends.
+fn terminated(value: &[u8]) -> CString {
+    let end = value
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(value.len());
+    CString::new(&value[..end]).expect("the first NUL was removed")
+}
+
 impl TerminalCapabilities {
     // [spec:nshedit:req:abi.terminal-session]
     pub(in crate::adapter) fn new(
@@ -47,28 +57,15 @@ impl TerminalCapabilities {
         let mut numbers = HashMap::new();
         let mut strings = HashMap::new();
         if let Some(entry) = entry {
-            bools.extend(entry.bools.iter().map(|(&key, &value)| (key, value)));
+            bools.extend(entry.booleans());
             numbers.extend(
                 entry
-                    .numbers
-                    .iter()
-                    .map(|(&key, &value)| (key, c_int::try_from(value).unwrap_or(c_int::MAX))),
+                    .numbers()
+                    .map(|(key, value)| (key, c_int::try_from(value).unwrap_or(c_int::MAX))),
             );
-            strings.extend(entry.strings.iter().map(|(&key, value)| {
-                let end = value
-                    .iter()
-                    .position(|&byte| byte == 0)
-                    .unwrap_or(value.len());
-                let value = CString::new(&value[..end]).expect("the first NUL was removed");
-                (key, value)
-            }));
-            if let Some(value) = entry.termcap_string("me") {
-                let end = value
-                    .iter()
-                    .position(|&byte| byte == 0)
-                    .unwrap_or(value.len());
-                let value = CString::new(&value[..end]).expect("the first NUL was removed");
-                strings.insert("sgr0", value);
+            strings.extend(entry.strings().map(|(key, value)| (key, terminated(value))));
+            if let Some(value) = entry.string(nshterm::CapabilityName::Termcap("me")) {
+                strings.insert("sgr0", terminated(&value));
             }
         }
         let database_rows = numbers
@@ -101,21 +98,19 @@ impl TerminalCapabilities {
     }
 
     pub(in crate::adapter) fn profile(&self, baud_rate: Option<BaudRate>) -> TerminalProfile {
-        let entry = nshterm::TermInfo {
-            names: vec![self.name.clone()],
-            bools: self.bools.clone(),
-            numbers: self
-                .numbers
-                .iter()
-                .filter_map(|(&key, &value)| u32::try_from(value).ok().map(|value| (key, value)))
-                .collect(),
-            strings: self
-                .strings
-                .iter()
-                .map(|(&key, value)| (key, value.as_bytes().to_vec()))
-                .collect(),
-        };
-        TerminalProfile::from_terminfo(&entry).with_baud_rate(baud_rate)
+        let mut entry = nshterm::TermInfoBuilder::default().named(self.name.clone());
+        for (&capname, &value) in &self.bools {
+            entry = entry.boolean(capname, value);
+        }
+        for (&capname, &value) in &self.numbers {
+            if let Ok(value) = u32::try_from(value) {
+                entry = entry.number(capname, value);
+            }
+        }
+        for (&capname, value) in &self.strings {
+            entry = entry.string(capname, value.as_bytes());
+        }
+        TerminalProfile::from_terminfo(&entry.build()).with_baud_rate(baud_rate)
     }
 
     pub(super) fn set_size(&mut self, rows: usize, columns: usize) {

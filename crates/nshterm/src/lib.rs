@@ -11,19 +11,20 @@
 //! Terminfo database access: ncurses-compatible entry discovery, compiled
 //! `term(5)` parsing, and parameterised capability expansion.
 //!
-//! A terminal type resolves to a [`TermInfo`] — three maps keyed by terminfo
-//! capname, one each for booleans, numbers and strings — through
-//! [`TermInfo::from_env`], [`TermInfo::from_name`] or [`TermInfo::from_path`].
-//! String capabilities are stored raw; [`parm::expand`] substitutes their
-//! parameters.
+//! A terminal type resolves to a [`TermInfo`] — the booleans, numbers and
+//! strings one database entry defines — through [`TermInfo::from_env`],
+//! [`TermInfo::from_name`] or [`TermInfo::from_path`]. Capabilities are read
+//! back by name through [`TermInfo::string`] and its siblings, naming each
+//! one in the vocabulary it is being asked for; string capabilities are
+//! stored raw, and [`parm::expand`] substitutes their parameters.
 //!
 //! ```no_run
-//! use nshterm::TermInfo;
+//! use nshterm::{CapabilityName, EnvironmentTrust, TermInfo};
 //! use nshterm::parm::{Param, Variables, expand};
 //!
-//! let ti = TermInfo::from_env()?;
-//! let cup = ti.strings.get("cup").expect("no cursor_address");
-//! let bytes = expand(cup, &[Param::Number(4), Param::Number(12)], &mut Variables::new())?;
+//! let ti = TermInfo::from_env(EnvironmentTrust::for_process())?;
+//! let cup = ti.string(CapabilityName::Terminfo("cup")).expect("no cursor_address");
+//! let bytes = expand(&cup, &[Param::Number(4), Param::Number(12)], &mut Variables::new())?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -103,6 +104,7 @@
 #![deny(missing_docs)]
 #![deny(rust_2018_idioms)]
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
@@ -114,7 +116,9 @@ use std::path::Path;
 use self::Error::*;
 use self::parm::{Param, Variables, expand};
 use self::parser::compiled::parse;
-use self::searcher::get_dbpath_for_term;
+use self::searcher::database_path;
+
+pub use self::searcher::EnvironmentTrust;
 
 pub mod parm;
 pub mod searcher;
@@ -132,22 +136,122 @@ pub mod parser {
     pub mod names;
 }
 
+// [spec:nshedit:req:terminal.typed-api]
+/// Which of terminfo's two capability-name tables a compiled entry is read
+/// with.
+///
+/// The compiled format numbers its capabilities; the table decides what those
+/// numbers are called afterwards, and every lookup on the resulting entry is
+/// in the vocabulary the table chose.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum NameTable {
+    /// The short capnames `terminfo(5)` documents: `bw`, `cup`, `xenl`.
+    Capnames,
+    /// The long C variable names: `auto_left_margin`, `cursor_address`.
+    VariableNames,
+}
+
+// [spec:nshedit:req:terminal.typed-api]
+/// The vocabulary a capability is being named in at a lookup.
+///
+/// terminfo and termcap name the same capabilities differently, and a name
+/// alone does not say which of the two it is — `cr` is a terminfo capname and
+/// also a termcap code, for different capabilities. Callers say which they
+/// hold, and a termcap lookup gets termcap's projections as well as its names.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum CapabilityName<'a> {
+    /// A terminfo capname, as the database spells it.
+    Terminfo(&'a str),
+    /// A termcap two-letter code, as a `.editrc` or a user spells it.
+    Termcap(&'a str),
+}
+
+// [spec:nshedit:req:terminal.typed-api]
 /// A parsed terminfo database entry.
+///
+/// The capabilities are private: an entry answers what a terminal can do, and
+/// a caller that could reach into the tables could also invent a capability
+/// the database never defined, or key one under a name no table knows.
 #[derive(Debug, Clone)]
 pub struct TermInfo {
-    /// Names for the terminal
-    pub names: Vec<String>,
-    /// Map of capability name to boolean value
-    pub bools: HashMap<&'static str, bool>,
-    /// Map of capability name to numeric value
-    pub numbers: HashMap<&'static str, u32>,
-    /// Map of capability name to raw (unexpanded) string
-    pub strings: HashMap<&'static str, Vec<u8>>,
+    names: Vec<String>,
+    bools: HashMap<&'static str, bool>,
+    numbers: HashMap<&'static str, u32>,
+    strings: HashMap<&'static str, Vec<u8>>,
+}
+
+/// Assembles a [`TermInfo`] from capabilities a caller already holds.
+///
+/// The parsers build an entry out of a compiled file; this is the other
+/// source — a caller that resolved capabilities by some other route and needs
+/// them in the same shape. Capability names are `'static` because they are
+/// the ones the name tables define.
+#[derive(Debug, Clone, Default)]
+pub struct TermInfoBuilder {
+    names: Vec<String>,
+    bools: HashMap<&'static str, bool>,
+    numbers: HashMap<&'static str, u32>,
+    strings: HashMap<&'static str, Vec<u8>>,
+}
+
+impl TermInfoBuilder {
+    /// Add one name for the terminal, longest-lived first.
+    #[must_use]
+    pub fn named(mut self, name: impl Into<String>) -> Self {
+        self.names.push(name.into());
+        self
+    }
+
+    /// Define one boolean capability.
+    #[must_use]
+    pub fn boolean(mut self, capname: &'static str, value: bool) -> Self {
+        self.bools.insert(capname, value);
+        self
+    }
+
+    /// Define one numeric capability.
+    #[must_use]
+    pub fn number(mut self, capname: &'static str, value: u32) -> Self {
+        self.numbers.insert(capname, value);
+        self
+    }
+
+    /// Define one string capability, raw and unexpanded.
+    #[must_use]
+    pub fn string(mut self, capname: &'static str, value: impl Into<Vec<u8>>) -> Self {
+        self.strings.insert(capname, value.into());
+        self
+    }
+
+    /// The assembled entry.
+    #[must_use]
+    pub fn build(self) -> TermInfo {
+        let Self {
+            names,
+            bools,
+            numbers,
+            strings,
+        } = self;
+        TermInfo {
+            names,
+            bools,
+            numbers,
+            strings,
+        }
+    }
 }
 
 impl TermInfo {
-    /// Create a `TermInfo` based on current environment.
-    pub fn from_env() -> Result<TermInfo> {
+    /// Create a `TermInfo` for the terminal type the environment names.
+    ///
+    /// `environment` decides whether the environment may be read at all: a
+    /// process running with privileges its invoker does not have takes its
+    /// terminal type from nowhere, because the type selects the escape
+    /// sequences that will be written to the terminal.
+    pub fn from_env(environment: EnvironmentTrust) -> Result<TermInfo> {
+        if environment == EnvironmentTrust::Ignored {
+            return Err(TermUnset);
+        }
         let term_var = env::var("TERM").ok();
         let term_name = term_var.as_deref().or_else(|| {
             env::var("MSYSCON").ok().and_then(|s| {
@@ -167,17 +271,15 @@ impl TermInfo {
     }
 
     /// Create a `TermInfo` for the named terminal.
+    ///
+    /// A database directory or entry that exists but cannot be read is
+    /// reported as the [`Io`][Error::Io] failure it is, rather than as a
+    /// terminal the database does not describe.
     pub fn from_name(name: &str) -> Result<TermInfo> {
-        if let Some(path) = get_dbpath_for_term(name) {
-            match TermInfo::from_path(path) {
-                Ok(term) => return Ok(term),
-                // Skip IO Errors (e.g., permission denied).
-                Err(Io(_)) => {}
-                // Don't ignore malformed terminfo databases.
-                Err(e) => return Err(e),
-            }
+        match database_path(name, EnvironmentTrust::for_process())? {
+            Some(path) => TermInfo::from_path(path),
+            None => Err(TerminfoEntryNotFound),
         }
-        Err(TerminfoEntryNotFound)
     }
 
     /// Parse the given `TermInfo`.
@@ -193,23 +295,80 @@ impl TermInfo {
     fn _from_path(path: &Path) -> Result<TermInfo> {
         let file = File::open(path).map_err(Io)?;
         let mut reader = BufReader::new(file);
-        parse(&mut reader, false)
+        parse(&mut reader, NameTable::Capnames)
     }
 
     /// Read a `TermInfo` out of an already-open compiled entry.
     pub fn from_reader<R: Read>(mut reader: R) -> Result<TermInfo> {
-        parse(&mut reader, false)
+        parse(&mut reader, NameTable::Capnames)
     }
 
-    /// Project one termcap string capability from this terminfo entry.
-    ///
-    /// Most two-letter names are a direct namespace translation. `me` is
-    /// different: termcap has no `sgr` operation and therefore requires its
-    /// reset string to preserve alternate-character-set state. Ncurses makes
-    /// the same compatibility projection before answering `tgetstr("me")`.
+    /// The names this entry answers to, longest-lived first.
     #[must_use]
-    pub fn termcap_string(&self, code: &str) -> Option<Vec<u8>> {
-        termcap::string(self, code)
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
+
+    /// Whether this terminal has the named boolean capability.
+    ///
+    /// A capability the entry does not define is absent, which for a boolean
+    /// is the same as false — the distinction is kept so a caller can tell an
+    /// unknown name from a defined one.
+    #[must_use]
+    pub fn boolean(&self, name: CapabilityName<'_>) -> Option<bool> {
+        self.bools.get(self.capname(name)?).copied()
+    }
+
+    /// The value of the named numeric capability.
+    #[must_use]
+    pub fn number(&self, name: CapabilityName<'_>) -> Option<u32> {
+        self.numbers.get(self.capname(name)?).copied()
+    }
+
+    /// The raw, unexpanded bytes of the named string capability.
+    ///
+    /// Most termcap codes are a plain namespace translation, and the answer is
+    /// borrowed. `me` is not: termcap has no `sgr` operation and therefore
+    /// requires its reset string to preserve alternate-character-set state, so
+    /// a termcap lookup for it is a projection ncurses makes as well, and it
+    /// is owned.
+    #[must_use]
+    pub fn string(&self, name: CapabilityName<'_>) -> Option<Cow<'_, [u8]>> {
+        match name {
+            CapabilityName::Terminfo(capname) => self
+                .strings
+                .get(capname)
+                .map(|value| Cow::Borrowed(&value[..])),
+            CapabilityName::Termcap(code) => termcap::string(self, code).map(Cow::Owned),
+        }
+    }
+
+    /// Every boolean capability this entry defines.
+    pub fn booleans(&self) -> impl Iterator<Item = (&'static str, bool)> + '_ {
+        self.bools.iter().map(|(&capname, &value)| (capname, value))
+    }
+
+    /// Every numeric capability this entry defines.
+    pub fn numbers(&self) -> impl Iterator<Item = (&'static str, u32)> + '_ {
+        self.numbers
+            .iter()
+            .map(|(&capname, &value)| (capname, value))
+    }
+
+    /// Every string capability this entry defines, raw and unexpanded.
+    pub fn strings(&self) -> impl Iterator<Item = (&'static str, &[u8])> + '_ {
+        self.strings
+            .iter()
+            .map(|(&capname, value)| (capname, &value[..]))
+    }
+
+    /// The terminfo capname `name` selects, in whichever vocabulary it is
+    /// written.
+    fn capname<'a>(&self, name: CapabilityName<'a>) -> Option<&'a str> {
+        match name {
+            CapabilityName::Terminfo(capname) => Some(capname),
+            CapabilityName::Termcap(code) => parser::names::capname_for_termcap(code),
+        }
     }
 
     /// Retrieve a capability `cmd` and expand it with `params`, writing result to `out`.

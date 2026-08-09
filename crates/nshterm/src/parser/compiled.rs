@@ -15,6 +15,7 @@ use std::io;
 use std::io::prelude::*;
 
 use crate::Error::*;
+use crate::NameTable;
 use crate::Result;
 use crate::TermInfo;
 
@@ -42,13 +43,12 @@ fn read_byte(r: &mut dyn io::Read) -> io::Result<u8> {
     }
 }
 
-/// Parse a compiled terminfo entry, using long capability names if `longnames`
-/// is true
-pub fn parse(file: &mut dyn io::Read, longnames: bool) -> Result<TermInfo> {
-    let (bnames, snames, nnames) = if longnames {
-        (BOOL_LONG_NAMES, STRING_LONG_NAMES, NUMBER_LONG_NAMES)
-    } else {
-        (BOOL_NAMES, STRING_NAMES, NUMBER_NAMES)
+// [spec:nshedit:req:terminal.typed-api]
+/// Parse a compiled terminfo entry, keying its capabilities by `names`.
+pub fn parse(file: &mut dyn io::Read, names: NameTable) -> Result<TermInfo> {
+    let (bnames, snames, nnames) = match names {
+        NameTable::VariableNames => (BOOL_LONG_NAMES, STRING_LONG_NAMES, NUMBER_LONG_NAMES),
+        NameTable::Capnames => (BOOL_NAMES, STRING_NAMES, NUMBER_NAMES),
     };
 
     // Check magic number
@@ -287,9 +287,11 @@ mod test {
         }
     }
 
+    use crate::NameTable;
+
     fn parse_bytes(bytes: &[u8]) -> Result<TermInfo> {
         let mut reader = bytes;
-        parse(&mut reader, false)
+        parse(&mut reader, NameTable::Capnames)
     }
 
     /// Parse, asserting failure, and return the error. `TermInfo` is not

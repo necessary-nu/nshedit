@@ -10,7 +10,7 @@ pub mod common;
 
 use common::{fixture, fixture_names};
 use nshterm::parm::Param;
-use nshterm::{Error, TermInfo};
+use nshterm::{CapabilityName, Error, TermInfo, TermInfoBuilder};
 
 /// Every fixture parses, and parses into something usable.
 ///
@@ -27,21 +27,21 @@ fn every_fixture_loads_into_a_usable_entry() {
 
     for name in &names {
         let term = fixture(name);
-        assert!(!term.names.is_empty(), "{name}: entry has no names");
+        assert!(!term.names().is_empty(), "{name}: entry has no names");
         assert!(
-            term.names.iter().all(|n| !n.is_empty()),
+            term.names().iter().all(|n| !n.is_empty()),
             "{name}: an empty alias"
         );
         assert!(
-            !term.strings.is_empty(),
+            term.strings().next().is_some(),
             "{name}: parsed but has no string capabilities"
         );
         // Capability keys come from the static name tables, never from the
         // file, so a key that is not in them means the parser indexed past
         // its own table.
-        for key in term.strings.keys() {
+        for (key, _) in term.strings() {
             assert!(
-                nshterm::parser::names::STRING_NAMES.contains(key),
+                nshterm::parser::names::STRING_NAMES.contains(&key),
                 "{name}: string capability {key:?} is not a known capname"
             );
         }
@@ -53,14 +53,14 @@ fn every_fixture_loads_into_a_usable_entry() {
 #[test]
 fn the_dumb_entry_says_what_it_should() {
     let term = fixture("dumb");
-    assert!(term.names.iter().any(|n| n == "dumb"));
+    assert!(term.names().iter().any(|n| n == "dumb"));
     assert_eq!(
-        term.strings.get("bel").map(Vec::as_slice),
+        term.string(CapabilityName::Terminfo("bel")).as_deref(),
         Some(&b"\x07"[..])
     );
-    assert_eq!(term.numbers.get("cols"), Some(&80));
+    assert_eq!(term.number(CapabilityName::Terminfo("cols")), Some(80));
     // A dumb terminal cannot address the cursor; that is what makes it dumb.
-    assert!(!term.strings.contains_key("cup"));
+    assert_eq!(term.string(CapabilityName::Terminfo("cup")), None);
 }
 
 /// `apply_cap` on a capability the entry has, and on one it does not.
@@ -110,12 +110,7 @@ fn reset_uses_whichever_reset_capability_the_entry_has() {
 
     // An entry with none of the three cannot be reset, and must report that
     // rather than writing nothing and returning success.
-    let bare = TermInfo {
-        names: vec!["bare".into()],
-        bools: Default::default(),
-        numbers: Default::default(),
-        strings: Default::default(),
-    };
+    let bare = TermInfoBuilder::default().named("bare").build();
     let mut out = Vec::new();
     assert_eq!(bare.reset(&mut out).unwrap_err(), Error::NotSupported);
     assert!(out.is_empty());
@@ -166,7 +161,7 @@ fn from_name_finds_an_entry_under_terminfo() {
     if std::env::var_os(CHILD).is_some() {
         let found = TermInfo::from_name("xterm-nshterm-test")
             .expect("the entry under TERMINFO should be found");
-        assert!(found.names.iter().any(|name| name == "xterm"));
+        assert!(found.names().iter().any(|name| name == "xterm"));
         assert_eq!(
             TermInfo::from_name("nshterm-no-such-terminal").unwrap_err(),
             Error::TerminfoEntryNotFound,
@@ -224,4 +219,83 @@ fn the_errors_compare_and_print() {
     // The conversion a caller gets when they use `?` in an io context.
     let io: std::io::Error = Error::NotSupported.into();
     assert!(!io.to_string().is_empty());
+}
+
+/// Capabilities are read by name in a stated vocabulary, and the entry is the
+/// only thing that can answer: there is no map to reach past it into.
+// [spec:nshedit:req:terminal.typed-api/test]
+#[test]
+fn capabilities_answer_by_vocabulary() {
+    let term = fixture("xterm");
+
+    // The same capability under both namings, and a name that belongs to
+    // neither.
+    assert_eq!(
+        term.string(CapabilityName::Terminfo("cup")).as_deref(),
+        term.string(CapabilityName::Termcap("cm")).as_deref(),
+    );
+    assert_eq!(term.string(CapabilityName::Termcap("cup")), None);
+    assert_eq!(term.boolean(CapabilityName::Terminfo("am")), Some(true));
+    assert_eq!(term.boolean(CapabilityName::Termcap("am")), Some(true));
+    assert_eq!(term.boolean(CapabilityName::Terminfo("no_such_bool")), None);
+    assert_eq!(term.number(CapabilityName::Termcap("co")), Some(80));
+
+    // The bulk views answer the same entry the named lookups do.
+    let strings: Vec<&str> = term.strings().map(|(capname, _)| capname).collect();
+    assert!(strings.contains(&"cup"));
+    assert_eq!(
+        term.numbers().find(|&(capname, _)| capname == "cols"),
+        Some(("cols", 80))
+    );
+}
+
+/// The name table is a parsing decision the caller states, not a mode flag.
+// [spec:nshedit:req:terminal.typed-api/test]
+#[test]
+fn the_name_table_names_capabilities() {
+    let path: std::path::PathBuf = [env!("CARGO_MANIFEST_DIR"), "tests", "data", "xterm"]
+        .iter()
+        .collect();
+
+    let mut file = std::fs::File::open(&path).expect("the xterm fixture");
+    let long = nshterm::parser::compiled::parse(&mut file, nshterm::NameTable::VariableNames)
+        .expect("parsing the xterm fixture");
+
+    assert!(
+        long.string(CapabilityName::Terminfo("cursor_address"))
+            .is_some()
+    );
+    assert_eq!(long.string(CapabilityName::Terminfo("cup")), None);
+    // The capname table is what the plain constructors ask for.
+    assert!(
+        fixture("xterm")
+            .string(CapabilityName::Terminfo("cup"))
+            .is_some()
+    );
+}
+
+/// Every failure that wraps another one hands it back as its source, so a
+/// caller reporting the outermost message can still reach the cause.
+// [spec:nshedit:req:terminal.typed-api/test]
+#[test]
+fn failures_keep_their_source() {
+    use std::error::Error as _;
+
+    let missing: std::path::PathBuf =
+        [env!("CARGO_MANIFEST_DIR"), "tests", "data", "no-such-entry"]
+            .iter()
+            .collect();
+    let error = TermInfo::from_path(&missing).expect_err("the fixture must not exist");
+    assert!(matches!(error, Error::Io(_)), "{error:?}");
+    let source = error.source().expect("an I/O failure carries its cause");
+    assert_eq!(
+        source
+            .downcast_ref::<std::io::Error>()
+            .map(std::io::Error::kind),
+        Some(std::io::ErrorKind::NotFound)
+    );
+
+    // A capability the entry does not define is not a failure with a cause;
+    // it is the entry answering.
+    assert!(Error::NotSupported.source().is_none());
 }

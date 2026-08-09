@@ -153,7 +153,7 @@ fn no_capability_in_any_fixture_panics_the_expander() {
     let mut expanded = 0usize;
     for name in fixture_names() {
         let term = fixture(&name);
-        for (capname, value) in &term.strings {
+        for (capname, value) in term.strings() {
             for params in &shapes {
                 // A capability may legitimately fail (`u6` underflows the
                 // stack); it may not take the process down with it.
@@ -166,7 +166,7 @@ fn no_capability_in_any_fixture_panics_the_expander() {
                 // Everything else in the database is a tparm string, so an
                 // unrecognized `%` there would mean this crate is missing a
                 // production terminfo(5) defines.
-                if matches!(capname, &"u6" | &"u7" | &"u8" | &"u9") {
+                if matches!(capname, "u6" | "u7" | "u8" | "u9") {
                     continue;
                 }
                 if let Err(e @ Error::UnrecognizedFormatOption(_)) = outcome {
