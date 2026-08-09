@@ -412,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_quotes_keep_compatibility_data() {
+    fn empty_quotes_keep_raw_units() {
         let input: Text = [
             TextUnit::Scalar('\''),
             TextUnit::Scalar('\''),

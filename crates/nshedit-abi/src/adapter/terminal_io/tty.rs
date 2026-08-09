@@ -251,7 +251,7 @@ impl EditLine {
                 b'x' => mode = 0,
                 b'q' => mode = 2,
                 switch => {
-                    self.write_compatibility_stream(
+                    self.write_stream(
                         StreamKind::Diagnostics,
                         format!("{command}: Unknown switch `{}'.\n", char::from(switch)).as_bytes(),
                     );
@@ -294,7 +294,7 @@ impl EditLine {
             append_tty_listing_group(&mut output, "chars:", characters, columns, false);
             output.push(b'\n');
             drop(state);
-            self.write_compatibility_stream(StreamKind::Output, &output);
+            self.write_stream(StreamKind::Output, &output);
             return 0;
         }
 
@@ -379,7 +379,7 @@ impl EditLine {
     }
 
     fn invalid_tty_argument(&self, command: &str, argument: &str) {
-        self.write_compatibility_stream(
+        self.write_stream(
             StreamKind::Diagnostics,
             format!("{command}: Invalid argument `{argument}'.\n").as_bytes(),
         );

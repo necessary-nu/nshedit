@@ -101,6 +101,9 @@
 //! [`term`]: https://crates.io/crates/term/1.2.1
 //! [Stebalien/term#93]: https://github.com/Stebalien/term/issues/93
 
+// Every lint this crate and the workspace select is answered in the source
+// rather than suppressed at the item that raised it.
+// [spec:nshedit:req:workspace.lint-policy+1]
 #![deny(missing_docs)]
 #![deny(rust_2018_idioms)]
 

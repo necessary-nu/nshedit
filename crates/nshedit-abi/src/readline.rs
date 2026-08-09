@@ -1147,11 +1147,11 @@ pub unsafe extern "C" fn using_history() {
     }
 }
 
-/// C: `static char *_rl_compat_sub(const char *str, const char *what,
+/// C: `static char *history_substitute(const char *str, const char *what,
 /// const char *with, int globally);`
 // [spec:libedit:def:readline.rl-compat-sub-fn]
 // [spec:libedit:sem:readline.rl-compat-sub-fn]
-fn _rl_compat_sub(
+fn history_substitute(
     str_: *const c_char,
     what: *const c_char,
     with: *const c_char,
@@ -1705,7 +1705,7 @@ fn _history_expand_command(
                     p_on = true;
                 }
                 b'g' => {
-                    // 2, not 1; `_rl_compat_sub` only tests it for truth.
+                    // 2, not 1; `history_substitute` only tests it for truth.
                     g_on = 2;
                 }
                 c @ (b'&' | b's') => {
@@ -1750,11 +1750,11 @@ fn _history_expand_command(
                     }
                     cmd = cmdp.offset_from(command) as usize;
 
-                    // An allocation failure inside `_rl_compat_sub` silently
+                    // An allocation failure inside `history_substitute` silently
                     // leaves `tmp` unsubstituted.
                     let (expansion_from, expansion_to) = READLINE_RUNTIME
                         .access(|runtime| (runtime.expansion_from, runtime.expansion_to));
-                    let aptr = _rl_compat_sub(tmp, expansion_from, expansion_to, g_on);
+                    let aptr = history_substitute(tmp, expansion_from, expansion_to, g_on);
                     if !aptr.is_null() {
                         c_free_str(tmp);
                         tmp = aptr;
@@ -4189,7 +4189,7 @@ pub unsafe extern "C" fn completion_matches(
         // No sorting, generation order preserved, and an empty element 0 stays
         // empty — none of `rl_completion_matches`' behaviour (ERR-completion-22).
         let candidates = filecomplete::collect_candidates(&t, &mut make_match);
-        let Some(matches) = filecomplete::compatibility_matches(candidates) else {
+        let Some(matches) = filecomplete::matches_with_common_prefix(candidates) else {
             return ptr::null_mut();
         };
         let mut list: Vec<*mut c_char> = Vec::with_capacity(matches.len() + 1);

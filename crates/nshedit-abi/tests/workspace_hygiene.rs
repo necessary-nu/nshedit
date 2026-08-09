@@ -26,18 +26,18 @@ fn rust_sources_below(directory: &Path, sources: &mut Vec<PathBuf>) {
 // [spec:nshedit:req:core.public-surface/test]
 // [spec:nshedit:req:core.unsafe-free/test]
 #[test]
-fn native_core_surface_is_safe() {
+fn the_core_surface_is_safe() {
     let root = repo_root();
     let source = fs::read_to_string(root.join("crates/nshedit/src/lib.rs"))
-        .expect("read the native core facade");
+        .expect("read the editor core facade");
 
     assert!(
         source.contains("#![forbid(unsafe_code)]"),
-        "the native core must reject unsafe declarations and implementations"
+        "the editor core must reject unsafe declarations and implementations"
     );
     assert!(
         !source.contains("#[path"),
-        "the native facade must not compile compatibility sources by path"
+        "the core facade must not compile C-boundary sources by path"
     );
 
     let public_modules: Vec<&str> = source
@@ -51,24 +51,24 @@ fn native_core_surface_is_safe() {
     assert_eq!(
         public_modules,
         ["domain", "editor", "history", "history_file", "tokenizer"],
-        "the native facade exposed a module outside the semantic Rust API"
+        "the core facade exposed a module outside the semantic Rust API"
     );
 }
 
 // [spec:nshedit:req:core.no-compat-internals/test]
 #[test]
-fn translated_core_and_facade_are_absent() {
+fn the_core_has_no_c_boundary() {
     let root = repo_root();
-    let native = root.join("crates/nshedit/src");
+    let core = root.join("crates/nshedit/src");
     let abi = root.join("crates/nshedit-abi/src");
 
     assert!(
         !abi.join("compat.rs").exists() && !abi.join("compat").exists(),
-        "the retired translated implementation must not remain disconnected behind the ABI"
+        "a C-shaped implementation must not remain disconnected behind the ABI"
     );
 
     let mut sources = Vec::new();
-    rust_sources_below(&native, &mut sources);
+    rust_sources_below(&core, &mut sources);
     sources.sort();
     let forbidden = [
         "extern \"C\"",
@@ -80,11 +80,11 @@ fn translated_core_and_facade_are_absent() {
         "#[path",
     ];
     for path in sources {
-        let source = fs::read_to_string(&path).expect("read native core source");
+        let source = fs::read_to_string(&path).expect("read an editor core source");
         for spelling in forbidden {
             assert!(
                 !source.contains(spelling),
-                "{} contains retired compatibility spelling {spelling:?}",
+                "{} contains the C-boundary spelling {spelling:?}",
                 path.strip_prefix(&root).unwrap_or(&path).display()
             );
         }
@@ -92,21 +92,22 @@ fn translated_core_and_facade_are_absent() {
 }
 
 // [spec:nshedit:req:workspace.no-legacy-allows/test]
+// [spec:nshedit:req:workspace.lint-policy+1/test]
 #[test]
-fn first_party_rust_rejects_allow_attributes() {
+fn first_party_rust_rejects_suppressions() {
     let root = repo_root();
     let mut sources = Vec::new();
     rust_sources_below(&root.join("crates"), &mut sources);
     sources.sort();
 
-    // Assemble the spellings so this test does not report its own search
-    // strings. Whitespace and line comments are discarded so a split or
+    // Assembled so this test does not report its own search strings.
+    // Whitespace and line comments are discarded first, so a split or
     // formatted attribute cannot evade the check.
-    let item_allow = ["#", "[", "allow", "("].concat();
-    let inner_allow = ["allow", "("].concat();
-    let crate_allow = ["#", "!", "[", "allow", "("].concat();
-    let cfg_attr = ["#", "[", "cfg_attr", "("].concat();
-    let expect = ["#", "[", "expect", "("].concat();
+    let allow = ["allow", "("].concat();
+    let expect = ["expect", "("].concat();
+    let item = |attribute: &str| ["#", "[", attribute].concat();
+    let inner = |attribute: &str| ["#", "!", "[", attribute].concat();
+    let conditional = ["#", "[", "cfg_attr", "("].concat();
 
     for path in sources {
         let source = fs::read_to_string(&path).expect("read first-party Rust source");
@@ -117,40 +118,117 @@ fn first_party_rust_rejects_allow_attributes() {
             .filter(|character| !character.is_whitespace())
             .collect();
 
-        assert!(
-            !code.contains(&item_allow) && !code.contains(&crate_allow),
-            "{} contains a lint allow attribute; remove the exception or use the narrowest fulfilled expect with a reason",
-            path.strip_prefix(&root).unwrap_or(&path).display()
-        );
+        for suppression in [&allow, &expect] {
+            assert!(
+                !code.contains(&item(suppression)) && !code.contains(&inner(suppression)),
+                "{} suppresses a lint; represent the constraint so the lint does not arise, or move it outside first-party source",
+                path.strip_prefix(&root).unwrap_or(&path).display()
+            );
+        }
 
         let mut conditional_attributes = code.as_str();
-        while let Some(start) = conditional_attributes.find(&cfg_attr) {
-            conditional_attributes = &conditional_attributes[start + cfg_attr.len()..];
+        while let Some(start) = conditional_attributes.find(&conditional) {
+            conditional_attributes = &conditional_attributes[start + conditional.len()..];
             let end = conditional_attributes
                 .find(")]")
                 .expect("a Rust cfg_attr attribute has no closing delimiter");
             let attribute = &conditional_attributes[..end];
             assert!(
-                !attribute.contains(&inner_allow),
-                "{} conditionally enables a lint allow; conditional code must remain warning-clean too",
+                !attribute.contains(&allow) && !attribute.contains(&expect),
+                "{} conditionally suppresses a lint; conditional code must stay warning-clean too",
                 path.strip_prefix(&root).unwrap_or(&path).display()
             );
             conditional_attributes = &conditional_attributes[end + 2..];
         }
+    }
+}
 
-        let mut remainder = code.as_str();
-        while let Some(start) = remainder.find(&expect) {
-            remainder = &remainder[start + expect.len()..];
-            let end = remainder
-                .find(")]")
-                .expect("a Rust expect attribute has no closing delimiter");
-            let attribute = &remainder[..end];
-            assert!(
-                attribute.contains("reason="),
-                "{} contains an expect attribute without a reason",
-                path.strip_prefix(&root).unwrap_or(&path).display()
-            );
-            remainder = &remainder[end + 2..];
+/// The lints the workspace selects for every crate, which is what makes the
+/// suppression ban enforceable rather than aspirational: with these denied
+/// and no suppression allowed, the only way past one is to fix the code.
+// [spec:nshedit:req:workspace.lint-policy+1/test]
+#[test]
+fn every_crate_denies_the_workspace_lints() {
+    let root = repo_root();
+    let workspace =
+        fs::read_to_string(root.join("Cargo.toml")).expect("read the workspace manifest");
+    for lint in [
+        "dead_code",
+        "unused",
+        "nonstandard_style",
+        "unsafe_op_in_unsafe_fn",
+        "missing_safety_doc",
+        "allow_attributes",
+    ] {
+        assert!(
+            workspace.contains(&format!("{lint} = \"deny\"")),
+            "the workspace stopped denying {lint}"
+        );
+    }
+
+    for crate_directory in fs::read_dir(root.join("crates")).expect("read the crate directory") {
+        let path = crate_directory.expect("read a crate entry").path();
+        if !path.is_dir() {
+            continue;
+        }
+        let manifest = fs::read_to_string(path.join("Cargo.toml")).expect("read a crate manifest");
+        assert!(
+            manifest.contains("workspace = true"),
+            "{} does not take the workspace lints",
+            path.strip_prefix(&root).unwrap_or(&path).display()
+        );
+    }
+}
+
+/// Code — not prose — carrying one of the labels a migration uses to say
+/// "the one that came after". They name nothing on their own: every
+/// implementation here is the only one, so `native` distinguishes it from
+/// nothing, and a reader cannot tell what a `legacy` value holds.
+const MIGRATION_LABELS: [&str; 4] = ["native", "legacy", "compat", "translated"];
+
+/// `line` with its comment and its string literals removed, leaving the code
+/// a name would have to be declared in.
+fn code_of(line: &str) -> String {
+    let line = line.split_once("//").map_or(line, |(code, _)| code);
+    let mut code = String::with_capacity(line.len());
+    let mut quoted = false;
+    let mut escaped = false;
+    for character in line.chars() {
+        match character {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            _ if quoted => {}
+            _ => code.push(character),
+        }
+    }
+    code
+}
+
+// [spec:nshedit:req:workspace.semantic-naming/test]
+#[test]
+fn no_identifier_carries_a_migration_label() {
+    let root = repo_root();
+    let mut sources = Vec::new();
+    rust_sources_below(&root.join("crates"), &mut sources);
+    sources.sort();
+
+    for path in sources {
+        // This file names the labels in order to look for them.
+        if path.ends_with("workspace_hygiene.rs") {
+            continue;
+        }
+        let source = fs::read_to_string(&path).expect("read first-party Rust source");
+        for (number, line) in source.lines().enumerate() {
+            let code = code_of(line).to_lowercase();
+            for label in MIGRATION_LABELS {
+                assert!(
+                    !code.contains(label),
+                    "{}:{} names something {label:?}; name it for what it is responsible for",
+                    path.strip_prefix(&root).unwrap_or(&path).display(),
+                    number + 1
+                );
+            }
         }
     }
 }

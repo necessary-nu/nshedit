@@ -7,6 +7,8 @@
 #![forbid(unsafe_code)]
 
 // [spec:nshedit:req:workspace.no-legacy-allows]
+// [spec:nshedit:req:workspace.lint-policy+1]
+// [spec:nshedit:req:workspace.semantic-naming]
 // [spec:nshedit:req:core.public-surface]
 // [spec:nshedit:req:core.typed-domain+1]
 /// Editor values shared by the safe editor shell and its hosts.

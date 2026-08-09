@@ -87,7 +87,7 @@ unsafe fn list(el: *mut EditLine) -> c_int {
         let mut output = format!("{number}\t").into_bytes();
         output.extend_from_slice(&visible);
         output.push(b'\n');
-        unsafe { (&*el).write_compatibility_stream(StreamKind::Output, &output) };
+        unsafe { (&*el).write_stream(StreamKind::Output, &output) };
         number += 1;
         movement = HistoryMove::Newer;
     }

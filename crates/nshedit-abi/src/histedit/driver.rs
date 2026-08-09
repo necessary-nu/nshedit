@@ -18,20 +18,20 @@ use nshedit::editor::effect::{
 
 mod signal;
 
-use signal::{DirectReadOutcome, ReadSignals, native_signal};
+use signal::{DirectReadOutcome, ReadSignals, editor_signal};
 
 /// A safe writer over the caller-owned output stream for one driver step.
-struct CompatibilityOutput {
+struct StreamWriter {
     stream: CFile,
 }
 
-impl CompatibilityOutput {
+impl StreamWriter {
     const fn new(stream: CFile) -> Self {
         Self { stream }
     }
 }
 
-impl Write for CompatibilityOutput {
+impl Write for StreamWriter {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         crate::cstdio::write(self.stream, buffer)?;
         Ok(buffer.len())
@@ -135,7 +135,7 @@ unsafe fn host_read(
     signals: &mut ReadSignals,
 ) -> Result<ReadOutcome, HostFailure> {
     if let Some(signal) = unsafe { signals.take_pending(el) } {
-        return Ok(ReadOutcome::Signal(native_signal(signal)));
+        return Ok(ReadOutcome::Signal(editor_signal(signal)));
     }
     if let Some(unit) = unsafe { (&mut *el).pop_input() } {
         let _ = unsafe { signals.resume_pending_direct(el) }?;
@@ -160,7 +160,7 @@ unsafe fn host_read(
     let mut bytes = [0; 64];
     loop {
         if let Some(signal) = unsafe { signals.take_pending(el) } {
-            return Ok(ReadOutcome::Signal(native_signal(signal)));
+            return Ok(ReadOutcome::Signal(editor_signal(signal)));
         }
         match unsafe { (&*el).read_input(&mut bytes) } {
             Ok(0) => {
@@ -173,7 +173,7 @@ unsafe fn host_read(
             }
             Err(error) => {
                 if let Some(signal) = unsafe { signals.take_pending(el) } {
-                    return Ok(ReadOutcome::Signal(native_signal(signal)));
+                    return Ok(ReadOutcome::Signal(editor_signal(signal)));
                 }
                 if error.kind() == std::io::ErrorKind::Interrupted && unsafe { (&*el).safe_read() }
                 {
@@ -424,9 +424,7 @@ unsafe fn read_host_text(
     prompt: &Text,
     cancel_on_escape: bool,
 ) -> Result<Text, HostFailure> {
-    unsafe {
-        (&*el).write_compatibility_stream(StreamKind::Output, &terminal_bytes(prompt.as_units()))
-    };
+    unsafe { (&*el).write_stream(StreamKind::Output, &terminal_bytes(prompt.as_units())) };
     let mut text = Text::default();
     loop {
         let mut value = 0;
@@ -438,7 +436,7 @@ unsafe fn read_host_text(
         let unit = TextUnit::from_code_point(value);
         match unit {
             TextUnit::Scalar('\r' | '\n') => {
-                unsafe { (&*el).write_compatibility_stream(StreamKind::Output, b"\n") };
+                unsafe { (&*el).write_stream(StreamKind::Output, b"\n") };
                 return Ok(text);
             }
             TextUnit::Scalar('\u{1b}') if cancel_on_escape => {
@@ -454,7 +452,7 @@ unsafe fn read_host_text(
                     let _removed = text
                         .remove(span)
                         .expect("the checked final-unit span remains valid");
-                    unsafe { (&*el).write_compatibility_stream(StreamKind::Output, b"\x08 \x08") };
+                    unsafe { (&*el).write_stream(StreamKind::Output, b"\x08 \x08") };
                 }
             }
             unit => {
@@ -462,9 +460,7 @@ unsafe fn read_host_text(
                     return Err(HostFailure::Failed("command input is too long".into()));
                 }
                 text.push(unit);
-                unsafe {
-                    (&*el).write_compatibility_stream(StreamKind::Output, &terminal_bytes(&[unit]))
-                };
+                unsafe { (&*el).write_stream(StreamKind::Output, &terminal_bytes(&[unit])) };
             }
         }
     }
@@ -504,12 +500,7 @@ unsafe fn host_history_search(
                 Direction::Previous => Text::from("\nbck: "),
                 Direction::Next => Text::from("\nfwd: "),
             };
-            unsafe {
-                (&*el).write_compatibility_stream(
-                    StreamKind::Output,
-                    &terminal_bytes(prompt.as_units()),
-                )
-            };
+            unsafe { (&*el).write_stream(StreamKind::Output, &terminal_bytes(prompt.as_units())) };
             let mut value = 0;
             match unsafe { read_wide_character(el, &raw mut value) } {
                 1 if unsafe { (&mut *el).push_input(&[value]) } => {
@@ -867,7 +858,7 @@ pub(super) unsafe fn drive_read(el: *mut EditLine) -> Result<ReadResult, ()> {
             }
             ReadStep::Display(display) => {
                 let stream = unsafe { (&*el).stream(StreamKind::Output) };
-                let mut output = CompatibilityOutput::new(stream);
+                let mut output = StreamWriter::new(stream);
                 let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .display(editor, &display, &mut output)

@@ -52,8 +52,7 @@ impl EditLine {
             let sequence = KeySequence::new(std::iter::once(TextUnit::Scalar(character)).collect())
                 .expect("one scalar is a non-empty key sequence");
             if character.is_control() || crate::conversion::encoded_width(value) == 0 {
-                let binding =
-                    named_binding(command).expect("compatibility meta commands are built in");
+                let binding = named_binding(command).expect("the meta commands are built in");
                 self.editor.bind(KeymapMode::Emacs, sequence, binding);
             } else {
                 self.editor.unbind(KeymapMode::Emacs, &sequence);
@@ -234,7 +233,7 @@ impl EditLine {
         let Ok(sequence) = KeySequence::new(sequence) else {
             return -1;
         };
-        self.replace_legacy_binding(mode, sequence, binding);
+        self.bind_replacing_conflicts(mode, sequence, binding);
         0
     }
 
@@ -248,7 +247,7 @@ impl EditLine {
         }
     }
 
-    fn replace_legacy_binding(
+    fn bind_replacing_conflicts(
         &mut self,
         mode: KeymapMode,
         sequence: KeySequence,
@@ -293,7 +292,11 @@ impl EditLine {
         };
         let key = Text::from_iter([TextUnit::from_code_point(first & 0xff)]);
         if let Ok(key) = KeySequence::new(key) {
-            self.replace_legacy_binding(mode, key, Binding::Action(Action::Refresh(Refresh::Beep)));
+            self.bind_replacing_conflicts(
+                mode,
+                key,
+                Binding::Action(Action::Refresh(Refresh::Beep)),
+            );
         }
     }
 
@@ -311,7 +314,7 @@ impl EditLine {
             output.extend_from_slice(&text_bytes(&command.help));
             output.push(b'\n');
         }
-        self.write_compatibility_stream(StreamKind::Output, &output);
+        self.write_stream(StreamKind::Output, &output);
     }
 
     fn print_all_bindings(&self) {
@@ -329,7 +332,7 @@ impl EditLine {
                 append_binding_line(&mut output, key.name, binding);
             }
         }
-        self.write_compatibility_stream(StreamKind::Output, &output);
+        self.write_stream(StreamKind::Output, &output);
     }
 
     fn print_key_binding(&self, mode: KeymapMode, sequence: &Text) {
@@ -344,7 +347,7 @@ impl EditLine {
                     _ => binding_description(binding),
                 };
                 let line = format!("{rendered}\t->\t{description}\n");
-                self.write_compatibility_stream(StreamKind::Output, line.as_bytes());
+                self.write_stream(StreamKind::Output, line.as_bytes());
             }
             return;
         }
@@ -370,9 +373,9 @@ impl EditLine {
                 "Unbound extended key \"{}\"\n",
                 visual_text(sequence, false)
             );
-            self.write_compatibility_stream(StreamKind::Diagnostics, line.as_bytes());
+            self.write_stream(StreamKind::Diagnostics, line.as_bytes());
         } else {
-            self.write_compatibility_stream(StreamKind::Output, &output);
+            self.write_stream(StreamKind::Output, &output);
         }
     }
 
@@ -385,7 +388,7 @@ impl EditLine {
         };
         let mut output = Vec::new();
         append_binding_line(&mut output, TERMINAL_KEYS[index].name, binding);
-        self.write_compatibility_stream(StreamKind::Output, &output);
+        self.write_stream(StreamKind::Output, &output);
     }
 
     fn report_invalid_switch(&self, command: &[u32], invalid: u32) {
@@ -393,7 +396,7 @@ impl EditLine {
         output.extend_from_slice(b": Invalid switch `");
         output.extend_from_slice(&wide_bytes(&[invalid]));
         output.extend_from_slice(b"'.\n");
-        self.write_compatibility_stream(StreamKind::Diagnostics, &output);
+        self.write_stream(StreamKind::Diagnostics, &output);
     }
 
     fn report_bad_binding_escape(&self, command: &[u32], input: bool) {
@@ -403,7 +406,7 @@ impl EditLine {
         } else {
             b": Invalid \\ or ^ in outstring.\n"
         });
-        self.write_compatibility_stream(StreamKind::Diagnostics, &output);
+        self.write_stream(StreamKind::Diagnostics, &output);
     }
 
     fn report_invalid_command(&self, command: &[u32], value: &[u32]) {
@@ -411,7 +414,7 @@ impl EditLine {
         output.extend_from_slice(b": Invalid command `");
         output.extend_from_slice(&wide_bytes(value));
         output.extend_from_slice(b"'.\n");
-        self.write_compatibility_stream(StreamKind::Diagnostics, &output);
+        self.write_stream(StreamKind::Diagnostics, &output);
     }
 }
 
@@ -570,7 +573,7 @@ mod tests {
         let mut editor = editor();
         for command in BUILTIN_COMMANDS {
             let binding = named_binding(command.name)
-                .unwrap_or_else(|| panic!("{} has no closed native binding", command.name));
+                .unwrap_or_else(|| panic!("{} has no closed editor binding", command.name));
             assert!(
                 !matches!(binding, Binding::User(_)),
                 "{} resolved as a registered callback",

@@ -1,4 +1,4 @@
-//! A complete safe Rust consumer of the native editor API.
+//! A complete safe Rust consumer of the nshedit editor API.
 
 #![forbid(unsafe_code)]
 
@@ -94,7 +94,7 @@ fn read_line<T: TerminalControl>(
         step = match step {
             ReadStep::Prompt(pending) => {
                 let prompt = match pending.request().side {
-                    PromptSide::Left => Prompt::from("native> "),
+                    PromptSide::Left => Prompt::from("nshedit> "),
                     PromptSide::Right => Prompt::from(format!("[{}]", host.history.len())),
                 };
                 driver.resume_prompt(editor, &pending, Ok(prompt))?

@@ -436,4 +436,11 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule terminal.typed-api}
     )}
+    {id rust-idiom-lint-naming, covered_rules (
+        workspace.lint-policy
+        workspace.semantic-naming
+    ), covered_claims (
+        {impl_name native-impl, rule workspace.lint-policy}
+        {impl_name native-impl, rule workspace.semantic-naming}
+    )}
 )

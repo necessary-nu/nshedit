@@ -289,7 +289,7 @@ fn header_diff() {
 /// point — `ldd` names what actually loaded.
 // [spec:nshedit:req:abi.surface-stability/test]
 #[test]
-fn soname_and_compat_symlinks() {
+fn soname_and_version_symlinks() {
     let _stages = stage_lock();
     require_port_cdylib();
     run_script("build-oracle.sh", &[]);

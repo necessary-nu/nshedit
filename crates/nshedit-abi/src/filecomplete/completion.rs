@@ -8,7 +8,7 @@
 use nshedit::domain::{Error, Text, TextUnit};
 use nshedit::editor::{
     CompletionCandidate, CompletionCandidates, CompletionOutcome, CompletionQuery,
-    Tokenizer as NativeTokenizer,
+    Tokenizer as EditorTokenizer,
 };
 
 use crate::adapter::{CompletionInvocation, EditLine};
@@ -116,7 +116,7 @@ pub(crate) fn observe_completion(editor: &mut EditLine, separators: Text) -> Com
     let columns = editor.screen_size().map_or(80, |size| size.columns());
     let query = editor
         .editor()
-        .completion_query(&NativeTokenizer::new(separators));
+        .completion_query(&EditorTokenizer::new(separators));
     CompletionSnapshot {
         query,
         invocation,

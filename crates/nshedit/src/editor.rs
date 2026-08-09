@@ -632,7 +632,7 @@ mod tests {
 
     // [spec:nshedit:req:core.terminal-render+1/test]
     #[test]
-    fn editor_owns_native_render_state() {
+    fn editor_owns_its_render_state() {
         let events = Rc::new(RefCell::new(Vec::new()));
         let mut editor =
             Editor::new(EditorConfig::default(), MockTerminal::recording(&events)).unwrap();

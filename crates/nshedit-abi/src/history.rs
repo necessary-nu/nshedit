@@ -339,7 +339,7 @@ impl<C: HistoryChar> HistoryHandle<C> {
         };
         let id = self
             .id_at(position)
-            .expect("a checked native history position must exist");
+            .expect("a checked history position must exist");
         self.select_id(id);
         Ok(())
     }

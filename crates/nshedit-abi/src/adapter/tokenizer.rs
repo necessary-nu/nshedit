@@ -99,11 +99,11 @@ pub(crate) enum TokenizeOutcome<C> {
 // [spec:nshedit:req:abi.opaque-owner]
 /// Allocation behind either incomplete C tokenizer handle.
 ///
-/// Parsing belongs exclusively to the native [`NativeTokenizer`]. This owner
-/// retains only boundary state: physical-line accumulation, non-scalar C
-/// separators, NUL-terminated word storage, and the lent `argv` array.
+/// Parsing belongs exclusively to the [`EditorTokenizer`] this owns. The
+/// owner retains only boundary state: physical-line accumulation, non-scalar
+/// C separators, NUL-terminated word storage, and the lent `argv` array.
 pub struct TokenizerHandle<C> {
-    native: NativeTokenizer,
+    parser: EditorTokenizer,
     extra_separators: Vec<TextUnit>,
     escape_plain_space: bool,
     pending: Text,
@@ -146,20 +146,20 @@ impl<C> TokenizerHandle<C> {
             .copied()
             .filter(|unit| !matches!(unit, TextUnit::Scalar(_)))
             .collect();
-        let mut native = NativeTokenizer::new(requested);
+        let mut parser = EditorTokenizer::new(requested);
         let escape_plain_space = !extra_separators.is_empty()
-            && !native
+            && !parser
                 .separators()
                 .as_units()
                 .contains(&TextUnit::Scalar(' '));
         if !extra_separators.is_empty() {
-            let mut separators = native.separators().clone();
+            let mut separators = parser.separators().clone();
             separators.push(TextUnit::Scalar(' '));
-            native = NativeTokenizer::new(separators);
+            parser = EditorTokenizer::new(separators);
         }
 
         Box::new(Self {
-            native,
+            parser,
             extra_separators,
             escape_plain_space,
             pending: Text::default(),
@@ -208,7 +208,7 @@ impl<C> TokenizerHandle<C> {
         let Ok(cursor) = adapted.text.index(adapted.cursor) else {
             return TokenizeOutcome::Failed;
         };
-        let Ok(mut tokenization) = self.native.tokenize(&adapted.text, cursor) else {
+        let Ok(mut tokenization) = self.parser.tokenize(&adapted.text, cursor) else {
             return TokenizeOutcome::Failed;
         };
 
@@ -238,7 +238,7 @@ impl<C> TokenizerHandle<C> {
                 let Ok(cursor) = completed.index(cursor) else {
                     return TokenizeOutcome::Failed;
                 };
-                let Ok(completed) = self.native.tokenize(&completed, cursor) else {
+                let Ok(completed) = self.parser.tokenize(&completed, cursor) else {
                     return TokenizeOutcome::Failed;
                 };
                 tokenization = completed;

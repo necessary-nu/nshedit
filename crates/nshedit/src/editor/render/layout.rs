@@ -338,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn compatibility_units_render_as_escapes() {
+    fn raw_units_render_as_escapes() {
         let line: Text = [
             TextUnit::RawByte(0xff),
             TextUnit::OpaqueCodePoint(OpaqueCodePoint::new(0xd800).unwrap()),

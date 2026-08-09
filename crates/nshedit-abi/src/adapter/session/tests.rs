@@ -46,7 +46,7 @@ fn construction_owns_defaults() {
 }
 
 #[test]
-fn policy_reconfigures_native_editor() {
+fn policy_reconfigures_the_editor() {
     let mut editor = editor();
     editor.set_handle_signals(true);
     editor.set_unbuffered(true);

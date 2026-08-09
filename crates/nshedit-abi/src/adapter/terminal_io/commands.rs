@@ -5,10 +5,10 @@ use super::*;
 use nshterm::parser::names::BOOL_NAMES;
 use std::io::Write;
 
-/// Linux `speed_t` projection required by the `telltc baud` compatibility
-/// command. The platform API intentionally exposes semantic rates instead of
-/// this encoding.
-const fn compatibility_baud_encoding(speed: OutputSpeed) -> u32 {
+/// The `speed_t` encoding `telltc baud` reports, which is the number the
+/// kernel's termios uses rather than a rate. The platform API exposes
+/// semantic rates, so the projection back to the encoding lives here.
+const fn termios_speed_code(speed: OutputSpeed) -> u32 {
     let OutputSpeed::BitsPerSecond(rate) = speed else {
         return 0o0010000;
     };
@@ -122,7 +122,7 @@ fn decimal_argument(value: &str) -> Option<i32> {
 
 pub(super) fn required_parameters(sequence: &[u8]) -> usize {
     let mut maximum = 0;
-    let mut legacy = 0;
+    let mut termcap_parameters = 0;
     let mut index = 0;
     while index < sequence.len() {
         if sequence[index] != b'%' || index + 1 >= sequence.len() {
@@ -135,16 +135,26 @@ pub(super) fn required_parameters(sequence: &[u8]) -> usize {
                 index += 3;
             }
             b'd' | b'2' | b'3' | b'.' | b'+' => {
-                legacy += 1;
+                termcap_parameters += 1;
                 index += if sequence[index + 1] == b'+' { 3 } else { 2 };
             }
             _ => index += 2,
         }
     }
-    if maximum == 0 { legacy } else { maximum }
+    if maximum == 0 {
+        termcap_parameters
+    } else {
+        maximum
+    }
 }
 
-pub(super) fn expand_legacy_sequence(sequence: &[u8], column: i32, row: i32) -> Vec<u8> {
+/// Expand a termcap parameterised string — `%i`, `%d`, `%2`, `%+`, `%r` and
+/// the rest of `tgoto(3)`'s vocabulary, which is not terminfo's `%p1%d`.
+///
+/// The two parameter languages coexist in the database this reads, so each is
+/// named for the protocol it belongs to.
+// [spec:nshedit:req:workspace.semantic-naming]
+pub(super) fn expand_termcap_sequence(sequence: &[u8], column: i32, row: i32) -> Vec<u8> {
     let mut values = [row, column];
     let mut parameter = 0usize;
     let mut output = Vec::with_capacity(sequence.len());
@@ -314,7 +324,7 @@ impl EditLine {
                 .expect("Vec writes cannot fail");
         }
         output.push(b'\n');
-        self.write_compatibility_stream(StreamKind::Output, &output);
+        self.write_stream(StreamKind::Output, &output);
         0
     }
 
@@ -354,7 +364,7 @@ impl EditLine {
             let mut diagnostic = format!("{command}: Bad capability `").into_bytes();
             diagnostic.extend_from_slice(&name);
             diagnostic.extend_from_slice(b"'.\n");
-            self.write_compatibility_stream(StreamKind::Diagnostics, &diagnostic);
+            self.write_stream(StreamKind::Diagnostics, &diagnostic);
             return -1;
         };
         match kind {
@@ -426,7 +436,7 @@ impl EditLine {
         let mut diagnostic = format!("{command}: Bad {noun} `").into_bytes();
         diagnostic.extend_from_slice(value);
         diagnostic.extend_from_slice(b"'.\n");
-        self.write_compatibility_stream(StreamKind::Diagnostics, &diagnostic);
+        self.write_stream(StreamKind::Diagnostics, &diagnostic);
         -1
     }
 
@@ -529,7 +539,7 @@ impl EditLine {
                     .original
                     .as_ref()
                     .map_or(0, |attributes| {
-                        compatibility_baud_encoding(attributes.output_speed())
+                        termios_speed_code(attributes.output_speed())
                     });
                 Some(format!("{speed}\n"))
             }
@@ -538,7 +548,7 @@ impl EditLine {
             _ => None,
         };
         if let Some(pseudo) = pseudo {
-            self.write_compatibility_stream(StreamKind::Output, pseudo.as_bytes());
+            self.write_stream(StreamKind::Output, pseudo.as_bytes());
             return 0;
         }
 
@@ -554,7 +564,7 @@ impl EditLine {
         };
         let Some(sequence) = sequence.filter(|sequence| !sequence.to_bytes().is_empty()) else {
             if !silent {
-                self.write_compatibility_stream(
+                self.write_stream(
                     StreamKind::Diagnostics,
                     format!("echotc: Termcap parameter `{name}' not found.\n").as_bytes(),
                 );
@@ -568,7 +578,7 @@ impl EditLine {
             .collect();
         if values.len() > needed && values.get(needed).is_some_and(|value| !value.is_empty()) {
             if !silent {
-                self.write_compatibility_stream(
+                self.write_stream(
                     StreamKind::Diagnostics,
                     format!("echotc: Warning: Extra argument `{}`.\n", values[needed]).as_bytes(),
                 );
@@ -577,7 +587,7 @@ impl EditLine {
         }
         if values.len() < needed || values.iter().take(needed).any(String::is_empty) {
             if !silent {
-                self.write_compatibility_stream(
+                self.write_stream(
                     StreamKind::Diagnostics,
                     b"echotc: Warning: Missing argument.\n",
                 );
@@ -593,7 +603,7 @@ impl EditLine {
                     } else {
                         "cols"
                     };
-                    self.write_compatibility_stream(
+                    self.write_stream(
                         StreamKind::Diagnostics,
                         format!("echotc: Bad value `{value}' for {dimension}.\n").as_bytes(),
                     );
@@ -603,7 +613,7 @@ impl EditLine {
             parsed.push(number);
         }
         if needed > 2 && verbose {
-            self.write_compatibility_stream(
+            self.write_stream(
                 StreamKind::Diagnostics,
                 format!("echotc: Warning: Too many required arguments ({needed}).\n").as_bytes(),
             );
@@ -623,13 +633,13 @@ impl EditLine {
         let bytes = if sequence.to_bytes().windows(2).any(|window| window == b"%p") {
             profile.expand_sequence(sequence.to_bytes(), &[row, column], affected_lines)
         } else {
-            let expanded = expand_legacy_sequence(sequence.to_bytes(), column, row);
+            let expanded = expand_termcap_sequence(sequence.to_bytes(), column, row);
             profile.expand_sequence(&expanded, &[], affected_lines)
         };
         let Ok(bytes) = bytes else {
             return -1;
         };
-        self.write_compatibility_stream(StreamKind::Output, &bytes);
+        self.write_stream(StreamKind::Output, &bytes);
         0
     }
 }

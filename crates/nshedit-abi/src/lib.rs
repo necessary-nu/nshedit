@@ -38,6 +38,11 @@
 // [spec:nshedit:req:abi.behavioural-conformance]
 // [spec:nshedit:req:abi.observational-coverage]
 
+// The C spelling every exported symbol needs is carried by `no_mangle` and
+// the generated headers; no private item is named for it, and no lint is
+// suppressed to accommodate one.
+// [spec:nshedit:req:workspace.lint-policy+1]
+// [spec:nshedit:req:workspace.semantic-naming]
 // [spec:nshedit:req:abi.opaque-owner]
 mod adapter;
 pub mod cdecl;

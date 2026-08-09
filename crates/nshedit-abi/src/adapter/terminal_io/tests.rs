@@ -192,7 +192,7 @@ fn tty_modes_keep_independent_overrides() {
 }
 
 #[test]
-fn line_and_cursor_share_native_state() {
+fn line_and_cursor_share_state() {
     let mut editor = editor();
     assert!(editor.replace_line(text("abcd")));
     assert_eq!(editor.editor().line(), &text("abcd"));
@@ -205,7 +205,7 @@ fn line_and_cursor_share_native_state() {
 }
 
 #[test]
-fn wide_edits_are_native() {
+fn wide_edits_reach_the_editor() {
     let mut editor = editor();
     assert!(editor.replace_line(text("abcd")));
     assert_eq!(editor.move_cursor(-2), 2);
@@ -230,7 +230,7 @@ fn accepted_line_has_one_newline() {
 }
 
 #[test]
-fn range_delete_preserves_legacy_bug() {
+fn range_delete_reproduces_a_c_defect() {
     let mut editor = editor();
     assert!(editor.replace_line(text("abcdef")));
     assert_eq!(editor.delete_range(1, 3), 2);
@@ -286,7 +286,7 @@ fn streams_update_terminal_descriptors() {
 }
 
 #[test]
-fn wide_view_tracks_native_line() {
+fn wide_view_tracks_the_line() {
     let mut editor = editor();
     assert!(editor.replace_line(text("wide")));
     assert_eq!(editor.move_cursor(-2), 2);
@@ -319,7 +319,7 @@ fn inert_descriptors_report_errors() {
 
 // [spec:nshedit:req:abi.terminal-controls+1/test]
 #[test]
-fn mutations_reconfigure_native_profile() {
+fn mutations_reconfigure_the_profile() {
     let mut editor = editor();
 
     assert_eq!(terminal_command(&mut editor, &["settc", "co", "132"]), 0);
@@ -367,15 +367,15 @@ fn mutations_reconfigure_native_profile() {
         );
         assert_eq!(CStr::from_ptr(bell), c"B");
     }
-    let mut native_output = Vec::new();
+    let mut beep_output = Vec::new();
     assert_eq!(
         editor
             .editor_mut()
-            .beep(&mut native_output)
+            .beep(&mut beep_output)
             .expect("the Vec writer cannot fail"),
         1
     );
-    assert_eq!(native_output, b"B");
+    assert_eq!(beep_output, b"B");
 }
 
 // [spec:nshedit:req:abi.terminal-session/test]
@@ -476,20 +476,20 @@ fn tty_commands_change_selected_masks() {
 }
 
 #[test]
-fn expands_legacy_coordinates() {
+fn expands_termcap_coordinates() {
     assert_eq!(commands::required_parameters(b"\x1b[%i%d;%dH"), 2);
     assert_eq!(
-        commands::expand_legacy_sequence(b"\x1b[%i%d;%dH", 12, 4),
+        commands::expand_termcap_sequence(b"\x1b[%i%d;%dH", 12, 4),
         b"\x1b[5;13H"
     );
     assert_eq!(
-        commands::expand_legacy_sequence(b"%r%2,%3", 7, 42),
+        commands::expand_termcap_sequence(b"%r%2,%3", 7, 42),
         b"07,042"
     );
 }
 
 #[test]
-fn parses_legacy_tty_characters() {
+fn parses_tty_control_characters() {
     assert_eq!(
         tty::parse_tty_character(""),
         ControlCharacter::EndOfLine.default_value()

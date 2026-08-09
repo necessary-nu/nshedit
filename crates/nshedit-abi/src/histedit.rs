@@ -72,7 +72,7 @@ use std::os::unix::ffi::OsStrExt;
 use nshedit::domain::{Direction, Outcome, Prompt, Refresh, TerminalLiteral, Text, TextUnit};
 use nshedit::editor::effect::{HistoryResponse, HostFailure, PromptSide, ReadOutcome};
 use nshedit::editor::{
-    ReadResult, ReadStep, Tokenization as NativeTokenization, Tokenizer as NativeTokenizer,
+    ReadResult, ReadStep, Tokenization as EditorTokenization, Tokenizer as EditorTokenizer,
 };
 use nshedit_plat::signal::{BlockedSignals, Signal as PlatformSignal};
 

@@ -187,7 +187,7 @@ pub(crate) fn collect_candidates(
     matches
 }
 
-pub(crate) fn compatibility_matches(mut candidates: Vec<String>) -> Option<Vec<String>> {
+pub(crate) fn matches_with_common_prefix(mut candidates: Vec<String>) -> Option<Vec<String>> {
     let first = candidates.first()?;
     let mut prefix_length = first.len();
     for candidate in candidates.iter().skip(1) {

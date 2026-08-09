@@ -3128,6 +3128,14 @@ children (
                             rust-idiom-terminal
                             rust-idiom-readline
                         )
+                        log (
+                            {
+                                at 2026-08-09T18:29:44.800183874Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+                        )
                     }
 
                     {

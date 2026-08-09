@@ -19,8 +19,8 @@ pub(super) unsafe fn parse_editrc_line(el: *mut EditLine, input: &[TextUnit]) ->
     let Ok(cursor) = text.index(text.len()) else {
         return -1;
     };
-    let Ok(NativeTokenization::Complete(parsed)) =
-        NativeTokenizer::default().tokenize(&text, cursor)
+    let Ok(EditorTokenization::Complete(parsed)) =
+        EditorTokenizer::default().tokenize(&text, cursor)
     else {
         return -1;
     };

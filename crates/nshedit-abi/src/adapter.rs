@@ -23,7 +23,7 @@ use nshedit::domain::{
 use nshedit::editor::effect::PromptSide;
 use nshedit::editor::{
     BaudRate, Continuation, Editor, QuoteStyle, ReadDriver, StartError, TerminalControl,
-    TerminalProfile, Tokenization, Tokenizer as NativeTokenizer,
+    TerminalProfile, Tokenization, Tokenizer as EditorTokenizer,
 };
 use nshedit_plat::signal::SignalHandlers;
 use nshedit_plat::terminal::{

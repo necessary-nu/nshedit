@@ -1,6 +1,6 @@
 //! ABI adaptation for the native driver's typed signal protocol.
 
-use nshedit::domain::{ScreenSize, Signal as NativeSignal, TerminalMode};
+use nshedit::domain::{ScreenSize, Signal as EditorSignal, TerminalMode};
 use nshedit::editor::effect::{HostFailure, ResizeEffect};
 use nshedit_plat::signal::{BlockedSignals, Signal as PlatformSignal, SignalError, SignalHandlers};
 
@@ -97,7 +97,7 @@ impl ReadSignals {
     pub(super) unsafe fn propagate(
         &mut self,
         el: *mut EditLine,
-        signal: NativeSignal,
+        signal: EditorSignal,
     ) -> Result<(), HostFailure> {
         unsafe { self.propagate_platform(el, platform_signal(signal)) }
     }
@@ -193,27 +193,33 @@ impl ReadSignals {
     }
 }
 
-fn platform_signal(signal: NativeSignal) -> PlatformSignal {
+fn platform_signal(signal: EditorSignal) -> PlatformSignal {
     match signal {
-        NativeSignal::Hangup => PlatformSignal::Hangup,
-        NativeSignal::Interrupt => PlatformSignal::Interrupt,
-        NativeSignal::Quit => PlatformSignal::Quit,
-        NativeSignal::Terminate => PlatformSignal::Terminate,
-        NativeSignal::Suspend => PlatformSignal::Suspend,
-        NativeSignal::Continue => PlatformSignal::Continue,
-        NativeSignal::Resize => PlatformSignal::Resize,
+        EditorSignal::Hangup => PlatformSignal::Hangup,
+        EditorSignal::Interrupt => PlatformSignal::Interrupt,
+        EditorSignal::Quit => PlatformSignal::Quit,
+        EditorSignal::Terminate => PlatformSignal::Terminate,
+        EditorSignal::Suspend => PlatformSignal::Suspend,
+        EditorSignal::Continue => PlatformSignal::Continue,
+        EditorSignal::Resize => PlatformSignal::Resize,
     }
 }
 
-pub(super) fn native_signal(signal: PlatformSignal) -> NativeSignal {
+/// The editor's signal for a platform one.
+///
+/// Two signal vocabularies genuinely coexist here — the platform's delivery
+/// and the editor's domain — so each conversion is named for the side it
+/// answers in, and the pair reads as the round trip it is.
+// [spec:nshedit:req:workspace.semantic-naming]
+pub(super) fn editor_signal(signal: PlatformSignal) -> EditorSignal {
     match signal {
-        PlatformSignal::Hangup => NativeSignal::Hangup,
-        PlatformSignal::Interrupt => NativeSignal::Interrupt,
-        PlatformSignal::Quit => NativeSignal::Quit,
-        PlatformSignal::Terminate => NativeSignal::Terminate,
-        PlatformSignal::Suspend => NativeSignal::Suspend,
-        PlatformSignal::Continue => NativeSignal::Continue,
-        PlatformSignal::Resize => NativeSignal::Resize,
+        PlatformSignal::Hangup => EditorSignal::Hangup,
+        PlatformSignal::Interrupt => EditorSignal::Interrupt,
+        PlatformSignal::Quit => EditorSignal::Quit,
+        PlatformSignal::Terminate => EditorSignal::Terminate,
+        PlatformSignal::Suspend => EditorSignal::Suspend,
+        PlatformSignal::Continue => EditorSignal::Continue,
+        PlatformSignal::Resize => EditorSignal::Resize,
     }
 }
 
@@ -238,7 +244,7 @@ mod tests {
     #[test]
     fn signals_round_trip_across_boundary() {
         for platform in PlatformSignal::EDITOR {
-            assert_eq!(platform_signal(native_signal(platform)), platform);
+            assert_eq!(platform_signal(editor_signal(platform)), platform);
         }
     }
 
