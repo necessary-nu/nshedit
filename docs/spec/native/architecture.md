@@ -34,6 +34,44 @@ states where those semantics may live and what the native Rust API must be.
 > Undefined C inputs MUST receive a documented safe result rather than an
 > attempt to reproduce memory unsafety.
 
+> [spec:nshedit:req:abi.terminal-controls]
+> Terminal capability and tty commands reached through `el_get`, `el_set`,
+> `el_parse`, and `el_source` MUST perform the query, mutation, byte emission,
+> listing, and diagnostic behaviour assigned by the detailed terminal and tty
+> rules. `gettc`, `settc`, `telltc`, `echotc`, and `setty` MUST share one
+> ABI-owned compatibility view of the native terminal profile and platform tty
+> state; unconditional success is forbidden where the reference performs work.
+
+> [spec:nshedit:req:abi.bindings]
+> The compatibility `bind` command MUST implement the defined editing-map,
+> alternate-map, string-macro, terminal-key, removal, listing, and query forms,
+> and MUST resolve the complete built-in and registered user-command inventory
+> required by the detailed map and command rules. A dispatched user command
+> MUST receive the invoking character and the same observable editor state as
+> the reference callback.
+
+> [spec:nshedit:req:abi.history-effects]
+> An installed narrow or wide history callback MUST service editrc history
+> commands, traversal, and accepted-line recording with the arguments, ordering,
+> return translation, and output assigned by the detailed history and read
+> rules. Foreign callback storage and invocation remain ABI-owned; the native
+> editor MUST cross this boundary only through typed history effects.
+
+> [spec:nshedit:req:abi.signal-lifecycle]
+> Signal-enabled reads MUST install, observe, propagate, and restore the signal
+> behaviour assigned by the detailed signal and read rules, while signal-disabled
+> reads MUST leave caller signal policy untouched. Platform handler ownership
+> MUST be RAII-safe, and the native driver MUST represent delivery and resume as
+> typed state rather than silently accepting every signal effect.
+
+> [spec:nshedit:req:abi.observational-coverage]
+> Compatibility tests for an operation that changes state, emits bytes, or
+> invokes callbacks MUST observe that effect and a later dependent operation;
+> matching only the immediate return code is insufficient. The final oracle
+> MUST cover the terminal-control, binding, history-effect, and signal-lifecycle
+> paths through both direct operation codes and editrc entry points where the
+> shipped headers expose both.
+
 ## Native domain
 
 > [spec:nshedit:req:core.typed-domain+1]

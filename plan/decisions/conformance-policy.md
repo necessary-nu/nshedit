@@ -9,6 +9,11 @@ scope {
         [spec:nshedit:req:abi.complete-surface]
         [spec:nshedit:req:abi.surface-stability]
         [spec:nshedit:req:abi.behavioural-conformance]
+        [spec:nshedit:req:abi.terminal-controls]
+        [spec:nshedit:req:abi.bindings]
+        [spec:nshedit:req:abi.history-effects]
+        [spec:nshedit:req:abi.signal-lifecycle]
+        [spec:nshedit:req:abi.observational-coverage]
     )
 }
 author "brendan@necessary.nu"
@@ -29,6 +34,8 @@ alternatives (
 consequences {
     accepted (
         "The detailed libedit corpus remains the behavioural authority for the ABI: return values, errno, emitted bytes, stream effects, callback ordering, pointer validity, and state transitions are observable."
+        "A compatibility probe counts as evidence only when it observes the effect the reference operation promises. A matching success code cannot prove a state mutation, emitted sequence, callback, or handler transition."
+        "State-changing probes include a dependent observation after the mutation, so an unconditional stand-in cannot satisfy the oracle by returning the reference status."
         "The compatibility oracle is strengthened before structural replacement. A missing implementation, unconditional error, or documented stand-in is fixed before it can be treated as baseline behaviour whenever the reference performs real work; reference-defined unsupported and no-op behaviour remains compatible."
         "Defined defects in the reference are preserved unless a separate decided record and a versioned rule change authorize a C-visible divergence. Idiomatization is not automatic permission to change them."
         "Existing intentional divergences are re-proven by the oracle and remain only where a rule explicitly defines them."
@@ -47,6 +54,11 @@ codifies (
     [spec:nshedit:req:abi.complete-surface]
     [spec:nshedit:req:abi.surface-stability]
     [spec:nshedit:req:abi.behavioural-conformance]
+    [spec:nshedit:req:abi.terminal-controls]
+    [spec:nshedit:req:abi.bindings]
+    [spec:nshedit:req:abi.history-effects]
+    [spec:nshedit:req:abi.signal-lifecycle]
+    [spec:nshedit:req:abi.observational-coverage]
 )
 ---
 
@@ -58,6 +70,13 @@ which its callbacks run, how long a returned pointer remains valid, which
 stream owns buffered output, and what errno contains on failure. Those
 observations remain tied to the reference implementation and the detailed
 rules extracted from it.
+
+Return-code-only comparisons are particularly weak for editrc commands: a
+stub can return zero for `bind`, `settc`, `history`, or signal preparation and
+look identical until a later read, query, callback, or emitted terminal byte
+is inspected. The oracle therefore couples each mutating operation to an
+observable consequence. This is part of defining compatibility evidence, not
+an expansion of the C contract.
 
 The greenfield core changes the mechanism, not that contract. Port-only
 compatibility gaps already documented by the ABI are therefore closed and

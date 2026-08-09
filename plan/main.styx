@@ -2583,11 +2583,74 @@ children (
             }
 
             {
+                id greenfield-terminal-compat
+                title "Implement observable terminal capability and tty command compatibility"
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:abi.terminal-controls])
+                }
+                deps (greenfield-terminal-render greenfield-abi-adapter)
+            }
+
+            {
+                id greenfield-binding-compat
+                title "Implement complete binding forms and command dispatch compatibility"
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:abi.bindings])
+                }
+                deps (greenfield-line-commands greenfield-effect-runtime greenfield-abi-adapter)
+            }
+
+            {
+                id greenfield-history-compat
+                title "Connect history callbacks to commands, traversal, and accepted lines"
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:abi.history-effects])
+                }
+                deps (
+                    greenfield-history
+                    greenfield-effect-runtime
+                    greenfield-read-driver
+                    greenfield-abi-adapter
+                )
+            }
+
+            {
+                id greenfield-signal-compat
+                title "Implement signal handler lifecycle and read-driver propagation"
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:abi.signal-lifecycle])
+                }
+                deps (greenfield-editor-shell greenfield-read-driver greenfield-abi-adapter)
+            }
+
+            {
                 id greenfield-acceptance
                 title "Prove Rust-core safety and drop-in C ABI compatibility end to end"
-                priority 0
                 kind @test
-                deps (greenfield-lint-zero greenfield-rust-consumer nshterm-hashed-db)
+                implements {
+                    native-impl ([spec:nshedit:req:abi.observational-coverage])
+                }
+                deps (
+                    greenfield-lint-zero
+                    greenfield-rust-consumer
+                    nshterm-hashed-db
+                    greenfield-terminal-compat
+                    greenfield-binding-compat
+                    greenfield-history-compat
+                    greenfield-signal-compat
+                )
+                log (
+                    {
+                        at 2026-08-09T01:10:37.887308076Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Acceptance auditing found return-code-only coverage around terminal/tty commands, binding mutations, foreign history effects, and signal handling. Those behaviours are now explicit prerequisite nodes. The four repairs are independent after their existing native-core and ABI dependencies; final acceptance joins them and must observe downstream state, output, callback, and signal effects rather than immediate statuses alone."
+                    }
+                )
             }
         )
         log (
