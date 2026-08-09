@@ -344,9 +344,17 @@ impl Effect for ExternalEditEffect {
     type Response = EffectResult<Text>;
 }
 
-/// Ask the host for the current terminal dimensions.
+/// Ask the host for terminal dimensions at one explicit lifecycle point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct ResizeEffect;
+pub enum ResizeEffect {
+    /// Prepare a fresh read and re-query caller-visible terminal state.
+    #[default]
+    Prepare,
+    /// Apply a terminal-size delivery before propagating its disposition.
+    Signal,
+    /// Rebuild display state after job-control continuation.
+    Resume,
+}
 
 impl sealed::Sealed for ResizeEffect {}
 
@@ -672,7 +680,7 @@ mod tests {
             },
             Ok(AliasResponse::Expansion(Text::from("ls -l"))),
         );
-        accepts(ResizeEffect, Ok(ScreenSize::new(24, 80).unwrap()));
+        accepts(ResizeEffect::Prepare, Ok(ScreenSize::new(24, 80).unwrap()));
         accepts(
             SignalEffect {
                 signal: Signal::Interrupt,

@@ -203,6 +203,7 @@ fn abi_shape() {
 /// same native owned parser. They are still probed in a forked child, which
 /// is what would let the rest of a run survive a regression.
 // [spec:nshedit:req:abi.behavioural-conformance/test]
+// [spec:nshedit:req:abi.signal-lifecycle/test/integration]
 #[test]
 fn differential_traces() {
     let _stages = stage_lock();

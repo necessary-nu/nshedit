@@ -1,5 +1,5 @@
-//! The signal family, and the first of this workspace's two libc `extern`
-//! blocks.
+//! Scoped signal handling, and the first of this workspace's two libc
+//! `extern` blocks.
 //!
 //! rustix declines these on principle. Its `not_implemented.rs` lists
 //! `sigaction`, `sigprocmask`, `sigwait` and `tkill` as deliberately out of
@@ -17,19 +17,27 @@
 //! *around* them is ordinary Rust: `sigemptyset` and `sigaddset` are bit
 //! operations on the transcribed [`SigSet`] and are not linked.
 //!
-//! # The installed handler
+//! # Handler ownership
 //!
 //! [`sig_trampoline`] is what `sigaction` installs, and it is the whole of
 //! the async-signal-safe work: two atomic operations, no allocation, no lock,
-//! no buffered write. It records the signal number into the slot
-//! [`set_signal_slot`] registered — which is the port's counterpart of
-//! libedit's file-static `sel`, and is `el_signal->sig_no` for the `EditLine`
-//! that last armed. `crate::sig::sig_handler` in the core is the *body*, run
-//! from ordinary context by the read loop when it notices; see the note
-//! there for what that buys and what it costs.
+//! no buffered write. It records the signal number into the stable atomic
+//! owned by one [`SignalHandlers`] value. The read loop observes that value
+//! and performs terminal transitions, resize work, and previous-disposition
+//! propagation from ordinary context.
+//!
+//! Signal dispositions are process-global, so only one scoped owner may be
+//! live at a time. Construction claims that ownership atomically; destruction
+//! restores every displaced disposition before withdrawing the stable slot.
+//! This rejects the C implementation's last-editor-wins pointer overwrite and
+//! makes both normal return and unwinding restore caller policy.
 
 use core::ffi::{c_int, c_ulong, c_void};
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
+
+mod handlers;
+
+pub use handlers::{BlockedSignals, SignalError, SignalHandlers};
 
 #[cfg(any(
     target_arch = "mips",
@@ -51,7 +59,7 @@ compile_error!(
 /// libedit traps agree everywhere in scope; only `SIGCONT` and `SIGTSTP`
 /// differ. Linux's alpha, mips, sparc and parisc ports renumber more widely
 /// and are not covered — see the `compile_error!` above.
-pub mod signo {
+mod signo {
     pub const SIGHUP: i32 = 1;
     pub const SIGINT: i32 = 2;
     pub const SIGQUIT: i32 = 3;
@@ -68,6 +76,75 @@ pub mod signo {
     pub const SIGCONT: i32 = 19;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub const SIGTSTP: i32 = 18;
+}
+
+/// One of the terminal signals an interactive editor can temporarily own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Signal {
+    /// Loss of the controlling session (`SIGHUP`).
+    Hangup,
+    /// Interactive interruption (`SIGINT`).
+    Interrupt,
+    /// Interactive quit (`SIGQUIT`).
+    Quit,
+    /// Termination request (`SIGTERM`).
+    Terminate,
+    /// Job-control stop (`SIGTSTP`).
+    Suspend,
+    /// Job-control continuation (`SIGCONT`).
+    Continue,
+    /// Terminal-size change (`SIGWINCH`).
+    Resize,
+}
+
+impl Signal {
+    /// The complete signal family owned by a signal-enabled editor read.
+    pub const EDITOR: [Self; 7] = [
+        Self::Interrupt,
+        Self::Suspend,
+        Self::Quit,
+        Self::Hangup,
+        Self::Terminate,
+        Self::Continue,
+        Self::Resize,
+    ];
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Interrupt => 0,
+            Self::Suspend => 1,
+            Self::Quit => 2,
+            Self::Hangup => 3,
+            Self::Terminate => 4,
+            Self::Continue => 5,
+            Self::Resize => 6,
+        }
+    }
+
+    const fn number(self) -> i32 {
+        match self {
+            Self::Hangup => signo::SIGHUP,
+            Self::Interrupt => signo::SIGINT,
+            Self::Quit => signo::SIGQUIT,
+            Self::Terminate => signo::SIGTERM,
+            Self::Suspend => signo::SIGTSTP,
+            Self::Continue => signo::SIGCONT,
+            Self::Resize => signo::SIGWINCH,
+        }
+    }
+
+    const fn from_number(number: i32) -> Option<Self> {
+        match number {
+            signo::SIGHUP => Some(Self::Hangup),
+            signo::SIGINT => Some(Self::Interrupt),
+            signo::SIGQUIT => Some(Self::Quit),
+            signo::SIGTERM => Some(Self::Terminate),
+            signo::SIGTSTP => Some(Self::Suspend),
+            signo::SIGCONT => Some(Self::Continue),
+            signo::SIGWINCH => Some(Self::Resize),
+            _ => None,
+        }
+    }
 }
 
 /// How many `unsigned long` words a `sigset_t` holds: 1024 bits, which is
@@ -93,14 +170,14 @@ const SA_ONSTACK: c_int = 0x0800_0000;
 /// rations the exception, and these need no ration.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct SigSet {
+struct SigSet {
     val: [c_ulong; SIGSET_WORDS],
 }
 
 impl SigSet {
     /// `sigemptyset(&set)`.
     #[must_use]
-    pub const fn empty() -> Self {
+    const fn empty() -> Self {
         Self {
             val: [0; SIGSET_WORDS],
         }
@@ -108,7 +185,7 @@ impl SigSet {
 
     /// `sigaddset(&set, signo)`. Out-of-range numbers are dropped, where the
     /// C would answer `EINVAL` and libedit would ignore it.
-    pub const fn add(&mut self, signo: i32) {
+    const fn add(&mut self, signo: i32) {
         if signo <= 0 {
             return;
         }
@@ -121,7 +198,8 @@ impl SigSet {
 
     /// One set holding exactly the given signals, in the order named.
     #[must_use]
-    pub fn of(signos: &[i32]) -> Self {
+    #[cfg(test)]
+    fn of(signos: &[i32]) -> Self {
         let mut set = Self::empty();
         for &s in signos {
             set.add(s);
@@ -144,7 +222,7 @@ impl Default for SigSet {
 /// `sem:sig.sig-clr-fn` promises the application.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct SigAction {
+struct SigAction {
     /// `sa_handler`/`sa_sigaction`, which are a union.
     handler: usize,
     mask: SigSet,
@@ -203,7 +281,7 @@ const _: () = {
 /// The C spells this as `sigaction(...) != -1 && osa.sa_handler !=
 /// sig_handler`; only this layer can compare handler identity, so the whole
 /// test is answered here.
-pub enum Installed {
+enum Installed {
     /// Installed, and what it displaced was somebody else's disposition.
     /// This is the case that fills a `sig_action[]` slot.
     Displaced(SigAction),
@@ -249,83 +327,12 @@ static PENDING_SLOT: AtomicPtr<AtomicI32> = AtomicPtr::new(core::ptr::null_mut()
 extern "C" fn sig_trampoline(signo: c_int) {
     let slot = PENDING_SLOT.load(Ordering::Acquire);
     if !slot.is_null() {
-        // SAFETY: `set_signal_slot`'s contract is that the pointer stays
-        // valid until `clear_signal_slot`, and the core clears it in
-        // `sig_clr` — which runs before the state it points into is dropped,
-        // and before any disposition of ours is left installed. Reading a
-        // shared `AtomicI32` through it is the only use.
+        // SAFETY: `SignalHandlers` publishes a boxed atomic, restores every
+        // installed disposition, and withdraws this pointer before freeing
+        // that box. Reading the atomic through the stable pointer is the only
+        // use.
         unsafe { (*slot).store(signo, Ordering::Relaxed) };
     }
-}
-
-/// Register the atomic [`sig_trampoline`] records into.
-///
-/// This is `sem:sig.sig-set-fn`'s step 2, the C's `sel = el`, and it must be
-/// issued *inside* the blocked window the rule describes rather than before
-/// it, so that a delivery cannot land while the slot and the dispositions
-/// disagree.
-///
-/// # Safety
-///
-/// `slot` must point at a live `AtomicI32` that neither moves nor is dropped
-/// until [`clear_signal_slot`] is called. The core satisfies this by pointing
-/// it at the boxed `ElSignal::sig_no` and clearing it in `sig_clr`, which
-/// `sig_end` runs before the box is dropped.
-pub unsafe fn set_signal_slot(slot: *const AtomicI32) {
-    PENDING_SLOT.store(slot.cast_mut(), Ordering::Release);
-}
-
-/// Drop the registration [`set_signal_slot`] made.
-///
-/// The C never does this, which is why after `el_end` its `sel` dangles for
-/// the rest of the process (ERR-terminal-18). `sem:sig.sig-end-fn` requires
-/// the port not to reproduce that.
-pub fn clear_signal_slot() {
-    PENDING_SLOT.store(core::ptr::null_mut(), Ordering::Release);
-}
-
-// ---------------------------------------------------------------------------
-// The override slot
-// ---------------------------------------------------------------------------
-
-/// The signal family, as one replaceable table.
-///
-/// Nothing installs one and nothing has to: the default is this module's own
-/// implementation and `plan/decisions/platform-layer.md` makes that the
-/// specified behaviour. The slot is here for an embedder that must route
-/// signal arming through its own bookkeeping — a shell with a job-control
-/// table, say — without forking the crate.
-pub struct SignalOps {
-    pub install_handler: fn(i32, &SigSet) -> Installed,
-    pub restore_handler: fn(i32, SigAction) -> bool,
-    pub sigmask_block: fn(&SigSet) -> Option<SigSet>,
-    pub sigmask_set: fn(&SigSet) -> bool,
-    pub raise: fn(i32) -> bool,
-}
-
-const BUILTIN_OPS: SignalOps = SignalOps {
-    install_handler: install_handler_default,
-    restore_handler: restore_handler_default,
-    sigmask_block: sigmask_block_default,
-    sigmask_set: sigmask_set_default,
-    raise: raise_default,
-};
-
-static OPS: AtomicPtr<SignalOps> = AtomicPtr::new(core::ptr::null_mut());
-
-/// Install an override for the whole family. Idempotent, and there is no way
-/// to take one back off — the slot is a one-way seam, not a stack.
-pub fn set_signal_ops(ops: &'static SignalOps) {
-    OPS.store(core::ptr::from_ref(ops).cast_mut(), Ordering::Release);
-}
-
-fn ops() -> &'static SignalOps {
-    let p = OPS.load(Ordering::Acquire);
-    if p.is_null() {
-        return &BUILTIN_OPS;
-    }
-    // SAFETY: `set_signal_ops` is the only writer and takes a `&'static`.
-    unsafe { &*p }
 }
 
 // ---------------------------------------------------------------------------
@@ -334,44 +341,38 @@ fn ops() -> &'static SignalOps {
 
 /// `sigaction(signo, &nsa, &osa)` with `nsa` built by [`SigAction::ours`].
 #[must_use]
-pub fn install_handler(signo: i32, mask: &SigSet) -> Installed {
-    (ops().install_handler)(signo, mask)
+fn install_handler(signo: i32, mask: &SigSet) -> Installed {
+    install_handler_default(signo, mask)
 }
 
 /// `sigaction(signo, osa, NULL)`, putting a saved disposition back. Takes the
 /// disposition by value because the callers consume the slot in the same
 /// breath. `false` is the C's -1.
 #[must_use]
-pub fn restore_handler(signo: i32, osa: SigAction) -> bool {
-    (ops().restore_handler)(signo, osa)
+fn restore_handler(signo: i32, osa: SigAction) -> bool {
+    restore_handler_default(signo, osa)
 }
 
 /// `sigprocmask(SIG_BLOCK, set, &oset)`. `None` is the C's -1.
 #[must_use]
-pub fn sigmask_block(set: &SigSet) -> Option<SigSet> {
-    (ops().sigmask_block)(set)
-}
-
-/// `sigemptyset(&nset)`, `sigaddset(&nset, signo)`, `sigprocmask(SIG_BLOCK,
-/// &nset, &oset)` — one signal, which is both `sig_handler`'s step 2 and
-/// `terminal_set`'s `SIGWINCH` block.
-#[must_use]
-pub fn sigmask_block_one(signo: i32) -> Option<SigSet> {
-    sigmask_block(&SigSet::of(&[signo]))
+fn sigmask_block(set: &SigSet) -> Option<SigSet> {
+    sigmask_block_default(set)
 }
 
 /// `sigprocmask(SIG_SETMASK, oset, NULL)`. `false` is the C's -1.
 #[must_use]
-pub fn sigmask_set(oset: &SigSet) -> bool {
-    (ops().sigmask_set)(oset)
+fn sigmask_set(oset: &SigSet) -> bool {
+    sigmask_set_default(oset)
 }
 
-/// `raise(signo)` — POSIX defines it as `pthread_kill(pthread_self(),
-/// signo)`, so the re-raised signal is delivered to this same thread.
+/// Raise one handled signal on this thread.
+///
+/// POSIX defines `raise` as `pthread_kill(pthread_self(), signo)`, so the
+/// signal is delivered to the calling thread.
 /// `false` is the C's non-zero return.
 #[must_use]
-pub fn raise(signo: i32) -> bool {
-    (ops().raise)(signo)
+pub fn raise(signal: Signal) -> bool {
+    raise_default(signal.number())
 }
 
 fn install_handler_default(signo: i32, mask: &SigSet) -> Installed {
@@ -458,7 +459,7 @@ mod tests {
 
     impl Drop for Disposition {
         fn drop(&mut self) {
-            clear_signal_slot();
+            PENDING_SLOT.store(core::ptr::null_mut(), Ordering::Release);
             // Not asserted: a failure here during an unwind would abort the
             // runner and hide the failure that caused it.
             install(self.signo, &self.saved);
@@ -588,42 +589,66 @@ mod tests {
         assert!(sigmask_set(&saved));
     }
 
+    #[test]
+    fn scoped_mask_delays_and_restores() {
+        let _disposition = Disposition::take(signo::SIGWINCH);
+        let saved_mask = sigmask_block(&SigSet::empty()).expect("read the current mask");
+        assert!(sigmask_set(&SigSet::empty()));
+
+        let theirs = SigAction {
+            handler: application_handler as *const () as usize,
+            mask: SigSet::empty(),
+            flags: 0,
+            restorer: core::ptr::null(),
+        };
+        assert!(install(signo::SIGWINCH, &theirs));
+        APPLICATION_RAN.store(0, Ordering::Relaxed);
+
+        let blocked = BlockedSignals::block(&[Signal::Resize]).unwrap();
+        assert!(raise(Signal::Resize));
+        assert_eq!(APPLICATION_RAN.load(Ordering::Relaxed), 0);
+
+        blocked.restore().unwrap();
+        assert_eq!(
+            APPLICATION_RAN.load(Ordering::Relaxed),
+            signo::SIGWINCH,
+            "the pending signal was not delivered when the guard restored the mask"
+        );
+        assert_eq!(
+            sigmask_block(&SigSet::empty())
+                .expect("read the restored mask")
+                .val,
+            SigSet::empty().val
+        );
+        assert!(sigmask_set(&saved_mask));
+    }
+
     /// The one test that can catch a wrong `struct sigaction` transcription,
     /// which the size assertion above cannot: a field in the wrong place
     /// makes the libc install a handler address it read out of `sa_mask`.
     #[test]
     fn a_handler_installs_records_and_restores() {
         let _disposition = Disposition::take(signo::SIGWINCH);
-        static SLOT: AtomicI32 = AtomicI32::new(0);
-        // SAFETY: `SLOT` is a static, so it outlives the registration below,
-        // which is cleared before this test returns.
-        unsafe { set_signal_slot(&raw const SLOT) };
-
-        let mask = SigSet::of(&[signo::SIGWINCH]);
-        let Installed::Displaced(osa) = install_handler(signo::SIGWINCH, &mask) else {
-            panic!("the first install must displace the default disposition");
-        };
+        let handlers = SignalHandlers::with_signals(&[Signal::Resize]).unwrap();
+        assert!(current(signo::SIGWINCH).is_ours());
 
         // `raise` is `pthread_kill(pthread_self(), …)`, so this lands on this
         // thread and the store is visible by the time it returns.
-        assert!(raise(signo::SIGWINCH));
-        assert_eq!(SLOT.load(Ordering::Relaxed), signo::SIGWINCH);
+        assert!(raise(Signal::Resize));
+        assert_eq!(handlers.take_pending(), Some(Signal::Resize));
 
         // The idempotence guard `sem:sig.sig-set-fn` step 4 depends on.
         assert!(matches!(
-            install_handler(signo::SIGWINCH, &mask),
+            install_handler(signo::SIGWINCH, &SigSet::of(&[signo::SIGWINCH])),
             Installed::AlreadyOurs
         ));
+        assert!(matches!(
+            SignalHandlers::with_signals(&[Signal::Resize]),
+            Err(SignalError::AlreadyActive)
+        ));
 
-        assert!(restore_handler(signo::SIGWINCH, osa));
-        SLOT.store(0, Ordering::Relaxed);
-        assert!(raise(signo::SIGWINCH));
-        assert_eq!(
-            SLOT.load(Ordering::Relaxed),
-            0,
-            "the displaced disposition was not put back"
-        );
-        clear_signal_slot();
+        handlers.restore().unwrap();
+        assert!(!current(signo::SIGWINCH).is_ours());
     }
 
     /// What `sem:sig.sig-clr-fn` promises the application: the disposition
@@ -671,7 +696,7 @@ mod tests {
 
         APPLICATION_RAN.store(0, Ordering::Relaxed);
         assert!(restore_handler(signo::SIGWINCH, osa));
-        assert!(raise(signo::SIGWINCH));
+        assert!(raise(Signal::Resize));
         assert_eq!(
             APPLICATION_RAN.load(Ordering::Relaxed),
             signo::SIGWINCH,
@@ -727,21 +752,12 @@ mod tests {
     #[test]
     fn the_trampoline_records_from_a_thread_that_never_armed() {
         let _disposition = Disposition::take(signo::SIGWINCH);
-        static SLOT: AtomicI32 = AtomicI32::new(0);
-        // SAFETY: `SLOT` is a static and the registration is cleared before
-        // this test returns.
-        unsafe { set_signal_slot(&raw const SLOT) };
-        let Installed::Displaced(osa) = install_handler(signo::SIGWINCH, &SigSet::empty()) else {
-            panic!("the first install must displace the default disposition");
-        };
+        let handlers = SignalHandlers::with_signals(&[Signal::Resize]).unwrap();
 
-        std::thread::spawn(|| assert!(raise(signo::SIGWINCH)))
+        std::thread::spawn(|| assert!(raise(Signal::Resize)))
             .join()
             .expect("the raising thread");
-        assert_eq!(SLOT.load(Ordering::Relaxed), signo::SIGWINCH);
-
-        clear_signal_slot();
-        assert!(restore_handler(signo::SIGWINCH, osa));
+        assert_eq!(handlers.take_pending(), Some(Signal::Resize));
     }
 
     /// `sig_clr` drops the registration, which the C never does — after its
@@ -749,49 +765,71 @@ mod tests {
     /// (ERR-terminal-18), and `sem:sig.sig-end-fn` requires the port not to
     /// reproduce that.
     ///
-    /// Also the re-pointing case: arming a second `EditLine` must send the
-    /// record to the second one, since the slot is the port's counterpart of a
-    /// single file-static.
+    /// Propagation consumes one saved disposition, rearming captures it
+    /// again, and dropping without propagating a later delivery still puts
+    /// the application policy back.
     #[test]
-    fn the_slot_can_be_repointed_and_dropped() {
+    fn propagation_rearm_and_drop_restore_policy() {
         let _disposition = Disposition::take(signo::SIGWINCH);
-        static FIRST: AtomicI32 = AtomicI32::new(0);
-        static SECOND: AtomicI32 = AtomicI32::new(0);
-
-        let Installed::Displaced(osa) = install_handler(signo::SIGWINCH, &SigSet::empty()) else {
-            panic!("the first install must displace the default disposition");
+        let application = SigAction {
+            handler: application_handler as *const () as usize,
+            mask: SigSet::empty(),
+            flags: 0,
+            restorer: core::ptr::null(),
         };
+        assert!(install(signo::SIGWINCH, &application));
+        APPLICATION_RAN.store(0, Ordering::Relaxed);
 
-        // SAFETY: both are statics and the registration is cleared below.
-        unsafe { set_signal_slot(&raw const FIRST) };
-        assert!(raise(signo::SIGWINCH));
-        assert_eq!(FIRST.load(Ordering::Relaxed), signo::SIGWINCH);
+        let mut handlers = SignalHandlers::with_signals(&[Signal::Resize]).unwrap();
+        assert!(raise(Signal::Resize));
+        assert_eq!(handlers.take_pending(), Some(Signal::Resize));
+        assert_eq!(APPLICATION_RAN.load(Ordering::Relaxed), 0);
 
-        // SAFETY: SECOND is also static and the registration is cleared below;
-        // repointing deliberately replaces the still-live FIRST registration.
-        unsafe { set_signal_slot(&raw const SECOND) };
-        FIRST.store(0, Ordering::Relaxed);
-        assert!(raise(signo::SIGWINCH));
-        assert_eq!(SECOND.load(Ordering::Relaxed), signo::SIGWINCH);
+        handlers.propagate(Signal::Resize).unwrap();
+        assert_eq!(APPLICATION_RAN.load(Ordering::Relaxed), signo::SIGWINCH);
+        handlers.rearm().unwrap();
+
+        APPLICATION_RAN.store(0, Ordering::Relaxed);
+        assert!(raise(Signal::Resize));
+        assert_eq!(handlers.take_pending(), Some(Signal::Resize));
+        drop(handlers);
+
+        assert!(raise(Signal::Resize));
+        assert_eq!(APPLICATION_RAN.load(Ordering::Relaxed), signo::SIGWINCH);
+    }
+
+    #[test]
+    fn empty_scope_claims_nothing() {
+        let _disposition = Disposition::take(signo::SIGWINCH);
+        let handlers = SignalHandlers::with_signals(&[]).unwrap();
+
+        assert!(!current(signo::SIGWINCH).is_ours());
+        handlers.restore().unwrap();
+        assert!(!current(signo::SIGWINCH).is_ours());
+    }
+
+    #[test]
+    fn subset_rejects_unarmed_signal() {
+        let _disposition = Disposition::take(signo::SIGWINCH);
+        let mut handlers = SignalHandlers::with_signals(&[Signal::Resize]).unwrap();
+
         assert_eq!(
-            FIRST.load(Ordering::Relaxed),
-            0,
-            "the first slot was still written"
+            handlers.propagate(Signal::Interrupt),
+            Err(SignalError::NotArmed(Signal::Interrupt))
         );
+        handlers.restore().unwrap();
+    }
 
-        // The handler stays installed here on purpose: a delivery arriving
-        // after the slot is dropped must be swallowed, not followed into
-        // freed storage.
-        clear_signal_slot();
-        SECOND.store(0, Ordering::Relaxed);
-        assert!(raise(signo::SIGWINCH));
-        assert_eq!(
-            SECOND.load(Ordering::Relaxed),
-            0,
-            "a cleared slot was written"
-        );
+    #[test]
+    fn pending_slot_keeps_latest_delivery() {
+        let _disposition = Disposition::take(signo::SIGWINCH);
+        let handlers = SignalHandlers::with_signals(&[Signal::Resize, Signal::Continue]).unwrap();
 
-        assert!(restore_handler(signo::SIGWINCH, osa));
+        assert!(raise(Signal::Resize));
+        assert!(raise(Signal::Continue));
+        assert_eq!(handlers.take_pending(), Some(Signal::Continue));
+        assert_eq!(handlers.take_pending(), None);
+        handlers.restore().unwrap();
     }
 
     /// Stands in for an application that had its own `SIGWINCH` handler before

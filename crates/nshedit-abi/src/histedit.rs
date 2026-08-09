@@ -74,6 +74,7 @@ use nshedit::editor::effect::{HistoryResponse, HostFailure, PromptSide, ReadOutc
 use nshedit::editor::{
     ReadResult, ReadStep, Tokenization as NativeTokenization, Tokenizer as NativeTokenizer,
 };
+use nshedit_plat::signal::{BlockedSignals, Signal as PlatformSignal};
 
 // Renamed on import so the signatures below read as `histedit.h` writes
 // them; see the note on `LineInfoWide`.
@@ -588,8 +589,8 @@ pub use crate::eln::el_parse;
 ///
 /// Defined in [`crate::eln`]; re-exported so the header's rules sit with
 /// the rest of `histedit.h`.
-// [spec:libedit:def:histedit.el-set-fn]
-// [spec:libedit:sem:histedit.el-set-fn]
+// [spec:libedit:def:histedit.el-set-fn+1]
+// [spec:libedit:sem:histedit.el-set-fn+1]
 pub use crate::eln::el_set;
 
 /// C: `int el_get(EditLine *, int, ...);`
@@ -690,19 +691,15 @@ pub unsafe extern "C" fn el_source(el: *mut EditLine, fname: *const c_char) -> c
     result
 }
 
-// [spec:libedit:def:histedit.el-resize-fn]
-// [spec:libedit:sem:histedit.el-resize-fn]
+// [spec:libedit:def:histedit.el-resize-fn+1]
+// [spec:libedit:sem:histedit.el-resize-fn+1]
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_resize(el: *mut EditLine) {
     // SAFETY: `el` must be non-NULL. Not async-signal-safe, as in the C.
-    let callback = unsafe { (&*el).resize_callback() };
+    let blocked = BlockedSignals::block(&[PlatformSignal::Resize]).ok();
     unsafe { &mut *el }.resize_display();
-    if let Some((callback, cookie)) = callback {
-        // SAFETY: the callback and cookie were installed by this caller for
-        // this live handle. No Rust editor borrow crosses the foreign call.
-        unsafe { callback(el, cookie) };
-    }
+    drop(blocked);
 }
 
 /// C: `const LineInfo *el_line(EditLine *);`
@@ -1310,12 +1307,17 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // `read_finish` here returns it to cooked mode.
             if on && !was {
                 el.set_unbuffered(true);
+                if el.handle_signals() {
+                    let _ = el.arm_persistent_signal_handlers();
+                }
+                el.reset_line();
                 if el.editing_enabled() {
                     let _ = el.set_terminal_mode(nshedit::domain::TerminalMode::Editing);
                 }
             } else if !on && was {
                 el.set_unbuffered(false);
                 let _ = el.set_terminal_mode(nshedit::domain::TerminalMode::Cooked);
+                let _ = el.disarm_persistent_signal_handlers();
             }
             0
         }

@@ -39,14 +39,14 @@
 // ---------------------------------------------------------------------------
 // conformance/driver/hist_tok.c — 35 rules
 // ---------------------------------------------------------------------------
-// [spec:libedit:sem:histedit.history-w-fn/test]  crates/nshedit-abi/src/histedit.rs:1917
-// [spec:libedit:sem:histedit.history-wend-fn/test]  crates/nshedit-abi/src/histedit.rs:1742
-// [spec:libedit:sem:histedit.history-winit-fn/test]  crates/nshedit-abi/src/histedit.rs:1730
-// [spec:libedit:sem:histedit.tok-wend-fn/test]  crates/nshedit-abi/src/histedit.rs:1948
-// [spec:libedit:sem:histedit.tok-winit-fn/test]  crates/nshedit-abi/src/histedit.rs:1936
-// [spec:libedit:sem:histedit.tok-wline-fn/test]  crates/nshedit-abi/src/histedit.rs:1972
-// [spec:libedit:sem:histedit.tok-wreset-fn/test]  crates/nshedit-abi/src/histedit.rs:1960
-// [spec:libedit:sem:histedit.tok-wstr-fn/test]  crates/nshedit-abi/src/histedit.rs:1998
+// [spec:libedit:sem:histedit.history-w-fn/test]  crates/nshedit-abi/src/histedit.rs:1919
+// [spec:libedit:sem:histedit.history-wend-fn/test]  crates/nshedit-abi/src/histedit.rs:1744
+// [spec:libedit:sem:histedit.history-winit-fn/test]  crates/nshedit-abi/src/histedit.rs:1732
+// [spec:libedit:sem:histedit.tok-wend-fn/test]  crates/nshedit-abi/src/histedit.rs:1950
+// [spec:libedit:sem:histedit.tok-winit-fn/test]  crates/nshedit-abi/src/histedit.rs:1938
+// [spec:libedit:sem:histedit.tok-wline-fn/test]  crates/nshedit-abi/src/histedit.rs:1974
+// [spec:libedit:sem:histedit.tok-wreset-fn/test]  crates/nshedit-abi/src/histedit.rs:1962
+// [spec:libedit:sem:histedit.tok-wstr-fn/test]  crates/nshedit-abi/src/histedit.rs:2000
 // [spec:libedit:sem:history.fun-history-end-fn/test]  crates/nshedit-abi/src/history.rs:737
 // [spec:libedit:sem:history.fun-history-init-fn/test]  crates/nshedit-abi/src/history.rs:275
 // [spec:libedit:sem:history.funw-history-fn/test]  crates/nshedit-abi/src/history/dispatch.rs:202
@@ -78,32 +78,32 @@
 // ---------------------------------------------------------------------------
 // conformance/driver/el_api.c — 26 rules
 // ---------------------------------------------------------------------------
-// [spec:libedit:sem:el.el-init-fn/test]  crates/nshedit-abi/src/histedit.rs:472
-// [spec:libedit:sem:el.el-wline-fn/test]  crates/nshedit-abi/src/histedit.rs:1683
-// [spec:libedit:sem:el.el-wset-fn/test]  crates/nshedit-abi/src/histedit.rs:1061
+// [spec:libedit:sem:el.el-init-fn/test]  crates/nshedit-abi/src/histedit.rs:473
+// [spec:libedit:sem:el.el-wline-fn/test]  crates/nshedit-abi/src/histedit.rs:1685
+// [spec:libedit:sem:el.el-wset-fn/test]  crates/nshedit-abi/src/histedit.rs:1058
 // [spec:libedit:sem:eln.el-get-fn/test]  crates/nshedit-abi/src/eln.rs:652
 // [spec:libedit:sem:eln.el-insertstr-fn/test]  crates/nshedit-abi/src/eln.rs:872
 // [spec:libedit:sem:eln.el-line-fn/test]  crates/nshedit-abi/src/eln.rs:779
 // [spec:libedit:sem:eln.el-parse-fn/test]  crates/nshedit-abi/src/eln.rs:308
 // [spec:libedit:sem:eln.el-set-fn/test]  crates/nshedit-abi/src/eln.rs:383
-// [spec:libedit:sem:histedit.el-cursor-fn/test]  crates/nshedit-abi/src/histedit.rs:1668
-// [spec:libedit:sem:histedit.el-deletestr-fn/test]  crates/nshedit-abi/src/histedit.rs:728
-// [spec:libedit:sem:histedit.el-end-fn/test]  crates/nshedit-abi/src/histedit.rs:526
-// [spec:libedit:sem:histedit.el-init-fn/test]  crates/nshedit-abi/src/histedit.rs:472
-// [spec:libedit:sem:histedit.el-resize-fn/test]  crates/nshedit-abi/src/histedit.rs:697
-// [spec:libedit:sem:histedit.el-source-fn/test]  crates/nshedit-abi/src/histedit.rs:633
-// [spec:libedit:sem:histedit.el-winsertstr-fn/test]  crates/nshedit-abi/src/histedit.rs:1709
-// [spec:libedit:sem:histedit.el-wline-fn/test]  crates/nshedit-abi/src/histedit.rs:1683
-// [spec:libedit:sem:histedit.el-wparse-fn/test]  crates/nshedit-abi/src/histedit.rs:1028
-// [spec:libedit:sem:histedit.el-wset-fn/test]  crates/nshedit-abi/src/histedit.rs:1061
-// [spec:libedit:sem:histedit.history-end-fn/test]  crates/nshedit-abi/src/histedit.rs:775
-// [spec:libedit:sem:histedit.history-fn/test]  crates/nshedit-abi/src/histedit.rs:791
-// [spec:libedit:sem:histedit.history-init-fn/test]  crates/nshedit-abi/src/histedit.rs:761
-// [spec:libedit:sem:histedit.tok-end-fn/test]  crates/nshedit-abi/src/histedit.rs:823
-// [spec:libedit:sem:histedit.tok-init-fn/test]  crates/nshedit-abi/src/histedit.rs:807
-// [spec:libedit:sem:histedit.tok-reset-fn/test]  crates/nshedit-abi/src/histedit.rs:835
-// [spec:libedit:sem:histedit.tok-str-fn/test]  crates/nshedit-abi/src/histedit.rs:876
-// [spec:libedit:sem:tokenizer.fun-tok-end-fn/test]  crates/nshedit-abi/src/histedit.rs:823
+// [spec:libedit:sem:histedit.el-cursor-fn/test]  crates/nshedit-abi/src/histedit.rs:1670
+// [spec:libedit:sem:histedit.el-deletestr-fn/test]  crates/nshedit-abi/src/histedit.rs:725
+// [spec:libedit:sem:histedit.el-end-fn/test]  crates/nshedit-abi/src/histedit.rs:527
+// [spec:libedit:sem:histedit.el-init-fn/test]  crates/nshedit-abi/src/histedit.rs:473
+// [spec:libedit:sem:histedit.el-resize-fn+1/test]  crates/nshedit-abi/src/histedit.rs:698
+// [spec:libedit:sem:histedit.el-source-fn/test]  crates/nshedit-abi/src/histedit.rs:634
+// [spec:libedit:sem:histedit.el-winsertstr-fn/test]  crates/nshedit-abi/src/histedit.rs:1711
+// [spec:libedit:sem:histedit.el-wline-fn/test]  crates/nshedit-abi/src/histedit.rs:1685
+// [spec:libedit:sem:histedit.el-wparse-fn/test]  crates/nshedit-abi/src/histedit.rs:1025
+// [spec:libedit:sem:histedit.el-wset-fn/test]  crates/nshedit-abi/src/histedit.rs:1058
+// [spec:libedit:sem:histedit.history-end-fn/test]  crates/nshedit-abi/src/histedit.rs:772
+// [spec:libedit:sem:histedit.history-fn/test]  crates/nshedit-abi/src/histedit.rs:788
+// [spec:libedit:sem:histedit.history-init-fn/test]  crates/nshedit-abi/src/histedit.rs:758
+// [spec:libedit:sem:histedit.tok-end-fn/test]  crates/nshedit-abi/src/histedit.rs:820
+// [spec:libedit:sem:histedit.tok-init-fn/test]  crates/nshedit-abi/src/histedit.rs:804
+// [spec:libedit:sem:histedit.tok-reset-fn/test]  crates/nshedit-abi/src/histedit.rs:832
+// [spec:libedit:sem:histedit.tok-str-fn/test]  crates/nshedit-abi/src/histedit.rs:873
+// [spec:libedit:sem:tokenizer.fun-tok-end-fn/test]  crates/nshedit-abi/src/histedit.rs:820
 
 // ---------------------------------------------------------------------------
 // conformance/driver/readline_api.c — 79 rules
@@ -111,8 +111,8 @@
 // [spec:libedit:sem:eln.el-replacestr-fn/test]  crates/nshedit-abi/src/eln.rs:894
 // [spec:libedit:sem:filecomplete.fn-filename-completion-function-fn/test]  crates/nshedit-abi/src/filecomplete.rs:933
 // [spec:libedit:sem:filecomplete.fn-tilde-expand-fn/test]  crates/nshedit-abi/src/filecomplete.rs:874
-// [spec:libedit:sem:histedit.el-deletestr1-fn/test]  crates/nshedit-abi/src/histedit.rs:748
-// [spec:libedit:sem:histedit.el-wreplacestr-fn/test]  crates/nshedit-abi/src/histedit.rs:1720
+// [spec:libedit:sem:histedit.el-deletestr1-fn/test]  crates/nshedit-abi/src/histedit.rs:745
+// [spec:libedit:sem:histedit.el-wreplacestr-fn/test]  crates/nshedit-abi/src/histedit.rs:1722
 // [spec:libedit:sem:readline.add-history-fn/test]  crates/nshedit-abi/src/readline.rs:2619
 // [spec:libedit:sem:readline.append-history-fn/test]  crates/nshedit-abi/src/readline/history_io.rs:252
 // [spec:libedit:sem:readline.clear-history-fn/test]  crates/nshedit-abi/src/readline.rs:2741
@@ -192,11 +192,15 @@
 // conformance/driver/pty_edit.c — 3 rules
 // ---------------------------------------------------------------------------
 // [spec:libedit:sem:eln.el-gets-fn/test]  crates/nshedit-abi/src/eln.rs:235
-// [spec:libedit:sem:histedit.el-wgets-fn/test]  crates/nshedit-abi/src/histedit.rs:918
-// [spec:libedit:sem:histedit.wcsdup-fn/test]  crates/nshedit-abi/src/histedit.rs:918
+// [spec:libedit:sem:histedit.el-wgets-fn/test]  crates/nshedit-abi/src/histedit.rs:915
+// [spec:libedit:sem:histedit.wcsdup-fn/test]  crates/nshedit-abi/src/histedit.rs:915
 
 // ---------------------------------------------------------------------------
 // conformance/driver/binding_dispatch.c — 0 rules
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// conformance/driver/signal_lifecycle.c — 0 rules
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -215,12 +219,12 @@
 ///
 /// A rule reached by more than one driver is attributed to the first that
 /// reaches it, so these sum to the total. The overlap is large and that is
-/// expected — 147 of 147 rules are reached by more than one,
+/// expected — 65 of 147 rules are reached by more than one,
 /// because every driver goes through the same lifecycle and allocator paths.
 #[test]
 fn the_claim_list_is_what_coverage_measured() {
     // Regenerate with ./conformance/coverage.sh, verify with --check.
-    // 147 rules across 7 drivers, measured under -C instrument-coverage.
+    // 147 rules across 8 drivers, measured under -C instrument-coverage.
     assert_eq!(CLAIMED, 147);
 }
 

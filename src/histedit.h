@@ -131,8 +131,8 @@ int		 el_parse(EditLine *, int, const char **);
 /*
  * Low level editline access functions
  */
-// [spec:libedit:def:histedit.el-set-fn]
-// [spec:libedit:sem:histedit.el-set-fn]
+// [spec:libedit:def:histedit.el-set-fn+1]
+// [spec:libedit:sem:histedit.el-set-fn+1]
 int		 el_set(EditLine *, int, ...);
 // [spec:libedit:def:histedit.el-get-fn]
 // [spec:libedit:sem:histedit.el-get-fn]
@@ -205,8 +205,8 @@ int		el_source(EditLine *, const char *);
  * is set this is done automatically otherwise it is the responsibility
  * of the application
  */
-// [spec:libedit:def:histedit.el-resize-fn]
-// [spec:libedit:sem:histedit.el-resize-fn]
+// [spec:libedit:def:histedit.el-resize-fn+1]
+// [spec:libedit:sem:histedit.el-resize-fn+1]
 void		 el_resize(EditLine *);
 
 /*

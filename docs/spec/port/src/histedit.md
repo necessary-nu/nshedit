@@ -456,10 +456,10 @@
 > has no NULL check, so `el_reset(NULL)` is undefined behaviour.
 > Invalidates any previously returned `LineInfo`/`LineInfoW`.
 
-> [spec:libedit:def:histedit.el-resize-fn]
+> [spec:libedit:def:histedit.el-resize-fn+1]
 > void el_resize(EditLine *)
 
-> [spec:libedit:sem:histedit.el-resize-fn]
+> [spec:libedit:sem:histedit.el-resize-fn+1]
 > Re-read the terminal window size and, if it changed, propagate the new
 > geometry through libedit's display state. Must be called by the
 > application when the terminal is resized unless `EL_SIGNAL` is enabled,
@@ -470,9 +470,9 @@
 > capability values and then to the `LINES`/`COLUMNS` environment variables
 > read through the installed environment accessor); if the query reports a
 > change, apply it — which reallocates the display and visual line arrays,
-> re-derives the wrap behaviour, and invokes the `EL_RESIZE` callback if
-> one is installed. Finally restore the saved signal mask with
-> `sigprocmask(SIG_SETMASK, ...)`.
+> re-derives the wrap behaviour, and clears the recorded display. This path
+> does not invoke the `EL_RESIZE` callback. Finally restore the saved signal
+> mask with `sigprocmask(SIG_SETMASK, ...)`.
 > Returns nothing; allocation failures inside the resize are not reported.
 > `el` must be non-NULL. Not async-signal-safe: it must be called from
 > normal context, not from a signal handler.
@@ -480,10 +480,10 @@
 > [spec:libedit:def:histedit.el-rfunc-t-edit-line-wchar-t]
 > typedef int (*el_rfunc_t)(EditLine *, wchar_t *)
 
-> [spec:libedit:def:histedit.el-set-fn]
+> [spec:libedit:def:histedit.el-set-fn+1]
 > int el_set(EditLine *, int, ...)
 
-> [spec:libedit:sem:histedit.el-set-fn]
+> [spec:libedit:sem:histedit.el-set-fn+1]
 > Narrow (multibyte) variant of the parameter-setting varargs entry point.
 > Returns 0 on success and -1 on failure, including for any op it does not
 > recognise.
@@ -501,8 +501,8 @@
 >   stored directly. Always returns 0.
 > - `EL_RESIZE` (23), args `void (*)(EditLine *, void *)` and `void *`:
 >   record the resize callback and its opaque argument. Always returns 0.
->   The callback is invoked from `el_resize`, from buffer growth, and from
->   `el_line`.
+>   The callback is invoked from buffer growth and from `el_line`;
+>   `el_resize` itself does not invoke it.
 > - `EL_ALIAS_TEXT` (24), args `const char *(*)(void *, const char *)` and
 >   `void *`: record the alias-expansion callback and its argument. Always
 >   returns 0.
@@ -1654,4 +1654,3 @@
 > retained only to record what the symbol meant when it was present, so
 > that a consumer that compiled against a `wcsdup`-less build is
 > understood.
-

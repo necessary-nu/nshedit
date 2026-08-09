@@ -3158,7 +3158,7 @@ fn _el_rl_tstp(el: *mut EditLine, ch: c_int) -> c_uchar {
     // cooked mode before the process actually stops, and if the application
     // did not turn `EL_SIGNAL` on, nothing does — which is the C's behaviour
     // too. The result is discarded, as the C discards `raise`'s.
-    let _ = nshedit_plat::signal::raise(nshedit_plat::signal::signo::SIGTSTP);
+    let _ = nshedit_plat::signal::raise(nshedit_plat::signal::Signal::Suspend);
     CC_NORM
 }
 

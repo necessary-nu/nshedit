@@ -560,37 +560,23 @@ fn the_bind_wrapper_hardcodes_a_count_of_one_and_discards_the_result() {
 /// `EL_SIGNAL` on, nothing puts the tty back into cooked mode before the
 /// stop.
 ///
-/// The signal is real, so the test cannot let its default action run: it
-/// installs the platform layer's own trampoline for the duration and
-/// points the trampoline's slot at a local, which is the only way to
-/// observe the raise rather than be stopped by it. Both are put back
-/// before anything is asserted, so a failure cannot leave SIGTSTP
-/// disarmed for the rest of the binary.
+/// The signal is real, so the test cannot let its default action run. A
+/// one-signal scoped owner observes the raise and restores the previous
+/// disposition even if the assertion unwinds.
 // [spec:libedit:sem:readline.el-rl-tstp-fn/test]
 #[test]
 fn suspending_raises_sigtstp_at_this_thread_and_resumes_normally() {
-    use nshedit_plat::signal::{self, Installed, SigSet, signo};
+    use nshedit_plat::signal::{Signal, SignalHandlers};
 
     let _g = globals();
-    let seen = AtomicI32::new(0);
-
-    let installed = signal::install_handler(signo::SIGTSTP, &SigSet::empty());
-    let Installed::Displaced(previous) = installed else {
-        panic!("could not take SIGTSTP over for the duration of the test");
-    };
-    // SAFETY: `seen` outlives the window, and `clear_signal_slot` below
-    // ends the registration before it is dropped.
-    unsafe { signal::set_signal_slot(&raw const seen) };
+    let handlers = SignalHandlers::with_signals(&[Signal::Suspend]).unwrap();
 
     // Both parameters are unused.
     let rc = _el_rl_tstp(ptr::null_mut(), c_int::from(b'\x1a'));
 
-    signal::clear_signal_slot();
-    assert!(signal::restore_handler(signo::SIGTSTP, previous));
-
     // `raise` is `pthread_kill(pthread_self(), ...)`, so delivery has
     // already happened by the time it returns.
-    assert_eq!(seen.load(Relaxed), signo::SIGTSTP);
+    assert_eq!(handlers.take_pending(), Some(Signal::Suspend));
     assert_eq!(rc, CC_NORM);
 }
 

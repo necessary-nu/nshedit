@@ -16,6 +16,10 @@ use nshedit::editor::effect::{
     HistoryWordResponse,
 };
 
+mod signal;
+
+use signal::{DirectReadOutcome, ReadSignals, native_signal};
+
 /// A safe writer over the caller-owned output stream for one driver step.
 struct CompatibilityOutput {
     stream: CFile,
@@ -127,13 +131,22 @@ unsafe fn host_prompt(el: *mut EditLine, side: PromptSide) -> Prompt {
 
 /// Obtain one owned input response without retaining an editor borrow while
 /// an application callback runs.
-unsafe fn host_read(el: *mut EditLine) -> Result<ReadOutcome, HostFailure> {
+unsafe fn host_read(
+    el: *mut EditLine,
+    signals: &mut ReadSignals,
+) -> Result<ReadOutcome, HostFailure> {
+    if let Some(signal) = unsafe { signals.take_pending(el) } {
+        return Ok(ReadOutcome::Signal(native_signal(signal)));
+    }
     if let Some(unit) = unsafe { (&mut *el).pop_input() } {
+        let _ = unsafe { signals.resume_pending_direct(el) }?;
         return Ok(ReadOutcome::Unit(unit));
     }
     if let Some(callback) = unsafe { (&*el).read_callback() } {
         let mut value = 0;
-        return match unsafe { callback(el, &raw mut value) } {
+        let result = unsafe { callback(el, &raw mut value) };
+        let _ = unsafe { signals.resume_pending_direct(el) }?;
+        return match result {
             result if result > 0 => Ok(ReadOutcome::Unit(TextUnit::from_wide(value))),
             0 => Ok(ReadOutcome::EndOfInput),
             _ => Err(HostFailure::Failed("input callback failed".into())),
@@ -141,18 +154,34 @@ unsafe fn host_read(el: *mut EditLine) -> Result<ReadOutcome, HostFailure> {
     }
 
     if unsafe { (&*el).descriptor(0) }.is_none_or(|descriptor| descriptor < 0) {
+        let _ = unsafe { signals.resume_pending_direct(el) }?;
         return Ok(ReadOutcome::EndOfInput);
     }
 
     let mut bytes = [0; 64];
     loop {
+        if let Some(signal) = unsafe { signals.take_pending(el) } {
+            return Ok(ReadOutcome::Signal(native_signal(signal)));
+        }
         match unsafe { (&*el).read_input(&mut bytes) } {
-            Ok(0) => return Ok(ReadOutcome::EndOfInput),
-            Ok(length) => return Ok(ReadOutcome::Bytes(bytes[..length].into())),
-            Err(error)
-                if error.kind() == std::io::ErrorKind::Interrupted
-                    && unsafe { (&*el).safe_read() } => {}
-            Err(error) => return Err(HostFailure::Failed(error.to_string().into_boxed_str())),
+            Ok(0) => {
+                let _ = unsafe { signals.resume_pending_direct(el) }?;
+                return Ok(ReadOutcome::EndOfInput);
+            }
+            Ok(length) => {
+                let _ = unsafe { signals.resume_pending_direct(el) }?;
+                return Ok(ReadOutcome::Bytes(bytes[..length].into()));
+            }
+            Err(error) => {
+                if let Some(signal) = unsafe { signals.take_pending(el) } {
+                    return Ok(ReadOutcome::Signal(native_signal(signal)));
+                }
+                if error.kind() == std::io::ErrorKind::Interrupted && unsafe { (&*el).safe_read() }
+                {
+                    continue;
+                }
+                return Err(HostFailure::Failed(error.to_string().into_boxed_str()));
+            }
         }
     }
 }
@@ -164,9 +193,11 @@ unsafe fn host_read(el: *mut EditLine) -> Result<ReadOutcome, HostFailure> {
 /// pushed input must bypass terminal activation entirely.
 pub(super) unsafe fn read_wide_character(el: *mut EditLine, wc: *mut WcharT) -> c_int {
     let _ = unsafe { (&*el).flush_output() };
+    let mut signals = ReadSignals::empty();
 
     if let Some(unit) = unsafe { (&mut *el).pop_input() } {
         unsafe { *wc = crate::adapter::unit_to_wide(unit) };
+        let _ = unsafe { signals.resume_pending_direct(el) };
         return 1;
     }
 
@@ -177,7 +208,9 @@ pub(super) unsafe fn read_wide_character(el: *mut EditLine, wc: *mut WcharT) -> 
     }
 
     if let Some(callback) = unsafe { (&*el).read_callback() } {
-        return unsafe { callback(el, wc) };
+        let result = unsafe { callback(el, wc) };
+        let _ = unsafe { signals.resume_pending_direct(el) };
+        return result;
     }
 
     let mut pending = [0; 6];
@@ -186,6 +219,10 @@ pub(super) unsafe fn read_wide_character(el: *mut EditLine, wc: *mut WcharT) -> 
         match crate::conversion::decode_prefix(&pending[..used]) {
             crate::conversion::PrefixDecode::Complete(value) => {
                 unsafe { *wc = value };
+                if unsafe { signals.resume_pending_direct(el) }.is_err() {
+                    unsafe { *wc = 0 };
+                    return -1;
+                }
                 return 1;
             }
             crate::conversion::PrefixDecode::Incomplete => {}
@@ -206,16 +243,40 @@ pub(super) unsafe fn read_wide_character(el: *mut EditLine, wc: *mut WcharT) -> 
         }
 
         let next = &mut pending[used..=used];
+        if unsafe { signals.resume_pending_direct(el) }.is_err() {
+            unsafe { *wc = 0 };
+            return -1;
+        }
         match unsafe { (&*el).read_input(next) } {
             Ok(0) => {
+                if unsafe { signals.resume_pending_direct(el) }.is_err() {
+                    unsafe { *wc = 0 };
+                    return -1;
+                }
                 unsafe { *wc = 0 };
                 return 0;
             }
-            Ok(_) => used += 1,
-            Err(error)
-                if error.kind() == std::io::ErrorKind::Interrupted
-                    && unsafe { (&*el).safe_read() } => {}
-            Err(_) => {
+            Ok(_) => {
+                used += 1;
+                if unsafe { signals.resume_pending_direct(el) }.is_err() {
+                    unsafe { *wc = 0 };
+                    return -1;
+                }
+            }
+            Err(error) => {
+                if let Some(signal) = unsafe { signals.take_pending(el) } {
+                    match unsafe { signals.resume_direct(el, signal) } {
+                        Ok(DirectReadOutcome::Resume) => continue,
+                        Ok(DirectReadOutcome::Interrupt) | Err(_) => {
+                            unsafe { *wc = 0 };
+                            return -1;
+                        }
+                    }
+                }
+                if error.kind() == std::io::ErrorKind::Interrupted && unsafe { (&*el).safe_read() }
+                {
+                    continue;
+                }
                 unsafe { *wc = 0 };
                 return -1;
             }
@@ -732,6 +793,8 @@ unsafe fn host_command(
 }
 
 pub(super) unsafe fn drive_read(el: *mut EditLine) -> Result<ReadResult, ()> {
+    let mut signals = unsafe { ReadSignals::edited(el) }?;
+
     let mut step = {
         let (editor, driver) = unsafe { (&mut *el).split_driver() };
         driver.begin(editor).map_err(|_| ())?
@@ -746,14 +809,14 @@ pub(super) unsafe fn drive_read(el: *mut EditLine) -> Result<ReadResult, ()> {
                     .map_err(|_| ())?
             }
             ReadStep::Resize(pending) => {
-                let response = unsafe { (&*el).screen_size() }.ok_or(HostFailure::Unavailable);
+                let response = unsafe { signals.resize(el, *pending.request()) };
                 let (editor, driver) = unsafe { (&mut *el).split_driver() };
                 driver
                     .resume_resize(editor, &pending, response)
                     .map_err(|_| ())?
             }
             ReadStep::Read(pending) => {
-                let response = unsafe { host_read(el) };
+                let response = unsafe { host_read(el, &mut signals) };
                 let (editor, driver) = unsafe { (&mut *el).split_driver() };
                 driver
                     .resume_read(editor, &pending, response)
@@ -835,9 +898,10 @@ pub(super) unsafe fn drive_read(el: *mut EditLine) -> Result<ReadResult, ()> {
                     .map_err(|_| ())?
             }
             ReadStep::Signal(pending) => {
+                let response = unsafe { signals.propagate(el, pending.request().signal) };
                 let (editor, driver) = unsafe { (&mut *el).split_driver() };
                 driver
-                    .resume_signal(editor, &pending, Ok(()))
+                    .resume_signal(editor, &pending, response)
                     .map_err(|_| ())?
             }
             ReadStep::Display(display) => {
@@ -848,20 +912,27 @@ pub(super) unsafe fn drive_read(el: *mut EditLine) -> Result<ReadResult, ()> {
                     .display(editor, &display, &mut output)
                     .map_err(|_| ())?
             }
-            ReadStep::Complete(result) => return Ok(result),
+            ReadStep::Complete(result) => {
+                unsafe { signals.finish(el) }.map_err(|_| ())?;
+                return Ok(result);
+            }
         };
     }
 }
 
 pub(super) unsafe fn read_unedited(el: *mut EditLine) -> Result<bool, ()> {
+    let mut signals = unsafe { ReadSignals::unedited(el) }?;
     let callback = unsafe { (&*el).read_callback() };
     let unbuffered = unsafe { (&*el).unbuffered() };
     let mut line = Text::default();
     let mut bytes = Vec::new();
     loop {
         if let Some(callback) = callback {
+            let _ = unsafe { signals.resume_pending_direct(el) }.map_err(|_| ())?;
             let mut value = 0;
-            match unsafe { callback(el, &raw mut value) } {
+            let result = unsafe { callback(el, &raw mut value) };
+            let delivery = unsafe { signals.resume_pending_direct(el) }.map_err(|_| ())?;
+            match result {
                 result if result > 0 => {
                     let unit = TextUnit::from_wide(value);
                     line.push(unit);
@@ -870,26 +941,50 @@ pub(super) unsafe fn read_unedited(el: *mut EditLine) -> Result<bool, ()> {
                     }
                 }
                 0 => break,
-                _ => return Err(()),
+                _ => {
+                    if delivery.is_some() {
+                        unsafe { (&mut *el).reset_line() };
+                    }
+                    return Err(());
+                }
             }
         } else {
             let mut byte = [0];
+            let _ = unsafe { signals.resume_pending_direct(el) }.map_err(|_| ())?;
             match unsafe { (&*el).read_input(&mut byte) } {
                 Ok(1) => {
+                    let _ = unsafe { signals.resume_pending_direct(el) }.map_err(|_| ())?;
                     bytes.push(byte[0]);
                     if unbuffered || matches!(byte[0], b'\r' | b'\n') {
                         break;
                     }
                 }
-                Ok(0) => break,
+                Ok(0) => {
+                    let _ = unsafe { signals.resume_pending_direct(el) }.map_err(|_| ())?;
+                    break;
+                }
                 Ok(_) => unreachable!("the one-byte buffer cannot read more than one byte"),
-                Err(error)
+                Err(error) => {
+                    if let Some(signal) = unsafe { signals.take_pending(el) } {
+                        if unsafe { signals.resume_direct(el, signal) }.map_err(|_| ())?
+                            == DirectReadOutcome::Resume
+                        {
+                            continue;
+                        }
+                        unsafe { (&mut *el).reset_line() };
+                        return Err(());
+                    }
                     if error.kind() == std::io::ErrorKind::Interrupted
-                        && unsafe { (&*el).safe_read() } => {}
-                Err(_) => return Err(()),
+                        && unsafe { (&*el).safe_read() }
+                    {
+                        continue;
+                    }
+                    return Err(());
+                }
             }
         }
     }
+    unsafe { signals.finish(el) }.map_err(|_| ())?;
     if callback.is_none() {
         line = text_from_bytes(&bytes);
     }

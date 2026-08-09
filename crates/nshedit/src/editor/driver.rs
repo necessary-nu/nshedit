@@ -5,6 +5,7 @@ mod decode;
 mod error;
 mod immediate;
 mod sequence;
+mod signal;
 
 use std::collections::VecDeque;
 use std::io::Write;
@@ -13,7 +14,7 @@ use std::sync::Arc;
 
 use crate::domain::{
     Action, Binding, Buffering, Direction, EditTarget, KeyLookup, KeySequence, KeymapMode, Motion,
-    Outcome, Prompt, Refresh, RepeatCount, Signal, SignalPolicy, TerminalMode, Text, TextUnit,
+    Outcome, Prompt, Refresh, RepeatCount, Signal, TerminalMode, Text, TextUnit,
 };
 
 use super::effect::{
@@ -202,6 +203,7 @@ pub struct ReadDriver {
     replaying_change: bool,
     expanded_units: usize,
     eof_pending: bool,
+    signal_after_resize: Option<Signal>,
     pending_beeps: usize,
     left_prompt: Prompt,
     right_prompt: Option<Prompt>,
@@ -245,6 +247,7 @@ impl ReadDriver {
             replaying_change: false,
             expanded_units: 0,
             eof_pending: false,
+            signal_after_resize: None,
             pending_beeps: 0,
             left_prompt: Prompt::default(),
             right_prompt: None,
@@ -278,7 +281,7 @@ impl ReadDriver {
             .map_err(DriverError::Terminal)?;
         self.clear_transient(editor.config().buffering() != Buffering::Line);
         self.phase = Phase::Advancing;
-        self.pending(editor, ResizeEffect, EffectKind::Resize)
+        self.pending(editor, ResizeEffect::Prepare, EffectKind::Resize)
             .map(ReadStep::Resize)
     }
 
@@ -314,27 +317,6 @@ impl ReadDriver {
             }
             _ => unreachable!("the effect kind came from a prompt side"),
         }
-    }
-
-    /// Resume a terminal-size request and rebuild the display.
-    pub fn resume_resize<T: TerminalControl>(
-        &mut self,
-        editor: &mut Editor<T>,
-        pending: &Pending<ResizeEffect>,
-        response: <ResizeEffect as Effect>::Response,
-    ) -> Result<ReadStep, DriverError> {
-        let response = self.accept(editor, pending, EffectKind::Resize, response)?;
-        match response {
-            Ok(size) => editor
-                .resize_display(size)
-                .map_err(|error| self.fail(editor, DriverError::Render(error)))?,
-            Err(HostFailure::Unavailable) => {}
-            Err(HostFailure::Interrupted) => {
-                return self.complete(editor, ReadResult::Interrupted(ReadInterrupt::Host));
-            }
-            Err(error) => return Err(self.fail(editor, DriverError::Host(error))),
-        }
-        self.schedule_display(editor, DisplayKind::Refresh)
     }
 
     /// Perform one display step, then continue input processing.
@@ -497,32 +479,6 @@ impl ReadDriver {
                 self.schedule_display(editor, DisplayKind::FinishLine)
             }
             Err(error) => Err(self.fail(editor, DriverError::Host(error))),
-        }
-    }
-
-    /// Resume host signal propagation.
-    pub fn resume_signal<T: TerminalControl>(
-        &mut self,
-        editor: &mut Editor<T>,
-        pending: &Pending<SignalEffect>,
-        response: <SignalEffect as Effect>::Response,
-    ) -> Result<ReadStep, DriverError> {
-        let signal = pending.request().signal;
-        let response = self.accept(editor, pending, EffectKind::Signal, response)?;
-        if let Err(HostFailure::Failed(message)) = response {
-            return Err(self.fail(editor, DriverError::Host(HostFailure::Failed(message))));
-        }
-        if signal == Signal::Suspend {
-            editor
-                .set_terminal_mode(TerminalMode::Editing)
-                .map_err(|error| self.fail(editor, DriverError::Terminal(error)))?;
-            self.pending(editor, ResizeEffect, EffectKind::Resize)
-                .map(ReadStep::Resize)
-        } else {
-            self.complete(
-                editor,
-                ReadResult::Interrupted(ReadInterrupt::Signal(signal)),
-            )
         }
     }
 
@@ -1071,38 +1027,6 @@ impl ReadDriver {
         }
     }
 
-    fn handle_signal<T: TerminalControl>(
-        &mut self,
-        editor: &mut Editor<T>,
-        signal: Signal,
-    ) -> Result<ReadStep, DriverError> {
-        if editor.config().signal_policy() == SignalPolicy::Ignore {
-            return self.complete(
-                editor,
-                ReadResult::Interrupted(ReadInterrupt::Signal(signal)),
-            );
-        }
-        match signal {
-            Signal::Resize => self
-                .pending(editor, ResizeEffect, EffectKind::Resize)
-                .map(ReadStep::Resize),
-            Signal::Continue => {
-                editor
-                    .set_terminal_mode(TerminalMode::Editing)
-                    .map_err(|error| self.fail(editor, DriverError::Terminal(error)))?;
-                self.pending(editor, ResizeEffect, EffectKind::Resize)
-                    .map(ReadStep::Resize)
-            }
-            signal => {
-                editor
-                    .set_terminal_mode(TerminalMode::Cooked)
-                    .map_err(|error| self.fail(editor, DriverError::Terminal(error)))?;
-                self.pending(editor, SignalEffect { signal }, EffectKind::Signal)
-                    .map(ReadStep::Signal)
-            }
-        }
-    }
-
     fn schedule_display<T: TerminalControl>(
         &mut self,
         editor: &mut Editor<T>,
@@ -1265,6 +1189,7 @@ impl ReadDriver {
         self.semantic_replay.clear();
         self.replaying_change = false;
         self.expanded_units = 0;
+        self.signal_after_resize = None;
         self.pending_beeps = 0;
         self.left_prompt = Prompt::default();
         self.right_prompt = None;

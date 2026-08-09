@@ -377,4 +377,13 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule abi.binding-dispatch}
     )}
+    {id greenfield-signal-compat, covered_rules (
+        abi.signal-lifecycle
+        histedit.el-resize-fn
+        histedit.el-set-fn
+    ), covered_claims (
+        {impl_name native-impl, rule abi.signal-lifecycle}
+        {impl_name native-impl, rule histedit.el-resize-fn}
+        {impl_name native-impl, rule histedit.el-set-fn}
+    )}
 )

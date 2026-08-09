@@ -333,6 +333,91 @@ fn history_completion_and_signal_resume() {
     assert_eq!(editor.terminal_mode(), TerminalMode::Cooked);
 }
 
+// [spec:nshedit:req:abi.signal-lifecycle/test]
+#[test]
+fn signal_transitions_are_typed() {
+    let mut editor = editor(EditorConfig::default());
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+    let pending = read(settle(&mut driver, &mut editor, begin, &mut output));
+
+    let step = driver
+        .resume_read(
+            &mut editor,
+            &pending,
+            Ok(ReadOutcome::Signal(Signal::Resize)),
+        )
+        .unwrap();
+    let ReadStep::Resize(resize) = step else {
+        panic!("resize delivery did not request dimensions");
+    };
+    assert_eq!(*resize.request(), ResizeEffect::Signal);
+    let step = driver
+        .resume_resize(&mut editor, &resize, Ok(ScreenSize::new(4, 30).unwrap()))
+        .unwrap();
+    let ReadStep::Signal(resize) = step else {
+        panic!("resize did not request disposition propagation");
+    };
+    assert_eq!(resize.request().signal, Signal::Resize);
+    let step = driver.resume_signal(&mut editor, &resize, Ok(())).unwrap();
+    let pending = read(settle(&mut driver, &mut editor, step, &mut output));
+
+    let step = driver
+        .resume_read(
+            &mut editor,
+            &pending,
+            Ok(ReadOutcome::Signal(Signal::Suspend)),
+        )
+        .unwrap();
+    let ReadStep::Signal(suspend) = step else {
+        panic!("suspend did not request disposition propagation");
+    };
+    assert_eq!(editor.terminal_mode(), TerminalMode::Cooked);
+    let step = driver.resume_signal(&mut editor, &suspend, Ok(())).unwrap();
+    let ReadStep::Signal(resume) = step else {
+        panic!("suspend resumption did not propagate continue");
+    };
+    assert_eq!(resume.request().signal, Signal::Continue);
+    assert_eq!(editor.terminal_mode(), TerminalMode::Editing);
+    let step = driver.resume_signal(&mut editor, &resume, Ok(())).unwrap();
+    let ReadStep::Resize(resume) = step else {
+        panic!("continue did not request display rebuilding");
+    };
+    assert_eq!(*resume.request(), ResizeEffect::Resume);
+    let step = driver
+        .resume_resize(&mut editor, &resume, Ok(ScreenSize::new(4, 30).unwrap()))
+        .unwrap();
+    assert!(matches!(
+        settle(&mut driver, &mut editor, step, &mut output),
+        ReadStep::Read(_)
+    ));
+}
+
+#[test]
+fn signal_failure_is_not_accepted() {
+    let mut editor = editor(EditorConfig::default());
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+    let pending = read(settle(&mut driver, &mut editor, begin, &mut output));
+    let step = driver
+        .resume_read(
+            &mut editor,
+            &pending,
+            Ok(ReadOutcome::Signal(Signal::Interrupt)),
+        )
+        .unwrap();
+    let ReadStep::Signal(signal) = step else {
+        panic!("interrupt did not request propagation");
+    };
+    assert!(matches!(
+        driver.resume_signal(&mut editor, &signal, Err(HostFailure::Unavailable)),
+        Err(DriverError::Host(HostFailure::Unavailable))
+    ));
+    assert_eq!(editor.terminal_mode(), TerminalMode::Cooked);
+}
+
 // [spec:nshedit:req:core.command-sequences/test]
 #[test]
 fn quoted_and_meta() {

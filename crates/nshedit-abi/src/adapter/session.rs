@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod signal;
+
 impl EditLine {
     pub(crate) fn new(
         program: &str,
@@ -111,11 +113,6 @@ impl EditLine {
 
     pub(crate) fn handle_signals(&self) -> bool {
         self.boundary.policy.handle_signals
-    }
-
-    pub(crate) fn set_handle_signals(&mut self, enabled: bool) {
-        self.boundary.policy.handle_signals = enabled;
-        self.reconfigure();
     }
 
     pub(crate) fn editing_enabled(&self) -> bool {

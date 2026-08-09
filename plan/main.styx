@@ -2681,9 +2681,17 @@ children (
                 title "Implement signal handler lifecycle and read-driver propagation"
                 kind @fix
                 implements {
-                    native-impl ([spec:nshedit:req:abi.signal-lifecycle])
+                    native-impl ([spec:nshedit:req:abi.signal-lifecycle] [spec:libedit:sem:histedit.el-resize-fn] [spec:libedit:sem:histedit.el-set-fn])
                 }
                 deps (greenfield-editor-shell greenfield-read-driver greenfield-abi-adapter)
+                log (
+                    {
+                        at 2026-08-09T07:30:13.129699883Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

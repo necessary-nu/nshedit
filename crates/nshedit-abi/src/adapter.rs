@@ -23,6 +23,7 @@ use nshedit::editor::{
     BaudRate, Continuation, Editor, QuoteStyle, ReadDriver, TerminalControl, TerminalProfile,
     Tokenization, Tokenizer as NativeTokenizer,
 };
+use nshedit_plat::signal::SignalHandlers;
 use nshedit_plat::termios::{self, Termios};
 
 use crate::cdecl::histedit::{CFile, HistEventWide, LineInfo, LineInfoWide as LineInfoW};
@@ -287,6 +288,7 @@ struct EditLineBoundary {
     commands: Vec<HostCommand>,
     terminal_bindings: [Option<Binding>; 7],
     pushback: VecDeque<VecDeque<TextUnit>>,
+    signal_handlers: Option<SignalHandlers>,
     terminal: Rc<RefCell<TerminalState>>,
     terminal_capabilities: TerminalCapabilities,
     narrow_conversion: ConversionBuffer,
@@ -340,6 +342,7 @@ impl EditLineBoundary {
             commands: Vec::new(),
             terminal_bindings: std::array::from_fn(|_| None),
             pushback: VecDeque::new(),
+            signal_handlers: None,
             terminal,
             terminal_capabilities,
             narrow_conversion: ConversionBuffer::default(),

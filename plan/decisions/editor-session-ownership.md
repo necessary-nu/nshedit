@@ -34,6 +34,7 @@ consequences {
         "Explicit finish reports restoration failure. Drop ignores the error from its one best-effort attempt and does not panic because restoration returned an error."
         "SessionIo is a separate borrowed capability set over std::io::Read, std::io::Write, and BorrowedFd. Editor never owns streams or descriptor ownership."
         "The effect driver may end the editor borrow before it uses SessionIo or invokes a host operation, preserving the later reentrancy boundary."
+        "Signal dispositions are a separate ABI/platform guard governed by [dec:libedit:signal-lifecycle]; they never become Editor fields or a second terminal-restoration authority."
     )
     deferred (
         "A convenience native driver may own concrete streams around Editor after the typed effect protocol exists."
@@ -41,7 +42,7 @@ consequences {
 }
 edges {
     requires ([dec:libedit:idiomatic-core] [dec:libedit:effect-driven-hooks])
-    related_to ([dec:libedit:opaque-abi-adapter] [dec:libedit:platform-layer])
+    related_to ([dec:libedit:opaque-abi-adapter] [dec:libedit:platform-layer] [dec:libedit:signal-lifecycle])
 }
 codifies (
     [spec:nshedit:req:core.raii-lifecycle]

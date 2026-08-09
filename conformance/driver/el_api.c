@@ -44,6 +44,7 @@
 
 static int seq = 0;
 static const char *workdir;
+static int resize_calls;
 
 static void op(const char *label)
 {
@@ -76,6 +77,12 @@ static void sesc(const char *s)
 static void pr(int rc)
 {
 	printf("rc=%d\n", rc);
+}
+
+static void resize_hook(EditLine *el, void *cookie)
+{
+	(void)el;
+	(*(int *)cookie)++;
 }
 
 static char pathbuf[4096];
@@ -541,8 +548,13 @@ static void section_geometry(EditLine *el)
 {
 	/* COLUMNS and LINES are pinned by the harness, so what el_resize
 	 * reads is fixed and the answer is comparable. */
-	op("el_resize");          el_resize(el); printf("void\n");
+	resize_calls = 0;
+	op("EL_RESIZE hook");     pr(el_set(el, EL_RESIZE, resize_hook,
+	    &resize_calls));
+	op("el_resize");          el_resize(el); printf("void calls=%d\n",
+	    resize_calls);
 	dump_line(el, "line after resize");
+	op("resize calls after line"); printf("%d\n", resize_calls);
 }
 
 /* --------------------------------------------------------------------- */

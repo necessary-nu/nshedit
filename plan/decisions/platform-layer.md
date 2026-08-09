@@ -96,7 +96,7 @@ consequences {
         "Signals use the platform libc because raw signal syscalls are unsound in a process containing libc. NSS passwd lookup and enumeration use libc because the configured name-service backends are C modules."
         "Unsafe declarations, transcribed structs, constants, and conversions are private to nshedit-plat and covered by focused platform tests."
         "The core receives safe typed results and never exposes termios, sigaction, passwd, ioctl, or raw ownership mechanics in its public API."
-        "There are no mandatory or optional process-global installation hooks. Editor-level customization suspends through [dec:libedit:effect-driven-hooks]."
+        "There are no public process-global override hooks. Scoped disposition ownership follows [dec:libedit:signal-lifecycle], while editor-level customization suspends through [dec:libedit:effect-driven-hooks]."
         "Linux is the supported system ABI until another target supplies and verifies its constants, layouts, libc accessors, and conformance matrix."
     )
     deferred (
@@ -105,7 +105,7 @@ consequences {
 }
 edges {
     requires ([dec:libedit:no-c-ffi] [dec:libedit:idiomatic-core] [dec:libedit:posix-only-scope] [dec:libedit:conformance-policy])
-    related_to ([dec:libedit:terminal-caps-via-term-crate] [dec:libedit:effect-driven-hooks])
+    related_to ([dec:libedit:terminal-caps-via-term-crate] [dec:libedit:effect-driven-hooks] [dec:libedit:signal-lifecycle])
 }
 codifies (
     [spec:nshedit:req:core.rust-io]

@@ -26,8 +26,9 @@ import os
 import re
 import sys
 
-# A `sem` or `def` annotation, in the form the port's sources carry.
-ANNOTATION = re.compile(r"\[spec:libedit:(sem|def):([a-z0-9._-]+)\]")
+# A semantic annotation, including an optional rule-version pin, in the form
+# the port's sources carry.
+ANNOTATION = re.compile(r"\[spec:libedit:sem:([a-z0-9._-]+)(\+\d+)?\]")
 # The first line of a function definition, in every shape the port uses.
 FN = re.compile(r'\s*(pub(\(crate\))?\s+)?(unsafe\s+)?(extern\s+"C"\s+)?fn\s')
 # Between an annotation and the item it labels there is only ever a doc
@@ -92,7 +93,7 @@ def annotations(root):
                 continue
             item = labelled_item(lines, i + 1)
             if item is not None and FN.match(lines[item]):
-                found.append((m.group(2), real, rel, item + 1))
+                found.append((m.group(1), m.group(2) or "", real, rel, item + 1))
     return found
 
 
@@ -101,12 +102,18 @@ def claims(cov_dir, root, drivers):
     per_driver = {d: executed_ranges(os.path.join(cov_dir, f"{d}.json")) for d in drivers}
     by_rule = collections.defaultdict(list)
     sites = {}
-    for rule, real, rel, line in annotations(root):
+    versions = {}
+    for rule, version, real, rel, line in annotations(root):
+        previous = versions.get(rule, "")
+        if previous and version and previous != version:
+            raise ValueError(f"conflicting version pins for {rule}: {previous}, {version}")
+        if version:
+            versions[rule] = version
         for driver in drivers:
             if any(lo <= line <= hi for lo, hi in per_driver[driver].get(real, ())):
                 by_rule[rule].append(driver)
                 sites[rule] = f"{rel}:{line}"
-    return by_rule, sites
+    return by_rule, sites, versions
 
 
 HEADER = '''//! What the conformance drivers provably drive.
@@ -149,7 +156,7 @@ HEADER = '''//! What the conformance drivers provably drive.
 '''
 
 
-def render(by_rule, sites, drivers, root):
+def render(by_rule, sites, versions, drivers, root):
     out = [HEADER]
     total = 0
     for driver in drivers:
@@ -165,7 +172,10 @@ def render(by_rule, sites, drivers, root):
         out.append(f"// {src} — {len(mine)} rules")
         out.append(f"// ---------------------------------------------------------------------------")
         for rule in mine:
-            out.append(f"// [spec:libedit:sem:{rule}/test]  {sites[rule]}")
+            out.append(
+                f"// [spec:libedit:sem:{rule}{versions.get(rule, '')}/test]  "
+                f"{sites[rule]}"
+            )
         total += len(mine)
 
     shared = sorted(r for r, ds in by_rule.items() if len(ds) > 1)
@@ -194,8 +204,8 @@ def render(by_rule, sites, drivers, root):
 
 def main():
     mode, cov_dir, root, claims_path, *drivers = sys.argv[1:]
-    by_rule, sites = claims(cov_dir, root, drivers)
-    text, total = render(by_rule, sites, drivers, root)
+    by_rule, sites, versions = claims(cov_dir, root, drivers)
+    text, total = render(by_rule, sites, versions, drivers, root)
 
     counts = {d: sum(1 for ds in by_rule.values() if ds and ds[0] == d) for d in drivers}
     for d in drivers:

@@ -334,7 +334,7 @@ fn parsing_an_argument_vector_runs_one_editrc_command() {
 // el_set / el_get
 // -----------------------------------------------------------------
 
-// [spec:libedit:sem:histedit.el-set-fn/test]
+// [spec:libedit:sem:histedit.el-set-fn+1/test]
 /// The narrow setter decodes what the wide one takes wide, and marks the
 /// prompt narrow — which is the only reason the prompt ops are not simply
 /// forwarded.
@@ -382,7 +382,7 @@ fn the_narrow_setter_decodes_and_records_that_it_was_narrow() {
     done(el);
 }
 
-// [spec:libedit:sem:histedit.el-set-fn/test]
+// [spec:libedit:sem:histedit.el-set-fn+1/test]
 /// `el_set(EL_HIST)` raises `NARROW_HISTORY` unconditionally and
 /// `el_wset(EL_HIST)` only ever lowers it, and then only in a single-byte
 /// locale.
