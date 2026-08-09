@@ -33,7 +33,7 @@ consequences {
         "Rust types, constants, statics, functions, fields, and generated identifiers follow Rust naming conventions. C names are produced with export_name and header-generation metadata."
         "Unsafe exported functions carry real Safety documentation. Unused variables are removed or intentionally named with a leading underscore where the value is contractually present."
         "A lint imposed solely by an external ABI or generated format may use the narrowest expect attribute with a reason. Unfulfilled expectations are lint failures."
-        "The final core forbids unsafe code; the ABI and platform crates deny undocumented unsafe operations and keep unsafe blocks local."
+        "The final core forbids unsafe code; the ABI and platform crates require Safety documentation on unsafe APIs, deny implicit unsafe operations inside unsafe functions, and keep unsafe blocks local."
     )
     deferred ()
 }

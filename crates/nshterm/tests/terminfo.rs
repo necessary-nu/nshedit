@@ -162,30 +162,34 @@ fn a_missing_file_is_an_error() {
 /// corpus it must find an entry there and nowhere else.
 #[test]
 fn from_name_finds_an_entry_under_terminfo() {
+    const CHILD: &str = "NSHTERM_TERMINFO_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let found = TermInfo::from_name("xterm-nshterm-test")
+            .expect("the entry under TERMINFO should be found");
+        assert!(found.names.iter().any(|name| name == "xterm"));
+        assert_eq!(
+            TermInfo::from_name("nshterm-no-such-terminal").unwrap_err(),
+            Error::TerminfoEntryNotFound,
+            "a terminal that exists nowhere must not resolve to something else"
+        );
+        return;
+    }
+
     let dir = std::env::temp_dir().join(format!("nshterm-terminfo-{}", std::process::id()));
     let sub = dir.join("x");
     std::fs::create_dir_all(&sub).unwrap();
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/xterm");
     std::fs::copy(&src, sub.join("xterm-nshterm-test")).unwrap();
 
-    // SAFETY: single-threaded test; restored below.
-    let saved = std::env::var_os("TERMINFO");
-    unsafe { std::env::set_var("TERMINFO", &dir) };
-    let found = TermInfo::from_name("xterm-nshterm-test");
-    let missing = TermInfo::from_name("nshterm-no-such-terminal");
-    match saved {
-        Some(v) => unsafe { std::env::set_var("TERMINFO", v) },
-        None => unsafe { std::env::remove_var("TERMINFO") },
-    }
+    let status = std::process::Command::new(std::env::current_exe().expect("current test binary"))
+        .args(["--exact", "from_name_finds_an_entry_under_terminfo"])
+        .env("TERMINFO", &dir)
+        .env(CHILD, "1")
+        .status()
+        .expect("run isolated TERMINFO consumer");
     std::fs::remove_dir_all(&dir).ok();
 
-    let found = found.expect("the entry under TERMINFO should be found");
-    assert!(found.names.iter().any(|n| n == "xterm"));
-    assert_eq!(
-        missing.unwrap_err(),
-        Error::TerminfoEntryNotFound,
-        "a terminal that exists nowhere must not resolve to something else"
-    );
+    assert!(status.success(), "isolated TERMINFO consumer failed");
 }
 
 /// Every error variant renders a message, and `PartialEq` is the hand-written

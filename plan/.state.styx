@@ -276,4 +276,11 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule core.token-completion}
     )}
+    {id greenfield-lint-zero, covered_rules (
+        core.unsafe-free
+        workspace.lint-policy
+    ), covered_claims (
+        {impl_name native-impl, rule core.unsafe-free}
+        {impl_name native-impl, rule workspace.lint-policy}
+    )}
 )

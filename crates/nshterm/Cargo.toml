@@ -14,3 +14,6 @@ categories = ["command-line-interface", "parser-implementations"]
 
 [dependencies]
 nshedit-plat.workspace = true
+
+[lints]
+workspace = true

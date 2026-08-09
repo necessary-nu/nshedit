@@ -128,6 +128,7 @@ fn the_format_gate_does_not_use_all() {
 }
 
 // [spec:nshedit:req:core.public-surface/test]
+// [spec:nshedit:req:core.unsafe-free/test]
 #[test]
 fn native_core_surface_is_safe() {
     let root = repo_root();
@@ -195,6 +196,8 @@ fn translated_core_and_facade_are_absent() {
 }
 
 // [spec:nshedit:req:workspace.no-legacy-allows/test]
+// [spec:nshedit:req:workspace.lint-policy]
+// [spec:nshedit:req:workspace.lint-policy/test]
 #[test]
 fn first_party_rust_rejects_allow_attributes() {
     let root = repo_root();
@@ -255,5 +258,39 @@ fn first_party_rust_rejects_allow_attributes() {
             );
             remainder = &remainder[end + 2..];
         }
+    }
+}
+
+#[test]
+fn workspace_lints_are_inherited() {
+    let root = repo_root();
+    let workspace = fs::read_to_string(root.join("Cargo.toml")).expect("workspace Cargo.toml");
+    for required in [
+        "dead_code = \"deny\"",
+        "nonstandard_style = \"deny\"",
+        "unfulfilled_lint_expectations = \"deny\"",
+        "unsafe_op_in_unsafe_fn = \"deny\"",
+        "unused = \"deny\"",
+        "allow_attributes = \"deny\"",
+        "missing_safety_doc = \"deny\"",
+    ] {
+        assert!(
+            workspace.lines().any(|line| line.trim() == required),
+            "the workspace does not enforce `{required}`"
+        );
+    }
+
+    for member in workspace_members(&root) {
+        let path = root.join("crates").join(&member).join("Cargo.toml");
+        let manifest = fs::read_to_string(&path).expect("workspace member Cargo.toml");
+        let lints = manifest
+            .split_once("[lints]")
+            .map(|(_, tail)| tail.split("\n[").next().unwrap_or(tail))
+            .unwrap_or_default();
+        assert!(
+            lints.lines().any(|line| line.trim() == "workspace = true"),
+            "{} does not inherit the workspace lint policy",
+            path.strip_prefix(&root).unwrap_or(&path).display()
+        );
     }
 }

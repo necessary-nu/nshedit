@@ -13,6 +13,7 @@
 //! Does not support hashed database, only filesystem!
 
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 
@@ -50,25 +51,28 @@ const DEFAULT_LOCATIONS: &[&str] = &[
 // all, so on an ncurses built `--with-hashed-db` every search below misses and
 // the terminal resolves to dumb. Not Debian's build. See `nshterm-hashed-db`.
 pub fn get_dbpath_for_term(term: &str) -> Option<PathBuf> {
+    get_dbpath_for_term_with(term, !nshedit_plat::is_elevated(), |name| env::var_os(name))
+}
+
+fn get_dbpath_for_term_with(
+    term: &str,
+    trust_env: bool,
+    environment: impl Fn(&str) -> Option<OsString>,
+) -> Option<PathBuf> {
     let mut dirs_to_search = Vec::new();
     let mut default_locations = DEFAULT_LOCATIONS.iter().map(PathBuf::from);
     let first_char = term.chars().next()?;
-
-    // One test for all three sources, as ncurses has one `use_terminfo_vars()`
-    // for all three of its call sites. Splitting it per variable would make it
-    // possible to guard two and forget the third.
-    let trust_env = !nshedit_plat::is_elevated();
 
     // From the manual.
     //
     // > The  environment  variable TERMINFO is checked first, for a terminal
     // > database containing the terminal description.
-    if let Some(dir) = trust_env.then(|| env::var_os("TERMINFO")).flatten() {
+    if let Some(dir) = trust_env.then(|| environment("TERMINFO")).flatten() {
         dirs_to_search.push(PathBuf::from(dir));
     }
 
     // > Next, ncurses looks in $HOME/.terminfo for a compiled description.
-    if let Some(home) = trust_env.then(|| env::var_os("HOME")).flatten() {
+    if let Some(home) = trust_env.then(|| environment("HOME")).flatten() {
         let mut homedir = PathBuf::from(home);
         homedir.push(".terminfo");
         dirs_to_search.push(homedir)
@@ -81,7 +85,11 @@ pub fn get_dbpath_for_term(term: &str) -> Option<PathBuf> {
     // > An  empty  pathname  (i.e.,  if  the  variable begins or ends with a
     // > colon, or contains adjacent colons) is interpreted as the system location
     // > /usr/share/terminfo.
-    if let Some(Ok(dirs)) = trust_env.then(|| env::var("TERMINFO_DIRS")) {
+    if let Some(dirs) = trust_env
+        .then(|| environment("TERMINFO_DIRS"))
+        .flatten()
+        .and_then(|value| value.into_string().ok())
+    {
         for i in dirs.split(':') {
             if i.is_empty() {
                 dirs_to_search.extend(&mut default_locations);
@@ -122,7 +130,7 @@ pub fn get_dbpath_for_term(term: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod test {
-    use super::{DEFAULT_LOCATIONS, get_dbpath_for_term};
+    use super::{DEFAULT_LOCATIONS, get_dbpath_for_term, get_dbpath_for_term_with};
 
     /// The guard is a property of the process, and this test process is not
     /// elevated, so what can be asserted here is that the trusted path still
@@ -146,17 +154,13 @@ mod test {
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(sub.join("fakevt100"), b"not a real entry").unwrap();
 
-        // SAFETY: single-threaded test, and the variable is restored below.
-        let saved = std::env::var_os("TERMINFO");
-        unsafe { std::env::set_var("TERMINFO", &dir) };
-        let found = get_dbpath_for_term("fakevt100");
-        match saved {
-            Some(v) => unsafe { std::env::set_var("TERMINFO", v) },
-            None => unsafe { std::env::remove_var("TERMINFO") },
-        }
+        let environment = |name: &str| (name == "TERMINFO").then(|| dir.clone().into_os_string());
+        let found = get_dbpath_for_term_with("fakevt100", true, environment);
+        let untrusted = get_dbpath_for_term_with("fakevt100", false, environment);
         std::fs::remove_dir_all(&dir).ok();
 
         assert_eq!(found.as_deref(), Some(sub.join("fakevt100").as_path()));
+        assert_eq!(untrusted, None);
     }
 
     /// A terminal that exists nowhere resolves to nothing rather than to

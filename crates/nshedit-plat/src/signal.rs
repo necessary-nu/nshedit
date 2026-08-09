@@ -767,6 +767,8 @@ mod tests {
         assert!(raise(signo::SIGWINCH));
         assert_eq!(FIRST.load(Ordering::Relaxed), signo::SIGWINCH);
 
+        // SAFETY: SECOND is also static and the registration is cleared below;
+        // repointing deliberately replaces the still-live FIRST registration.
         unsafe { set_signal_slot(&raw const SECOND) };
         FIRST.store(0, Ordering::Relaxed);
         assert!(raise(signo::SIGWINCH));

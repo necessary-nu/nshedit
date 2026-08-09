@@ -2549,6 +2549,14 @@ children (
                     native-impl ([spec:nshedit:req:core.unsafe-free] [spec:nshedit:req:workspace.lint-policy])
                 }
                 deps (greenfield-retire-port)
+                log (
+                    {
+                        at 2026-08-09T00:27:37.482157094Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

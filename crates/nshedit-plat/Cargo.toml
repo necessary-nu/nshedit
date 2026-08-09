@@ -30,3 +30,6 @@ rustix = { version = "1.1", default-features = false, features = ["std", "termio
 # needs rustix's `pty`. Cargo does not consider dev-dependencies when building
 # the library, so the shipped artifact still links exactly the features above.
 rustix = { version = "1.1", default-features = false, features = ["pty"] }
+
+[lints]
+workspace = true

@@ -3,9 +3,11 @@
 //! C and readline compatibility live in `nshedit-abi`; this crate exposes
 //! only native Rust values and operations.
 
+// [spec:nshedit:req:core.unsafe-free]
 #![forbid(unsafe_code)]
 
 // [spec:nshedit:req:workspace.no-legacy-allows]
+// [spec:nshedit:req:workspace.lint-policy]
 // [spec:nshedit:req:core.public-surface]
 // [spec:nshedit:req:core.typed-domain+1]
 /// Rust-native editor values shared by the safe editor shell and its hosts.

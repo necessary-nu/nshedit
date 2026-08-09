@@ -46,3 +46,6 @@ regex = { version = "1.13.1", default-features = false, features = ["std", "perf
 # `tests/headers.rs` can prove the committed copies are current without
 # anyone having remembered to install a tool.
 cbindgen = "0.29"
+
+[lints]
+workspace = true
