@@ -416,4 +416,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule core.read-driver}
     )}
+    {id rust-idiom-history, covered_rules (
+        abi.typed-history
+    ), covered_claims (
+        {impl_name native-impl, rule abi.typed-history}
+    )}
 )

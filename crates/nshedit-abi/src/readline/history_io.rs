@@ -180,7 +180,6 @@ fn truncate_through_temp(fp: &mut std::fs::File, tp: &mut std::fs::File, nlines:
 #[unsafe(no_mangle)]
 #[doc = include_str!("../ffi_safety.md")]
 pub unsafe extern "C" fn read_history(filename: *const c_char) -> c_int {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state; `filename` is NULL or a
     // NUL-terminated string.
     unsafe {
@@ -189,13 +188,14 @@ pub unsafe extern "C" fn read_history(filename: *const c_char) -> c_int {
             Ok(n) => n,
             Err(e) => return e,
         };
+        let path = std::path::Path::new(std::ffi::OsStr::from_bytes(c_bytes(name)));
         // The C's `errno = 0`, cleared in both homes so that neither a stale
         // platform value nor a stale core one can be mistaken for this call's
         // failure. The sample is taken after it, or the clear itself would
         // count as something to publish.
         crate::errno::set(0);
         let mark = crate::errno::mark();
-        if history_va(H, &mut ev, H_LOAD, name) == -1 {
+        if history::execute(HistoryRequest::Load(Some(path))).is_err() {
             // Whatever failed wrote one of the two homes — a decoder in the
             // history layer writes the core's, a failing `open` or `read`
             // writes the platform's — so they are reconciled before the read.
@@ -203,11 +203,13 @@ pub unsafe extern "C" fn read_history(filename: *const c_char) -> c_int {
             let e = crate::errno::get();
             return if e != 0 { e } else { EINVAL };
         }
-        if history_va(H, &mut ev, H_GETSIZE) == 0 {
+        if let Ok(reply) = history::execute(HistoryRequest::Size)
+            && let Some(size) = history::size(reply)
+        {
             // `history_base` and `history_offset` are *not* adjusted, so
             // callers are expected to follow with `using_history()`
             // (ERR-readline-40).
-            history_length = ev.num;
+            history_length = size;
         }
         if history_length < 0 {
             return EINVAL;
@@ -221,7 +223,6 @@ pub unsafe extern "C" fn read_history(filename: *const c_char) -> c_int {
 #[unsafe(no_mangle)]
 #[doc = include_str!("../ffi_safety.md")]
 pub unsafe extern "C" fn write_history(filename: *const c_char) -> c_int {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: as `read_history`.
     unsafe {
         lazy_init();
@@ -229,13 +230,14 @@ pub unsafe extern "C" fn write_history(filename: *const c_char) -> c_int {
             Ok(n) => n,
             Err(e) => return e,
         };
+        let path = std::path::Path::new(std::ffi::OsStr::from_bytes(c_bytes(name)));
         // No `errno = 0` here — unlike `read_history` the C does not clear it,
         // so a value left over from before the call is what a failure with no
         // `errno` of its own reports. Reproduced by sampling without clearing.
         let mark = crate::errno::mark();
         // H_SAVE truncates or creates the file and writes the signature line
         // and every event `strvis`-escaped — the frozen on-disk format.
-        if history_va(H, &mut ev, H_SAVE, name) == -1 {
+        if history::execute(HistoryRequest::Save(Some(path))).is_err() {
             crate::errno::publish(mark);
             let e = crate::errno::get();
             if e != 0 { e } else { EINVAL }
@@ -250,11 +252,8 @@ pub unsafe extern "C" fn write_history(filename: *const c_char) -> c_int {
 #[unsafe(no_mangle)]
 #[doc = include_str!("../ffi_safety.md")]
 pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_int {
-    // No [`EMPTY_EVENT`] here. The C declares one for its `H_NSAVE_FP` call,
-    // and this is the one history entry point that does not make that call —
-    // see the note on the descriptor save path below — so there is no
-    // out-parameter
-    // to declare.
+    // This is the one history entry point that does not delegate to the
+    // exported variadic history function; see the descriptor-save note below.
     // SAFETY: as `read_history`.
     unsafe {
         lazy_init();
@@ -309,7 +308,7 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
         let mark = crate::errno::mark();
         let rc = crate::history::save_fd(H, n as usize, fp.as_raw_fd());
         // The C captures `errno` before `fclose`, which can overwrite it.
-        let e = if rc == -1 {
+        let e = if rc.is_err() {
             crate::errno::publish(mark);
             crate::errno::get()
         } else {
@@ -317,7 +316,7 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
         };
         // The file this function opened is the one it closes.
         drop(fp);
-        if rc == -1 {
+        if rc.is_err() {
             return if e != 0 { e } else { EINVAL };
         }
         0

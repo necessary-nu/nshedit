@@ -1,200 +1,101 @@
-use core::ffi::c_int;
+//! Projection of typed history results into the exported C protocol.
 
-use crate::cdecl::histedit::{
-    H_ADD, H_APPEND, H_CLEAR, H_CURR, H_DEL, H_DELDATA, H_END, H_ENTER, H_FIRST, H_FUNC, H_GETSIZE,
-    H_GETUNIQUE, H_LAST, H_LOAD, H_NEXT, H_NEXT_EVDATA, H_NEXT_EVENT, H_NEXT_STR, H_NSAVE_FP,
-    H_PREV, H_PREV_EVENT, H_PREV_STR, H_REPLACE, H_SAVE, H_SAVE_FP, H_SET, H_SETSIZE, H_SETUNIQUE,
-};
+use core::ffi::{c_int, c_void};
 
-use super::persistence::{load, save, save_stream};
+use crate::cdecl::histedit::HistEventGen;
+
 use super::*;
 
-fn missing<C: HistoryChar>(event: &mut HistEventGen<C>) -> c_int {
-    set_error(event, PARAMETER_MISSING);
-    -1
+fn set_error<C: HistoryChar>(event: &mut HistEventGen<C>, error: HistoryErrorKind) {
+    let code = error.code();
+    event.num = code;
+    event.str = C::errors()[code as usize].as_ptr();
 }
 
-fn report_io<C: HistoryChar>(event: &mut HistEventGen<C>, result: c_int, error: c_int) -> c_int {
-    if result == -1 {
-        set_error(event, error);
-    }
-    result
+fn set_ok<C: HistoryChar>(event: &mut HistEventGen<C>) {
+    event.num = 0;
+    event.str = C::errors()[0].as_ptr();
 }
 
-fn control<C: HistoryChar>(
+fn publish<C: HistoryChar>(
     history: &mut HistoryHandle<C>,
     event: &mut HistEventGen<C>,
-    operation: c_int,
-    argument: DispatchArg<'_, C>,
+    value: HistoryEvent<C>,
+) {
+    event.num = value.number.0;
+    event.str = history.boundary_text(&value);
+}
+
+fn publish_removed<C: HistoryChar>(event: &mut HistEventGen<C>, value: HistoryEvent<C>) {
+    event.num = value.number.0;
+    event.str = transfer_text(&value).cast_const();
+}
+
+fn write_data(output: Option<*mut *mut c_void>, data: EntryData) {
+    if let Some(output) = output
+        && !output.is_null()
+    {
+        // SAFETY: the exported operation supplied this writable out-parameter.
+        unsafe { output.write(data.as_raw()) };
+    }
+}
+
+fn publish_reply<C: HistoryChar>(
+    history: &mut HistoryHandle<C>,
+    event: &mut HistEventGen<C>,
+    reply: HistoryReply<C>,
+    data_output: Option<*mut *mut c_void>,
 ) -> c_int {
-    match operation {
-        H_GETSIZE => history.get_size(event),
-        H_SETSIZE => match argument {
-            DispatchArg::Number(size) => history.set_size(event, size),
-            _ => missing(event),
-        },
-        H_GETUNIQUE => history.get_unique(event),
-        H_SETUNIQUE => match argument {
-            DispatchArg::Number(unique) => history.set_unique(event, unique),
-            _ => missing(event),
-        },
-        H_CLEAR => {
-            history.clear_backend(event);
+    match reply {
+        HistoryReply::Complete => 0,
+        HistoryReply::Event(value) => {
+            publish(history, event, value);
             0
         }
-        H_FUNC => match argument {
-            DispatchArg::Callbacks(callbacks) => {
-                history.last_entered = -1;
-                let result = history.install(callbacks);
-                if result == -1 {
-                    set_error(event, PARAMETER_MISSING);
-                }
-                result
+        HistoryReply::Insertion {
+            state,
+            event: value,
+        } => {
+            if let Some(value) = value {
+                publish(history, event, value);
             }
-            _ => missing(event),
-        },
-        _ => unreachable!("control dispatch received operation {operation}"),
+            c_int::from(state == Insertion::Inserted)
+        }
+        HistoryReply::Removed { event: value, data } => {
+            publish_removed(event, value);
+            write_data(data_output, data);
+            0
+        }
+        HistoryReply::Size(size) => {
+            event.num = c_int::try_from(size).unwrap_or(c_int::MAX);
+            0
+        }
+        HistoryReply::Unique(unique) => {
+            event.num = c_int::from(unique);
+            0
+        }
+        HistoryReply::Count(count) => c_int::try_from(count).unwrap_or(c_int::MAX),
+        HistoryReply::EventData { event: value, data } => {
+            publish(history, event, value);
+            if let Some(data) = data {
+                write_data(data_output, data);
+            }
+            0
+        }
     }
 }
 
-fn edit<C: HistoryChar>(
+fn publish_error<C: HistoryChar>(
     history: &mut HistoryHandle<C>,
     event: &mut HistEventGen<C>,
-    operation: c_int,
-    argument: DispatchArg<'_, C>,
+    error: HistoryError<C>,
 ) -> c_int {
-    match operation {
-        H_ADD => match argument {
-            DispatchArg::Text(text) => history.enter_backend(event, EnterOperation::Add, text),
-            _ => missing(event),
-        },
-        H_DEL => match argument {
-            DispatchArg::Number(number) => {
-                history.select_backend(event, SelectOperation::Delete, number)
-            }
-            _ => missing(event),
-        },
-        H_ENTER => match argument {
-            DispatchArg::Text(text) => {
-                let result = history.enter_backend(event, EnterOperation::Enter, text);
-                if result != -1 {
-                    history.last_entered = event.num;
-                }
-                result
-            }
-            _ => missing(event),
-        },
-        H_APPEND => match argument {
-            DispatchArg::Text(text) => {
-                let mut result =
-                    history.select_backend(event, SelectOperation::Select, history.last_entered);
-                if result != -1 {
-                    result = history.enter_backend(event, EnterOperation::Add, text);
-                }
-                result
-            }
-            _ => missing(event),
-        },
-        H_SET => match argument {
-            DispatchArg::Number(number) => {
-                history.select_backend(event, SelectOperation::Select, number)
-            }
-            _ => missing(event),
-        },
-        H_DELDATA => match argument {
-            DispatchArg::EventData(number, data) => {
-                if !history.is_builtin() {
-                    set_error(event, NOT_ALLOWED);
-                    -1
-                } else {
-                    history.delete_nth(event, number, data)
-                }
-            }
-            _ => missing(event),
-        },
-        H_REPLACE => match argument {
-            DispatchArg::Replace(line, data) => history.replace(event, line, data),
-            _ => missing(event),
-        },
-        _ => unreachable!("edit dispatch received operation {operation}"),
+    match error {
+        HistoryError::Known(error) => set_error(event, error),
+        HistoryError::Foreign(value) => publish(history, event, value),
+        HistoryError::Silent => {}
     }
-}
-
-fn walk<C: HistoryChar>(
-    history: &mut HistoryHandle<C>,
-    event: &mut HistEventGen<C>,
-    operation: c_int,
-    argument: DispatchArg<'_, C>,
-) -> c_int {
-    match operation {
-        H_FIRST => history.get_backend(event, GetOperation::First),
-        H_NEXT => history.get_backend(event, GetOperation::Next),
-        H_LAST => history.get_backend(event, GetOperation::Last),
-        H_PREV => history.get_backend(event, GetOperation::Previous),
-        H_CURR => history.get_backend(event, GetOperation::Current),
-        H_PREV_EVENT => match argument {
-            DispatchArg::Number(number) => history.previous_event(event, number),
-            _ => missing(event),
-        },
-        H_NEXT_EVENT => match argument {
-            DispatchArg::Number(number) => history.next_event(event, number),
-            _ => missing(event),
-        },
-        H_PREV_STR => match argument {
-            DispatchArg::Text(pattern) => history.previous_string(event, pattern),
-            _ => missing(event),
-        },
-        H_NEXT_STR => match argument {
-            DispatchArg::Text(pattern) => history.next_string(event, pattern),
-            _ => missing(event),
-        },
-        H_NEXT_EVDATA => match argument {
-            DispatchArg::EventData(number, data) => history.event_data(event, number, data),
-            _ => missing(event),
-        },
-        _ => unreachable!("walk dispatch received operation {operation}"),
-    }
-}
-
-fn file<C: HistoryChar>(
-    history: &mut HistoryHandle<C>,
-    event: &mut HistEventGen<C>,
-    operation: c_int,
-    argument: DispatchArg<'_, C>,
-) -> c_int {
-    match operation {
-        H_LOAD => match argument {
-            DispatchArg::Path(Some(path)) => {
-                let result = load(history, path);
-                report_io(event, result, HISTORY_READ_FAILED)
-            }
-            DispatchArg::Path(None) => report_io(event, -1, HISTORY_READ_FAILED),
-            _ => missing(event),
-        },
-        H_SAVE => match argument {
-            DispatchArg::Path(Some(path)) => {
-                let result = save(history, path);
-                report_io(event, result, HISTORY_WRITE_FAILED)
-            }
-            DispatchArg::Path(None) => report_io(event, -1, HISTORY_WRITE_FAILED),
-            _ => missing(event),
-        },
-        H_SAVE_FP => match argument {
-            DispatchArg::Stream(stream) => {
-                let result = save_stream(history, usize::MAX, stream);
-                report_io(event, result, HISTORY_WRITE_FAILED)
-            }
-            _ => missing(event),
-        },
-        H_NSAVE_FP => match argument {
-            DispatchArg::LimitedStream(count, stream) => {
-                let result = save_stream(history, count, stream);
-                report_io(event, result, HISTORY_WRITE_FAILED)
-            }
-            _ => missing(event),
-        },
-        _ => unreachable!("file dispatch received operation {operation}"),
-    }
+    -1
 }
 
 // [spec:libedit:def:history.funw-history-fn]
@@ -202,38 +103,25 @@ fn file<C: HistoryChar>(
 pub(crate) unsafe fn dispatch<C: HistoryChar>(
     handle: *mut HistoryHandle<C>,
     event: *mut HistEventGen<C>,
-    operation: c_int,
-    argument: DispatchArg<'_, C>,
+    request: Result<HistoryRequest<'_, C>, HistoryErrorKind>,
+    data_output: Option<*mut *mut c_void>,
 ) -> c_int {
-    // SAFETY: the public entry point requires a writable event.
+    // SAFETY: the exported entry point requires a writable event.
     let event = unsafe { &mut *event };
-    set_error(event, OK);
-    if handle.is_null() {
-        set_error(event, UNKNOWN);
+    set_ok(event);
+    let Some(history) = (unsafe { handle.as_mut() }) else {
+        set_error(event, HistoryErrorKind::Unknown);
         return -1;
-    }
-    if operation == H_END {
-        // SAFETY: this consuming operation receives the live allocation from
-        // `new_raw`; the caller must not use it again.
-        drop(unsafe { Box::from_raw(handle) });
-        return 0;
-    }
-    // SAFETY: non-consuming operation through a live opaque owner.
-    let history = unsafe { &mut *handle };
-
-    match operation {
-        H_GETSIZE | H_SETSIZE | H_GETUNIQUE | H_SETUNIQUE | H_CLEAR | H_FUNC => {
-            control(history, event, operation, argument)
+    };
+    let request = match request {
+        Ok(request) => request,
+        Err(error) => {
+            set_error(event, error);
+            return -1;
         }
-        H_ADD | H_DEL | H_ENTER | H_APPEND | H_SET | H_DELDATA | H_REPLACE => {
-            edit(history, event, operation, argument)
-        }
-        H_FIRST | H_NEXT | H_LAST | H_PREV | H_CURR | H_PREV_EVENT | H_NEXT_EVENT | H_PREV_STR
-        | H_NEXT_STR | H_NEXT_EVDATA => walk(history, event, operation, argument),
-        H_LOAD | H_SAVE | H_SAVE_FP | H_NSAVE_FP => file(history, event, operation, argument),
-        _ => {
-            set_error(event, UNKNOWN);
-            -1
-        }
+    };
+    match history.execute(request) {
+        Ok(reply) => publish_reply(history, event, reply, data_output),
+        Err(error) => publish_error(history, event, error),
     }
 }

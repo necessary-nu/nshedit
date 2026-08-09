@@ -1,12 +1,10 @@
 //! History forms in the editrc command language.
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
 
-use crate::adapter::EditLine;
-use crate::cdecl::histedit::{H_LAST, H_PREV, H_SETSIZE, H_SETUNIQUE, HistEvent, HistEventWide};
-use crate::conversion::{ConversionBuffer, decode_bytes, encode_wide};
-
-use super::super::{cbytes, wstr};
+use crate::adapter::{EditLine, HistoryPolicy};
+use crate::conversion::{ConversionBuffer, encode_wide};
+use crate::history::HistoryMove;
 
 fn word_is(word: &[u32], expected: &str) -> bool {
     word.iter().copied().eq(expected.bytes().map(u32::from))
@@ -67,55 +65,17 @@ fn parse_number(word: &[u32]) -> c_int {
     (signed as i64) as c_int
 }
 
-unsafe fn history_text(el: *mut EditLine, operation: c_int) -> Option<Vec<u32>> {
-    let (callback, cookie) = unsafe { (&*el).history_callback() }?;
-    if cookie.is_null() {
-        return None;
-    }
-    if unsafe { (&*el).narrow_history() } {
-        let mut event = HistEvent {
-            num: 0,
-            str: core::ptr::null(),
-        };
-        if unsafe {
-            callback(
-                cookie,
-                (&raw mut event).cast(),
-                operation,
-                core::ptr::null_mut::<c_void>(),
-            )
-        } == -1
-        {
-            return None;
-        }
-        let bytes = unsafe { cbytes(event.str) }?;
-        let mut conversion = ConversionBuffer::new();
-        Some(decode_bytes(Some(bytes), &mut conversion)?.to_vec())
-    } else {
-        let mut event = HistEventWide {
-            num: 0,
-            str: core::ptr::null(),
-        };
-        if unsafe {
-            callback(
-                cookie,
-                &raw mut event,
-                operation,
-                core::ptr::null_mut::<c_void>(),
-            )
-        } == -1
-        {
-            return None;
-        }
-        Some(unsafe { wstr(event.str) }?.to_vec())
-    }
+unsafe fn history_text(el: *mut EditLine, movement: HistoryMove) -> Option<Vec<u32>> {
+    let source = unsafe { (&*el).history_source() }?;
+    // SAFETY: the editor stores the callback together with its live cookie.
+    Some(unsafe { source.item(movement) }?.into_boundary_text())
 }
 
 unsafe fn list(el: *mut EditLine) -> c_int {
-    let mut operation = H_LAST;
+    let mut movement = HistoryMove::Oldest;
     let mut number = 1;
     let mut conversion = ConversionBuffer::new();
-    while let Some(wide) = unsafe { history_text(el, operation) } {
+    while let Some(wide) = unsafe { history_text(el, movement) } {
         let Some(encoded) = encode_wide(Some(&wide), &mut conversion) else {
             return -1;
         };
@@ -129,31 +89,21 @@ unsafe fn list(el: *mut EditLine) -> c_int {
         output.push(b'\n');
         unsafe { (&*el).write_compatibility_stream(1, &output) };
         number += 1;
-        operation = H_PREV;
+        movement = HistoryMove::Newer;
     }
     0
 }
 
-unsafe fn set_policy(el: *mut EditLine, operation: c_int, value: c_int) -> c_int {
-    let Some((callback, cookie)) = (unsafe { (&*el).history_callback() }) else {
+unsafe fn set_policy(el: *mut EditLine, policy: HistoryPolicy) -> c_int {
+    let Some(source) = (unsafe { (&*el).history_source() }) else {
         return -1;
     };
-    if cookie.is_null() || unsafe { (&*el).narrow_history() } {
-        return -1;
-    }
-    if callback as *const () != crate::histedit::history_w as *const () {
-        return -1;
-    }
-    let mut event = HistEventWide {
-        num: 0,
-        str: core::ptr::null(),
-    };
-    unsafe { callback(cookie, &raw mut event, operation, value) }
+    c_int::from(!unsafe { source.set_policy(policy) }).wrapping_neg()
 }
 
 // [spec:nshedit:req:abi.history-effects+1]
 pub(super) unsafe fn history_command(el: *mut EditLine, words: &[&[u32]]) -> c_int {
-    if unsafe { (&*el).history_callback() }.is_none_or(|(_, cookie)| cookie.is_null()) {
+    if unsafe { (&*el).history_source() }.is_none_or(|source| !source.is_available()) {
         return -1;
     }
     if words.len() == 1 || words.get(1).is_some_and(|word| word_is(word, "list")) {
@@ -164,9 +114,9 @@ pub(super) unsafe fn history_command(el: *mut EditLine, words: &[&[u32]]) -> c_i
     }
     let value = parse_number(words[2]);
     if word_is(words[1], "size") {
-        unsafe { set_policy(el, H_SETSIZE, value) }
+        unsafe { set_policy(el, HistoryPolicy::Limit(value)) }
     } else if word_is(words[1], "unique") {
-        unsafe { set_policy(el, H_SETUNIQUE, value) }
+        unsafe { set_policy(el, HistoryPolicy::Unique(value != 0)) }
     } else {
         -1
     }

@@ -1,5 +1,3 @@
-use core::ffi::c_int;
-use core::ptr;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, Write};
 use std::mem::ManuallyDrop;
@@ -9,16 +7,7 @@ use std::path::Path;
 
 use crate::conversion::ConversionBuffer;
 
-use super::{
-    EnterOperation, GetOperation, HistEventGen, HistoryChar, HistoryHandle, SaveStream, input,
-};
-
-fn empty_event<C>() -> HistEventGen<C> {
-    HistEventGen {
-        num: 0,
-        str: ptr::null(),
-    }
-}
+use super::*;
 
 fn decode_libedit_entry(dst: &mut [u8], src: &[u8]) -> usize {
     dst.fill(0);
@@ -32,9 +21,15 @@ fn encode_libedit_entry(bytes: &[u8]) -> Vec<u8> {
 
 // [spec:libedit:def:history.history-load-fn]
 // [spec:libedit:sem:history.history-load-fn]
-pub(super) fn load<C: HistoryChar>(history: &mut HistoryHandle<C>, path: &Path) -> c_int {
+pub(super) fn load<C: HistoryChar>(
+    history: &mut HistoryHandle<C>,
+    path: Option<&Path>,
+) -> HistoryResult<C> {
+    let Some(path) = path else {
+        return Err(HistoryErrorKind::ReadFailed.into());
+    };
     let Ok(file) = File::open(path) else {
-        return -1;
+        return Err(HistoryErrorKind::ReadFailed.into());
     };
     let mut input = BufReader::new(file);
     let nshedit_format = matches!(
@@ -46,16 +41,19 @@ pub(super) fn load<C: HistoryChar>(history: &mut HistoryHandle<C>, path: &Path) 
     } else {
         load_libedit(history, &mut input)
     }
+    .map(HistoryReply::Count)
 }
 
-fn load_nshedit<C: HistoryChar>(history: &mut HistoryHandle<C>, input: &mut dyn Read) -> c_int {
+fn load_nshedit<C: HistoryChar>(
+    history: &mut HistoryHandle<C>,
+    input: &mut dyn Read,
+) -> Result<usize, HistoryError<C>> {
     let mut bytes = Vec::new();
     let mut failed = input.read_to_end(&mut bytes).is_err();
     let (records, fault) = nshedit::history_file::read_nshedit(&bytes);
     failed |= fault.is_some();
     let mut conversion = ConversionBuffer::default();
-    let mut event = empty_event();
-    let mut count: c_int = 0;
+    let mut count = 0usize;
 
     for record in records {
         if record.text.contains(&0) {
@@ -69,29 +67,33 @@ fn load_nshedit<C: HistoryChar>(history: &mut HistoryHandle<C>, input: &mut dyn 
             count = count.saturating_add(1);
             continue;
         };
-        if history.enter_backend(&mut event, EnterOperation::Enter, decoded.as_ptr()) == -1 {
-            return -1;
-        }
+        history.execute(HistoryRequest::Enter(decoded))?;
         count = count.saturating_add(1);
     }
-    if failed { -1 } else { count }
+    if failed {
+        Err(HistoryErrorKind::ReadFailed.into())
+    } else {
+        Ok(count)
+    }
 }
 
-fn load_libedit<C: HistoryChar>(history: &mut HistoryHandle<C>, input: &mut dyn BufRead) -> c_int {
+fn load_libedit<C: HistoryChar>(
+    history: &mut HistoryHandle<C>,
+    input: &mut dyn BufRead,
+) -> Result<usize, HistoryError<C>> {
     let mut line = Vec::new();
     let size = match input.read_until(b'\n', &mut line) {
-        Ok(0) | Err(_) => return -1,
+        Ok(0) | Err(_) => return Err(HistoryErrorKind::ReadFailed.into()),
         Ok(size) => size,
     };
     if !cookie_prefix_matches(&line[..size]) {
-        return -1;
+        return Err(HistoryErrorKind::ReadFailed.into());
     }
 
     let mut capacity = 1024usize;
     let mut decoded = vec![0; capacity];
     let mut conversion = ConversionBuffer::default();
-    let mut event = empty_event();
-    let mut count: c_int = 0;
+    let mut count = 0usize;
 
     loop {
         line.clear();
@@ -107,7 +109,7 @@ fn load_libedit<C: HistoryChar>(history: &mut HistoryHandle<C>, input: &mut dyn 
         if capacity <= size {
             let wanted = (size + 1024) & !1023usize;
             if decoded.try_reserve(wanted - decoded.len()).is_err() {
-                return -1;
+                return Err(HistoryErrorKind::ReadFailed.into());
             }
             decoded.resize(wanted, 0);
             capacity = wanted;
@@ -118,12 +120,10 @@ fn load_libedit<C: HistoryChar>(history: &mut HistoryHandle<C>, input: &mut dyn 
             count = count.saturating_add(1);
             continue;
         };
-        if history.enter_backend(&mut event, EnterOperation::Enter, text.as_ptr()) == -1 {
-            return -1;
-        }
+        history.execute(HistoryRequest::Enter(text))?;
         count = count.saturating_add(1);
     }
-    count
+    Ok(count)
 }
 
 fn cookie_prefix_matches(line: &[u8]) -> bool {
@@ -148,8 +148,8 @@ pub(super) fn save_stream<C: HistoryChar>(
     history: &mut HistoryHandle<C>,
     count: usize,
     stream: SaveStream<'_>,
-) -> c_int {
-    save_to(history, count, stream.output, stream.at_start)
+) -> HistoryResult<C> {
+    save_to(history, count, stream.output, stream.at_start).map(HistoryReply::Count)
 }
 
 fn save_to<C: HistoryChar>(
@@ -157,73 +157,74 @@ fn save_to<C: HistoryChar>(
     count: usize,
     output: &mut dyn Write,
     at_start: bool,
-) -> c_int {
+) -> Result<usize, HistoryError<C>> {
     if at_start
         && output
             .write_all(nshedit::history_file::LIBEDIT_V2_HEADER)
             .is_err()
     {
-        return -1;
+        return Err(HistoryErrorKind::WriteFailed.into());
     }
 
     let mut conversion = ConversionBuffer::default();
-    let mut event = empty_event();
     let mut result;
     if count != usize::MAX {
         let mut remaining = count;
-        result = history.get_backend(&mut event, GetOperation::First);
-        while result != -1 && remaining > 0 {
+        result = history.execute(HistoryRequest::Move(HistoryMove::Newest));
+        while result.is_ok() && remaining > 0 {
             remaining -= 1;
-            result = history.get_backend(&mut event, GetOperation::Next);
+            result = history.execute(HistoryRequest::Move(HistoryMove::Older));
         }
     } else {
-        result = -1;
+        result = Err(HistoryErrorKind::NotFound.into());
     }
-    if result == -1 {
-        result = history.get_backend(&mut event, GetOperation::Last);
+    if result.is_err() {
+        result = history.execute(HistoryRequest::Move(HistoryMove::Oldest));
     }
 
-    let mut written: c_int = 0;
-    while result != -1 {
-        let text = if event.str.is_null() {
-            None
-        } else {
-            // SAFETY: a successful history callback lends a terminated
-            // string until the entry is changed.
-            Some(unsafe { input(event.str) })
+    let mut written = 0usize;
+    while let Ok(reply) = result {
+        let HistoryReply::Event(event) = reply else {
+            return Err(HistoryErrorKind::WriteFailed.into());
         };
-        let Some(bytes) = C::encode(text, &mut conversion) else {
-            return -1;
+        let Some(bytes) = C::encode(event.text.as_deref(), &mut conversion) else {
+            return Err(HistoryErrorKind::WriteFailed.into());
         };
         let mut encoded = encode_libedit_entry(bytes);
         encoded.push(b'\n');
         let _ = output.write_all(&encoded);
         written = written.saturating_add(1);
-        result = history.get_backend(&mut event, GetOperation::Previous);
+        result = history.execute(HistoryRequest::Move(HistoryMove::Newer));
     }
-    written
+    Ok(written)
 }
 
 pub(crate) fn save_fd<C: HistoryChar>(
     history: &mut HistoryHandle<C>,
     count: usize,
     descriptor: RawFd,
-) -> c_int {
+) -> HistoryResult<C> {
     if descriptor < 0 {
-        return -1;
+        return Err(HistoryErrorKind::WriteFailed.into());
     }
     // SAFETY: the descriptor is borrowed and `ManuallyDrop` prevents close.
     let mut file = ManuallyDrop::new(unsafe { File::from_raw_fd(descriptor) });
     let at_start = matches!(file.stream_position(), Ok(0));
     let mut output = BufWriter::new(&mut *file);
-    let result = save_to(history, count, &mut output, at_start);
+    let result = save_to(history, count, &mut output, at_start).map(HistoryReply::Count);
     let _ = output.flush();
     result
 }
 
 // [spec:libedit:def:history.history-save-fn]
 // [spec:libedit:sem:history.history-save-fn]
-pub(super) fn save<C: HistoryChar>(history: &mut HistoryHandle<C>, path: &Path) -> c_int {
+pub(super) fn save<C: HistoryChar>(
+    history: &mut HistoryHandle<C>,
+    path: Option<&Path>,
+) -> HistoryResult<C> {
+    let Some(path) = path else {
+        return Err(HistoryErrorKind::WriteFailed.into());
+    };
     let Ok(file) = OpenOptions::new()
         .write(true)
         .create(true)
@@ -231,10 +232,10 @@ pub(super) fn save<C: HistoryChar>(history: &mut HistoryHandle<C>, path: &Path) 
         .mode(0o600)
         .open(path)
     else {
-        return -1;
+        return Err(HistoryErrorKind::WriteFailed.into());
     };
     let mut output = BufWriter::new(file);
-    let result = save_to(history, usize::MAX, &mut output, true);
+    let result = save_to(history, usize::MAX, &mut output, true).map(HistoryReply::Count);
     let _ = output.flush();
     result
 }

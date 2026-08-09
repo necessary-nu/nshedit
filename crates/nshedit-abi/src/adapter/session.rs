@@ -271,12 +271,18 @@ impl EditLine {
         if callback.is_none() && !cookie.is_null() {
             return false;
         }
-        self.boundary.callbacks.history = callback.map(|callback| (callback, cookie));
+        let encoding = if narrow {
+            HistoryEncoding::Narrow
+        } else {
+            HistoryEncoding::Wide
+        };
+        self.boundary.callbacks.history =
+            callback.map(|callback| HistorySource::new(callback, cookie, encoding));
         self.boundary.policy.narrow_history = narrow;
         true
     }
 
-    pub(crate) fn history_callback(&self) -> Option<(HistoryCallback, *mut c_void)> {
+    pub(crate) fn history_source(&self) -> Option<HistorySource> {
         self.boundary.callbacks.history
     }
 

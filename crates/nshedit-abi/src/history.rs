@@ -8,15 +8,14 @@
 
 mod backend;
 mod dispatch;
+mod model;
 mod persistence;
 #[cfg(test)]
 mod tests;
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_void};
 use core::ptr;
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::io::Write;
-use std::path::Path;
 
 use nshedit::domain::Direction;
 use nshedit::history::{
@@ -25,26 +24,14 @@ use nshedit::history::{
 
 use crate::adapter::BoundaryChar;
 use crate::cdecl::handles::History as OpaqueHistory;
-use crate::cdecl::histedit::HistEventGen;
 use crate::conversion::{ConversionBuffer, decode_bytes, encode_wide};
 
 pub(crate) use dispatch::dispatch;
-
-const OK: c_int = 0;
-const UNKNOWN: c_int = 1;
-const ALLOCATION_FAILED: c_int = 2;
-const FIRST_NOT_FOUND: c_int = 3;
-const LAST_NOT_FOUND: c_int = 4;
-const EMPTY_LIST: c_int = 5;
-const END_REACHED: c_int = 6;
-const START_REACHED: c_int = 7;
-const CURRENT_INVALID: c_int = 8;
-const NOT_FOUND: c_int = 9;
-const HISTORY_READ_FAILED: c_int = 10;
-const HISTORY_WRITE_FAILED: c_int = 11;
-const PARAMETER_MISSING: c_int = 12;
-const NOT_ALLOWED: c_int = 14;
-const BAD_PARAMETER: c_int = 15;
+pub(crate) use model::{
+    CallbackSet, ClearCallback, DataAccess, DeleteMode, EnterCallback, EntryData, EventNumber,
+    GetCallback, HistoryError, HistoryErrorKind, HistoryEvent, HistoryMove, HistoryReply,
+    HistoryRequest, HistoryResult, Insertion, SaveStream, SeekDirection, SelectCallback,
+};
 
 macro_rules! error_tables {
     ($($message:literal),+ $(,)?) => {
@@ -143,82 +130,12 @@ impl HistoryChar for u32 {
     }
 }
 
-// [spec:libedit:def:history.history-gfun-t-void-type-hist-event]
-pub(crate) type GetCallback<C> = unsafe extern "C" fn(*mut c_void, *mut HistEventGen<C>) -> c_int;
-
-// [spec:libedit:def:history.history-efun-t-void-type-hist-event-const-char]
-pub(crate) type EnterCallback<C> =
-    unsafe extern "C" fn(*mut c_void, *mut HistEventGen<C>, *const C) -> c_int;
-
-// [spec:libedit:def:history.history-vfun-t-void-type-hist-event]
-pub(crate) type ClearCallback<C> = unsafe extern "C" fn(*mut c_void, *mut HistEventGen<C>);
-
-// [spec:libedit:def:history.history-sfun-t-void-type-hist-event-const-int]
-pub(crate) type SelectCallback<C> =
-    unsafe extern "C" fn(*mut c_void, *mut HistEventGen<C>, c_int) -> c_int;
-
-#[derive(Clone, Copy)]
-pub(crate) struct CallbackSet<C> {
-    pub(crate) reference: *mut c_void,
-    pub(crate) first: Option<GetCallback<C>>,
-    pub(crate) next: Option<GetCallback<C>>,
-    pub(crate) last: Option<GetCallback<C>>,
-    pub(crate) previous: Option<GetCallback<C>>,
-    pub(crate) current: Option<GetCallback<C>>,
-    pub(crate) select: Option<SelectCallback<C>>,
-    pub(crate) clear: Option<ClearCallback<C>>,
-    pub(crate) enter: Option<EnterCallback<C>>,
-    pub(crate) add: Option<EnterCallback<C>>,
-    pub(crate) delete: Option<SelectCallback<C>>,
-}
-
-impl<C> CallbackSet<C> {
-    fn is_complete(&self) -> bool {
-        !self.reference.is_null()
-            && self.first.is_some()
-            && self.next.is_some()
-            && self.last.is_some()
-            && self.previous.is_some()
-            && self.current.is_some()
-            && self.select.is_some()
-            && self.clear.is_some()
-            && self.enter.is_some()
-            && self.add.is_some()
-            && self.delete.is_some()
-    }
-}
-
-/// A caller-owned stream, borrowed for one save operation.
-pub(crate) struct SaveStream<'a> {
-    pub(crate) at_start: bool,
-    pub(crate) output: &'a mut dyn Write,
-}
-
-pub(crate) enum DispatchArg<'a, C> {
-    None,
-    Number(c_int),
-    Text(*const C),
-    Path(Option<&'a Path>),
-    Stream(SaveStream<'a>),
-    LimitedStream(usize, SaveStream<'a>),
-    EventData(c_int, *mut *mut c_void),
-    Replace(*const C, *mut c_void),
-    Callbacks(CallbackSet<C>),
-}
-
 // [spec:libedit:def:history.hentry-t]
 #[derive(Debug)]
 struct EntryBoundary<C> {
-    event_number: c_int,
+    event_number: EventNumber,
     c_string: Vec<C>,
-    data: *mut c_void,
-}
-
-// [spec:libedit:def:history.hist-event-private]
-#[repr(C)]
-struct MutableEvent<C> {
-    number: c_int,
-    string: *mut C,
+    data: EntryData,
 }
 
 #[repr(C, align(16))]
@@ -236,35 +153,15 @@ pub(crate) struct HistoryHandle<C> {
     store: HistoryStore<EntryBoundary<C>>,
     cursor: HistoryCursor,
     limit: usize,
-    next_event: c_int,
-    last_entered: c_int,
+    next_event: EventNumber,
+    last_entered: Option<EventNumber>,
     callbacks: Option<CallbackSet<C>>,
     callback_cookie: Box<CallbackCookie>,
+    published: Vec<C>,
 }
 
 pub(crate) type HistoryOwner = HistoryHandle<c_char>;
 pub(crate) type HistoryWideOwner = HistoryHandle<u32>;
-
-#[derive(Clone, Copy)]
-enum GetOperation {
-    First,
-    Next,
-    Last,
-    Previous,
-    Current,
-}
-
-#[derive(Clone, Copy)]
-enum EnterOperation {
-    Enter,
-    Add,
-}
-
-#[derive(Clone, Copy)]
-enum SelectOperation {
-    Select,
-    Delete,
-}
 
 impl<C: HistoryChar> HistoryHandle<C> {
     // [spec:libedit:def:history.history-def-init-fn]
@@ -277,10 +174,11 @@ impl<C: HistoryChar> HistoryHandle<C> {
             store: HistoryStore::new(),
             cursor: HistoryCursor::new(),
             limit: 0,
-            next_event: 0,
-            last_entered: -1,
+            next_event: EventNumber(0),
+            last_entered: None,
             callbacks: None,
             callback_cookie: Box::new(CallbackCookie { marker: 0 }),
+            published: Vec::new(),
         }))
     }
 
@@ -300,7 +198,7 @@ impl<C: HistoryChar> HistoryHandle<C> {
         self.store.iter().nth(position).map(HistoryEntry::id)
     }
 
-    fn find_event(&self, number: c_int) -> Option<HistoryId> {
+    fn find_event(&self, number: EventNumber) -> Option<HistoryId> {
         self.store
             .iter()
             .find(|entry| entry.metadata().event_number == number)
@@ -311,111 +209,104 @@ impl<C: HistoryChar> HistoryHandle<C> {
         self.store.select(&mut self.cursor, id).is_some()
     }
 
-    fn publish_id(&self, id: HistoryId, event: &mut HistEventGen<C>) -> c_int {
-        let Some(entry) = self.store.get(id) else {
-            set_error(event, CURRENT_INVALID);
-            return -1;
+    fn event_for_id(&self, id: HistoryId) -> Result<HistoryEvent<C>, HistoryErrorKind> {
+        let entry = self.store.get(id).ok_or(HistoryErrorKind::CurrentInvalid)?;
+        let boundary = entry.metadata();
+        Ok(HistoryEvent::retained(
+            boundary.event_number,
+            boundary.c_string[..boundary.c_string.len() - 1].to_vec(),
+            id,
+        ))
+    }
+
+    /// Project a typed event into the pointer lifetime promised by an exported
+    /// compatibility function.
+    pub(crate) fn boundary_text(&mut self, event: &HistoryEvent<C>) -> *const C {
+        if let Some(id) = event.retained
+            && let Some(entry) = self.store.get(id)
+        {
+            return entry.metadata().c_string.as_ptr();
+        }
+        let Some(text) = event.text.as_deref() else {
+            return ptr::null();
         };
-        publish(entry, event);
-        0
+        self.published = own_string(text);
+        self.published.as_ptr()
     }
 
     // [spec:libedit:def:history.history-def-first-fn]
     // [spec:libedit:sem:history.history-def-first-fn]
-    fn first(&mut self, event: &mut HistEventGen<C>) -> c_int {
+    fn first(&mut self) -> Result<HistoryEvent<C>, HistoryError<C>> {
         let Some(id) = self.store.newest().map(HistoryEntry::id) else {
             self.cursor.reset();
-            set_error(event, FIRST_NOT_FOUND);
-            return -1;
+            return Err(HistoryErrorKind::FirstNotFound.into());
         };
         self.select_id(id);
-        self.publish_id(id, event)
+        self.event_for_id(id).map_err(Into::into)
     }
 
     // [spec:libedit:def:history.history-def-last-fn]
     // [spec:libedit:sem:history.history-def-last-fn]
-    fn last(&mut self, event: &mut HistEventGen<C>) -> c_int {
+    fn last(&mut self) -> Result<HistoryEvent<C>, HistoryError<C>> {
         let Some(id) = self.store.oldest().map(HistoryEntry::id) else {
             self.cursor.reset();
-            set_error(event, LAST_NOT_FOUND);
-            return -1;
+            return Err(HistoryErrorKind::LastNotFound.into());
         };
         self.select_id(id);
-        self.publish_id(id, event)
+        self.event_for_id(id).map_err(Into::into)
     }
 
     // [spec:libedit:def:history.history-def-next-fn]
     // [spec:libedit:sem:history.history-def-next-fn]
-    fn next(&mut self, event: &mut HistEventGen<C>) -> c_int {
+    fn next(&mut self) -> Result<HistoryEvent<C>, HistoryError<C>> {
         if self.cursor.is_live() {
-            set_error(event, EMPTY_LIST);
-            return -1;
+            return Err(HistoryErrorKind::Empty.into());
         }
         match self.store.navigate(&mut self.cursor, Direction::Previous) {
-            Navigation::Entry(entry) => {
-                publish(entry, event);
-                0
-            }
-            Navigation::Boundary | Navigation::Live => {
-                set_error(event, END_REACHED);
-                -1
-            }
+            Navigation::Entry(entry) => Ok(event_from_entry(entry)),
+            Navigation::Boundary | Navigation::Live => Err(HistoryErrorKind::EndReached.into()),
         }
     }
 
     // [spec:libedit:def:history.history-def-prev-fn]
     // [spec:libedit:sem:history.history-def-prev-fn]
-    fn previous(&mut self, event: &mut HistEventGen<C>) -> c_int {
+    fn previous(&mut self) -> Result<HistoryEvent<C>, HistoryError<C>> {
         let Some(id) = self.cursor.current() else {
-            set_error(
-                event,
-                if self.store.is_empty() {
-                    EMPTY_LIST
-                } else {
-                    END_REACHED
-                },
-            );
-            return -1;
+            return Err(if self.store.is_empty() {
+                HistoryErrorKind::Empty
+            } else {
+                HistoryErrorKind::EndReached
+            }
+            .into());
         };
         if self.position(id) == Some(0) {
-            set_error(event, START_REACHED);
-            return -1;
+            return Err(HistoryErrorKind::StartReached.into());
         }
         match self.store.navigate(&mut self.cursor, Direction::Next) {
-            Navigation::Entry(entry) => {
-                publish(entry, event);
-                0
-            }
-            Navigation::Boundary | Navigation::Live => {
-                set_error(event, START_REACHED);
-                -1
-            }
+            Navigation::Entry(entry) => Ok(event_from_entry(entry)),
+            Navigation::Boundary | Navigation::Live => Err(HistoryErrorKind::StartReached.into()),
         }
     }
 
     // [spec:libedit:def:history.history-def-curr-fn]
     // [spec:libedit:sem:history.history-def-curr-fn]
-    fn current(&self, event: &mut HistEventGen<C>) -> c_int {
+    fn current(&self) -> Result<HistoryEvent<C>, HistoryError<C>> {
         let Some(id) = self.cursor.current() else {
-            set_error(
-                event,
-                if self.store.is_empty() {
-                    EMPTY_LIST
-                } else {
-                    CURRENT_INVALID
-                },
-            );
-            return -1;
+            return Err(if self.store.is_empty() {
+                HistoryErrorKind::Empty
+            } else {
+                HistoryErrorKind::CurrentInvalid
+            }
+            .into());
         };
-        self.publish_id(id, event)
+        self.event_for_id(id).map_err(Into::into)
     }
 
     // [spec:libedit:def:history.history-def-set-fn]
     // [spec:libedit:sem:history.history-def-set-fn]
-    fn select_event(&mut self, event: &mut HistEventGen<C>, number: c_int) -> c_int {
+    fn select_event(&mut self, number: EventNumber) -> Result<(), HistoryError<C>> {
         if self.store.is_empty() {
-            set_error(event, EMPTY_LIST);
-            return -1;
+            return Err(HistoryErrorKind::Empty.into());
         }
         if self
             .cursor
@@ -423,38 +314,34 @@ impl<C: HistoryChar> HistoryHandle<C> {
             .and_then(|id| self.store.get(id))
             .is_some_and(|entry| entry.metadata().event_number == number)
         {
-            return 0;
+            return Ok(());
         }
         let Some(id) = self.find_event(number) else {
             self.cursor.reset();
-            set_error(event, NOT_FOUND);
-            return -1;
+            return Err(HistoryErrorKind::NotFound.into());
         };
         self.select_id(id);
-        0
+        Ok(())
     }
 
     // [spec:libedit:def:history.history-set-nth-fn]
     // [spec:libedit:sem:history.history-set-nth-fn]
-    fn select_nth(&mut self, event: &mut HistEventGen<C>, number: c_int) -> c_int {
+    fn select_nth(&mut self, from_oldest: usize) -> Result<(), HistoryError<C>> {
         if self.store.is_empty() {
-            set_error(event, EMPTY_LIST);
-            return -1;
+            return Err(HistoryErrorKind::Empty.into());
         }
-        let from_oldest = usize::try_from(number).unwrap_or(0);
         let Some(position) = from_oldest
             .checked_add(1)
             .and_then(|offset| self.store.len().checked_sub(offset))
         else {
             self.cursor.reset();
-            set_error(event, NOT_FOUND);
-            return -1;
+            return Err(HistoryErrorKind::NotFound.into());
         };
         let id = self
             .id_at(position)
             .expect("a checked native history position must exist");
         self.select_id(id);
-        0
+        Ok(())
     }
 
     fn remove_entry(&mut self, id: HistoryId) -> Option<HistoryEntry<EntryBoundary<C>>> {
@@ -484,27 +371,26 @@ impl<C: HistoryChar> HistoryHandle<C> {
 
     // [spec:libedit:def:history.history-def-insert-fn]
     // [spec:libedit:sem:history.history-def-insert-fn]
-    fn insert(&mut self, event: &mut HistEventGen<C>, input: &[C]) -> c_int {
-        let Some(number) = self.next_event.checked_add(1) else {
-            set_error(event, ALLOCATION_FAILED);
-            return -1;
+    fn insert(&mut self, input: &[C]) -> HistoryResult<C> {
+        let Some(number) = self.next_event.0.checked_add(1).map(EventNumber) else {
+            return Err(HistoryErrorKind::AllocationFailed.into());
         };
         let c_string = own_string(input);
         let text = input.iter().copied().map(BoundaryChar::into_unit).collect();
         let metadata = EntryBoundary {
             event_number: number,
             c_string,
-            data: ptr::null_mut(),
+            data: EntryData::NONE,
         };
         let result = match self.store.push_with(text, metadata) {
             Ok(result) => result,
-            Err(_) => {
-                set_error(event, ALLOCATION_FAILED);
-                return -1;
-            }
+            Err(_) => return Err(HistoryErrorKind::AllocationFailed.into()),
         };
         let PushResult::Inserted { id, evicted } = result else {
-            return 0;
+            return Ok(HistoryReply::Insertion {
+                state: Insertion::Unchanged,
+                event: None,
+            });
         };
         debug_assert!(
             evicted.is_none(),
@@ -512,7 +398,7 @@ impl<C: HistoryChar> HistoryHandle<C> {
         );
         self.next_event = number;
         self.select_id(id);
-        self.publish_id(id, event);
+        let mut event = self.event_for_id(id).map_err(HistoryError::from)?;
 
         while self.store.len() > self.limit {
             let oldest = self
@@ -525,33 +411,34 @@ impl<C: HistoryChar> HistoryHandle<C> {
                 .expect("the selected oldest entry must remain present");
             if oldest == id {
                 let (_, _, boundary) = removed.into_parts();
-                Vec::leak(boundary.c_string);
+                event.retained = None;
+                self.published = boundary.c_string;
             }
         }
-        1
+        Ok(HistoryReply::Insertion {
+            state: Insertion::Inserted,
+            event: Some(event),
+        })
     }
 
     // [spec:libedit:def:history.history-def-enter-fn]
     // [spec:libedit:sem:history.history-def-enter-fn]
-    fn enter(&mut self, event: &mut HistEventGen<C>, text: *const C) -> c_int {
-        // SAFETY: the public C operation promises a NUL-terminated string;
-        // NULL is an undefined C input defined here as the empty string.
-        self.insert(event, unsafe { input(text) })
+    fn enter(&mut self, text: &[C]) -> HistoryResult<C> {
+        self.insert(text)
     }
 
     // [spec:libedit:def:history.history-def-add-fn]
     // [spec:libedit:sem:history.history-def-add-fn]
-    fn add(&mut self, event: &mut HistEventGen<C>, text: *const C) -> c_int {
+    fn add(&mut self, text: &[C]) -> HistoryResult<C> {
         let Some(id) = self.cursor.current() else {
-            return self.enter(event, text);
+            return self.enter(text);
         };
         // Copy first because a caller can pass a pointer borrowed from an
         // entry whose boundary buffer may reallocate below.
-        // SAFETY: as in `enter`.
-        let suffix = unsafe { input(text) }.to_vec();
+        let suffix = text.to_vec();
         let Some(entry) = self.store.get_mut(id) else {
             self.cursor.reset();
-            return self.insert(event, &suffix);
+            return self.insert(&suffix);
         };
         entry
             .line_mut()
@@ -560,46 +447,41 @@ impl<C: HistoryChar> HistoryHandle<C> {
         boundary.c_string.pop();
         boundary.c_string.extend_from_slice(&suffix);
         boundary.c_string.push(C::NUL);
-        publish(entry, event);
-        0
+        Ok(HistoryReply::Insertion {
+            state: Insertion::Unchanged,
+            event: Some(event_from_entry(entry)),
+        })
     }
 
     // [spec:libedit:def:history.history-def-del-fn]
     // [spec:libedit:sem:history.history-def-del-fn]
-    fn delete_event(&mut self, event: &mut HistEventGen<C>, number: c_int) -> c_int {
-        if self.select_event(event, number) != 0 {
-            return -1;
-        }
+    fn delete_event(&mut self, number: EventNumber) -> HistoryResult<C> {
+        self.select_event(number)?;
         let entry = self
             .delete_selected()
             .expect("successful selection names a retained entry");
-        hand_over(&entry, event);
-        0
+        let data = entry.metadata().data;
+        Ok(HistoryReply::Removed {
+            event: detached_event(&entry),
+            data,
+        })
     }
 
     // [spec:libedit:def:history.history-deldata-nth-fn]
     // [spec:libedit:sem:history.history-deldata-nth-fn]
-    fn delete_nth(
-        &mut self,
-        event: &mut HistEventGen<C>,
-        number: c_int,
-        data: *mut *mut c_void,
-    ) -> c_int {
-        if self.select_nth(event, number) != 0 {
-            return -1;
-        }
-        if data.addr() == usize::MAX {
-            return 0;
+    fn delete_nth(&mut self, position_from_oldest: usize, mode: DeleteMode) -> HistoryResult<C> {
+        self.select_nth(position_from_oldest)?;
+        if mode == DeleteMode::SelectOnly {
+            return Ok(HistoryReply::Complete);
         }
         let entry = self
             .delete_selected()
             .expect("successful positional selection names an entry");
-        hand_over(&entry, event);
-        if !data.is_null() {
-            // SAFETY: this is the caller's non-null out-parameter.
-            unsafe { *data = entry.metadata().data };
-        }
-        0
+        let data = entry.metadata().data;
+        Ok(HistoryReply::Removed {
+            event: detached_event(&entry),
+            data,
+        })
     }
 
     // [spec:libedit:def:history.history-def-clear-fn]
@@ -607,71 +489,69 @@ impl<C: HistoryChar> HistoryHandle<C> {
     fn clear(&mut self) {
         self.store.clear();
         self.cursor.reset();
-        self.next_event = 0;
+        self.next_event = EventNumber(0);
     }
 
     // [spec:libedit:def:history.history-setsize-fn]
     // [spec:libedit:sem:history.history-setsize-fn]
-    fn set_size(&mut self, event: &mut HistEventGen<C>, size: c_int) -> c_int {
+    fn set_size(&mut self, size: usize) -> HistoryResult<C> {
         if !self.is_builtin() {
-            set_error(event, NOT_ALLOWED);
-            return -1;
+            return Err(HistoryErrorKind::NotAllowed.into());
         }
-        let Ok(size) = usize::try_from(size) else {
-            set_error(event, BAD_PARAMETER);
-            return -1;
-        };
         self.limit = size;
-        0
+        Ok(HistoryReply::Complete)
     }
 
     // [spec:libedit:def:history.history-getsize-fn]
     // [spec:libedit:sem:history.history-getsize-fn]
-    fn get_size(&self, event: &mut HistEventGen<C>) -> c_int {
+    fn get_size(&self) -> HistoryResult<C> {
         if !self.is_builtin() {
-            set_error(event, NOT_ALLOWED);
-            return -1;
+            return Err(HistoryErrorKind::NotAllowed.into());
         }
-        event.num = c_int::try_from(self.store.len()).unwrap_or(c_int::MAX);
-        0
+        Ok(HistoryReply::Size(self.store.len()))
     }
 
     // [spec:libedit:def:history.history-setunique-fn]
     // [spec:libedit:sem:history.history-setunique-fn]
-    fn set_unique(&mut self, event: &mut HistEventGen<C>, unique: c_int) -> c_int {
+    fn set_unique(&mut self, unique: bool) -> HistoryResult<C> {
         if !self.is_builtin() {
-            set_error(event, NOT_ALLOWED);
-            return -1;
+            return Err(HistoryErrorKind::NotAllowed.into());
         }
-        self.store.set_duplicate_policy(if unique == 0 {
-            DuplicatePolicy::Keep
-        } else {
+        self.store.set_duplicate_policy(if unique {
             DuplicatePolicy::IgnoreConsecutive
+        } else {
+            DuplicatePolicy::Keep
         });
-        0
+        Ok(HistoryReply::Complete)
     }
 
     // [spec:libedit:def:history.history-getunique-fn]
     // [spec:libedit:sem:history.history-getunique-fn]
-    fn get_unique(&self, event: &mut HistEventGen<C>) -> c_int {
+    fn get_unique(&self) -> HistoryResult<C> {
         if !self.is_builtin() {
-            set_error(event, NOT_ALLOWED);
-            return -1;
+            return Err(HistoryErrorKind::NotAllowed.into());
         }
-        event.num =
-            c_int::from(self.store.duplicate_policy() == DuplicatePolicy::IgnoreConsecutive);
-        0
+        Ok(HistoryReply::Unique(
+            self.store.duplicate_policy() == DuplicatePolicy::IgnoreConsecutive,
+        ))
     }
 }
 
-fn set_error<C: HistoryChar>(event: &mut HistEventGen<C>, code: c_int) {
-    event.num = code;
-    event.str = C::errors()[code as usize].as_ptr();
+fn event_from_entry<C: Clone>(entry: &HistoryEntry<EntryBoundary<C>>) -> HistoryEvent<C> {
+    let boundary = entry.metadata();
+    HistoryEvent::retained(
+        boundary.event_number,
+        boundary.c_string[..boundary.c_string.len() - 1].to_vec(),
+        entry.id(),
+    )
 }
 
-fn publish<C>(entry: &HistoryEntry<EntryBoundary<C>>, event: &mut HistEventGen<C>) {
-    event.num = entry.metadata().event_number;
-    event.str = entry.metadata().c_string.as_ptr();
+fn detached_event<C: Clone>(entry: &HistoryEntry<EntryBoundary<C>>) -> HistoryEvent<C> {
+    let boundary = entry.metadata();
+    HistoryEvent::detached(
+        boundary.event_number,
+        Some(boundary.c_string[..boundary.c_string.len() - 1].to_vec()),
+    )
 }
 
 fn own_string<C: HistoryChar>(input: &[C]) -> Vec<C> {
@@ -681,7 +561,7 @@ fn own_string<C: HistoryChar>(input: &[C]) -> Vec<C> {
     owned
 }
 
-fn owned_copy<C: HistoryChar>(source: &[C]) -> *mut C {
+pub(super) fn owned_copy<C: HistoryChar>(source: &[C]) -> *mut C {
     let Some(length) = source.len().checked_add(1) else {
         return ptr::null_mut();
     };
@@ -703,14 +583,8 @@ fn owned_copy<C: HistoryChar>(source: &[C]) -> *mut C {
     allocation
 }
 
-fn hand_over<C: HistoryChar>(entry: &HistoryEntry<EntryBoundary<C>>, event: &mut HistEventGen<C>) {
-    let source = &entry.metadata().c_string[..entry.metadata().c_string.len() - 1];
-    let owned = MutableEvent {
-        number: entry.metadata().event_number,
-        string: owned_copy(source),
-    };
-    event.num = owned.number;
-    event.str = owned.string;
+pub(crate) fn transfer_text<C: HistoryChar>(event: &HistoryEvent<C>) -> *mut C {
+    event.text.as_deref().map_or(ptr::null_mut(), owned_copy)
 }
 
 /// Read the characters before a C string's terminator. NULL is defined as an
@@ -719,7 +593,7 @@ fn hand_over<C: HistoryChar>(entry: &HistoryEntry<EntryBoundary<C>>, event: &mut
 /// # Safety
 ///
 /// A non-null pointer must name a live NUL-terminated string.
-unsafe fn input<'a, C: HistoryChar>(string: *const C) -> &'a [C] {
+pub(super) unsafe fn input<'a, C: HistoryChar>(string: *const C) -> &'a [C] {
     if string.is_null() {
         return &[];
     }
@@ -750,11 +624,11 @@ pub(crate) unsafe fn save_fd(
     handle: *mut OpaqueHistory,
     count: usize,
     descriptor: std::os::fd::RawFd,
-) -> c_int {
+) -> HistoryResult<c_char> {
     // SAFETY: the caller guarantees that a non-null opaque handle points at
     // the narrow owner allocated by `history_init`.
     let Some(history) = (unsafe { handle.cast::<HistoryOwner>().as_mut() }) else {
-        return -1;
+        return Err(HistoryErrorKind::WriteFailed.into());
     };
     persistence::save_fd(history, count, descriptor)
 }

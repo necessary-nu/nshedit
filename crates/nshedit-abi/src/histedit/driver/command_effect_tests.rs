@@ -8,6 +8,8 @@ use nshedit::editor::effect::{
     HistoryWordPosition, HistoryWordResponse,
 };
 
+use crate::cdecl::histedit::{H_FIRST, H_NEXT};
+
 use super::*;
 
 struct TestHistory {

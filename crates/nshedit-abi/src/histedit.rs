@@ -87,13 +87,14 @@ use crate::adapter::{
 use crate::cdecl::handles::{History, HistoryW};
 use crate::cdecl::histedit::{
     CC_EOF, CC_ERROR, CC_NEWLINE, CC_NORM, CC_REDISPLAY, CC_REFRESH, CC_REFRESH_BEEP, CFile,
-    H_FIRST, H_NEXT, HistEvent, HistEventGen, HistEventWide as HistEventW, LineInfo, LineInfoGen,
+    HistEvent, HistEventGen, HistEventWide as HistEventW, LineInfo, LineInfoGen,
     LineInfoWide as LineInfoW, WcharT,
 };
 use crate::cstdio::{self, CFileWriter};
 use crate::history::{
-    CallbackSet, ClearCallback, DispatchArg, EnterCallback, GetCallback, HistoryChar,
-    HistoryHandle, HistoryOwner, HistoryWideOwner, SaveStream, SelectCallback,
+    CallbackSet, ClearCallback, DataAccess, DeleteMode, EnterCallback, EntryData, EventNumber,
+    GetCallback, HistoryChar, HistoryErrorKind, HistoryHandle, HistoryMove, HistoryOwner,
+    HistoryRequest, HistoryWideOwner, SaveStream, SeekDirection, SelectCallback,
 };
 
 mod driver;
@@ -1756,12 +1757,12 @@ pub unsafe extern "C" fn history_wend(h: *mut HistoryW) {
 }
 
 /// The varargs tail of `history_w`/`history`, walked into the ABI adapter's
-/// closed [`DispatchArg`] form.
+/// closed [`HistoryRequest`] form.
 ///
 /// The op enumeration below is the whole of this function: each code names how
-/// many trailing arguments it has and what they are, which is what the core's
-/// [`DispatchArg`] is a closed form of, and it is also exactly how many `va_arg`
-/// reads the C makes. Only one entry in that table depends on the
+/// many trailing arguments it has and what they are. The corresponding request
+/// variant couples that payload to its operation, and the arm also performs
+/// exactly as many `va_arg` reads as the C. Only one entry in that table depends on the
 /// instantiation — the five string ops, whose argument is `const wchar_t *`
 /// wide and `const char *` narrow — so the table is written once and `C` picks
 /// the spelling. `H_LOAD` and `H_SAVE` take a `const char *` path in *both*,
@@ -1789,8 +1790,25 @@ unsafe fn history_dispatch<C: HistoryChar>(
     // reason: the adapter borrows it for the length of the call and never
     // past it, so no `FILE *` outlives the operation that was handed it.
     let mut fp_out: Option<CFileWriter> = None;
+    let mut data_output = None;
 
-    let arg = match op {
+    if op == H_END {
+        // SAFETY: the exported function requires a writable event record.
+        let event = unsafe { &mut *ev };
+        if h.is_null() {
+            let code = HistoryErrorKind::Unknown.code();
+            event.num = code;
+            event.str = C::errors()[code as usize].as_ptr();
+            return -1;
+        }
+        event.num = 0;
+        event.str = C::errors()[0].as_ptr();
+        // SAFETY: this consuming operation owns the live opaque allocation.
+        unsafe { crate::history::end(h) };
+        return 0;
+    }
+
+    let request = match op {
         // `void *ptr` then ten function pointers: first, next, last, prev,
         // curr, set, clear, enter, add, del — eleven arguments, one more than
         // the manual documents. The C reads `ptr`, validates it, and never
@@ -1800,8 +1818,8 @@ unsafe fn history_dispatch<C: HistoryChar>(
             // SAFETY: for this op the eleven slots carry the state pointer and
             // then the ten vtable functions in exactly this order, per the
             // header and `sem:histedit.history-w-fn`.
-            DispatchArg::Callbacks(CallbackSet {
-                reference: unsafe { ap.next_arg::<*mut c_void>() },
+            Ok(HistoryRequest::Install(CallbackSet {
+                reference: core::ptr::NonNull::new(unsafe { ap.next_arg::<*mut c_void>() }),
                 first: unsafe { fn_arg::<GetCallback<C>>(&mut ap) },
                 next: unsafe { fn_arg::<GetCallback<C>>(&mut ap) },
                 last: unsafe { fn_arg::<GetCallback<C>>(&mut ap) },
@@ -1812,29 +1830,68 @@ unsafe fn history_dispatch<C: HistoryChar>(
                 enter: unsafe { fn_arg::<EnterCallback<C>>(&mut ap) },
                 add: unsafe { fn_arg::<EnterCallback<C>>(&mut ap) },
                 delete: unsafe { fn_arg::<SelectCallback<C>>(&mut ap) },
-            })
+            }))
         }
 
         // One `int`.
         // SAFETY: the op's argument is an `int`.
-        H_SETSIZE | H_SET | H_SETUNIQUE | H_DEL | H_NEXT_EVENT | H_PREV_EVENT => {
-            DispatchArg::Number(unsafe { ap.next_arg::<c_int>() })
-        }
+        H_SETSIZE => usize::try_from(unsafe { ap.next_arg::<c_int>() })
+            .map(HistoryRequest::SetSize)
+            .map_err(|_| HistoryErrorKind::BadParameter),
+        H_SET => Ok(HistoryRequest::Select(EventNumber(unsafe {
+            ap.next_arg::<c_int>()
+        }))),
+        H_SETUNIQUE => Ok(HistoryRequest::SetUnique(
+            unsafe { ap.next_arg::<c_int>() } != 0,
+        )),
+        H_DEL => Ok(HistoryRequest::Delete(EventNumber(unsafe {
+            ap.next_arg::<c_int>()
+        }))),
+        H_NEXT_EVENT => Ok(HistoryRequest::Seek {
+            direction: SeekDirection::Older,
+            number: EventNumber(unsafe { ap.next_arg::<c_int>() }),
+        }),
+        H_PREV_EVENT => Ok(HistoryRequest::Seek {
+            direction: SeekDirection::Newer,
+            number: EventNumber(unsafe { ap.next_arg::<c_int>() }),
+        }),
 
         // No trailing argument. `H_CURR` included: the header comment's
         // `, const int)` is wrong.
-        H_GETSIZE | H_FIRST | H_LAST | H_PREV | H_NEXT | H_CURR | H_END | H_CLEAR | H_GETUNIQUE => {
-            DispatchArg::None
-        }
+        H_GETSIZE => Ok(HistoryRequest::Size),
+        H_GETUNIQUE => Ok(HistoryRequest::Unique),
+        H_CLEAR => Ok(HistoryRequest::Clear),
+        H_FIRST => Ok(HistoryRequest::Move(HistoryMove::Newest)),
+        H_NEXT => Ok(HistoryRequest::Move(HistoryMove::Older)),
+        H_LAST => Ok(HistoryRequest::Move(HistoryMove::Oldest)),
+        H_PREV => Ok(HistoryRequest::Move(HistoryMove::Newer)),
+        H_CURR => Ok(HistoryRequest::Move(HistoryMove::Current)),
 
         // One `const wchar_t *`.
         // SAFETY: the op's argument is a NUL-terminated string of this
         // instantiation's character type.
-        H_ADD | H_ENTER | H_APPEND | H_NEXT_STR | H_PREV_STR => DispatchArg::Text(
-            unsafe { ap.next_arg::<*mut c_void>() }
+        H_ADD | H_ENTER | H_APPEND | H_NEXT_STR | H_PREV_STR => {
+            let text = unsafe { ap.next_arg::<*mut c_void>() }
                 .cast::<C>()
-                .cast_const(),
-        ),
+                .cast_const();
+            // SAFETY: the operation promises a terminated string; null is the
+            // reference implementation's defined empty-input extension.
+            let text = unsafe { crate::history::input(text) };
+            Ok(match op {
+                H_ADD => HistoryRequest::Add(text),
+                H_ENTER => HistoryRequest::Enter(text),
+                H_APPEND => HistoryRequest::Append(text),
+                H_NEXT_STR => HistoryRequest::Search {
+                    direction: SeekDirection::Newer,
+                    prefix: text,
+                },
+                H_PREV_STR => HistoryRequest::Search {
+                    direction: SeekDirection::Older,
+                    prefix: text,
+                },
+                _ => unreachable!(),
+            })
+        }
 
         // One `const char *` filename — narrow in both instantiations,
         // because the on-disk format is bytes and is frozen.
@@ -1847,7 +1904,11 @@ unsafe fn history_dispatch<C: HistoryChar>(
             let p = unsafe { ap.next_arg::<*mut c_void>() };
             let path = unsafe { cbytes(p.cast::<c_char>()) }
                 .map(|bytes| std::path::Path::new(OsStr::from_bytes(bytes)));
-            DispatchArg::Path(path)
+            Ok(if op == H_LOAD {
+                HistoryRequest::Load(path)
+            } else {
+                HistoryRequest::Save(path)
+            })
         }
 
         // One `FILE *`, which the caller keeps and must close. The stream is
@@ -1857,10 +1918,10 @@ unsafe fn history_dispatch<C: HistoryChar>(
         H_SAVE_FP => {
             // SAFETY: the op's argument is the caller's `FILE *`.
             let fp = unsafe { ap.next_arg::<*mut c_void>() };
-            DispatchArg::Stream(SaveStream {
+            Ok(HistoryRequest::SaveStream(SaveStream {
                 at_start: cstdio::at_start(fp),
                 output: fp_out.insert(CFileWriter::new(fp)),
-            })
+            }))
         }
 
         // `size_t n` then `FILE *`. `n` is passed through unchanged: the walk
@@ -1871,13 +1932,13 @@ unsafe fn history_dispatch<C: HistoryChar>(
             // SAFETY: the op's arguments are a `size_t` then a `FILE *`.
             let n = unsafe { ap.next_arg::<usize>() };
             let fp = unsafe { ap.next_arg::<*mut c_void>() };
-            DispatchArg::LimitedStream(
-                n,
-                SaveStream {
+            Ok(HistoryRequest::SaveRecent {
+                count: n,
+                stream: SaveStream {
                     at_start: cstdio::at_start(fp),
                     output: fp_out.insert(CFileWriter::new(fp)),
                 },
-            )
+            })
         }
 
         // `int` then `void **`. The pointer stays raw: `H_DELDATA` accepts
@@ -1886,7 +1947,27 @@ unsafe fn history_dispatch<C: HistoryChar>(
             // SAFETY: the op's arguments are an `int` then a `void **`.
             let num = unsafe { ap.next_arg::<c_int>() };
             let d = unsafe { ap.next_arg::<*mut c_void>() };
-            DispatchArg::EventData(num, d.cast::<*mut c_void>())
+            let output = d.cast::<*mut c_void>();
+            data_output = Some(output);
+            if op == H_DELDATA {
+                Ok(HistoryRequest::DeleteAt {
+                    position_from_oldest: usize::try_from(num).unwrap_or(0),
+                    mode: if output.addr() == usize::MAX {
+                        DeleteMode::SelectOnly
+                    } else {
+                        DeleteMode::Remove
+                    },
+                })
+            } else {
+                Ok(HistoryRequest::FindData {
+                    number: EventNumber(num),
+                    access: if output.is_null() {
+                        DataAccess::Locate
+                    } else {
+                        DataAccess::Read
+                    },
+                })
+            }
         }
 
         // `const wchar_t *line` then `void *data`. It does not free the
@@ -1898,13 +1979,21 @@ unsafe fn history_dispatch<C: HistoryChar>(
             // instantiation's character type then an opaque cookie.
             let line = unsafe { ap.next_arg::<*mut c_void>() };
             let d = unsafe { ap.next_arg::<*mut c_void>() };
-            DispatchArg::Replace(line.cast::<C>().cast_const(), d)
+            let line = if line.is_null() {
+                None
+            } else {
+                // SAFETY: this non-null argument is terminated by contract.
+                Some(unsafe { crate::history::input(line.cast::<C>().cast_const()) })
+            };
+            Ok(HistoryRequest::Replace {
+                text: line,
+                data: EntryData(core::ptr::NonNull::new(d)),
+            })
         }
 
         // Anything else reads no argument and comes back -1 with `ev` set to
-        // code 1, "unknown error" — which the core's default arm does, so it
-        // is dispatched rather than short-circuited here.
-        _ => DispatchArg::None,
+        // code 1, "unknown error" without reading a trailing argument.
+        _ => Err(HistoryErrorKind::Unknown),
     };
 
     // Ownership on the way out is implemented by the ABI owner:
@@ -1914,7 +2003,7 @@ unsafe fn history_dispatch<C: HistoryChar>(
     // not be freed.
     // SAFETY: this function's own handle/event/tail contract, now expressed
     // as one closed typed argument.
-    unsafe { crate::history::dispatch(h, ev, op, arg) }
+    unsafe { crate::history::dispatch(h, ev, request, data_output) }
 }
 
 /// C: `int history_w(HistoryW *, HistEventW *, int, ...);`

@@ -1,4 +1,5 @@
-use core::ffi::{c_int, c_void};
+//! Typed built-in and foreign history backend operations.
+
 use core::ptr;
 
 use nshedit::domain::Text;
@@ -7,248 +8,262 @@ use nshedit::history::HistoryStore;
 use crate::adapter::BoundaryChar;
 use crate::cdecl::histedit::HistEventGen;
 
-use super::{
-    CallbackSet, EnterOperation, GetOperation, HistoryChar, HistoryHandle, NOT_ALLOWED, NOT_FOUND,
-    SelectOperation, UNKNOWN, input, own_string, set_error,
-};
+use super::*;
+
+#[derive(Clone, Copy)]
+enum EntryChange {
+    Enter,
+    Add,
+}
+
+#[derive(Clone, Copy)]
+enum Selection {
+    Select,
+    Delete,
+}
+
+fn empty_event<C>() -> HistEventGen<C> {
+    HistEventGen {
+        num: 0,
+        str: ptr::null(),
+    }
+}
 
 impl<C: HistoryChar> HistoryHandle<C> {
     // [spec:libedit:def:history.history-set-fun-fn]
     // [spec:libedit:sem:history.history-set-fun-fn]
-    pub(super) fn install(&mut self, callbacks: CallbackSet<C>) -> c_int {
+    pub(super) fn install(&mut self, callbacks: CallbackSet<C>) -> HistoryResult<C> {
         if !callbacks.is_complete() {
             if !self.is_builtin() {
                 self.store = HistoryStore::new();
                 self.cursor.reset();
                 self.limit = 0;
-                self.next_event = 0;
+                self.next_event = EventNumber(0);
                 self.callbacks = None;
                 self.callback_cookie.marker = 0;
             }
-            return -1;
+            return Err(HistoryErrorKind::ParameterMissing.into());
         }
         if self.is_builtin() {
             self.clear();
         }
         self.callbacks = Some(callbacks);
-        0
+        Ok(HistoryReply::Complete)
     }
 
-    pub(super) fn get_backend(
-        &mut self,
-        event: &mut HistEventGen<C>,
-        operation: GetOperation,
-    ) -> c_int {
-        let callback = self.callbacks.and_then(|callbacks| match operation {
-            GetOperation::First => callbacks.first,
-            GetOperation::Next => callbacks.next,
-            GetOperation::Last => callbacks.last,
-            GetOperation::Previous => callbacks.previous,
-            GetOperation::Current => callbacks.current,
+    fn foreign_event(event: &HistEventGen<C>) -> HistoryEvent<C> {
+        let text = if event.str.is_null() {
+            None
+        } else {
+            // SAFETY: a successful callback lends a terminated event string
+            // for the duration of this operation. Own it before returning.
+            Some(unsafe { input(event.str) }.to_vec())
+        };
+        HistoryEvent::detached(EventNumber(event.num), text)
+    }
+
+    fn backend_move(&mut self, movement: HistoryMove) -> Result<HistoryEvent<C>, HistoryError<C>> {
+        let callback = self.callbacks.and_then(|callbacks| match movement {
+            HistoryMove::Newest => callbacks.first,
+            HistoryMove::Older => callbacks.next,
+            HistoryMove::Oldest => callbacks.last,
+            HistoryMove::Newer => callbacks.previous,
+            HistoryMove::Current => callbacks.current,
         });
         if self.callbacks.is_some() {
             let Some(callback) = callback else {
-                set_error(event, UNKNOWN);
-                return -1;
+                return Err(HistoryErrorKind::Unknown.into());
             };
             let cookie = self.cookie();
-            // SAFETY: `H_FUNC` installed this C callback with this event
-            // signature. The deliberately wrong cookie preserves the
-            // reference implementation's frozen `H_FUNC` defect.
-            return unsafe { callback(cookie, ptr::from_mut(event)) };
+            let mut event = empty_event();
+            // SAFETY: `H_FUNC` installed this callback with this event
+            // signature. The deliberately wrong cookie preserves the frozen
+            // reference defect while the private protocol remains typed.
+            let status = unsafe { callback(cookie, ptr::from_mut(&mut event)) };
+            let event = Self::foreign_event(&event);
+            return if status == -1 {
+                Err(HistoryError::Foreign(event))
+            } else {
+                Ok(event)
+            };
         }
-        match operation {
-            GetOperation::First => self.first(event),
-            GetOperation::Next => self.next(event),
-            GetOperation::Last => self.last(event),
-            GetOperation::Previous => self.previous(event),
-            GetOperation::Current => self.current(event),
+        match movement {
+            HistoryMove::Newest => self.first(),
+            HistoryMove::Older => self.next(),
+            HistoryMove::Oldest => self.last(),
+            HistoryMove::Newer => self.previous(),
+            HistoryMove::Current => self.current(),
         }
     }
 
-    pub(super) fn enter_backend(
-        &mut self,
-        event: &mut HistEventGen<C>,
-        operation: EnterOperation,
-        text: *const C,
-    ) -> c_int {
-        let callback = self.callbacks.and_then(|callbacks| match operation {
-            EnterOperation::Enter => callbacks.enter,
-            EnterOperation::Add => callbacks.add,
+    fn backend_change(&mut self, change: EntryChange, text: &[C]) -> HistoryResult<C> {
+        let callback = self.callbacks.and_then(|callbacks| match change {
+            EntryChange::Enter => callbacks.enter,
+            EntryChange::Add => callbacks.add,
         });
         if self.callbacks.is_some() {
             let Some(callback) = callback else {
-                set_error(event, UNKNOWN);
-                return -1;
+                return Err(HistoryErrorKind::Unknown.into());
             };
             let cookie = self.cookie();
-            // SAFETY: as in `get_backend`; `text` is the caller's borrowed C
-            // string for the duration of the callback.
-            return unsafe { callback(cookie, ptr::from_mut(event), text) };
+            let mut event = empty_event();
+            let terminated = own_string(text);
+            // SAFETY: the installed callback has this signature; the owned
+            // string remains live and terminated for the whole call.
+            let status =
+                unsafe { callback(cookie, ptr::from_mut(&mut event), terminated.as_ptr()) };
+            let event = Self::foreign_event(&event);
+            return if status == -1 {
+                Err(HistoryError::Foreign(event))
+            } else {
+                Ok(HistoryReply::Insertion {
+                    state: if status == 0 {
+                        Insertion::Unchanged
+                    } else {
+                        Insertion::Inserted
+                    },
+                    event: Some(event),
+                })
+            };
         }
-        match operation {
-            EnterOperation::Enter => self.enter(event, text),
-            EnterOperation::Add => self.add(event, text),
+        match change {
+            EntryChange::Enter => self.enter(text),
+            EntryChange::Add => self.add(text),
         }
     }
 
-    pub(super) fn select_backend(
-        &mut self,
-        event: &mut HistEventGen<C>,
-        operation: SelectOperation,
-        number: c_int,
-    ) -> c_int {
-        let callback = self.callbacks.and_then(|callbacks| match operation {
-            SelectOperation::Select => callbacks.select,
-            SelectOperation::Delete => callbacks.delete,
+    fn backend_select(&mut self, selection: Selection, number: EventNumber) -> HistoryResult<C> {
+        let callback = self.callbacks.and_then(|callbacks| match selection {
+            Selection::Select => callbacks.select,
+            Selection::Delete => callbacks.delete,
         });
         if self.callbacks.is_some() {
             let Some(callback) = callback else {
-                set_error(event, UNKNOWN);
-                return -1;
+                return Err(HistoryErrorKind::Unknown.into());
             };
             let cookie = self.cookie();
-            // SAFETY: as in `get_backend`.
-            return unsafe { callback(cookie, ptr::from_mut(event), number) };
+            let mut event = empty_event();
+            // SAFETY: the installed callback has this signature.
+            let status = unsafe { callback(cookie, ptr::from_mut(&mut event), number.0) };
+            let event = Self::foreign_event(&event);
+            return if status == -1 {
+                Err(HistoryError::Foreign(event))
+            } else {
+                Ok(match selection {
+                    Selection::Select => HistoryReply::Event(event),
+                    Selection::Delete => HistoryReply::Removed {
+                        event,
+                        data: EntryData::NONE,
+                    },
+                })
+            };
         }
-        match operation {
-            SelectOperation::Select => self.select_event(event, number),
-            SelectOperation::Delete => self.delete_event(event, number),
-        }
-    }
-
-    pub(super) fn clear_backend(&mut self, event: &mut HistEventGen<C>) {
-        if let Some(callbacks) = self.callbacks {
-            if let Some(callback) = callbacks.clear {
-                let cookie = self.cookie();
-                // SAFETY: as in `get_backend`.
-                unsafe { callback(cookie, ptr::from_mut(event)) };
+        match selection {
+            Selection::Select => {
+                self.select_event(number)?;
+                Ok(HistoryReply::Complete)
             }
+            Selection::Delete => self.delete_event(number),
+        }
+    }
+
+    fn backend_clear(&mut self) -> HistoryResult<C> {
+        if let Some(callbacks) = self.callbacks {
+            let Some(callback) = callbacks.clear else {
+                return Err(HistoryErrorKind::Unknown.into());
+            };
+            let cookie = self.cookie();
+            let mut event = empty_event();
+            // SAFETY: the installed callback has this signature.
+            unsafe { callback(cookie, ptr::from_mut(&mut event)) };
         } else {
             self.clear();
         }
+        Ok(HistoryReply::Complete)
     }
 
     // [spec:libedit:def:history.history-prev-event-fn]
     // [spec:libedit:sem:history.history-prev-event-fn]
-    pub(super) fn previous_event(&mut self, event: &mut HistEventGen<C>, number: c_int) -> c_int {
-        let mut result = self.get_backend(event, GetOperation::Current);
-        while result != -1 {
-            if event.num == number {
-                return 0;
+    fn seek(
+        &mut self,
+        direction: SeekDirection,
+        number: EventNumber,
+    ) -> Result<HistoryEvent<C>, HistoryError<C>> {
+        let movement = match direction {
+            SeekDirection::Older => HistoryMove::Older,
+            SeekDirection::Newer => HistoryMove::Newer,
+        };
+        let mut event = self.backend_move(HistoryMove::Current);
+        while let Ok(found) = event {
+            if found.number == number {
+                return Ok(found);
             }
-            result = self.get_backend(event, GetOperation::Previous);
+            event = self.backend_move(movement);
         }
-        set_error(event, NOT_FOUND);
-        -1
-    }
-
-    // [spec:libedit:def:history.history-next-event-fn]
-    // [spec:libedit:sem:history.history-next-event-fn]
-    pub(super) fn next_event(&mut self, event: &mut HistEventGen<C>, number: c_int) -> c_int {
-        let mut result = self.get_backend(event, GetOperation::Current);
-        while result != -1 {
-            if event.num == number {
-                return 0;
-            }
-            result = self.get_backend(event, GetOperation::Next);
-        }
-        set_error(event, NOT_FOUND);
-        -1
+        Err(HistoryErrorKind::NotFound.into())
     }
 
     // [spec:libedit:def:history.history-next-evdata-fn]
     // [spec:libedit:sem:history.history-next-evdata-fn]
-    pub(super) fn event_data(
-        &mut self,
-        event: &mut HistEventGen<C>,
-        number: c_int,
-        output: *mut *mut c_void,
-    ) -> c_int {
-        let mut result = self.get_backend(event, GetOperation::Current);
-        while result != -1 {
-            if event.num == number {
-                if !output.is_null() {
-                    if !self.is_builtin() {
-                        set_error(event, NOT_ALLOWED);
-                        return -1;
-                    }
-                    let data = self
-                        .cursor
-                        .current()
-                        .and_then(|id| self.store.get(id))
-                        .map_or(ptr::null_mut(), |entry| entry.metadata().data);
-                    // SAFETY: `output` is the caller's non-null out-parameter.
-                    unsafe { *output = data };
-                }
-                return 0;
-            }
-            result = self.get_backend(event, GetOperation::Previous);
+    fn find_data(&mut self, number: EventNumber, access: DataAccess) -> HistoryResult<C> {
+        let event = self.seek(SeekDirection::Newer, number)?;
+        if access == DataAccess::Read && !self.is_builtin() {
+            return Err(HistoryErrorKind::NotAllowed.into());
         }
-        set_error(event, NOT_FOUND);
-        -1
+        let data = if access == DataAccess::Read {
+            Some(
+                self.cursor
+                    .current()
+                    .and_then(|id| self.store.get(id))
+                    .map_or(EntryData::NONE, |entry| entry.metadata().data),
+            )
+        } else {
+            None
+        };
+        Ok(HistoryReply::EventData { event, data })
     }
 
     // [spec:libedit:def:history.history-prev-string-fn]
     // [spec:libedit:sem:history.history-prev-string-fn]
-    pub(super) fn previous_string(
-        &mut self,
-        event: &mut HistEventGen<C>,
-        pattern: *const C,
-    ) -> c_int {
-        self.search(event, pattern, GetOperation::Next)
-    }
-
     // [spec:libedit:def:history.history-next-string-fn]
     // [spec:libedit:sem:history.history-next-string-fn]
-    pub(super) fn next_string(&mut self, event: &mut HistEventGen<C>, pattern: *const C) -> c_int {
-        self.search(event, pattern, GetOperation::Previous)
-    }
-
     fn search(
         &mut self,
-        event: &mut HistEventGen<C>,
-        pattern: *const C,
-        direction: GetOperation,
-    ) -> c_int {
-        // SAFETY: the public operation promises a NUL-terminated pattern;
-        // NULL is defined as the empty prefix.
-        let pattern = unsafe { input(pattern) }.to_vec();
-        let mut result = self.get_backend(event, GetOperation::Current);
-        while result != -1 {
-            // SAFETY: a successful backend operation returns a borrowed
-            // NUL-terminated event string.
-            if unsafe { input(event.str) }.starts_with(&pattern) {
-                return 0;
+        direction: SeekDirection,
+        pattern: &[C],
+    ) -> Result<HistoryEvent<C>, HistoryError<C>> {
+        let movement = match direction {
+            SeekDirection::Older => HistoryMove::Older,
+            SeekDirection::Newer => HistoryMove::Newer,
+        };
+        let mut event = self.backend_move(HistoryMove::Current);
+        while let Ok(found) = event {
+            if found
+                .text
+                .as_deref()
+                .is_some_and(|text| text.starts_with(pattern))
+            {
+                return Ok(found);
             }
-            result = self.get_backend(event, direction);
+            event = self.backend_move(movement);
         }
-        set_error(event, NOT_FOUND);
-        -1
+        Err(HistoryErrorKind::NotFound.into())
     }
 
-    pub(super) fn replace(
-        &mut self,
-        event: &mut HistEventGen<C>,
-        line: *const C,
-        data: *mut c_void,
-    ) -> c_int {
+    fn replace(&mut self, line: Option<&[C]>, data: EntryData) -> HistoryResult<C> {
         if !self.is_builtin() {
-            set_error(event, NOT_ALLOWED);
-            return -1;
+            return Err(HistoryErrorKind::NotAllowed.into());
         }
-        if line.is_null() {
-            return -1;
-        }
-        let Some(id) = self.cursor.current() else {
-            return -1;
+        let Some(input) = line else {
+            return Err(HistoryError::Silent);
         };
-        // SAFETY: non-null and NUL-terminated by the operation contract.
-        let input = unsafe { input(line) }.to_vec();
-        let replacement = own_string(&input);
+        let Some(id) = self.cursor.current() else {
+            return Err(HistoryError::Silent);
+        };
+        let replacement = own_string(input);
         let Some(entry) = self.store.get_mut(id) else {
             self.cursor.reset();
-            return -1;
+            return Err(HistoryError::Silent);
         };
         *entry.line_mut() = input
             .iter()
@@ -258,6 +273,63 @@ impl<C: HistoryChar> HistoryHandle<C> {
         let boundary = entry.metadata_mut();
         Vec::leak(core::mem::replace(&mut boundary.c_string, replacement));
         boundary.data = data;
-        0
+        Ok(HistoryReply::Complete)
+    }
+
+    pub(crate) fn execute(&mut self, request: HistoryRequest<'_, C>) -> HistoryResult<C> {
+        match request {
+            HistoryRequest::Install(callbacks) => {
+                self.last_entered = None;
+                self.install(callbacks)
+            }
+            HistoryRequest::Size => self.get_size(),
+            HistoryRequest::SetSize(size) => self.set_size(size),
+            HistoryRequest::Unique => self.get_unique(),
+            HistoryRequest::SetUnique(unique) => self.set_unique(unique),
+            HistoryRequest::Clear => self.backend_clear(),
+            HistoryRequest::Enter(text) => {
+                let reply = self.backend_change(EntryChange::Enter, text)?;
+                if let HistoryReply::Insertion { event, .. } = &reply {
+                    self.last_entered =
+                        Some(event.as_ref().map_or(EventNumber(0), |event| event.number));
+                }
+                Ok(reply)
+            }
+            HistoryRequest::Add(text) => self.backend_change(EntryChange::Add, text),
+            HistoryRequest::Append(text) => {
+                let last_entered = self.last_entered.unwrap_or(EventNumber(-1));
+                self.backend_select(Selection::Select, last_entered)?;
+                self.backend_change(EntryChange::Add, text)
+            }
+            HistoryRequest::Select(number) => self.backend_select(Selection::Select, number),
+            HistoryRequest::Delete(number) => self.backend_select(Selection::Delete, number),
+            HistoryRequest::DeleteAt {
+                position_from_oldest,
+                mode,
+            } => {
+                if !self.is_builtin() {
+                    Err(HistoryErrorKind::NotAllowed.into())
+                } else {
+                    self.delete_nth(position_from_oldest, mode)
+                }
+            }
+            HistoryRequest::Replace { text, data } => self.replace(text, data),
+            HistoryRequest::Move(movement) => self.backend_move(movement).map(HistoryReply::Event),
+            HistoryRequest::Seek { direction, number } => {
+                self.seek(direction, number).map(HistoryReply::Event)
+            }
+            HistoryRequest::Search { direction, prefix } => {
+                self.search(direction, prefix).map(HistoryReply::Event)
+            }
+            HistoryRequest::FindData { number, access } => self.find_data(number, access),
+            HistoryRequest::Load(path) => super::persistence::load(self, path),
+            HistoryRequest::Save(path) => super::persistence::save(self, path),
+            HistoryRequest::SaveStream(stream) => {
+                super::persistence::save_stream(self, usize::MAX, stream)
+            }
+            HistoryRequest::SaveRecent { count, stream } => {
+                super::persistence::save_stream(self, count, stream)
+            }
+        }
     }
 }

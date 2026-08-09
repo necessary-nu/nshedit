@@ -292,63 +292,16 @@ enum HistoryFetch {
     },
 }
 
-struct HistoryItem {
-    number: c_int,
+struct DriverHistoryItem {
+    number: EventNumber,
     line: Text,
 }
 
-unsafe fn history_item(el: *mut EditLine, operation: c_int) -> Option<HistoryItem> {
-    let (callback, cookie) = unsafe { (&*el).history_callback() }?;
-    if cookie.is_null() {
-        return None;
-    }
-    let (number, mut line): (c_int, Text) = if unsafe { (&*el).narrow_history() } {
-        let mut event = HistEvent {
-            num: 0,
-            str: core::ptr::null(),
-        };
-        if unsafe {
-            callback(
-                cookie,
-                (&raw mut event).cast(),
-                operation,
-                core::ptr::null_mut::<c_void>(),
-            )
-        } == -1
-        {
-            return None;
-        }
-        let bytes = unsafe { cbytes(event.str) }?;
-        let mut conversion = crate::conversion::ConversionBuffer::new();
-        let line = crate::conversion::decode_bytes(Some(bytes), &mut conversion)?
-            .iter()
-            .copied()
-            .map(TextUnit::from_code_point)
-            .collect();
-        (event.num, line)
-    } else {
-        let mut event = HistEventW {
-            num: 0,
-            str: core::ptr::null(),
-        };
-        if unsafe {
-            callback(
-                cookie,
-                &raw mut event,
-                operation,
-                core::ptr::null_mut::<c_void>(),
-            )
-        } == -1
-        {
-            return None;
-        }
-        let line = unsafe { wstr(event.str) }?
-            .iter()
-            .copied()
-            .map(TextUnit::from_code_point)
-            .collect();
-        (event.num, line)
-    };
+unsafe fn history_item(el: *mut EditLine, movement: HistoryMove) -> Option<DriverHistoryItem> {
+    let source = unsafe { (&*el).history_source()? };
+    let item = unsafe { source.item(movement) }?;
+    let number = item.number();
+    let mut line = item.into_line();
 
     let mut end = line.len();
     if line.as_units().get(end.wrapping_sub(1)) == Some(&TextUnit::Scalar('\n')) {
@@ -360,12 +313,12 @@ unsafe fn history_item(el: *mut EditLine, operation: c_int) -> Option<HistoryIte
     if end != line.len() {
         line = line.as_units()[..end].iter().copied().collect();
     }
-    Some(HistoryItem { number, line })
+    Some(DriverHistoryItem { number, line })
 }
 
 unsafe fn fetch_history(el: *mut EditLine, depth: usize) -> HistoryFetch {
     debug_assert!(depth > 0);
-    let Some(first) = (unsafe { history_item(el, H_FIRST) }) else {
+    let Some(first) = (unsafe { history_item(el, HistoryMove::Newest) }) else {
         return HistoryFetch::Missing {
             last_depth: 0,
             last_entry: None,
@@ -374,7 +327,7 @@ unsafe fn fetch_history(el: *mut EditLine, depth: usize) -> HistoryFetch {
     let mut line = first.line;
     let mut reached = 1;
     while reached < depth {
-        let Some(next) = (unsafe { history_item(el, H_NEXT) }) else {
+        let Some(next) = (unsafe { history_item(el, HistoryMove::Older) }) else {
             return HistoryFetch::Missing {
                 last_depth: reached,
                 last_entry: Some(line),
@@ -390,7 +343,7 @@ unsafe fn host_history(
     el: *mut EditLine,
     request: &HistoryNavigateEffect,
 ) -> Result<HistoryResponse, HostFailure> {
-    if unsafe { (&*el).history_callback() }.is_none_or(|(_, cookie)| cookie.is_null()) {
+    if unsafe { (&*el).history_source() }.is_none_or(|source| !source.is_available()) {
         return Err(HostFailure::Unavailable);
     }
     let depth = unsafe { (&*el).history_depth() };
@@ -514,18 +467,18 @@ unsafe fn read_host_text(
     }
 }
 
-unsafe fn history_items(el: *mut EditLine) -> Result<Vec<HistoryItem>, HostFailure> {
-    if unsafe { (&*el).history_callback() }.is_none_or(|(_, cookie)| cookie.is_null()) {
+unsafe fn history_items(el: *mut EditLine) -> Result<Vec<DriverHistoryItem>, HostFailure> {
+    if unsafe { (&*el).history_source() }.is_none_or(|source| !source.is_available()) {
         return Err(HostFailure::Unavailable);
     }
     let mut items = Vec::new();
-    let mut operation = H_FIRST;
-    while let Some(item) = unsafe { history_item(el, operation) } {
+    let mut movement = HistoryMove::Newest;
+    while let Some(item) = unsafe { history_item(el, movement) } {
         if items.len() == MAX_HISTORY_SCAN {
             return Err(HostFailure::Failed("history scan limit exceeded".into()));
         }
         items.push(item);
-        operation = H_NEXT;
+        movement = HistoryMove::Older;
     }
     Ok(items)
 }
@@ -659,7 +612,7 @@ unsafe fn host_history_line(
         HistoryPosition::Number(number) => items
             .iter()
             .enumerate()
-            .find(|(_, item)| usize::try_from(item.number).ok() == Some(number.get())),
+            .find(|(_, item)| usize::try_from(item.number.0).ok() == Some(number.get())),
     };
     let Some((index, item)) = selected else {
         return Ok(HistoryResponse::boundary());
@@ -672,10 +625,10 @@ unsafe fn host_history_word(
     el: *mut EditLine,
     request: &HistoryWordEffect,
 ) -> Result<HistoryWordResponse, HostFailure> {
-    if unsafe { (&*el).history_callback() }.is_none_or(|(_, cookie)| cookie.is_null()) {
+    if unsafe { (&*el).history_source() }.is_none_or(|source| !source.is_available()) {
         return Err(HostFailure::Unavailable);
     }
-    let Some(item) = (unsafe { history_item(el, H_FIRST) }) else {
+    let Some(item) = (unsafe { history_item(el, HistoryMove::Newest) }) else {
         return Ok(HistoryWordResponse::Missing);
     };
     let words: Vec<&[TextUnit]> = item

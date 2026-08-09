@@ -28,14 +28,16 @@ use nshedit_plat::terminal::{
     self, ApplyWhen, ControlCharacter, OutputSpeed, TerminalAttributes, TerminalFlag,
 };
 
-use crate::cdecl::histedit::{CFile, HistEventWide, LineInfo, LineInfoWide as LineInfoW};
+use crate::cdecl::histedit::{CFile, LineInfo, LineInfoWide as LineInfoW};
 use crate::conversion::ConversionBuffer;
 
 mod binding;
+mod history;
 mod session;
 mod terminal_io;
 mod tokenizer;
 
+pub(crate) use history::{HistoryCallback, HistoryEncoding, HistoryPolicy, HistorySource};
 pub(crate) use tokenizer::{
     BoundaryChar, BoundaryContinuation, TokenizeOutcome, Tokenizer, TokenizerW,
 };
@@ -45,8 +47,6 @@ pub(crate) type ResizeCallback = unsafe extern "C" fn(*mut EditLine, *mut c_void
 pub(crate) type AliasCallback = unsafe extern "C" fn(*mut c_void, *const c_char) -> *const c_char;
 pub(crate) type CommandCallback = unsafe extern "C" fn(*mut EditLine, u32) -> u8;
 pub(crate) type ReadCallback = unsafe extern "C" fn(*mut EditLine, *mut u32) -> c_int;
-pub(crate) type HistoryCallback =
-    unsafe extern "C" fn(*mut c_void, *mut HistEventWide, c_int, ...) -> c_int;
 pub(crate) type WidePromptCallback = unsafe extern "C" fn(*mut EditLine) -> *mut u32;
 pub(crate) type NarrowPromptCallback = unsafe extern "C" fn(*mut EditLine) -> *mut c_char;
 
@@ -82,7 +82,7 @@ struct HostCallbacks {
     resize: Option<(ResizeCallback, *mut c_void)>,
     alias: Option<(AliasCallback, *mut c_void)>,
     read: Option<ReadCallback>,
-    history: Option<(HistoryCallback, *mut c_void)>,
+    history: Option<HistorySource>,
     environment: Option<EnvironmentCallback>,
 }
 

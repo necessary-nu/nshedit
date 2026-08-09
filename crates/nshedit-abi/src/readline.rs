@@ -43,15 +43,15 @@ use std::os::fd::AsRawFd;
 
 use crate::adapter::EditLine;
 use crate::cdecl::handles::History;
-use crate::cdecl::histedit::{
-    CC_EOF, CC_ERROR, CC_NORM, CC_REFRESH, H_CLEAR, H_CURR, H_DELDATA, H_ENTER, H_FIRST, H_GETSIZE,
-    H_LAST, H_LOAD, H_NEXT, H_NEXT_EVDATA, H_NEXT_EVENT, H_NEXT_STR, H_PREV, H_PREV_EVENT,
-    H_PREV_STR, H_REPLACE, H_SAVE, H_SET, H_SETSIZE, HistEvent,
-};
+use crate::cdecl::histedit::{CC_EOF, CC_ERROR, CC_NORM, CC_REFRESH};
 use crate::cdecl::readline::{
     CFile, HistEntry, HistdataT, HistoryState, KEYMAP_SIZE, Keymap, KeymapEntry, RlCommandFuncT,
 };
 use crate::conversion::{ConversionBuffer, decode_bytes};
+use crate::history::{
+    DataAccess, DeleteMode, EntryData, EventNumber, HistoryMove, HistoryReply, HistoryRequest,
+    SeekDirection,
+};
 use crate::{cenv, clocale, cstdio};
 use bridge::{em_kill_line, passwd_home_dir, re_putc, tty_end, tty_get_signal_character, tty_init};
 use completion::_el_rl_complete;
@@ -60,6 +60,7 @@ use completion::readline_completion_suffix;
 
 mod bridge;
 mod completion;
+mod history;
 
 // ---------------------------------------------------------------------------
 // Constants `readline.c` gets from its public and private C headers.
@@ -719,38 +720,18 @@ static ABORT_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 // `EditLine` and `History` are ABI-owned opaque allocations. Only their
 // pointer values cross this declaration; no caller can name or inspect their
 // fields, and every exported definition in this crate uses the same handles.
-#[expect(
-    improper_ctypes,
-    reason = "the C ABI treats EditLine and History exclusively as opaque pointer handles"
-)]
 unsafe extern "C" {
     /// C: `int el_set(EditLine *el, int op, ...);` — defined by
     /// [`crate::eln::el_set`].
     #[link_name = "el_set"]
-    fn el_set_va(el: *mut EditLine, op: c_int, ...) -> c_int;
+    fn el_set_va(el: *mut c_void, op: c_int, ...) -> c_int;
 
     /// C: `int el_get(EditLine *el, int op, ...);` — defined by
     /// [`crate::eln::el_get`].
     #[link_name = "el_get"]
-    fn el_get_va(el: *mut EditLine, op: c_int, ...) -> c_int;
+    fn el_get_va(el: *mut c_void, op: c_int, ...) -> c_int;
 
-    /// C: `int history(History *h, HistEvent *ev, int op, ...);` — defined
-    /// by [`crate::histedit::history`].
-    #[link_name = "history"]
-    fn history_va(h: *mut History, ev: *mut HistEvent, op: c_int, ...) -> c_int;
 }
-
-/// C: `HistEvent ev;` — the out-parameter every [`history_va`] call needs.
-///
-/// The C's is an uninitialised local, so a failing op leaves it holding
-/// whatever was on the stack, and the callers that read `ev.num` without
-/// checking the status — `readline()`, `add_history` — read exactly that.
-/// Starting from zero is what makes those reads deterministic; it is the only
-/// respect in which the declaration differs from the C's.
-const EMPTY_EVENT: HistEvent = HistEvent {
-    num: 0,
-    str: ptr::null(),
-};
 // ---------------------------------------------------------------------------
 // Memory a C caller frees, and the C strings this file reads.
 // ---------------------------------------------------------------------------
@@ -1178,7 +1159,6 @@ pub unsafe extern "C" fn rl_restore_prompt() {
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn rl_initialize() -> c_int {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state; every editor call below is the
     // one `readline.c` makes, in its order.
     unsafe {
@@ -1246,7 +1226,7 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
         .map_or(ptr::null_mut(), Box::into_raw);
 
         if editmode == 0 {
-            el_set_va(E, EL_EDITMODE, 0);
+            el_set_va(E.cast(), EL_EDITMODE, 0);
         }
 
         H = crate::histedit::history_init();
@@ -1254,14 +1234,19 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
             return -1;
         }
 
-        history_va(H, &mut ev, H_SETSIZE, c_int::MAX); /* unlimited */
+        let _ = history::execute(HistoryRequest::SetSize(c_int::MAX as usize));
         history_length = 0;
         max_input_history = c_int::MAX;
-        el_set_va(E, EL_HIST, crate::histedit::history as *const c_void, H);
+        el_set_va(
+            E.cast(),
+            EL_HIST,
+            crate::histedit::history as *const c_void,
+            H,
+        );
 
         /* Setup resize function */
         el_set_va(
-            E,
+            E.cast(),
             EL_RESIZE,
             _resize_fun as *const c_void,
             &raw mut rl_line_buffer,
@@ -1273,7 +1258,7 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
         // (ERR-readline-31, reproduced).
         let getc_hook = rl_getc_function;
         if getc_hook.is_some() {
-            el_set_va(E, EL_GETCFN, _getc_function as *const c_void);
+            el_set_va(E.cast(), EL_GETCFN, _getc_function as *const c_void);
         }
 
         /* for proper prompt printing in readline() */
@@ -1285,18 +1270,18 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
             return -1;
         }
         el_set_va(
-            E,
+            E.cast(),
             EL_PROMPT_ESC,
             _get_prompt as *const c_void,
             RL_PROMPT_START_IGNORE as c_int,
         );
-        el_set_va(E, EL_SIGNAL, rl_catch_signals);
+        el_set_va(E.cast(), EL_SIGNAL, rl_catch_signals);
 
         /* set default mode to "emacs"-style and read setting afterwards */
         /* so this can be overridden */
-        el_set_va(E, EL_EDITOR, c"emacs".as_ptr());
+        el_set_va(E.cast(), EL_EDITOR, c"emacs".as_ptr());
         if !rl_terminal_name.is_null() {
-            el_set_va(E, EL_TERMINAL, rl_terminal_name);
+            el_set_va(E.cast(), EL_TERMINAL, rl_terminal_name);
         } else {
             // `terminal_set` keeps this exact pointer in the C. The native
             // core owns its terminal name, so restore the ABI's observable
@@ -1315,14 +1300,14 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
          * to emacs-style.
          */
         el_set_va(
-            E,
+            E.cast(),
             EL_ADDFN,
             c"rl_complete".as_ptr(),
             c"ReadLine compatible completion function".as_ptr(),
             _el_rl_complete as *const c_void,
         );
         el_set_va(
-            E,
+            E.cast(),
             EL_BIND,
             c"^I".as_ptr(),
             c"rl_complete".as_ptr(),
@@ -1333,14 +1318,14 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
          * Send TSTP when ^Z is pressed.
          */
         el_set_va(
-            E,
+            E.cast(),
             EL_ADDFN,
             c"rl_tstp".as_ptr(),
             c"ReadLine compatible suspend function".as_ptr(),
             _el_rl_tstp as *const c_void,
         );
         el_set_va(
-            E,
+            E.cast(),
             EL_BIND,
             c"^Z".as_ptr(),
             c"rl_tstp".as_ptr(),
@@ -1351,7 +1336,7 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
          * Set some readline compatible key-bindings.
          */
         el_set_va(
-            E,
+            E.cast(),
             EL_BIND,
             c"^R".as_ptr(),
             c"em-inc-search-prev".as_ptr(),
@@ -1379,7 +1364,7 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
             (c"\\e\\e[D", c"ed-prev-word"),
         ] {
             el_set_va(
-                E,
+                E.cast(),
                 EL_BIND,
                 keyseq.as_ptr(),
                 cmd.as_ptr(),
@@ -1411,7 +1396,6 @@ pub unsafe extern "C" fn rl_initialize() -> c_int {
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn readline(p: *const c_char) -> *mut c_char {
     let prompt = p;
-    let mut ev = EMPTY_EVENT;
     let mut buf: *mut c_char;
     // SAFETY: single-threaded module state.
     unsafe {
@@ -1447,11 +1431,11 @@ pub unsafe extern "C" fn readline(p: *const c_char) -> *mut c_char {
             // (ERR-readline-31, reproduced).
             let event_hook = rl_event_hook;
             if event_hook.is_some() && !E.is_null() && (&*E).is_tty() {
-                el_set_va(E, EL_GETCFN, _rl_event_read_char as *const c_void);
+                el_set_va(E.cast(), EL_GETCFN, _rl_event_read_char as *const c_void);
                 USED_EVENT_HOOK = 1;
             }
             if event_hook.is_none() && USED_EVENT_HOOK != 0 {
-                el_set_va(E, EL_GETCFN, EL_BUILTIN_GETCFN);
+                el_set_va(E.cast(), EL_GETCFN, EL_BUILTIN_GETCFN);
                 USED_EVENT_HOOK = 0;
             }
 
@@ -1486,8 +1470,11 @@ pub unsafe extern "C" fn readline(p: *const c_char) -> *mut c_char {
             }
 
             // Refreshed even though `readline()` never adds to the history.
-            history_va(H, &mut ev, H_GETSIZE);
-            history_length = ev.num;
+            if let Ok(reply) = history::execute(HistoryRequest::Size)
+                && let Some(size) = history::size(reply)
+            {
+                history_length = size;
+            }
             break;
         }
 
@@ -1565,7 +1552,6 @@ pub unsafe extern "C" fn get_history_event(
     cindex: *mut c_int,
     qchar: c_int,
 ) -> *const c_char {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: `cmd` is a NUL-terminated string and `cindex` a live `int`.
     unsafe {
         let s = c_bytes(cmd);
@@ -1577,15 +1563,18 @@ pub unsafe extern "C" fn get_history_event(
 
         /* find out which event to take */
         if at(s, idx) == history_expansion_char as u8 || at(s, idx) == 0 {
-            if history_va(H, &mut ev, H_FIRST) != 0 {
+            let Some(event) = history::execute(HistoryRequest::Move(HistoryMove::Newest))
+                .ok()
+                .and_then(history::event)
+            else {
                 return ptr::null();
-            }
+            };
             *cindex = if at(s, idx) != 0 {
                 idx as c_int + 1
             } else {
                 idx as c_int
             };
-            return ev.str;
+            return history::boundary_text(&event);
         }
         let mut sign = false;
         if at(s, idx) == b'-' {
@@ -1661,11 +1650,14 @@ pub unsafe extern "C" fn get_history_event(
         }
 
         // Recorded for later restoration.
-        if history_va(H, &mut ev, H_CURR) != 0 {
+        let Some(current) = history::execute(HistoryRequest::Move(HistoryMove::Current))
+            .ok()
+            .and_then(history::event)
+        else {
             c_free_str(cpat);
             return ptr::null();
-        }
-        let num = ev.num;
+        };
+        let number = current.number;
 
         let ret = if sub {
             if !pat_is_last {
@@ -1678,7 +1670,7 @@ pub unsafe extern "C" fn get_history_event(
 
         if ret == -1 {
             /* restore to end of list on failed search */
-            history_va(H, &mut ev, H_FIRST);
+            let _ = history::execute(HistoryRequest::Move(HistoryMove::Newest));
             let mut msg = pat.clone();
             msg.extend_from_slice(b": Event not found\n");
             rl_out_write(&msg);
@@ -1693,16 +1685,19 @@ pub unsafe extern "C" fn get_history_event(
 
         c_free_str(cpat);
 
-        if history_va(H, &mut ev, H_CURR) != 0 {
+        let Some(found) = history::execute(HistoryRequest::Move(HistoryMove::Current))
+            .ok()
+            .and_then(history::event)
+        else {
             return ptr::null();
-        }
+        };
         *cindex = idx as c_int;
-        let rptr = ev.str;
+        let result = history::boundary_text(&found);
 
         /* roll back to original position */
-        history_va(H, &mut ev, H_SET, num);
+        let _ = history::execute(HistoryRequest::Select(number));
 
-        rptr
+        result
     }
 }
 
@@ -2438,12 +2433,14 @@ fn strchr_nonul(s: &[u8], c: u8) -> bool {
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn stifle_history(max: c_int) {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state.
     unsafe {
         lazy_init();
 
-        if history_va(H, &mut ev, H_SETSIZE, max) == 0 {
+        if usize::try_from(max)
+            .ok()
+            .is_some_and(|limit| history::execute(HistoryRequest::SetSize(limit)).is_ok())
+        {
             max_input_history = max;
             if history_length > max {
                 // Keeps subsequent `history_get` indices aligned with the
@@ -2476,7 +2473,6 @@ pub unsafe extern "C" fn stifle_history(max: c_int) {
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn unstifle_history() -> c_int {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state.
     unsafe {
         // There is no lazy-init guard here, unlike almost every other history
@@ -2486,7 +2482,7 @@ pub unsafe extern "C" fn unstifle_history() -> c_int {
         // history call; the mirror is still swapped, which is all the return
         // value reports.
         if !H.is_null() {
-            history_va(H, &mut ev, H_SETSIZE, c_int::MAX);
+            let _ = history::execute(HistoryRequest::SetSize(c_int::MAX as usize));
         }
         let omax = max_input_history;
         max_input_history = c_int::MAX;
@@ -2516,7 +2512,6 @@ pub use history_io::{append_history, history_truncate_file, read_history, write_
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn history_get(num: c_int) -> *mut HistEntry {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state; the returned entry is the shared
     // `she` static, invalidated by the next call.
     unsafe {
@@ -2529,10 +2524,13 @@ pub unsafe extern "C" fn history_get(num: c_int) -> *mut HistEntry {
         }
 
         /* save current position */
-        if history_va(H, &mut ev, H_CURR) != 0 {
+        let Some(current) = history::execute(HistoryRequest::Move(HistoryMove::Current))
+            .ok()
+            .and_then(history::event)
+        else {
             return ptr::null_mut();
-        }
-        let curr_num = ev.num;
+        };
+        let curr_num = current.number;
 
         let she = SHE.with(Cell::as_ptr);
         let mut ok = false;
@@ -2540,17 +2538,27 @@ pub unsafe extern "C" fn history_get(num: c_int) -> *mut HistEntry {
          * use H_DELDATA to set to nth history (without delete) by passing
          * (void **)-1  -- as in history_set_pos
          */
-        let sentinel = ptr::without_provenance_mut::<*mut c_void>(usize::MAX);
-        if history_va(H, &mut ev, H_DELDATA, num - history_base, sentinel) == 0
-            && history_va(H, &mut ev, H_CURR) == 0
-            && history_va(H, &mut ev, H_NEXT_EVDATA, ev.num, &raw mut (*she).data) == 0
+        if history::execute(HistoryRequest::DeleteAt {
+            position_from_oldest: usize::try_from(num - history_base).unwrap_or(0),
+            mode: DeleteMode::SelectOnly,
+        })
+        .is_ok()
+            && let Some(selected) = history::execute(HistoryRequest::Move(HistoryMove::Current))
+                .ok()
+                .and_then(history::event)
+            && let Ok(HistoryReply::EventData { event, data }) =
+                history::execute(HistoryRequest::FindData {
+                    number: selected.number,
+                    access: DataAccess::Read,
+                })
         {
-            (*she).line = ev.str;
+            (*she).line = history::boundary_text(&event);
+            (*she).data = data.unwrap_or(EntryData::NONE).as_raw();
             ok = true;
         }
 
         /* restore pointer to where it was */
-        history_va(H, &mut ev, H_SET, curr_num);
+        let _ = history::execute(HistoryRequest::Select(curr_num));
 
         if ok { she } else { ptr::null_mut() }
     }
@@ -2561,17 +2569,22 @@ pub unsafe extern "C" fn history_get(num: c_int) -> *mut HistEntry {
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn add_history(line: *const c_char) -> c_int {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state; `line` is copied by the history.
     unsafe {
         lazy_init();
 
-        if history_va(H, &mut ev, H_ENTER, line) == -1 {
+        let text = crate::history::input(line);
+        if history::execute(HistoryRequest::Enter(text)).is_err() {
             return 0;
         }
 
-        history_va(H, &mut ev, H_GETSIZE);
-        if ev.num == history_length {
+        let Some(size) = history::execute(HistoryRequest::Size)
+            .ok()
+            .and_then(history::size)
+        else {
+            return 0;
+        };
+        if size == history_length {
             // The count did not change, so the list was at its cap and the
             // oldest event was evicted — except that duplicate suppression
             // leaves the count unchanged too, and bumps the base as though an
@@ -2579,7 +2592,7 @@ pub unsafe extern "C" fn add_history(line: *const c_char) -> c_int {
             history_base += 1;
         } else {
             history_offset += 1;
-            history_length = ev.num;
+            history_length = size;
         }
         // Always 0, so success and allocation failure are indistinguishable.
         0
@@ -2591,7 +2604,6 @@ pub unsafe extern "C" fn add_history(line: *const c_char) -> c_int {
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn remove_history(num: c_int) -> *mut HistEntry {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state; the returned entry and its line
     // are heap blocks the caller owns.
     unsafe {
@@ -2604,17 +2616,26 @@ pub unsafe extern "C" fn remove_history(num: c_int) -> *mut HistEntry {
         (*he).line = ptr::null();
         (*he).data = ptr::null_mut();
 
-        if history_va(H, &mut ev, H_DELDATA, num, &raw mut (*he).data) != 0 {
+        let Some((event, data)) = history::execute(HistoryRequest::DeleteAt {
+            position_from_oldest: usize::try_from(num).unwrap_or(0),
+            mode: DeleteMode::Remove,
+        })
+        .ok()
+        .and_then(history::removed) else {
             c_free_array(he, 1);
             return ptr::null_mut();
-        }
+        };
 
         // The fresh copy H_DELDATA made, so this string is owned by the
         // caller — and leaked by the documented `free_history_entry` idiom,
         // which frees nothing (ERR-readline-15).
-        (*he).line = ev.str;
-        if history_va(H, &mut ev, H_GETSIZE) == 0 {
-            history_length = ev.num;
+        (*he).line = crate::history::transfer_text(&event);
+        (*he).data = data.as_raw();
+        if let Some(size) = history::execute(HistoryRequest::Size)
+            .ok()
+            .and_then(history::size)
+        {
+            history_length = size;
         }
         // `history_base` and `history_offset` are not adjusted.
 
@@ -2631,19 +2652,21 @@ pub unsafe extern "C" fn replace_history_entry(
     line: *const c_char,
     data: HistdataT,
 ) -> *mut HistEntry {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state.
     unsafe {
         lazy_init();
 
         /* save current position */
-        if history_va(H, &mut ev, H_CURR) != 0 {
+        let Some(current) = history::execute(HistoryRequest::Move(HistoryMove::Current))
+            .ok()
+            .and_then(history::event)
+        else {
             return ptr::null_mut();
-        }
-        let curr_num = ev.num;
+        };
+        let curr_num = current.number;
 
         /* start from the oldest */
-        if history_va(H, &mut ev, H_LAST) != 0 {
+        if history::execute(HistoryRequest::Move(HistoryMove::Oldest)).is_err() {
             return ptr::null_mut(); /* error */
         }
 
@@ -2660,15 +2683,30 @@ pub unsafe extern "C" fn replace_history_entry(
         // H_REPLACE overwrites the entry's string without freeing the old
         // one, so the pointer returned in `he->line` stays valid indefinitely
         // and the old line is leaked by the history layer.
-        if history_va(H, &mut ev, H_NEXT_EVDATA, num, &raw mut (*he).data) == 0
-            && {
-                (*he).line = ev.str;
-                !(*he).line.is_null()
+        if let Ok(HistoryReply::EventData {
+            event,
+            data: old_data,
+        }) = history::execute(HistoryRequest::FindData {
+            number: EventNumber(num),
+            access: DataAccess::Read,
+        }) {
+            (*he).line = history::boundary_text(&event);
+            (*he).data = old_data.unwrap_or(EntryData::NONE).as_raw();
+            let text = if line.is_null() {
+                None
+            } else {
+                Some(crate::history::input(line))
+            };
+            if !(*he).line.is_null()
+                && history::execute(HistoryRequest::Replace {
+                    text,
+                    data: EntryData(core::ptr::NonNull::new(data)),
+                })
+                .is_ok()
+                && history::execute(HistoryRequest::Select(curr_num)).is_ok()
+            {
+                return he;
             }
-            && history_va(H, &mut ev, H_REPLACE, line, data) == 0
-            && history_va(H, &mut ev, H_SET, curr_num) == 0
-        {
-            return he;
         }
 
         // A late failure leaves the history modified with no way for the
@@ -2683,12 +2721,11 @@ pub unsafe extern "C" fn replace_history_entry(
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn clear_history() {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state.
     unsafe {
         lazy_init();
 
-        history_va(H, &mut ev, H_CLEAR);
+        let _ = history::execute(HistoryRequest::Clear);
         // `history_base` is deliberately left where `add_history` and
         // `stifle_history` put it, so after a clear the base can still exceed
         // 1 and `history_get` rejects small indices (ERR-readline-28).
@@ -2713,14 +2750,19 @@ pub unsafe extern "C" fn where_history() -> c_int {
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn history_list() -> *mut *mut HistEntry {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state. The arrays, the entries and the
     // line strings are all borrowed; the whole result is invalidated by the
     // next call, and there is no lazy-init guard, as in the C.
     unsafe {
-        if H.is_null() || history_va(H, &mut ev, H_LAST) != 0 {
+        let Some(mut event) = (!H.is_null())
+            .then(|| history::execute(HistoryRequest::Move(HistoryMove::Oldest)))
+            .transpose()
+            .ok()
+            .flatten()
+            .and_then(history::event)
+        else {
             return ptr::null_mut();
-        }
+        };
 
         // The C sizes both arrays from the cached `history_length` and guards
         // the walk with `if (i++ == history_length) abort();` — evaluated
@@ -2733,12 +2775,16 @@ pub unsafe extern "C" fn history_list() -> *mut *mut HistEntry {
             list.clear();
             loop {
                 list.push(HistEntry {
-                    line: ev.str,
+                    line: history::boundary_text(&event),
                     data: ptr::null_mut(),
                 });
-                if history_va(H, &mut ev, H_PREV) != 0 {
+                let Some(next) = history::execute(HistoryRequest::Move(HistoryMove::Newer))
+                    .ok()
+                    .and_then(history::event)
+                else {
                     break;
-                }
+                };
+                event = next;
             }
             HISTORY_LISTP.with_borrow_mut(|listp| {
                 listp.clear();
@@ -2759,7 +2805,6 @@ pub unsafe extern "C" fn history_list() -> *mut *mut HistEntry {
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn current_history() -> *mut HistEntry {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state; the result is the shared `rl_he`
     // static, overwritten by the next navigation call.
     unsafe {
@@ -2769,14 +2814,25 @@ pub unsafe extern "C" fn current_history() -> *mut HistEntry {
         // The lookup implies an identity between a zero-based readline offset
         // and a one-based libedit event number, which holds only while event
         // numbering is dense and starts at 1 (ERR-readline-39).
-        if H.is_null() || history_va(H, &mut ev, H_PREV_EVENT, history_offset + 1) != 0 {
+        let Some(event) = (!H.is_null())
+            .then(|| {
+                history::execute(HistoryRequest::Seek {
+                    direction: SeekDirection::Newer,
+                    number: EventNumber(history_offset + 1),
+                })
+            })
+            .transpose()
+            .ok()
+            .flatten()
+            .and_then(history::event)
+        else {
             return ptr::null_mut();
-        }
+        };
 
         let he = RL_HE.with(Cell::as_ptr);
         // Borrowed, including whatever trailing newline the entry was stored
         // with; the entry's real `histdata_t` is never surfaced here.
-        (*he).line = ev.str;
+        (*he).line = history::boundary_text(&event);
         (*he).data = ptr::null_mut();
         he
     }
@@ -2787,31 +2843,46 @@ pub unsafe extern "C" fn current_history() -> *mut HistEntry {
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn history_total_bytes() -> c_int {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state.
     unsafe {
         // No lazy-init guard, as in the C (ERR-readline-11, UB): a NULL
         // history takes the documented -1 return instead of faulting.
-        if H.is_null() || history_va(H, &mut ev, H_CURR) != 0 {
+        let Some(current) = (!H.is_null())
+            .then(|| history::execute(HistoryRequest::Move(HistoryMove::Current)))
+            .transpose()
+            .ok()
+            .flatten()
+            .and_then(history::event)
+        else {
             return -1;
-        }
-        let curr_num = ev.num;
+        };
+        let curr_num = current.number;
 
-        history_va(H, &mut ev, H_FIRST);
+        let Some(mut event) = history::execute(HistoryRequest::Move(HistoryMove::Newest))
+            .ok()
+            .and_then(history::event)
+        else {
+            return -1;
+        };
         let mut size: usize = 0;
         loop {
-            if !ev.str.is_null() {
-                // The terminating NUL is not counted, and neither is any
-                // per-entry overhead.
-                size += c_bytes(ev.str).len();
-            }
-            if history_va(H, &mut ev, H_NEXT) != 0 {
+            // The terminating NUL is not counted, and neither is any per-entry
+            // overhead.
+            size += event.text.as_deref().map_or(0, <[c_char]>::len);
+            let Some(next) = history::execute(HistoryRequest::Move(HistoryMove::Older))
+                .ok()
+                .and_then(history::event)
+            else {
                 break;
-            }
+            };
+            event = next;
         }
 
         /* get to the same position as before */
-        history_va(H, &mut ev, H_PREV_EVENT, curr_num);
+        let _ = history::execute(HistoryRequest::Seek {
+            direction: SeekDirection::Newer,
+            number: curr_num,
+        });
 
         // The cast is unchecked in the C, so a history over INT_MAX bytes
         // yields an implementation-defined value; the wrap is that value on
@@ -2845,7 +2916,6 @@ pub unsafe extern "C" fn history_set_pos(pos: c_int) -> c_int {
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn previous_history() -> *mut HistEntry {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state.
     unsafe {
         // readline's "previous" means further back in time, which is
@@ -2856,7 +2926,7 @@ pub unsafe extern "C" fn previous_history() -> *mut HistEntry {
         }
 
         // No lazy-init guard, as in the C (ERR-readline-11, UB).
-        if H.is_null() || history_va(H, &mut ev, H_LAST) != 0 {
+        if H.is_null() || history::execute(HistoryRequest::Move(HistoryMove::Oldest)).is_err() {
             return ptr::null_mut();
         }
 
@@ -2870,7 +2940,6 @@ pub unsafe extern "C" fn previous_history() -> *mut HistEntry {
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn next_history() -> *mut HistEntry {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: single-threaded module state.
     unsafe {
         if history_offset >= history_length {
@@ -2879,7 +2948,7 @@ pub unsafe extern "C" fn next_history() -> *mut HistEntry {
 
         // The H_LAST-then-scan pattern makes every navigation step O(n)
         // (ERR-readline-39).
-        if H.is_null() || history_va(H, &mut ev, H_LAST) != 0 {
+        if H.is_null() || history::execute(HistoryRequest::Move(HistoryMove::Oldest)).is_err() {
             return ptr::null_mut();
         }
 
@@ -2893,18 +2962,23 @@ pub unsafe extern "C" fn next_history() -> *mut HistEntry {
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn history_search(str_: *const c_char, direction: c_int) -> c_int {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: `str_` is a NUL-terminated string; single-threaded module state.
     unsafe {
-        if H.is_null() || history_va(H, &mut ev, H_CURR) != 0 {
+        let Some(mut event) = (!H.is_null())
+            .then(|| history::execute(HistoryRequest::Move(HistoryMove::Current)))
+            .transpose()
+            .ok()
+            .flatten()
+            .and_then(history::event)
+        else {
             return -1;
-        }
-        let curr_num = ev.num;
+        };
+        let curr_num = event.number;
         let needle = c_bytes(str_);
 
         loop {
-            if !ev.str.is_null()
-                && let Some(off) = find_substring(c_bytes(ev.str), needle)
+            if let Some(text) = history::bytes(&event)
+                && let Some(off) = find_substring(text, needle)
             {
                 // The cursor is deliberately left *on the matching entry*,
                 // which is how `get_history_event` follows a `!?pat?`
@@ -2915,11 +2989,20 @@ pub unsafe extern "C" fn history_search(str_: *const c_char, direction: c_int) -
             // A negative direction uses H_NEXT, which moves toward *older*
             // entries: readline's convention, and the opposite of the plain
             // reading of the libedit op names.
-            if history_va(H, &mut ev, if direction < 0 { H_NEXT } else { H_PREV }) != 0 {
+            let movement = if direction < 0 {
+                HistoryMove::Older
+            } else {
+                HistoryMove::Newer
+            };
+            let Some(next) = history::execute(HistoryRequest::Move(movement))
+                .ok()
+                .and_then(history::event)
+            else {
                 break;
-            }
+            };
+            event = next;
         }
-        history_va(H, &mut ev, H_SET, curr_num);
+        let _ = history::execute(HistoryRequest::Select(curr_num));
         -1
     }
 }
@@ -2938,7 +3021,6 @@ fn find_substring(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn history_search_prefix(str_: *const c_char, direction: c_int) -> c_int {
-    let mut ev = EMPTY_EVENT;
     // SAFETY: `str_` is a NUL-terminated string; single-threaded module state.
     unsafe {
         // No lazy init, no global read or written, and the event is filled
@@ -2948,16 +3030,20 @@ pub unsafe extern "C" fn history_search_prefix(str_: *const c_char, direction: c
         if H.is_null() {
             return -1;
         }
-        history_va(
-            H,
-            &mut ev,
-            if direction < 0 {
-                H_PREV_STR
+        let prefix = crate::history::input(str_);
+        let request = HistoryRequest::Search {
+            direction: if direction < 0 {
+                SeekDirection::Older
             } else {
-                H_NEXT_STR
+                SeekDirection::Newer
             },
-            str_,
-        )
+            prefix,
+        };
+        if history::execute(request).is_ok() {
+            0
+        } else {
+            -1
+        }
     }
 }
 
@@ -2971,44 +3057,66 @@ pub unsafe extern "C" fn history_search_pos(
     pos: c_int,
 ) -> c_int {
     let _ = direction; /* declared unused: the sign of `pos` carries it */
-    let mut ev = EMPTY_EVENT;
     // SAFETY: `str_` is a NUL-terminated string; single-threaded module state.
     unsafe {
         let off = if pos > 0 { pos } else { -pos };
         let pos = if pos > 0 { 1 } else { -1 };
 
-        if H.is_null() || history_va(H, &mut ev, H_CURR) != 0 {
+        let Some(current) = (!H.is_null())
+            .then(|| history::execute(HistoryRequest::Move(HistoryMove::Current)))
+            .transpose()
+            .ok()
+            .flatten()
+            .and_then(history::event)
+        else {
             return -1;
-        }
-        let curr_num = ev.num;
+        };
+        let curr_num = current.number;
 
         // `history_set_pos` only assigns the global; it does not move
         // libedit's cursor, so the H_CURR below re-reads the entry the cursor
         // was already on and `off` acts purely as a range check
         // (ERR-readline-22, reproduced). The side effect on `history_offset`
         // survives even when the search then fails.
-        if history_set_pos(off) == 0 || history_va(H, &mut ev, H_CURR) != 0 {
+        let Some(mut event) = (history_set_pos(off) != 0)
+            .then(|| history::execute(HistoryRequest::Move(HistoryMove::Current)))
+            .transpose()
+            .ok()
+            .flatten()
+            .and_then(history::event)
+        else {
             return -1;
-        }
+        };
 
         let needle = c_bytes(str_);
         loop {
-            if !ev.str.is_null() && find_substring(c_bytes(ev.str), needle).is_some() {
+            if history::bytes(&event).is_some_and(|text| find_substring(text, needle).is_some()) {
                 // The *requested* position, not the position of the match.
                 return off;
             }
-            if history_va(H, &mut ev, if pos < 0 { H_PREV } else { H_NEXT }) != 0 {
+            let movement = if pos < 0 {
+                HistoryMove::Newer
+            } else {
+                HistoryMove::Older
+            };
+            let Some(next) = history::execute(HistoryRequest::Move(movement))
+                .ok()
+                .and_then(history::event)
+            else {
                 break;
-            }
+            };
+            event = next;
         }
 
         /* set "current" pointer back to previous state */
-        history_va(
-            H,
-            &mut ev,
-            if pos < 0 { H_NEXT_EVENT } else { H_PREV_EVENT },
-            curr_num,
-        );
+        let _ = history::execute(HistoryRequest::Seek {
+            direction: if pos < 0 {
+                SeekDirection::Older
+            } else {
+                SeekDirection::Newer
+            },
+            number: curr_num,
+        });
 
         -1
     }
@@ -3314,7 +3422,13 @@ pub unsafe extern "C" fn rl_add_defun(
         // There is no lazy `rl_initialize()` here, so the C hands a NULL
         // editor to `el_set` and crashes (ERR-readline-11, UB); `el_set`
         // taking the NULL is the port's definition of it.
-        el_set_va(E, EL_ADDFN, name, name, rl_bind_wrapper as *const c_void);
+        el_set_va(
+            E.cast(),
+            EL_ADDFN,
+            name,
+            name,
+            rl_bind_wrapper as *const c_void,
+        );
         // strvis form: control characters as `^X`, other non-printables as
         // `\nnn`, whitespace encoded, no backslash doubling.
         let vised =
@@ -3325,7 +3439,13 @@ pub unsafe extern "C" fn rl_add_defun(
         for (slot, &b) in dest.iter_mut().zip(&vised[..vised.len().min(7)]) {
             *slot = b as c_char;
         }
-        el_set_va(E, EL_BIND, dest.as_ptr(), name, ptr::null::<c_char>());
+        el_set_va(
+            E.cast(),
+            EL_BIND,
+            dest.as_ptr(),
+            name,
+            ptr::null::<c_char>(),
+        );
         // Both `el_set` results are discarded, so a failed registration or
         // binding is not reported.
         0
@@ -3351,7 +3471,7 @@ pub unsafe extern "C" fn rl_callback_read_char() {
         // (ERR-readline-37).
         let buf = crate::eln::el_gets(E, &mut count);
 
-        el_set_va(E, EL_UNBUFFERED, 1);
+        el_set_va(E.cast(), EL_UNBUFFERED, 1);
         count -= 1;
         if buf.is_null() || count < 0 {
             return;
@@ -3370,7 +3490,7 @@ pub unsafe extern "C" fn rl_callback_read_char() {
 
         let linefunc = rl_linefunc;
         if done != 0 && linefunc.is_some() {
-            el_set_va(E, EL_UNBUFFERED, 0);
+            el_set_va(E.cast(), EL_UNBUFFERED, 0);
             let wbuf = if done == 2 {
                 let w = c_dup(bytes);
                 if !w.is_null() {
@@ -3411,7 +3531,7 @@ pub unsafe extern "C" fn rl_callback_handler_install(
         // Installing a second handler simply overwrites this; there is no
         // stack of handlers.
         rl_linefunc = linefunc;
-        el_set_va(E, EL_UNBUFFERED, 1);
+        el_set_va(E.cast(), EL_UNBUFFERED, 1);
     }
 }
 
@@ -3426,7 +3546,7 @@ pub unsafe extern "C" fn rl_callback_handler_remove() {
         // Nothing else happens: the prompt is not restored or freed, no
         // partially typed line is discarded, the terminal is not deprepped and
         // the display is left as it is.
-        el_set_va(E, EL_UNBUFFERED, 0);
+        el_set_va(E.cast(), EL_UNBUFFERED, 0);
         rl_linefunc = None;
     }
 }
@@ -3479,7 +3599,7 @@ pub unsafe extern "C" fn rl_prep_terminal(meta_flag: c_int) {
     let _ = meta_flag;
     // SAFETY: single-threaded module state; no lazy-init guard, as in the C.
     unsafe {
-        el_set_va(E, EL_PREP_TERM, 1);
+        el_set_va(E.cast(), EL_PREP_TERM, 1);
     }
 }
 
@@ -3490,7 +3610,7 @@ pub unsafe extern "C" fn rl_prep_terminal(meta_flag: c_int) {
 pub unsafe extern "C" fn rl_deprep_terminal() {
     // SAFETY: single-threaded module state; no lazy-init guard, as in the C.
     unsafe {
-        el_set_va(E, EL_PREP_TERM, 0);
+        el_set_va(E.cast(), EL_PREP_TERM, 0);
     }
 }
 
@@ -3554,7 +3674,16 @@ pub unsafe extern "C" fn rl_variable_bind(var: *const c_char, value: *const c_ch
     // (ERR-readline-45, reproduced). No lazy-init guard, as in the C.
     // SAFETY: both are NUL-terminated strings owned by the caller.
     unsafe {
-        c_int::from(el_set_va(E, EL_BIND, c"".as_ptr(), var, value, ptr::null::<c_char>()) == -1)
+        c_int::from(
+            el_set_va(
+                E.cast(),
+                EL_BIND,
+                c"".as_ptr(),
+                var,
+                value,
+                ptr::null::<c_char>(),
+            ) == -1,
+        )
     }
 }
 
@@ -3628,7 +3757,7 @@ fn _rl_event_read_char(el: *mut EditLine, wc: *mut u32) -> c_int {
         }
         // The hook cleared itself: put the builtin reader back.
         if { rl_event_hook }.is_none() && !el.is_null() {
-            el_set_va(el, EL_GETCFN, EL_BUILTIN_GETCFN);
+            el_set_va(el.cast(), EL_GETCFN, EL_BUILTIN_GETCFN);
         }
         // Exactly one *byte*, widened with no multibyte decoding, so non-ASCII
         // input is corrupted whenever an event hook is installed
@@ -3793,10 +3922,10 @@ pub unsafe extern "C" fn rl_get_screen_size(rows: *mut c_int, cols: *mut c_int) 
         // Neither result is checked, so on failure the caller's variables keep
         // whatever they held: this function does not initialize them.
         if !rows.is_null() {
-            el_get_va(E, EL_GETTC, c"li".as_ptr(), rows);
+            el_get_va(E.cast(), EL_GETTC, c"li".as_ptr(), rows);
         }
         if !cols.is_null() {
-            el_get_va(E, EL_GETTC, c"co".as_ptr(), cols);
+            el_get_va(E.cast(), EL_GETTC, c"co".as_ptr(), cols);
         }
     }
 }
@@ -3839,7 +3968,7 @@ pub unsafe extern "C" fn rl_set_screen_size(rows: c_int, cols: c_int) {
         // arrays are not resized the way `el_resize` would resize them.
         let buf = format!("{rows}\0");
         el_set_va(
-            E,
+            E.cast(),
             EL_SETTC,
             c"li".as_ptr(),
             buf.as_ptr(),
@@ -3847,7 +3976,7 @@ pub unsafe extern "C" fn rl_set_screen_size(rows: c_int, cols: c_int) {
         );
         let buf = format!("{cols}\0");
         el_set_va(
-            E,
+            E.cast(),
             EL_SETTC,
             c"co".as_ptr(),
             buf.as_ptr(),
@@ -3981,7 +4110,7 @@ pub unsafe extern "C" fn rl_forced_update_display() {
     // `rl_redisplay_function` is never consulted, so a custom redisplay
     // routine has no effect.
     unsafe {
-        el_set_va(E, EL_REFRESH);
+        el_set_va(E.cast(), EL_REFRESH);
     }
 }
 
