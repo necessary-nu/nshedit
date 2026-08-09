@@ -8,9 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! ncurses-compatible database discovery
+//! Ncurses-compatible filesystem database discovery.
 //!
-//! Does not support hashed database, only filesystem!
+//! The supported Linux package matrix installs directory trees. Ncurses'
+//! opt-in Berkeley DB layout is intentionally outside that matrix; see
+//! `plan/decisions/terminal-caps-via-term-crate.md`.
 
 use std::env;
 use std::ffi::OsString;
@@ -24,8 +26,6 @@ const DEFAULT_LOCATIONS: &[&str] = &[
     "/usr/share/terminfo",
     "/usr/lib/terminfo",
     "/lib/terminfo",
-    #[cfg(target_os = "haiku")]
-    "/boot/system/data/terminfo",
 ];
 
 /// Return path to database entry for `term`
@@ -47,9 +47,6 @@ const DEFAULT_LOCATIONS: &[&str] = &[
 /// terminal *type* was guarded and the *database it was looked up in* was not,
 /// which is the wrong half.
 ///
-// TODO(nshterm): filesystem layout only — a hashed `terminfo.db` is not read at
-// all, so on an ncurses built `--with-hashed-db` every search below misses and
-// the terminal resolves to dumb. Not Debian's build. See `nshterm-hashed-db`.
 pub fn get_dbpath_for_term(term: &str) -> Option<PathBuf> {
     get_dbpath_for_term_with(term, !nshedit_plat::is_elevated(), |name| env::var_os(name))
 }

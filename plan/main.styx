@@ -2010,6 +2010,7 @@ children (
                 title "Survey whether any platform we target ships hashed terminfo, then decide whether to read it"
                 priority 0
                 deps (nshterm-extract)
+                sealed true
                 log (
                     {
                         at 2026-08-05T11:53:53.861057785Z
@@ -2030,6 +2031,20 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Verified against ncurses source and this host, replacing the recollection the earlier notes on this node were resting on. Two claims held; a third measurement reprioritises the whole node.\n\nCONFIRMED, from ncurses/tinfo/hashed_db.c: the access method is DB_HASH in every branch, so db185 -- btree only by its own documentation -- does not fit. Also confirmed that ncurses spans API generations, and the branches are explicit:\n\n    HASHED_DB_API >= 4   db_create() + result->open(result, NULL, path, NULL, DB_HASH, ...)\n    HASHED_DB_API >= 3   db_create() + result->open(result, path, NULL, DB_HASH, ...)\n    HASHED_DB_API >= 2   db_open(path, DB_HASH, ...)\n    HASHED_DB_API <  2   dbopen(path, ..., DB_HASH, NULL)\n\nThe `< 2` branch is the 1.85 API, so db185 is the right generation for it and only the wrong access method. Extending db185 with hash support would cover exactly that branch and no other. Worth knowing if we ever contribute there rather than build our own.\n\nTHE MEASUREMENT THAT CHANGES THE PRIORITY: Debian's libtinfo.so.6 records NEEDED libc.so.6 and nothing else, and has zero db_*/dbopen undefined symbols. Debian's ncurses is built WITHOUT --with-hashed-db. There is no hashed database on the target platform at all.\n\nSo this node is not the cliff the earlier note called it. Re-read that note with this in mind: \"the failure is total, not partial\" and \"the whole editor degrades\" are both accurate about a hashed system and irrelevant to Debian, and I wrote them before checking whether Debian was one. Deprioritised accordingly -- a portability gap for systems configured differently, not something the port is standing on.\n\nWhat the survey still owes, and it is smaller now: which platforms in our POSIX scope actually ship --with-hashed-db. FreeBSD and the commercial Unixes are the candidates. If the answer is none we care about, this leaf can be retired rather than built, and the honest version of nshterm's publishing pitch drops from \"handles both database layouts\" to \"handles the filesystem layout, like ncurses does on Linux\"."
+                    }
+
+                    {
+                        at 2026-08-09T00:57:09.504672435Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T01:02:09.380870907Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

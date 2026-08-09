@@ -14,8 +14,8 @@ elements (
             [spec:libedit:def:terminal.tgoto-fn]
             [spec:libedit:def:terminal.tputs-fn]
         )
-        exposes ()
-        depends_on ()
+        exposes ("crates/nshterm/src/**")
+        depends_on ([arch:libedit:platform])
         composed_of ()
         decisions ([dec:libedit:terminal-caps-via-term-crate] [dec:libedit:native-terminal-render] [dec:libedit:lint-policy])
         log (
@@ -23,6 +23,7 @@ elements (
             {at "2026-08-08T14:07:24Z", kind @modified, by "[dec:libedit:terminal-caps-via-term-crate]"}
             {at "2026-08-08T18:14:09Z", kind @modified, by "[dec:libedit:native-terminal-render]"}
             {at "2026-08-08T14:07:24Z", kind @modified, by "[dec:libedit:lint-policy]"}
+            {at "2026-08-09T00:59:40Z", kind @modified, by "[dec:libedit:terminal-caps-via-term-crate]"}
         )
     }
     {
