@@ -3,7 +3,6 @@ name = "nshedit"
 description = "Line editing, history and tokenization for nsh — a Rust re-implementation of libedit"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

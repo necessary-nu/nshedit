@@ -3,7 +3,6 @@ name = "nshedit-plat"
 description = "The only crate in the workspace that issues a syscall: termios, window size, descriptor flags, the uid/gid queries, signals and the passwd database"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

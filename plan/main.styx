@@ -3346,4 +3346,27 @@ children (
             }
         )
     }
+
+    {
+        id release-metadata-cleanup
+        title "Remove obsolete toolchain, documentation, and legacy project metadata"
+        kind @chore
+        deps (retire-c)
+        sealed true
+        log (
+            {
+                at 2026-08-09T22:56:27.306527992Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-09T22:59:49.047931183Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
+        )
+    }
 )

@@ -3,10 +3,8 @@ name = "nshedit-abi"
 description = "The libedit and readline C ABIs, exported from nshedit"
 version.workspace = true
 edition.workspace = true
-# NOT the workspace floor: `c_variadic`, which this crate needs to declare
-# el_set/el_get/el_wset/el_wget/history/history_w variadic the way
-# histedit.h declares them, stabilises in 1.99. Until then rust-toolchain.toml
-# pins a nightly. This is the only crate in the workspace that is affected.
+# `c_variadic`, used by the exported libedit entry points, requires Rust 1.99.
+# No other crate in the workspace declares an MSRV.
 rust-version = "1.99"
 license.workspace = true
 repository.workspace = true

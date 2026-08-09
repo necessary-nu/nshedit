@@ -27,15 +27,16 @@ dependency.
 
 ## Quick start
 
-The repository pins the Rust toolchain it needs, including the nightly support
-currently required by the C ABI crate's variadic functions. With
-[`rustup`](https://rustup.rs/) installed:
+With a current Rust toolchain installed:
 
 ```sh
 git clone https://github.com/necessary-nu/nshedit.git
 cd nshedit
 cargo run -p nshedit --example repl
 ```
+
+Only `nshedit-abi` declares an MSRV: Rust 1.99, for its C-variadic exports.
+The native Rust crates do not pin a minimum compiler version.
 
 The example is a complete safe Rust consumer with editing, history,
 completion, terminal resize handling, and explicit terminal restoration. See
@@ -160,7 +161,7 @@ The architecture and compatibility decisions are kept under
 ## License
 
 `nshedit`, `nshedit-abi`, `nshedit-plat`, and the libedit-derived Rust code are
-available under the [BSD 3-Clause License](COPYING).
+available under the [BSD 3-Clause License](LICENSE).
 
 `nshterm` is derived from Rust's `term` crate and remains dual-licensed under
 [MIT](crates/nshterm/LICENSE-MIT) or

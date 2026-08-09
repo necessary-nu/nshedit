@@ -243,6 +243,7 @@ assertions (
     {id rust-idiom-acceptance, kind @complete, author "brendan@necessary.nu", at 2026-08-09T18:56:33.30057473Z}
     {id macos-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-09T20:26:25.744405883Z}
     {id retire-c, kind @complete, author "brendan@necessary.nu", at 2026-08-09T22:48:20.117912108Z}
+    {id release-metadata-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-09T22:59:49.047931183Z}
 )
 
 impl_evidence (
