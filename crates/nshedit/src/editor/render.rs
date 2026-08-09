@@ -7,6 +7,7 @@ use std::fmt;
 use std::io::{self, Write};
 
 use nshterm::parm::{Error as ExpansionError, Param, Variables};
+use unicode_width::UnicodeWidthStr;
 
 use crate::domain::{Error, Prompt, Screen, ScreenPosition, ScreenSize, Text, TextIndex};
 
@@ -120,9 +121,19 @@ pub(super) struct State {
 struct Configured {
     profile: TerminalProfile,
     screen: Screen,
+    rows: Vec<layout::Row>,
     cursor: ScreenPosition,
     rows_used: usize,
     variables: Variables,
+    damaged: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Committed<'a> {
+    screen: &'a Screen,
+    rows: &'a [layout::Row],
+    cursor: ScreenPosition,
+    damaged: bool,
 }
 
 impl State {
@@ -130,11 +141,13 @@ impl State {
         self.configured = Some(Configured {
             profile,
             screen: Screen::new(size),
+            rows: Vec::new(),
             cursor: size
                 .position(0, 0)
                 .expect("a validated screen has an origin"),
             rows_used: 0,
             variables: Variables::new(),
+            damaged: false,
         });
     }
 
@@ -144,10 +157,12 @@ impl State {
             .as_mut()
             .ok_or(RenderError::DisplayNotConfigured)?;
         configured.screen = Screen::new(size);
+        configured.rows.clear();
         configured.cursor = size
             .position(0, 0)
             .expect("a validated screen has an origin");
         configured.rows_used = 0;
+        configured.damaged = true;
         Ok(())
     }
 
@@ -181,15 +196,21 @@ impl State {
             .ok_or(RenderError::DisplayNotConfigured)?;
         let frame = layout::build(configured.screen.size(), left, right, line, cursor)?;
         let mut variables = configured.variables.clone();
-        let bytes = encode(
-            &configured.profile,
-            &frame,
-            configured.rows_used,
-            &mut variables,
-        )?;
+        let committed = Committed {
+            screen: &configured.screen,
+            rows: &configured.rows,
+            cursor: configured.cursor,
+            damaged: configured.damaged,
+        };
+        let bytes = encode(&configured.profile, &frame, committed, &mut variables)?;
 
-        output.write_all(&bytes)?;
-        output.flush()?;
+        if let Err(error) = output.write_all(&bytes).and_then(|()| output.flush()) {
+            self.configured
+                .as_mut()
+                .expect("display configuration cannot disappear during a write")
+                .damaged = true;
+            return Err(RenderError::Io(error));
+        }
 
         let rows_used = frame.rows_used();
         let summary = RenderSummary {
@@ -203,9 +224,11 @@ impl State {
             .as_mut()
             .expect("display configuration cannot disappear during a write");
         configured.screen = frame.screen;
+        configured.rows = frame.rows;
         configured.cursor = frame.cursor;
         configured.rows_used = rows_used;
         configured.variables = variables;
+        configured.damaged = false;
         Ok(summary)
     }
 
@@ -229,35 +252,40 @@ impl State {
         configured.variables = variables;
         Ok(bytes.len())
     }
+
+    pub(super) fn finish_line(&mut self, output: &mut dyn Write) -> Result<usize, RenderError> {
+        let configured = self
+            .configured
+            .as_mut()
+            .ok_or(RenderError::DisplayNotConfigured)?;
+        if let Err(error) = output.write_all(b"\n").and_then(|()| output.flush()) {
+            configured.damaged = true;
+            return Err(RenderError::Io(error));
+        }
+        let size = configured.screen.size();
+        configured.screen = Screen::new(size);
+        configured.rows.clear();
+        configured.cursor = size
+            .position(0, 0)
+            .expect("a validated screen has an origin");
+        configured.rows_used = 0;
+        configured.damaged = false;
+        Ok(1)
+    }
 }
 
+// [spec:nshedit:req:core.incremental-render]
 fn encode(
     profile: &TerminalProfile,
     frame: &Frame,
-    previous_rows: usize,
+    committed: Committed<'_>,
     variables: &mut Variables,
 ) -> Result<Vec<u8>, RenderError> {
     let mut output = Vec::new();
-    let cleared = append_capability(
-        profile,
-        &mut output,
-        CapabilityKind::ClearScreen,
-        &[],
-        frame.rows_used(),
-        variables,
-    )?;
-
     if profile.has_cursor_address() {
-        encode_addressed(
-            profile,
-            frame,
-            previous_rows,
-            cleared,
-            &mut output,
-            variables,
-        )?;
+        encode_addressed(profile, frame, committed, &mut output, variables)?;
     } else {
-        encode_plain(profile, frame, previous_rows, &mut output, variables)?;
+        encode_plain(profile, frame, committed, &mut output, variables)?;
     }
     Ok(output)
 }
@@ -265,19 +293,34 @@ fn encode(
 fn encode_addressed(
     profile: &TerminalProfile,
     frame: &Frame,
-    previous_rows: usize,
-    cleared: bool,
+    committed: Committed<'_>,
     output: &mut Vec<u8>,
     variables: &mut Variables,
 ) -> Result<(), RenderError> {
+    let cleared = committed.damaged
+        && append_capability(
+            profile,
+            output,
+            CapabilityKind::ClearScreen,
+            &[],
+            frame.rows_used(),
+            variables,
+        )?;
     let rows = if cleared {
         frame.rows_used()
+    } else if committed.damaged {
+        frame.screen.size().rows()
     } else {
-        frame.rows_used().max(previous_rows)
+        frame.rows_used().max(committed.rows.len())
     };
     for row in 0..rows {
+        let current = frame.rows.get(row);
+        let previous = committed.rows.get(row);
+        if !cleared && !committed.damaged && current == previous {
+            continue;
+        }
         append_cursor(profile, output, row, 0, variables)?;
-        let used = match frame.rows.get(row) {
+        let used = match current {
             Some(content) => {
                 append_atoms(output, &content.atoms);
                 content.used()
@@ -292,42 +335,118 @@ fn encode_addressed(
             1,
             variables,
         )?;
-        if !cleared_to_end && !cleared {
-            output.extend(std::iter::repeat_n(
-                b' ',
-                frame.screen.size().columns() - used,
-            ));
+        if !cleared_to_end {
+            let previous_used = previous.map_or(0, layout::Row::used);
+            let erase_to = if committed.damaged {
+                frame.screen.size().columns()
+            } else {
+                used.max(previous_used)
+            };
+            output.extend(std::iter::repeat_n(b' ', erase_to.saturating_sub(used)));
         }
     }
-    append_cursor(
-        profile,
-        output,
-        frame.cursor.row(),
-        frame.cursor.column(),
-        variables,
-    )
+    if !output.is_empty() || frame.cursor != committed.cursor {
+        append_cursor(
+            profile,
+            output,
+            frame.cursor.row(),
+            frame.cursor.column(),
+            variables,
+        )?;
+    }
+    Ok(())
 }
 
 fn encode_plain(
     profile: &TerminalProfile,
     frame: &Frame,
-    previous_rows: usize,
+    committed: Committed<'_>,
     output: &mut Vec<u8>,
     variables: &mut Variables,
 ) -> Result<(), RenderError> {
-    if frame.rows_used() > 1 || previous_rows > 1 || frame.cursor.row() > 0 {
+    if frame.rows_used() > 1 || committed.rows.len() > 1 || frame.cursor.row() > 0 {
         return Err(RenderError::CursorAddressUnavailable {
-            rows: frame.rows_used().max(previous_rows),
+            rows: frame.rows_used().max(committed.rows.len()),
         });
     }
-    append_capability(
-        profile,
-        output,
-        CapabilityKind::CarriageReturn,
-        &[],
-        1,
-        variables,
-    )?;
+    let row = &frame.rows[0];
+    let Some(previous) = committed.rows.first() else {
+        append_atoms(output, &row.atoms);
+        return append_plain_reposition(
+            profile,
+            row,
+            row.used(),
+            frame.cursor.column(),
+            output,
+            variables,
+        );
+    };
+
+    if committed.damaged {
+        return append_plain_redraw(profile, frame, previous, true, output, variables);
+    }
+
+    if row == previous {
+        return match frame.cursor.column().cmp(&committed.cursor.column()) {
+            std::cmp::Ordering::Less if committed.cursor.column() - frame.cursor.column() == 1 => {
+                append_cursor_left(profile, output, 1, variables)
+            }
+            std::cmp::Ordering::Less => {
+                append_carriage_return(profile, output, variables)?;
+                append_atom_range(output, row, 0, frame.cursor.column(), true);
+                Ok(())
+            }
+            std::cmp::Ordering::Greater => {
+                append_atom_range(
+                    output,
+                    row,
+                    committed.cursor.column(),
+                    frame.cursor.column(),
+                    true,
+                );
+                Ok(())
+            }
+            std::cmp::Ordering::Equal => {
+                append_carriage_return(profile, output, variables)?;
+                append_atom_range(output, row, 0, frame.cursor.column(), true);
+                Ok(())
+            }
+        };
+    }
+
+    let columns = frame.screen.size().columns();
+    let common_prefix = committed.screen.cells()[..columns]
+        .iter()
+        .zip(&frame.screen.cells()[..columns])
+        .take_while(|(before, after)| before == after)
+        .count();
+    if committed.cursor.column() == previous.used()
+        && frame.cursor.column() == row.used()
+        && row.used() >= previous.used()
+        && common_prefix >= previous.used()
+    {
+        append_atom_range(
+            output,
+            row,
+            committed.cursor.column(),
+            frame.cursor.column(),
+            true,
+        );
+        return Ok(());
+    }
+
+    append_plain_redraw(profile, frame, previous, false, output, variables)
+}
+
+fn append_plain_redraw(
+    profile: &TerminalProfile,
+    frame: &Frame,
+    previous: &layout::Row,
+    damaged: bool,
+    output: &mut Vec<u8>,
+    variables: &mut Variables,
+) -> Result<(), RenderError> {
+    append_carriage_return(profile, output, variables)?;
     let row = &frame.rows[0];
     append_atoms(output, &row.atoms);
     let cleared_to_end = append_capability(
@@ -341,17 +460,116 @@ fn encode_plain(
     let end_column = if cleared_to_end {
         row.used()
     } else {
+        let erase_to = if damaged {
+            frame.screen.size().columns()
+        } else {
+            previous.used().max(row.used())
+        };
         output.extend(std::iter::repeat_n(
             b' ',
-            frame.screen.size().columns() - row.used(),
+            erase_to.saturating_sub(row.used()),
         ));
-        frame.screen.size().columns()
+        erase_to
     };
-    output.extend(std::iter::repeat_n(
-        b'\x08',
-        end_column - frame.cursor.column(),
-    ));
+    append_plain_reposition(
+        profile,
+        row,
+        end_column,
+        frame.cursor.column(),
+        output,
+        variables,
+    )
+}
+
+fn append_plain_reposition(
+    profile: &TerminalProfile,
+    row: &layout::Row,
+    from: usize,
+    to: usize,
+    output: &mut Vec<u8>,
+    variables: &mut Variables,
+) -> Result<(), RenderError> {
+    let distance = from.saturating_sub(to);
+    match distance {
+        0 => Ok(()),
+        1 => append_cursor_left(profile, output, 1, variables),
+        _ => {
+            append_carriage_return(profile, output, variables)?;
+            append_atom_range(output, row, 0, to, true);
+            Ok(())
+        }
+    }
+}
+
+fn append_carriage_return(
+    profile: &TerminalProfile,
+    output: &mut Vec<u8>,
+    variables: &mut Variables,
+) -> Result<(), RenderError> {
+    append_capability(
+        profile,
+        output,
+        CapabilityKind::CarriageReturn,
+        &[],
+        1,
+        variables,
+    )?;
     Ok(())
+}
+
+fn append_cursor_left(
+    profile: &TerminalProfile,
+    output: &mut Vec<u8>,
+    count: usize,
+    variables: &mut Variables,
+) -> Result<(), RenderError> {
+    for _ in 0..count {
+        append_capability(
+            profile,
+            output,
+            CapabilityKind::CursorLeft,
+            &[],
+            1,
+            variables,
+        )?;
+    }
+    Ok(())
+}
+
+fn append_atom_range(
+    output: &mut Vec<u8>,
+    row: &layout::Row,
+    start: usize,
+    end: usize,
+    include_end_literals: bool,
+) {
+    let mut column = 0usize;
+    for atom in &row.atoms {
+        match atom {
+            Atom::Literal(bytes) => {
+                if column >= start && (column < end || (include_end_literals && column == end)) {
+                    output.extend_from_slice(bytes);
+                }
+            }
+            Atom::Glyph(text) => {
+                let width = text.width();
+                if column < end && column.saturating_add(width) > start {
+                    output.extend_from_slice(text.as_bytes());
+                }
+                column = column.saturating_add(width);
+            }
+            Atom::Spaces(count) => {
+                let atom_end = column.saturating_add(*count);
+                let overlap_start = column.max(start);
+                let overlap_end = atom_end.min(end);
+                output.extend(std::iter::repeat_n(
+                    b' ',
+                    overlap_end.saturating_sub(overlap_start),
+                ));
+                column = atom_end;
+            }
+        }
+    }
 }
 
 fn append_cursor(
@@ -450,7 +668,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(output.starts_with(b"\x1b[H\x1b[2J"));
+        assert!(!output.windows(4).any(|window| window == b"\x1b[2J"));
         assert!(output.windows(6).any(|window| window == b"p> abc"));
         assert_eq!(summary.cursor().column(), 5);
         assert_eq!(state.cursor(), Some(summary.cursor()));
@@ -499,6 +717,40 @@ mod tests {
                 .is_err()
         );
         assert_eq!(state.screen(), Some(&before));
+    }
+
+    // [spec:nshedit:req:core.incremental-render/test]
+    #[test]
+    fn plans_plain_incremental_transitions() {
+        let mut state = configured(TerminalProfile::plain(), 1, 20);
+        let prompt = Prompt::from("> ");
+        let mut output = Vec::new();
+
+        let mut present = |state: &mut State, line: &str, cursor: usize| {
+            output.clear();
+            let line = Text::from(line);
+            state
+                .present(
+                    &prompt,
+                    None,
+                    &line,
+                    line.index(cursor).unwrap(),
+                    &mut output,
+                )
+                .unwrap();
+            output.clone()
+        };
+
+        assert_eq!(present(&mut state, "", 0), b"> ");
+        assert_eq!(present(&mut state, "h", 1), b"h");
+        assert_eq!(present(&mut state, "hello", 5), b"ello");
+        assert_eq!(present(&mut state, "hello", 0), b"\r> ");
+        assert_eq!(present(&mut state, "hello", 5), b"hello");
+        assert_eq!(present(&mut state, "hello", 4), b"\x08");
+        assert_eq!(present(&mut state, "hell", 4), b"\r> hell \x08");
+        assert_eq!(present(&mut state, "hell", 4), b"\r> hell");
+        assert_eq!(present(&mut state, "hellworld", 9), b"world");
+        assert_eq!(present(&mut state, "", 0), b"\r>          \r> ");
     }
 
     #[test]

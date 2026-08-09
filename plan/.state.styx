@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-09T02:16:15.652816609Z
+last_sync_at 2026-08-09T02:19:38.778000232Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -199,7 +199,6 @@ assertions (
     {id nshterm-hashed-db, kind @complete, author "brendan@necessary.nu", at 2026-08-09T01:02:09.380870907Z}
     {id greenfield-acceptance, kind @doing, author "brendan@necessary.nu", at 2026-08-09T01:04:02.612575717Z}
     {id greenfield-terminal-compat, kind @doing, author "brendan@necessary.nu", at 2026-08-09T01:11:16.919818416Z}
-    {id greenfield-incremental-render, kind @doing, author "brendan@necessary.nu", at 2026-08-09T02:15:26.706068023Z}
 )
 
 impl_evidence (
@@ -255,6 +254,11 @@ impl_evidence (
         core.history
     ), covered_claims (
         {impl_name native-impl, rule core.history}
+    )}
+    {id greenfield-incremental-render, covered_rules (
+        core.incremental-render
+    ), covered_claims (
+        {impl_name native-impl, rule core.incremental-render}
     )}
     {id greenfield-line-commands, covered_rules (
         core.line-commands

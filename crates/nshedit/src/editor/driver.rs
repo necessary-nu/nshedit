@@ -55,6 +55,8 @@ enum DisplayKind {
     Beep,
     /// Refresh first, then emit the notification.
     RefreshAndBeep,
+    /// Emit the accepted-line break before completing the read.
+    FinishLine,
 }
 
 /// An owned display request that can be performed with any safe writer.
@@ -166,6 +168,7 @@ pub struct ReadDriver {
     right_prompt: Option<Prompt>,
     display_kind: DisplayKind,
     live_line: Option<Text>,
+    completion: Option<ReadResult>,
 }
 
 impl Default for ReadDriver {
@@ -197,6 +200,7 @@ impl ReadDriver {
             right_prompt: None,
             display_kind: DisplayKind::Refresh,
             live_line: None,
+            completion: None,
         }
     }
 
@@ -299,6 +303,7 @@ impl ReadDriver {
             DisplayKind::RefreshAndBeep => editor
                 .render_to(&display.left, display.right.as_ref(), output)
                 .and_then(|_| editor.beep(output).map(|_| ())),
+            DisplayKind::FinishLine => editor.renderer.finish_line(output).map(|_| ()),
         };
         if let Err(error) = emitted {
             return Err(self.fail(editor, DriverError::Render(error)));
@@ -446,7 +451,8 @@ impl ReadDriver {
         let response = self.accept(editor, pending, EffectKind::RecordHistory, response)?;
         match response {
             Ok(()) | Err(HostFailure::Unavailable) => {
-                self.complete(editor, ReadResult::Accepted(line))
+                self.completion = Some(ReadResult::Accepted(line));
+                self.schedule_display(editor, DisplayKind::FinishLine)
             }
             Err(error) => Err(self.fail(editor, DriverError::Host(error))),
         }
@@ -482,6 +488,9 @@ impl ReadDriver {
         &mut self,
         editor: &mut Editor<T>,
     ) -> Result<ReadStep, DriverError> {
+        if let Some(result) = self.completion.take() {
+            return self.complete(editor, result);
+        }
         if let Some(unit) = self.replay.pop_front().or_else(|| self.decoder.pop()) {
             return self.process_unit(editor, unit);
         }
@@ -829,7 +838,7 @@ impl ReadDriver {
         kind: DisplayKind,
     ) -> Result<ReadStep, DriverError> {
         self.display_kind = kind;
-        if kind == DisplayKind::Beep {
+        if matches!(kind, DisplayKind::Beep | DisplayKind::FinishLine) {
             self.left_prompt = Prompt::default();
             self.right_prompt = None;
             self.make_display()
@@ -974,6 +983,7 @@ impl ReadDriver {
         self.left_prompt = Prompt::default();
         self.right_prompt = None;
         self.live_line = None;
+        self.completion = None;
     }
 }
 

@@ -35,6 +35,7 @@ pub enum CapabilityKind {
     CursorAddress,
     Bell,
     CarriageReturn,
+    CursorLeft,
 }
 
 impl CapabilityKind {
@@ -45,6 +46,7 @@ impl CapabilityKind {
             Self::CursorAddress => "cursor address",
             Self::Bell => "bell",
             Self::CarriageReturn => "carriage return",
+            Self::CursorLeft => "cursor left",
         }
     }
 }
@@ -84,6 +86,7 @@ pub struct TerminalProfile {
     cursor_address: Option<Capability>,
     bell: Capability,
     carriage_return: Capability,
+    cursor_left: Capability,
     pad_byte: u8,
     flow_controlled: bool,
     baud_rate: Option<BaudRate>,
@@ -100,6 +103,7 @@ impl TerminalProfile {
             cursor_address: Some(Capability::from(&b"\x1b[%i%p1%d;%p2%dH"[..])),
             bell: Capability::from(&b"\x07"[..]),
             carriage_return: Capability::from(&b"\r"[..]),
+            cursor_left: Capability::from(&b"\x08"[..]),
             pad_byte: 0,
             flow_controlled: false,
             baud_rate: None,
@@ -116,6 +120,7 @@ impl TerminalProfile {
             cursor_address: None,
             bell: Capability::from(&b"\x07"[..]),
             carriage_return: Capability::from(&b"\r"[..]),
+            cursor_left: Capability::from(&b"\x08"[..]),
             pad_byte: 0,
             flow_controlled: false,
             baud_rate: None,
@@ -143,6 +148,7 @@ impl TerminalProfile {
             cursor_address: cap("cup"),
             bell: cap("bel").unwrap_or_else(|| Capability::from(&b"\x07"[..])),
             carriage_return: cap("cr").unwrap_or_else(|| Capability::from(&b"\r"[..])),
+            cursor_left: cap("cub1").unwrap_or_else(|| Capability::from(&b"\x08"[..])),
             pad_byte: entry
                 .strings
                 .get("pad")
@@ -172,6 +178,25 @@ impl TerminalProfile {
         self.baud_rate
     }
 
+    /// Expand one owned terminal sequence and realise its padding markers.
+    ///
+    /// Terminal databases carry byte strings rather than text, and some
+    /// applications need capabilities beyond the renderer's fixed semantic
+    /// operations. Numeric parameters stay ordinary Rust values; the
+    /// terminfo stack language and padding calculation remain encapsulated.
+    pub fn expand_sequence(
+        &self,
+        sequence: &[u8],
+        parameters: &[i32],
+        affected_lines: usize,
+    ) -> Result<Vec<u8>, ExpansionError> {
+        let parameters: Vec<Param> = parameters.iter().copied().map(Param::Number).collect();
+        let expanded = expand(sequence, &parameters, &mut Variables::new())?;
+        let mut output = Vec::with_capacity(expanded.len());
+        self.append_padded(&mut output, &expanded, affected_lines);
+        Ok(output)
+    }
+
     pub(super) fn has_cursor_address(&self) -> bool {
         self.cursor_address.is_some()
     }
@@ -190,6 +215,7 @@ impl TerminalProfile {
             CapabilityKind::CursorAddress => self.cursor_address.as_ref(),
             CapabilityKind::Bell => Some(&self.bell),
             CapabilityKind::CarriageReturn => Some(&self.carriage_return),
+            CapabilityKind::CursorLeft => Some(&self.cursor_left),
         };
         let Some(capability) = capability else {
             return Ok(false);
@@ -335,5 +361,17 @@ mod tests {
             )
             .unwrap();
         assert_eq!(output, b"x$<bad>y$<5");
+    }
+
+    #[test]
+    fn expands_typed_parameters_with_padding() {
+        let profile = TerminalProfile {
+            pad_byte: b'.',
+            ..TerminalProfile::plain().with_baud_rate(BaudRate::new(9_600))
+        };
+        let output = profile
+            .expand_sequence(b"[%p1%d,%p2%d]$<5/>", &[4, 12], 1)
+            .unwrap();
+        assert_eq!(output, b"[4,12]....");
     }
 }

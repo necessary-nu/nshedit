@@ -109,10 +109,12 @@ fn driver_decodes_and_accepts_utf8() {
     let step = driver
         .resume_history_record(&mut editor, &record, Ok(()))
         .unwrap();
+    let step = settle(&mut driver, &mut editor, step, &mut output);
 
     assert!(
         matches!(step, ReadStep::Complete(ReadResult::Accepted(ref line)) if line == &Text::from("é"))
     );
+    assert!(output.ends_with(b"\n"));
     assert_eq!(editor.line(), &Text::from("é"));
     assert_eq!(editor.terminal_mode(), TerminalMode::Cooked);
 }
