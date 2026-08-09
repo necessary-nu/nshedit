@@ -3,6 +3,7 @@
 use super::*;
 
 mod profile;
+mod tty;
 
 impl EditLine {
     pub(crate) fn set_terminal_mode(&mut self, mode: TerminalMode) -> io::Result<()> {
@@ -54,6 +55,10 @@ impl EditLine {
     pub(crate) fn screen_size(&self) -> Option<ScreenSize> {
         let capabilities = &self.boundary.terminal_capabilities;
         ScreenSize::new(capabilities.rows, capabilities.columns).ok()
+    }
+
+    fn write_compatibility_stream(&self, index: usize, bytes: &[u8]) {
+        let _ = crate::cstdio::write(self.stream(index).unwrap_or(core::ptr::null_mut()), bytes);
     }
 
     pub(crate) fn move_cursor(&mut self, delta: c_int) -> c_int {

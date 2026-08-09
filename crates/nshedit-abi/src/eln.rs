@@ -491,7 +491,8 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         argv.extend(owned.iter().map(|v| &v[..v.len() - 1]));
         return match op {
             EL_BIND => el.bind_command(&argv),
-            EL_TELLTC | EL_SETTC | EL_ECHOTC | EL_SETTY if argv.len() > 1 => 0,
+            EL_SETTY => el.set_tty_modes(&argv),
+            EL_TELLTC | EL_SETTC | EL_ECHOTC if argv.len() > 1 => 0,
             _ => -1,
         };
     }

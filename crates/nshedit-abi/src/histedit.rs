@@ -1201,10 +1201,11 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             let argc = argv.len() as c_int;
             match op {
                 EL_BIND => el.bind_command(&argv),
+                EL_SETTY => el.set_tty_modes(&argv),
                 // These diagnostic/configuration commands remain accepted
                 // only when they have an argument. Their typed terminal
                 // implementations live at the boundary, never in the core.
-                EL_TELLTC | EL_SETTC | EL_ECHOTC | EL_SETTY if argc > 1 => 0,
+                EL_TELLTC | EL_SETTC | EL_ECHOTC if argc > 1 => 0,
                 _ => -1,
             }
         }

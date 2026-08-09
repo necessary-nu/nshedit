@@ -2726,6 +2726,21 @@ children (
                     native-impl ([spec:nshedit:req:abi.tty-modes])
                 }
                 deps (greenfield-terminal-session)
+                log (
+                    {
+                        at 2026-08-09T02:43:34.70198211Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T02:43:34.70198211Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "single-flight overridden: started while greenfield-terminal-compat had uncommitted WIP"
+                    }
+                )
             }
 
             {

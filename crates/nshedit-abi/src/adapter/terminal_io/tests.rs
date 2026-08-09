@@ -17,6 +17,15 @@ fn text(value: &str) -> Text {
     value.chars().map(TextUnit::Scalar).collect()
 }
 
+fn tty_command(editor: &mut EditLine, words: &[&str]) -> c_int {
+    let storage: Vec<Vec<u32>> = words
+        .iter()
+        .map(|word| word.chars().map(u32::from).collect())
+        .collect();
+    let arguments: Vec<&[u32]> = storage.iter().map(Vec::as_slice).collect();
+    editor.set_tty_modes(&arguments)
+}
+
 #[test]
 fn line_and_cursor_share_native_state() {
     let mut editor = editor();
@@ -152,4 +161,33 @@ fn geometry_prefers_kernel_size() {
 
     assert_eq!((database.rows, database.columns), (17, 63));
     assert_eq!((kernel.rows, kernel.columns), (41, 109));
+}
+
+// [spec:nshedit:req:abi.tty-modes/test]
+#[test]
+fn tty_commands_change_selected_masks() {
+    let mut editor = editor();
+    assert_eq!(
+        tty_command(&mut editor, &["setty", "-d", "+echo", "-isig"]),
+        0
+    );
+
+    let state = editor.boundary.terminal.borrow();
+    let editing = state.overrides[tty::tty_mode_index(TerminalMode::Editing)];
+    assert_ne!(editing.set[3] & termios::ECHO, 0);
+    assert_eq!(editing.clear[3] & termios::ECHO, 0);
+    assert_ne!(editing.clear[3] & termios::ISIG, 0);
+    assert_eq!(editing.set[3] & termios::ISIG, 0);
+}
+
+#[test]
+fn parses_legacy_tty_characters() {
+    assert_eq!(tty::parse_tty_character(""), termios::VDISABLE);
+    assert_eq!(tty::parse_tty_character("X"), u8::MAX);
+    assert_eq!(tty::parse_tty_character("XY"), b'X');
+    assert_eq!(tty::parse_tty_character("^H"), 0x08);
+    assert_eq!(tty::parse_tty_character("\\377"), 0xff);
+    assert_eq!(tty::parse_tty_character("\\400"), u8::MAX);
+    assert_eq!(tty::parse_tty_character("\\U+0041"), b'A');
+    assert_eq!(tty::parse_tty_character("\\U+00ff"), u8::MAX);
 }

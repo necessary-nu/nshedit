@@ -105,12 +105,22 @@ struct TerminalCapabilities {
     columns: usize,
 }
 
+#[derive(Clone, Copy, Default)]
+struct TtyFlagOverrides {
+    set: [u32; 4],
+    clear: [u32; 4],
+    char_set: u32,
+    char_clear: u32,
+}
+
 struct TerminalState {
     input: c_int,
     output: c_int,
     original: Option<Termios>,
     editing: Option<Termios>,
     quoted: Option<Termios>,
+    active_mode: TerminalMode,
+    overrides: [TtyFlagOverrides; 3],
     restoration_due: bool,
 }
 
@@ -125,6 +135,8 @@ impl AbiTerminal {
             original: None,
             editing: None,
             quoted: None,
+            active_mode: TerminalMode::Cooked,
+            overrides: initial_tty_overrides(),
             restoration_due: false,
         }));
         (Self(Rc::clone(&state)), state)
@@ -145,21 +157,26 @@ impl TerminalControl for AbiTerminal {
         state.original = Some(original);
         state.editing = Some(editing);
         state.quoted = Some(quoted);
+        state.active_mode = TerminalMode::Cooked;
         state.restoration_due = true;
         apply_termios(state.input, termios::TCSADRAIN, &editing)
     }
 
     fn set_mode(&mut self, mode: TerminalMode) -> io::Result<()> {
-        let state = self.0.borrow();
+        let mut state = self.0.borrow_mut();
         let selected = match mode {
             TerminalMode::Cooked => state.original.as_ref(),
             TerminalMode::Editing => state.editing.as_ref(),
             TerminalMode::Quoted => state.quoted.as_ref(),
         };
-        match selected {
+        let result = match selected {
             Some(attributes) => apply_termios(state.input, termios::TCSADRAIN, attributes),
             None => Ok(()),
+        };
+        if result.is_ok() {
+            state.active_mode = mode;
         }
+        result
     }
 
     fn restore(&mut self) -> io::Result<()> {
@@ -173,6 +190,41 @@ impl TerminalControl for AbiTerminal {
             None => Ok(()),
         }
     }
+}
+
+fn initial_tty_overrides() -> [TtyFlagOverrides; 3] {
+    let mut modes = [TtyFlagOverrides::default(); 3];
+
+    modes[0].set[0] = termios::ICRNL;
+    modes[0].clear[0] = termios::INLCR | termios::IGNCR;
+    modes[0].set[1] = termios::OPOST | termios::ONLCR;
+    modes[0].clear[1] = termios::ONLRET;
+    modes[0].set[3] = termios::ISIG
+        | termios::ICANON
+        | termios::ECHO
+        | termios::ECHOE
+        | termios::ECHOCTL
+        | termios::IEXTEN;
+    modes[0].clear[3] = termios::NOFLSH | termios::ECHONL | termios::EXTPROC | termios::FLUSHO;
+
+    modes[1].set[0] = termios::INLCR | termios::ICRNL;
+    modes[1].clear[0] = termios::IGNCR;
+    modes[1].set[1] = termios::OPOST | termios::ONLCR;
+    modes[1].clear[1] = termios::ONLRET;
+    modes[1].set[3] = termios::ISIG;
+    modes[1].clear[3] = termios::NOFLSH
+        | termios::ICANON
+        | termios::ECHO
+        | termios::ECHOK
+        | termios::ECHONL
+        | termios::EXTPROC
+        | termios::IEXTEN
+        | termios::FLUSHO;
+    modes[1].char_set = (1 << 5) | (1 << 13) | (1 << 16) | (1 << 23) | (1 << 24);
+
+    modes[2].clear[0] = termios::IXON | termios::IXOFF | termios::INLCR | termios::ICRNL;
+    modes[2].clear[3] = termios::ISIG | termios::IEXTEN;
+    modes
 }
 
 fn apply_termios(descriptor: c_int, action: c_int, attributes: &Termios) -> io::Result<()> {

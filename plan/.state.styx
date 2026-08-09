@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-09T02:34:12.911827275Z
+last_sync_at 2026-08-09T02:43:26.658810122Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
@@ -327,14 +327,21 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule core.terminal-render}
     )}
+    {id greenfield-terminal-session, covered_rules (
+        abi.terminal-session
+    ), covered_claims (
+        {impl_name native-impl, rule abi.terminal-session}
+    ), rule_versions_seen (
+        {id abi.terminal-session, version 0}
+    )}
     {id greenfield-token-completion, covered_rules (
         core.token-completion
     ), covered_claims (
         {impl_name native-impl, rule core.token-completion}
     )}
-    {id greenfield-terminal-session, covered_rules (
-        abi.terminal-session
+    {id greenfield-tty-modes, covered_rules (
+        abi.tty-modes
     ), covered_claims (
-        {impl_name native-impl, rule abi.terminal-session}
+        {impl_name native-impl, rule abi.tty-modes}
     )}
 )
