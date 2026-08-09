@@ -51,7 +51,6 @@ impl ScreenGlyph {
     }
 }
 
-// [spec:nshedit:req:core.text-screen-model] rendered screen representation
 /// The state of one physical terminal column.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum ScreenCell {
@@ -191,7 +190,6 @@ mod tests {
     use super::*;
     use crate::domain::{NonScalarWide, TerminalLiteral, TextUnit};
 
-    // [spec:nshedit:req:core.text-screen-model/test]
     #[test]
     fn display_values_have_distinct_types() {
         let logical = TextUnit::CompatibilityWide(NonScalarWide::new(0xD800).unwrap());

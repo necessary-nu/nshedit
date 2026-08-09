@@ -48,7 +48,6 @@ impl Effect for PromptEffect {
     type Response = EffectResult<Prompt>;
 }
 
-// [spec:nshedit:req:core.read-driver]
 /// Ask the host for input, end of input, a signal, or a prefix timeout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ReadEffect {
@@ -362,7 +361,6 @@ impl Effect for ResizeEffect {
     type Response = EffectResult<ScreenSize>;
 }
 
-// [spec:nshedit:req:core.read-driver]
 /// Ask the host to propagate a signal after the editor made the tty safe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SignalEffect {

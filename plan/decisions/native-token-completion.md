@@ -10,6 +10,7 @@ scope {
         [spec:nshedit:req:core.effect-hooks]
         [spec:nshedit:req:core.line-commands]
         [spec:nshedit:req:core.text-screen-model]
+        [spec:nshedit:req:abi.typed-completion]
     )
 }
 author "brendan@necessary.nu"
@@ -40,6 +41,7 @@ consequences {
         "CompletionEffect carries the query and accepts only the typed candidate collection. Filesystem scans, passwd lookup, application callbacks, and policy decisions run outside Editor; the core stores no generator, callback, thread-local result, or process-global scan state."
         "Applying a completion encodes the replacement for its quote context, revalidates the query snapshot and span, and records the whole replacement as one undoable line edit."
         "The translated tokenizer and file-completion engine is absent from the core. The ABI adapter owns only the temporary argv, C generator, and completion-record projections required by callers."
+        "Private ABI completion accepts one typed request and returns one typed report. Candidates and suffixes are owned; C flags, status values, out-parameters, callback parking, and result publication exist only in exported wrapper scopes."
     )
     deferred (
         "Candidate ranking, fuzzy matching, interactive cycling, and menu presentation policy belong to future native consumers rather than this deterministic baseline."
@@ -52,6 +54,7 @@ edges {
 }
 codifies (
     [spec:nshedit:req:core.token-completion+1]
+    [spec:nshedit:req:abi.typed-completion]
 )
 ---
 
@@ -72,7 +75,9 @@ arbitrary or reentrant work while producing candidates because no Editor
 borrow crosses that boundary; when it returns, snapshot validation prevents a
 response for an old line from being applied to new state.
 
-Compatibility remains an adapter responsibility. The adapter maps owned tokens
-back to temporary argv storage and drives C generators into a typed candidate
-collection, while the native core never learns their pointer, sentinel,
-callback, or integer-status conventions.
+Compatibility remains an adapter responsibility. Exported wrappers map owned
+tokens back to temporary argv storage and adapt C generators into a typed
+provider for the duration of one reentrant call. The private completion engine
+receives one request and returns one report with owned suffixes, while the core
+never learns pointer, sentinel, callback, flag, out-parameter, or integer-status
+conventions.

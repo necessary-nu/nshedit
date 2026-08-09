@@ -13,6 +13,8 @@ scope {
         [spec:nshedit:req:core.no-compat-internals]
         [spec:nshedit:req:core.native-consumer]
         [spec:nshedit:req:core.unsafe-free]
+        [spec:nshedit:req:abi.rust-internals]
+        [spec:nshedit:req:workspace.semantic-naming]
     )
 }
 author "brendan@necessary.nu"
@@ -40,6 +42,8 @@ consequences {
         "nshedit-abi depends only on the core's public semantic API and cannot access editor fields or internal modules."
         "The transliterated implementation and its compatibility payload are absent; the typed native editor is the only core engine and no legacy backend remains."
         "Opaque ABI owners contain the native object plus ABI-only state, never a second editor representation or synchronized shadow model."
+        "The safe crate's maintained identifiers and public formats are named for their responsibility or stable identity, never relative to a removed implementation or to C transport terminology."
+        "The ABI crate may expose exact C wrappers, but its private implementation uses the same typed Rust discipline as the core and never re-enters through exported varargs symbols."
     )
     deferred (
         "Whether a future native API offers async integration in addition to the resumable synchronous driver."
@@ -57,6 +61,8 @@ codifies (
     [spec:nshedit:req:core.no-compat-internals]
     [spec:nshedit:req:core.native-consumer]
     [spec:nshedit:req:core.unsafe-free]
+    [spec:nshedit:req:abi.rust-internals]
+    [spec:nshedit:req:workspace.semantic-naming]
 )
 establishes ([arch:libedit:core])
 ---

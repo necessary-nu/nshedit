@@ -17,7 +17,6 @@ use crate::domain::{
 // [spec:nshedit:req:core.effect-hooks]
 pub mod effect;
 
-// [spec:nshedit:req:core.read-driver]
 mod driver;
 
 // [spec:nshedit:req:core.token-completion+1]

@@ -197,6 +197,8 @@ assertions (
     {id greenfield-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:17:31.852523476Z}
     {id greenfield-abi-oracle, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:46:10.110061941Z}
     {id nshterm-hashed-db, kind @complete, author "brendan@necessary.nu", at 2026-08-09T01:02:09.380870907Z}
+    {id rust-idiom-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-09T12:52:55.079575034Z}
+    {id greenfield-read-driver, kind @complete, author "brendan@necessary.nu", at 2026-08-09T12:52:51.208714861Z}
 )
 
 impl_evidence (

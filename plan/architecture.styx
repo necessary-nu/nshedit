@@ -14,11 +14,12 @@ elements (
             [spec:libedit:def:terminal.tgoto-fn]
             [spec:libedit:def:terminal.tputs-fn]
             [spec:nshedit:req:abi.termcap-view]
+            [spec:nshedit:req:terminal.typed-api]
         )
         exposes ("crates/nshterm/src/**")
         depends_on ([arch:libedit:platform])
         composed_of ()
-        decisions ([dec:libedit:terminal-caps-via-term-crate] [dec:libedit:terminal-compatibility-view] [dec:libedit:native-terminal-render] [dec:libedit:lint-policy])
+        decisions ([dec:libedit:terminal-caps-via-term-crate] [dec:libedit:terminal-compatibility-view] [dec:libedit:native-terminal-render] [dec:libedit:lint-policy] [dec:libedit:rust-internal-boundary])
         log (
             {at "2026-08-04T16:27:13Z", kind @established, by "[dec:libedit:terminal-caps-via-term-crate]"}
             {at "2026-08-08T14:07:24Z", kind @modified, by "[dec:libedit:terminal-caps-via-term-crate]"}
@@ -27,6 +28,7 @@ elements (
             {at "2026-08-09T00:59:40Z", kind @modified, by "[dec:libedit:terminal-caps-via-term-crate]"}
             {at "2026-08-09T02:02:03Z", kind @modified, by "[dec:libedit:terminal-compatibility-view]"}
             {at "2026-08-09T09:19:15Z", kind @modified, by "[dec:libedit:terminal-caps-via-term-crate]"}
+            {at "2026-08-09T12:49:10Z", kind @modified, by "[dec:libedit:rust-internal-boundary]"}
         )
     }
     {
@@ -47,11 +49,15 @@ elements (
             [spec:nshedit:req:abi.history-effects]
             [spec:nshedit:req:abi.signal-lifecycle]
             [spec:nshedit:req:abi.observational-coverage]
+            [spec:nshedit:req:abi.rust-internals]
+            [spec:nshedit:req:abi.typed-history]
+            [spec:nshedit:req:abi.typed-completion]
+            [spec:nshedit:req:abi.typed-session]
         )
         exposes ("crates/nshedit-abi/src/**")
         depends_on ([arch:libedit:core] [arch:libedit:platform] [arch:libedit:terminal-caps])
         composed_of ()
-        decisions ([dec:libedit:no-c-ffi] [dec:libedit:conformance-policy] [dec:libedit:idiomatic-core] [dec:libedit:platform-layer] [dec:libedit:opaque-abi-adapter] [dec:libedit:effect-driven-hooks] [dec:libedit:editor-session-ownership] [dec:libedit:text-and-screen-model] [dec:libedit:native-line-state] [dec:libedit:native-command-protocols] [dec:libedit:native-history] [dec:libedit:native-terminal-render] [dec:libedit:native-token-completion] [dec:libedit:native-read-driver] [dec:libedit:signal-lifecycle] [dec:libedit:terminal-compatibility-view] [dec:libedit:lint-policy])
+        decisions ([dec:libedit:no-c-ffi] [dec:libedit:conformance-policy] [dec:libedit:idiomatic-core] [dec:libedit:platform-layer] [dec:libedit:opaque-abi-adapter] [dec:libedit:effect-driven-hooks] [dec:libedit:editor-session-ownership] [dec:libedit:text-and-screen-model] [dec:libedit:native-line-state] [dec:libedit:native-command-protocols] [dec:libedit:native-history] [dec:libedit:native-terminal-render] [dec:libedit:native-token-completion] [dec:libedit:native-read-driver] [dec:libedit:signal-lifecycle] [dec:libedit:terminal-compatibility-view] [dec:libedit:lint-policy] [dec:libedit:rust-internal-boundary])
         log (
             {at "2026-08-04T16:27:13Z", kind @established, by "[dec:libedit:no-c-ffi]"}
             {at "2026-08-04T17:47:40Z", kind @modified, by "[dec:libedit:idiomatic-core]"}
@@ -72,6 +78,7 @@ elements (
             {at "2026-08-09T03:59:03Z", kind @modified, by "[dec:libedit:native-command-protocols]"}
             {at "2026-08-09T08:22:40Z", kind @modified, by "[dec:libedit:signal-lifecycle]"}
             {at "2026-08-09T09:19:15Z", kind @modified, by "[dec:libedit:conformance-policy]"}
+            {at "2026-08-09T12:49:10Z", kind @modified, by "[dec:libedit:rust-internal-boundary]"}
         )
     }
     {
@@ -101,7 +108,7 @@ elements (
         exposes ("crates/nshedit/src/**")
         depends_on ([arch:libedit:terminal-caps] [arch:libedit:platform])
         composed_of ()
-        decisions ([dec:libedit:idiomatic-core] [dec:libedit:platform-layer] [dec:libedit:opaque-abi-adapter] [dec:libedit:effect-driven-hooks] [dec:libedit:editor-session-ownership] [dec:libedit:text-and-screen-model] [dec:libedit:native-line-state] [dec:libedit:native-command-protocols] [dec:libedit:native-history] [dec:libedit:native-terminal-render] [dec:libedit:native-token-completion] [dec:libedit:native-read-driver] [dec:libedit:signal-lifecycle] [dec:libedit:lint-policy])
+        decisions ([dec:libedit:idiomatic-core] [dec:libedit:platform-layer] [dec:libedit:opaque-abi-adapter] [dec:libedit:effect-driven-hooks] [dec:libedit:editor-session-ownership] [dec:libedit:text-and-screen-model] [dec:libedit:native-line-state] [dec:libedit:native-command-protocols] [dec:libedit:native-history] [dec:libedit:native-terminal-render] [dec:libedit:native-token-completion] [dec:libedit:native-read-driver] [dec:libedit:signal-lifecycle] [dec:libedit:lint-policy] [dec:libedit:rust-internal-boundary])
         log (
             {at "2026-08-04T17:47:40Z", kind @established, by "[dec:libedit:idiomatic-core]"}
             {at "2026-08-05T08:34:05Z", kind @modified, by "[dec:libedit:platform-layer]"}
@@ -120,6 +127,7 @@ elements (
             {at "2026-08-09T02:02:03Z", kind @modified, by "[dec:libedit:native-terminal-render]"}
             {at "2026-08-09T08:22:40Z", kind @modified, by "[dec:libedit:signal-lifecycle]"}
             {at "2026-08-09T09:19:15Z", kind @modified, by "[dec:libedit:idiomatic-core]"}
+            {at "2026-08-09T12:49:10Z", kind @modified, by "[dec:libedit:rust-internal-boundary]"}
         )
     }
     {
@@ -127,11 +135,11 @@ elements (
         name "Platform layer: syscalls through rustix, signals and passwd through libc"
         kind @boundary
         lifecycle @active
-        owns ()
+        owns ([spec:nshedit:req:platform.typed-boundary])
         exposes ("crates/nshedit-plat/src/**")
         depends_on ()
         composed_of ()
-        decisions ([dec:libedit:platform-layer] [dec:libedit:no-c-ffi] [dec:libedit:signal-lifecycle] [dec:libedit:terminal-compatibility-view] [dec:libedit:lint-policy])
+        decisions ([dec:libedit:platform-layer] [dec:libedit:no-c-ffi] [dec:libedit:signal-lifecycle] [dec:libedit:terminal-compatibility-view] [dec:libedit:lint-policy] [dec:libedit:rust-internal-boundary])
         log (
             {at "2026-08-05T08:34:05Z", kind @established, by "[dec:libedit:platform-layer]"}
             {at "2026-08-05T09:12:40Z", kind @modified, by "[dec:libedit:no-c-ffi]"}
@@ -141,6 +149,7 @@ elements (
             {at "2026-08-09T02:02:03Z", kind @modified, by "[dec:libedit:terminal-compatibility-view]"}
             {at "2026-08-09T08:22:40Z", kind @modified, by "[dec:libedit:signal-lifecycle]"}
             {at "2026-08-09T09:19:15Z", kind @modified, by "[dec:libedit:platform-layer]"}
+            {at "2026-08-09T12:49:10Z", kind @modified, by "[dec:libedit:rust-internal-boundary]"}
         )
     }
     {

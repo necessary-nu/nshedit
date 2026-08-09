@@ -1,6 +1,6 @@
 ---
 id [dec:libedit:lint-policy]
-epitome "First-party Rust uses idiomatic names and live code; blanket lint suppression is forbidden and external constraints use reasoned expectations."
+epitome "First-party Rust uses idiomatic names and live code without any lint-suppression attributes."
 state @decided
 category @ban
 scope {
@@ -22,17 +22,17 @@ alternatives (
         rejected_because "Export metadata and cbindgen renames preserve ABI spelling without weakening the Rust source convention."
     }
     {
-        option "Use allow for unavoidable ABI signatures."
-        rejected_because "A narrow expect with a reason records the external constraint and fails when the exception stops being necessary."
+        option "Use allow or expect for unavoidable ABI signatures."
+        rejected_because "An exported signature can remain exact while a typed private helper owns the implementation. A lint on private shape is evidence to improve that shape, not an ABI requirement."
     }
 )
 consequences {
     accepted (
-        "Crate- and module-wide allow attributes are removed from first-party code."
+        "Allow and expect attributes are absent from first-party code at every scope, including conditional attributes that would enable either."
         "Dead items are deleted, implemented, moved to the boundary that owns them, or accurately gated with cfg; dead_code is never silenced."
         "Rust types, constants, statics, functions, fields, and generated identifiers follow Rust naming conventions. C names are produced with export_name and header-generation metadata."
         "Unsafe exported functions carry real Safety documentation. Unused variables are removed or intentionally named with a leading underscore where the value is contractually present."
-        "A lint imposed solely by an external ABI or generated format may use the narrowest expect attribute with a reason. Unfulfilled expectations are lint failures."
+        "External ABI and generated-format constraints are represented so the lint does not arise, or the generated input is fixed or isolated outside first-party checked source."
         "The final core forbids unsafe code; the ABI and platform crates require Safety documentation on unsafe APIs, deny implicit unsafe operations inside unsafe functions, and keep unsafe blocks local."
     )
     deferred ()
@@ -55,6 +55,7 @@ paths, make C-derived spelling look intentional, and allow compatibility
 mechanics to spread beyond their boundary.
 
 The ABI determines exported spelling, not Rust identifier spelling. Modern
-export and header-generation metadata separate those concerns cleanly. Where
-an external signature genuinely forces a lint, `expect` documents why and
-alerts the project when refactoring makes the exception obsolete.
+export and header-generation metadata separate those concerns cleanly. An
+external signature constrains the exported wrapper, not the private helper
+that implements it. Splitting those responsibilities removes the reason to
+suppress a lint and makes the boundary itself visible in the types.

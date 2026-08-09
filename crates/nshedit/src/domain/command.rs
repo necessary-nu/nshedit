@@ -9,7 +9,6 @@ pub enum Direction {
     Next,
 }
 
-// [spec:nshedit:req:core.read-driver]
 /// A terminal-facing signal reported without exposing platform signal numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Signal {

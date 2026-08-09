@@ -23,7 +23,6 @@ impl NonScalarWide {
     }
 }
 
-// [spec:nshedit:req:core.text-screen-model] logical text representation
 /// One logical input unit, preserving every representation the boundary can
 /// receive without conflating it with display bookkeeping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

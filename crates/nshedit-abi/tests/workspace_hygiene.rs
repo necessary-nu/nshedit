@@ -196,8 +196,6 @@ fn translated_core_and_facade_are_absent() {
 }
 
 // [spec:nshedit:req:workspace.no-legacy-allows/test]
-// [spec:nshedit:req:workspace.lint-policy]
-// [spec:nshedit:req:workspace.lint-policy/test]
 #[test]
 fn first_party_rust_rejects_allow_attributes() {
     let root = repo_root();

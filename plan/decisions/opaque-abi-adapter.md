@@ -10,6 +10,8 @@ scope {
         [spec:nshedit:req:abi.surface-stability]
         [spec:nshedit:req:abi.behavioural-conformance]
         [spec:nshedit:req:core.public-surface]
+        [spec:nshedit:req:abi.rust-internals]
+        [spec:nshedit:req:abi.typed-session]
     )
 }
 author "brendan@necessary.nu"
@@ -36,6 +38,8 @@ consequences {
         "Rust identifiers remain idiomatic; export_name and cbindgen rename metadata preserve required C symbols and spellings."
         "The adapter calls only safe public semantic operations, and the crate boundary prevents access to core modules or fields."
         "Pointer validity and callback reentrancy are explicit adapter state-machine obligations covered by conformance tests; neither relies on layout aliasing or an offset-zero compatibility prefix."
+        "C representation ends in each exported wrapper after its arguments are validated and decoded. Private adapter code uses typed operations and results and never re-enters the crate through its own exported symbols."
+        "ABI-only state is organized by responsibility and legal state transitions rather than boolean bags, indexed prompt slots, or private translated globals."
     )
     deferred ()
 }
@@ -47,6 +51,8 @@ codifies (
     [spec:nshedit:req:abi.surface-stability]
     [spec:nshedit:req:abi.behavioural-conformance]
     [spec:nshedit:req:core.public-surface]
+    [spec:nshedit:req:abi.rust-internals]
+    [spec:nshedit:req:abi.typed-session]
 )
 ---
 
@@ -59,9 +65,12 @@ C-visible break.
 
 The ABI adapter becomes an anti-corruption layer rather than a symbol-forwarding
 crate. It owns every fact that exists because a C caller needs a pointer,
-callback, global, varargs operation, or temporary conversion. The native editor
-then remains free to change its private representation, and cbindgen reads only
-the crate that actually owns C layout.
+callback, global, varargs operation, or temporary conversion. Ownership alone
+is insufficient if private Rust still speaks those representations: exported
+wrappers decode them into typed requests and encode typed replies, and no
+private path calls back through a C symbol to reuse its parser. The editor then
+remains free to change its private representation, and cbindgen reads only the
+crate that actually owns C layout.
 
 The migration was deliberately asymmetric. An opaque owner temporarily carried
 the native object beside a translated payload while an exported concern still

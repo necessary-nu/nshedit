@@ -13,6 +13,7 @@ scope {
         [spec:libedit:def:terminal.tgoto-fn]
         [spec:libedit:def:terminal.tputs-fn]
         [spec:nshedit:req:abi.termcap-view]
+        [spec:nshedit:req:terminal.typed-api]
     )
 }
 author "brendan@necessary.nu"
@@ -42,6 +43,7 @@ consequences {
         "Padding markers survive parameter expansion and are emitted by the Rust tputs implementation according to output speed and affected lines; no global putc destination is required."
         "TERMINFO, TERMINFO_DIRS, and HOME-derived search paths are ignored for a privileged process according to the secure environment guard."
         "Filesystem terminfo trees are the supported database layout. The current Linux package matrix does not require ncurses' opt-in hashed layout, so nshterm does not probe or parse it."
+        "Public format, name, and environment choices are enums or policy values; capability maps remain private and parser or discovery errors retain their source."
     )
     deferred (
         "A future platform that ships only a hashed terminfo database must specify and verify its database format before entering the support matrix."
@@ -55,6 +57,7 @@ codifies (
     [spec:libedit:def:terminal.tgetent-fn]
     [spec:libedit:def:terminal.tputs-fn]
     [spec:nshedit:req:abi.termcap-view]
+    [spec:nshedit:req:terminal.typed-api]
 )
 establishes ([arch:libedit:terminal-caps])
 ---

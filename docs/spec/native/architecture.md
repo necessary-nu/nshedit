@@ -108,6 +108,41 @@ states where those semantics may live and what the native Rust API must be.
 > paths through both direct operation codes and editrc entry points where the
 > shipped headers expose both.
 
+> [spec:nshedit:req:abi.rust-internals]
+> Exported ABI wrappers MAY parse C scalars, varargs, callbacks, pointers,
+> operation codes, out-parameters, and status conventions. Once parsed, private
+> Rust implementation MUST use typed operations, values, and `Result`; it MUST
+> NOT call this crate's exported symbols through `extern` declarations or
+> `link_name`, carry varargs or raw operation codes through private dispatch, or
+> retain C out-parameters as its internal result protocol. Required C spelling
+> MUST be supplied by export and header-generation metadata rather than by
+> constraining private Rust identifiers.
+
+> [spec:nshedit:req:abi.typed-history]
+> Private history operations MUST couple each operation with its valid payload
+> in a typed value and return a typed reply or error. Only the exported boundary
+> MAY decode `H_*` integers, read variadic arguments, publish `HistEvent`
+> records, encode C status integers, or transfer caller-owned pointers. Built-in
+> and foreign callback backends MUST implement the same typed operation model.
+
+> [spec:nshedit:req:abi.typed-completion]
+> Private completion MUST accept one typed request containing provider and
+> policy choices and return one typed report containing edits, listing state,
+> and observable positions. Suffixes and candidates MUST be owned values;
+> private completion MUST NOT use C flags, C status integers, out-parameters,
+> leaked interning, or thread-local storage introduced solely to coerce a C
+> callback into a Rust function-pointer signature. Exported wrappers alone MAY
+> adapt scoped, reentrant C callbacks and encode their required outputs.
+
+> [spec:nshedit:req:abi.typed-session]
+> Each ABI-owned editor and readline runtime MUST organize policy, prompt,
+> encoding, callbacks, terminal ownership, and initialization failure as typed
+> components rather than boolean property bags, indexed side channels, or
+> erased `Option` failures. Private process-global state required by readline
+> MUST have one explicit owner, and no lock or dynamic borrow MAY remain held
+> across a foreign callback. Narrow and wide callbacks MUST be invoked through
+> their declared function-pointer types without transmutation.
+
 ## Native domain
 
 > [spec:nshedit:req:core.typed-domain+1]
@@ -116,12 +151,13 @@ states where those semantics may live and what the native Rust API must be.
 > model MUST NOT use integer operation codes, bit-packed flag words, errno
 > protocols, or sentinel values to represent domain state.
 
-> [spec:nshedit:req:core.text-screen-model]
+> [spec:nshedit:req:core.text-screen-model+1]
 > Logical input text and rendered screen cells MUST be distinct types.
-> Unicode scalar values, undecodable bytes, and non-scalar wide values that
-> the compatibility boundary must preserve MUST have explicit variants;
-> rendered continuation and padding cells MUST NOT be encoded in spare bits
-> of a character integer.
+> Unicode scalar values, undecodable bytes, and opaque non-Unicode code points
+> that a host boundary must preserve MUST have explicit, boundary-neutral
+> variants; the safe core MUST NOT define them in terms of `wchar_t`, wide C
+> strings, or compatibility transport names. Rendered continuation and padding
+> cells MUST NOT be encoded in spare bits of a character integer.
 
 > [spec:nshedit:req:core.raii-lifecycle]
 > A native editor session MUST restore terminal state exactly once when it
@@ -213,11 +249,30 @@ states where those semantics may live and what the native Rust API must be.
 > commit the new screen, cursor, capability variables, and damage state only
 > after the complete byte plan is written and flushed successfully.
 
-> [spec:nshedit:req:core.read-driver]
+> [spec:nshedit:req:core.read-driver+1]
 > Input preparation, decoding, key dispatch, signal transitions, and editing
 > completion MUST form a resumable native driver over the typed domain and
-> effect interfaces. All successful, EOF, interrupt, and error exits MUST
-> leave terminal and editor state valid for finish or Drop.
+> effect interfaces. Driver state MUST have exactly one continuation authority:
+> a continuation variant carries its request, legal response, ownership token,
+> and next transition. Parallel effect-kind, phase, step, or command-host-work
+> protocols that can disagree with that continuation are forbidden. All
+> successful, EOF, interrupt, and error exits MUST leave terminal and editor
+> state valid for finish or Drop.
+
+> [spec:nshedit:req:platform.typed-boundary]
+> Public safe platform operations MUST use borrowed descriptors, typed actions
+> and flags, and `io::Result` or an equally descriptive typed error. Raw integer
+> descriptors, transcribed layouts and constants, boolean syscall results,
+> fabricated lifetimes, and libc callback tables MUST remain private. Host
+> customization such as user lookup MUST be owned per editor session or effect,
+> never installed through process-global test or override hooks.
+
+> [spec:nshedit:req:terminal.typed-api]
+> The terminal-capability crate MUST expose typed format, name, and environment
+> policies; capability storage MUST remain private behind focused accessors;
+> parser and discovery failures MUST preserve their error source. Boolean mode
+> arguments, public mutable representation maps, and swallowed I/O failures are
+> forbidden in its maintained public API.
 
 > [spec:nshedit:req:core.no-compat-internals]
 > Once replacement concerns are active, the transliterated C-shaped core,
@@ -244,9 +299,25 @@ states where those semantics may live and what the native Rust API must be.
 > or accurately conditionalized; C spelling MUST be preserved with export or
 > header-generation metadata rather than Rust identifier spelling.
 
-> [spec:nshedit:req:workspace.lint-policy]
-> First-party crates MUST contain no blanket lint exemptions. A constraint
-> imposed by an external ABI or generated format MAY use the narrowest
-> `expect` attribute with a reason; `allow(dead_code)`, `allow(unused_*)`, and
-> `allow(nonstandard_style)` are forbidden, and an unfulfilled expectation
-> MUST fail lint checks.
+> [spec:nshedit:req:workspace.lint-policy+1]
+> First-party source MUST contain no lint-suppression attribute, including
+> `allow`, `expect`, or a conditional attribute that enables either. External
+> ABI and generated-format constraints MUST be represented so the lint does not
+> arise, or isolated outside first-party checked source; they do not justify a
+> suppression. Dead code, unused items, missing safety documentation, naming
+> violations, and structural lints selected by the workspace MUST fail checks.
+
+> [spec:nshedit:req:workspace.self-contained]
+> Every workspace dependency and build input MUST resolve from the repository,
+> the configured package registry, or an explicitly declared repository source.
+> A clean checkout MUST build, test, and package without a sibling personal
+> checkout or an absolute/path dependency outside the repository.
+
+> [spec:nshedit:req:workspace.semantic-naming]
+> Maintained Rust identifiers, modules, examples, and public formats MUST be
+> named for their responsibility, data, or stable identity. Relative migration
+> labels such as `native`, `legacy`, `compatibility`, or `translated` MUST NOT
+> identify the sole implementation or an unnamed format. Where two external
+> protocols truly coexist, their concrete protocol or version names MUST make
+> the distinction. Required C symbol spelling belongs only in export and
+> header-generation metadata.

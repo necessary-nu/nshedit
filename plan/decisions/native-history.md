@@ -1,6 +1,6 @@
 ---
 id [dec:libedit:native-history]
-epitome "Native history owns typed logical records while each traversal owns an independent stable-ID cursor."
+epitome "History storage owns typed logical records while each traversal owns an independent stable-ID cursor and the ABI translates through typed operations."
 state @decided
 category @property
 scope {
@@ -9,6 +9,7 @@ scope {
         [spec:nshedit:req:core.history+1]
         [spec:nshedit:req:core.effect-hooks]
         [spec:nshedit:req:abi.behavioural-conformance]
+        [spec:nshedit:req:abi.typed-history]
     )
 }
 author "brendan@necessary.nu"
@@ -38,7 +39,8 @@ consequences {
         "Previous means older input and Next means newer input. Navigation distinguishes selecting an entry, returning to the saved live line, and hitting a boundary. Removed or evicted cursor identities repair to the live position."
         "Capacity is Option<NonZeroUsize>, eliminating zero-as-magic ambiguity. Shrinking and bounded insertion return evicted owned entries; consecutive-duplicate rejection returns the caller's Text and metadata."
         "HistoryNavigateEffect carries a typed repeat count and answers atomically with HistoryResponse::Entry, Live, or Boundary, so the read driver neither exposes intermediate navigation nor infers live-line restoration from an ambiguous None."
-        "Persistence and locale conversion are integrations over owned records, not HistoryStore fields. C history records, callbacks, and narrow/wide conversion remain ABI-only projections; a versioned native Text codec is separately deferred."
+        "Persistence and locale conversion are integrations over owned records, not HistoryStore fields. C history records, callbacks, and narrow/wide conversion remain ABI-only projections; a versioned Text codec is separately deferred."
+        "The ABI couples each history operation with its valid payload and returns a typed reply or error. Only exported wrappers decode H_* values, read varargs, mutate HistEvent, and encode C status values."
         "The former NativeHistory byte/global-cursor facade, translated HistoryGen and EditorHistory traits, varargs dispatch, and event records are absent from the core rather than retained as aliases or a legacy engine."
     )
     deferred (
@@ -53,6 +55,7 @@ edges {
 codifies (
     [spec:nshedit:req:core.history+1]
     [spec:nshedit:req:core.effect-hooks]
+    [spec:nshedit:req:abi.typed-history]
 )
 ---
 
@@ -72,7 +75,8 @@ needs: moving newer from the newest history entry restores the saved live
 line, while a real boundary changes nothing.
 
 History remains outside Editor ownership because it is a host-controlled
-effect. Native callers may service that effect from HistoryStore; the ABI may
-service it through a foreign callback after releasing the editor borrow. The
-two integrations share semantic responses without sharing callback or C
-representations.
+effect. Rust callers may service that effect from HistoryStore; the ABI may
+service it through a foreign callback after releasing the editor borrow. Its
+private built-in and callback backends still share a typed operation and reply
+model: C operation numbers, event records, out-pointers, and return integers
+exist only while an exported wrapper decodes or publishes them.

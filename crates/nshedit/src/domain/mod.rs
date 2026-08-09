@@ -6,8 +6,6 @@
 //! built from this vocabulary; the ABI adapter translates at its boundary.
 
 // [spec:nshedit:req:core.line-commands]
-// [spec:nshedit:req:core.read-driver]
-
 mod command;
 mod command_effect;
 mod keymap;

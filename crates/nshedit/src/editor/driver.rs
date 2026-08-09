@@ -176,7 +176,6 @@ enum OwnedLookup {
     Unbound,
 }
 
-// [spec:nshedit:req:core.read-driver]
 /// Reusable native driver for one editor, with no stored streams or callbacks.
 pub struct ReadDriver {
     owner: Arc<()>,

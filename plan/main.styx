@@ -2285,7 +2285,7 @@ children (
                 priority 0
                 kind @refactor
                 implements {
-                    native-impl ([spec:nshedit:req:core.typed-domain] [spec:nshedit:req:core.text-screen-model])
+                    native-impl ([spec:nshedit:req:core.typed-domain])
                 }
                 deps (greenfield-lint-baseline)
                 log (
@@ -2504,10 +2504,8 @@ children (
                 title "Replace input, parsing, signals, and dispatch with the resumable editor driver"
                 priority 0
                 kind @refactor
-                implements {
-                    native-impl ([spec:nshedit:req:core.read-driver])
-                }
                 deps (greenfield-history greenfield-token-completion greenfield-terminal-render)
+                sealed true
                 log (
                     {
                         at 2026-08-08T18:50:38.390247575Z
@@ -2521,6 +2519,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "The native loop is a token-checked ReadDriver: owned byte chunks decode incrementally with invalid bytes preserved; key prefixes distinguish exact, ambiguous, prefix, timeout, and fallback reprocessing; repeat counts and macro replay are bounded; prompts, history, completion, resize, user commands, and signal propagation suspend as typed effects; rendering uses a safe Write. Cooked/Editing transitions bracket completion and signal propagation. Multi-key operators remain typed bindings, not a second C-shaped operator state machine. Recorded in [dec:libedit:native-read-driver], with [dec:libedit:native-line-state] corrected accordingly."
+                    }
+
+                    {
+                        at 2026-08-09T12:52:51.208714861Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
@@ -2569,7 +2574,7 @@ children (
                 priority 0
                 kind @refactor
                 implements {
-                    native-impl ([spec:nshedit:req:core.unsafe-free] [spec:nshedit:req:workspace.lint-policy])
+                    native-impl ([spec:nshedit:req:core.unsafe-free])
                 }
                 deps (greenfield-retire-port)
                 log (
@@ -2578,6 +2583,14 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T12:44:29.268838583Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "The completed lint audit treated two reasoned #[expect] attributes as acceptable. Both suppress private implementation smells rather than unavoidable exported signatures, so the zero-suppression claim was too weak and is superseded by rust-idiom-contract."
+                        after_done true
                     }
                 )
             }
@@ -2716,6 +2729,14 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "Acceptance auditing found return-code-only coverage around terminal/tty commands, binding mutations, foreign history effects, and signal handling. Those behaviours are now explicit prerequisite nodes. The four repairs are independent after their existing native-core and ABI dependencies; final acceptance joins them and must observe downstream state, output, callback, and signal effects rather than immediate statuses alone."
+                    }
+
+                    {
+                        at 2026-08-09T12:44:33.50271112Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "The ABI acceptance evidence remains valid, but the architecture acceptance was incomplete: private ABI code still re-entered exported variadic symbols, carried C status/out-parameter protocols, and used contrastive migration naming. rust-idiom-hardening owns the follow-up without weakening the conformance baseline."
+                        after_done true
                     }
                 )
             }
@@ -2890,6 +2911,158 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+                )
+            }
+
+            {
+                id rust-idiom-hardening
+                title "Remove residual C-shaped design from the Rust workspace"
+                kind @refactor
+                children (
+                    {
+                        id rust-idiom-contract
+                        title "Correct the Rust-idiom boundary, lint, continuation, and naming contracts"
+                        kind @docs
+                        deps (greenfield-acceptance)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-09T12:44:38.697484899Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-09T12:52:55.079575034Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
+                        )
+                    }
+
+                    {
+                        id rust-idiom-self-contained
+                        title "Make every build input resolve from a clean checkout"
+                        kind @build
+                        implements {
+                            native-impl ([spec:nshedit:req:workspace.self-contained])
+                        }
+                        deps (rust-idiom-contract)
+                    }
+
+                    {
+                        id rust-idiom-text
+                        title "Give text and history formats boundary-neutral stable names"
+                        kind @refactor
+                        implements {
+                            native-impl ([spec:nshedit:req:core.text-screen-model])
+                        }
+                        deps (rust-idiom-contract)
+                    }
+
+                    {
+                        id rust-idiom-platform
+                        title "Expose typed safe platform operations and remove global overrides"
+                        kind @refactor
+                        implements {
+                            native-impl ([spec:nshedit:req:platform.typed-boundary])
+                        }
+                        deps (rust-idiom-contract)
+                    }
+
+                    {
+                        id rust-idiom-continuation
+                        title "Unify editor effects, driver steps, and command host work"
+                        kind @refactor
+                        implements {
+                            native-impl ([spec:nshedit:req:core.read-driver])
+                        }
+                        deps (rust-idiom-text)
+                    }
+
+                    {
+                        id rust-idiom-history
+                        title "Replace private history opcodes and out-events with typed operations"
+                        kind @refactor
+                        implements {
+                            native-impl ([spec:nshedit:req:abi.typed-history])
+                        }
+                        deps (rust-idiom-text)
+                    }
+
+                    {
+                        id rust-idiom-completion
+                        title "Replace C-shaped private completion with typed requests and reports"
+                        kind @refactor
+                        implements {
+                            native-impl ([spec:nshedit:req:abi.typed-completion])
+                        }
+                        deps (rust-idiom-text rust-idiom-platform)
+                    }
+
+                    {
+                        id rust-idiom-session
+                        title "Replace ABI policy bags and private globals with typed session state"
+                        kind @refactor
+                        implements {
+                            native-impl ([spec:nshedit:req:abi.typed-session])
+                        }
+                        deps (rust-idiom-text rust-idiom-platform)
+                    }
+
+                    {
+                        id rust-idiom-terminal
+                        title "Give terminal capabilities typed policies and private storage"
+                        kind @refactor
+                        implements {
+                            native-impl ([spec:nshedit:req:terminal.typed-api])
+                        }
+                        deps (rust-idiom-contract)
+                    }
+
+                    {
+                        id rust-idiom-readline
+                        title "Remove private ABI re-entry and consolidate readline runtime ownership"
+                        kind @refactor
+                        implements {
+                            native-impl ([spec:nshedit:req:abi.rust-internals])
+                        }
+                        deps (
+                            rust-idiom-continuation
+                            rust-idiom-history
+                            rust-idiom-completion
+                            rust-idiom-session
+                        )
+                    }
+
+                    {
+                        id rust-idiom-lint-naming
+                        title "Eliminate lint suppressions and relative migration naming"
+                        kind @refactor
+                        implements {
+                            native-impl ([spec:nshedit:req:workspace.lint-policy] [spec:nshedit:req:workspace.semantic-naming])
+                        }
+                        deps (
+                            rust-idiom-self-contained
+                            rust-idiom-text
+                            rust-idiom-platform
+                            rust-idiom-continuation
+                            rust-idiom-history
+                            rust-idiom-completion
+                            rust-idiom-session
+                            rust-idiom-terminal
+                            rust-idiom-readline
+                        )
+                    }
+
+                    {
+                        id rust-idiom-acceptance
+                        title "Reprove the Rust architecture and drop-in ABI from a clean checkout"
+                        kind @test
+                        deps (rust-idiom-lint-naming)
                     }
                 )
             }

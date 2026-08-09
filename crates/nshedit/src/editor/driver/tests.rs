@@ -104,7 +104,6 @@ fn vi_with_line(line: &str) -> Editor<TestTerminal> {
     editor
 }
 
-// [spec:nshedit:req:core.read-driver/test]
 #[test]
 fn driver_decodes_and_accepts_utf8() {
     let mut editor = editor(EditorConfig::default());
