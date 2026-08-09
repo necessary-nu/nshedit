@@ -7,8 +7,8 @@ use std::io::{self, Read, Write};
 use std::os::fd::{AsFd, BorrowedFd};
 
 use nshedit::domain::{
-    Action, Binding, Direction, EditTarget, EditorConfig, KeySequence, KeymapMode, Motion, Prompt,
-    ScreenSize, SignalPolicy, Text, TextUnit,
+    Action, Binding, Direction, EditTarget, EditorConfig, EffectCommand, KeySequence, KeymapMode,
+    Motion, Prompt, ScreenSize, SignalPolicy, Text, TextUnit,
 };
 use nshedit::editor::effect::{HistoryResponse, HostFailure, PromptSide, ReadEffect, ReadOutcome};
 use nshedit::editor::{
@@ -193,30 +193,38 @@ fn read_input(
 fn install_terminal_bindings<T: TerminalControl>(
     editor: &mut Editor<T>,
 ) -> Result<(), nshedit::domain::Error> {
-    for (sequence, action) in [
-        ("\u{1b}[A", Action::History(Direction::Previous)),
-        ("\u{1b}[B", Action::History(Direction::Next)),
-        ("\u{1b}[C", Action::Move(Motion::Character(Direction::Next))),
+    for (sequence, binding) in [
+        (
+            "\u{1b}[A",
+            Binding::Effect(EffectCommand::NavigateHistory(Direction::Previous)),
+        ),
+        (
+            "\u{1b}[B",
+            Binding::Effect(EffectCommand::NavigateHistory(Direction::Next)),
+        ),
+        (
+            "\u{1b}[C",
+            Binding::Action(Action::Move(Motion::Character(Direction::Next))),
+        ),
         (
             "\u{1b}[D",
-            Action::Move(Motion::Character(Direction::Previous)),
+            Binding::Action(Action::Move(Motion::Character(Direction::Previous))),
         ),
-        ("\u{1b}[H", Action::Move(Motion::StartOfLine)),
-        ("\u{1b}[F", Action::Move(Motion::EndOfLine)),
+        (
+            "\u{1b}[H",
+            Binding::Action(Action::Move(Motion::StartOfLine)),
+        ),
+        ("\u{1b}[F", Binding::Action(Action::Move(Motion::EndOfLine))),
         (
             "\u{1b}[3~",
-            Action::Delete(EditTarget::Character(Direction::Next)),
+            Binding::Action(Action::Delete(EditTarget::Character(Direction::Next))),
         ),
         (
             "\u{7f}",
-            Action::Delete(EditTarget::Character(Direction::Previous)),
+            Binding::Action(Action::Delete(EditTarget::Character(Direction::Previous))),
         ),
     ] {
-        editor.bind(
-            KeymapMode::Emacs,
-            KeySequence::try_from(sequence)?,
-            Binding::Action(action),
-        );
+        editor.bind(KeymapMode::Emacs, KeySequence::try_from(sequence)?, binding);
     }
     Ok(())
 }

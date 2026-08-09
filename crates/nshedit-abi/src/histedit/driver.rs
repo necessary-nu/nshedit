@@ -628,7 +628,7 @@ unsafe fn host_history_line(
     el: *mut EditLine,
     request: &HistoryLineEffect,
 ) -> Result<HistoryResponse, HostFailure> {
-    if request.position == HistoryPosition::Current {
+    if request.position() == HistoryPosition::Current {
         unsafe { (&mut *el).set_history_depth(0) };
         return Ok(HistoryResponse::entry(
             unsafe { (&*el).history_live_line() }.clone(),
@@ -639,7 +639,7 @@ unsafe fn host_history_line(
     if original_depth == 0 {
         unsafe { (&mut *el).save_history_live_line() };
     }
-    if let HistoryPosition::Number(number) = request.position
+    if let HistoryPosition::Number(number) = request.position()
         && unsafe { (&*el).narrow_history() }
     {
         if number == RepeatCount::ONE {
@@ -653,7 +653,7 @@ unsafe fn host_history_line(
                 HistoryResponse::entry(item.line.clone()).at_boundary()
             }));
     }
-    let selected = match request.position {
+    let selected = match request.position() {
         HistoryPosition::Current => unreachable!("handled before scanning retained history"),
         HistoryPosition::Oldest => items.iter().enumerate().next_back(),
         HistoryPosition::Number(number) => items

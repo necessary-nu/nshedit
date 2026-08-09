@@ -14,14 +14,14 @@ use std::sync::Arc;
 
 use crate::domain::{
     Action, Binding, Buffering, Direction, EditTarget, KeyLookup, KeySequence, KeymapMode, Motion,
-    Outcome, Prompt, Refresh, RepeatCount, Signal, TerminalMode, Text, TextUnit,
+    Outcome, Prompt, Refresh, Signal, TerminalMode, Text, TextUnit,
 };
 
 use super::effect::{
     AliasEffect, CompletionEffect, EditorCommandEffect, Effect, EffectResult, ExternalEditEffect,
     HistoryLineEffect, HistoryNavigateEffect, HistoryRecordEffect, HistorySearchEffect,
     HistoryWordEffect, HostFailure, PromptEffect, PromptSide, ReadEffect, ReadOutcome,
-    ResizeEffect, SignalEffect, Suspension, UserCommandEffect,
+    ResizeEffect, SignalEffect, UserCommandEffect,
 };
 use super::{CompletionOutcome, Editor, RenderError, TerminalControl, Tokenizer};
 use decode::Decoder;
@@ -71,8 +71,7 @@ enum DisplayKind {
 
 /// An owned display request that can be performed with any safe writer.
 pub struct Display {
-    owner: Arc<()>,
-    step: u64,
+    token: Arc<ContinuationToken>,
     kind: DisplayKind,
     left: Prompt,
     right: Option<Prompt>,
@@ -80,20 +79,20 @@ pub struct Display {
 
 /// A typed host effect tied to one live driver step.
 pub struct Pending<E: Effect> {
-    owner: Arc<()>,
-    step: u64,
-    suspension: Suspension<E>,
+    token: Arc<ContinuationToken>,
+    request: E,
 }
 
 impl<E: Effect> Pending<E> {
     /// Inspect the owned request while editor and driver are unborrowed.
     #[must_use]
     pub fn request(&self) -> &E {
-        self.suspension.request()
+        &self.request
     }
 }
 
 /// The next operation required to continue a native read.
+// [spec:nshedit:req:core.read-driver+1]
 pub enum ReadStep {
     /// Produce a left or right prompt.
     Prompt(Pending<PromptEffect>),
@@ -129,37 +128,10 @@ pub enum ReadStep {
     Complete(ReadResult),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EffectKind {
-    PromptLeft,
-    PromptRight,
-    Resize,
-    Read,
-    History,
-    HistorySearch,
-    HistoryLine,
-    HistoryWord,
-    Alias,
-    EditorCommand,
-    ExternalEdit,
-    RecordHistory,
-    Completion,
-    UserCommand,
-    Signal,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum Phase {
-    #[default]
-    Idle,
-    Advancing,
-    Effect {
-        step: u64,
-        kind: EffectKind,
-    },
-    Display {
-        step: u64,
-    },
+#[derive(Debug)]
+struct ContinuationToken {
+    owner: Arc<()>,
+    generation: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -179,8 +151,8 @@ enum OwnedLookup {
 /// Reusable native driver for one editor, with no stored streams or callbacks.
 pub struct ReadDriver {
     owner: Arc<()>,
-    next_step: u64,
-    phase: Phase,
+    next_generation: u64,
+    active: Option<Arc<ContinuationToken>>,
     tokenizer: Tokenizer,
     work_limit: usize,
     decoder: Decoder,
@@ -191,8 +163,6 @@ pub struct ReadDriver {
     repetition: Option<Repetition>,
     pending_unit: Option<sequence::PendingUnit>,
     pending_operator: Option<sequence::PendingOperator>,
-    alias_selector_pending: bool,
-    after_history_line: Option<command_effect::AfterHistoryLine>,
     meta_next: bool,
     last_character_search: Option<sequence::StoredCharacterSearch>,
     last_history_search: Option<command_effect::StoredHistorySearch>,
@@ -202,7 +172,6 @@ pub struct ReadDriver {
     replaying_change: bool,
     expanded_units: usize,
     eof_pending: bool,
-    signal_after_resize: Option<Signal>,
     pending_beeps: usize,
     left_prompt: Prompt,
     right_prompt: Option<Prompt>,
@@ -223,8 +192,8 @@ impl ReadDriver {
     pub fn new(tokenizer: Tokenizer) -> Self {
         Self {
             owner: Arc::new(()),
-            next_step: 0,
-            phase: Phase::Idle,
+            next_generation: 0,
+            active: None,
             tokenizer,
             work_limit: 4096,
             decoder: Decoder::default(),
@@ -235,8 +204,6 @@ impl ReadDriver {
             repetition: None,
             pending_unit: None,
             pending_operator: None,
-            alias_selector_pending: false,
-            after_history_line: None,
             meta_next: false,
             last_character_search: None,
             last_history_search: None,
@@ -246,7 +213,6 @@ impl ReadDriver {
             replaying_change: false,
             expanded_units: 0,
             eof_pending: false,
-            signal_after_resize: None,
             pending_beeps: 0,
             left_prompt: Prompt::default(),
             right_prompt: None,
@@ -268,7 +234,7 @@ impl ReadDriver {
         &mut self,
         editor: &mut Editor<T>,
     ) -> Result<ReadStep, DriverError> {
-        if self.phase != Phase::Idle {
+        if self.active.is_some() {
             return Err(DriverError::Busy);
         }
         if editor.terminal_profile().is_none() {
@@ -279,9 +245,7 @@ impl ReadDriver {
             .set_terminal_mode(TerminalMode::Editing)
             .map_err(DriverError::Terminal)?;
         self.clear_transient(editor.config().buffering() != Buffering::Line);
-        self.phase = Phase::Advancing;
-        self.pending(editor, ResizeEffect::Prepare, EffectKind::Resize)
-            .map(ReadStep::Resize)
+        Ok(ReadStep::Resize(self.pending(ResizeEffect::Prepare)))
     }
 
     /// Resume either prompt request.
@@ -291,11 +255,8 @@ impl ReadDriver {
         pending: &Pending<PromptEffect>,
         response: EffectResult<Prompt>,
     ) -> Result<ReadStep, DriverError> {
-        let kind = match pending.request().side {
-            PromptSide::Left => EffectKind::PromptLeft,
-            PromptSide::Right => EffectKind::PromptRight,
-        };
-        let response = self.accept(editor, pending, kind, response)?;
+        let side = pending.request().side;
+        let response = self.accept(pending, response)?;
         let prompt = match response {
             Ok(prompt) => prompt,
             Err(HostFailure::Unavailable | HostFailure::Cancelled) => Prompt::default(),
@@ -305,16 +266,15 @@ impl ReadDriver {
             Err(error) => return Err(self.fail(editor, DriverError::Host(error))),
         };
 
-        match kind {
-            EffectKind::PromptLeft => {
+        match side {
+            PromptSide::Left => {
                 self.left_prompt = prompt;
-                self.request_prompt(editor, PromptSide::Right)
+                self.request_prompt(PromptSide::Right)
             }
-            EffectKind::PromptRight => {
+            PromptSide::Right => {
                 self.right_prompt = (!prompt.is_empty()).then_some(prompt);
                 self.make_display()
             }
-            _ => unreachable!("the effect kind came from a prompt side"),
         }
     }
 
@@ -325,7 +285,7 @@ impl ReadDriver {
         display: &Display,
         output: &mut dyn Write,
     ) -> Result<ReadStep, DriverError> {
-        self.validate_display(display)?;
+        self.accept_token(&display.token)?;
         let emitted = match display.kind {
             DisplayKind::Refresh => editor
                 .render_to(&display.left, display.right.as_ref(), output)
@@ -344,7 +304,6 @@ impl ReadDriver {
         if let Err(error) = emitted {
             return Err(self.fail(editor, DriverError::Render(error)));
         }
-        self.phase = Phase::Advancing;
         self.advance(editor)
     }
 
@@ -356,7 +315,7 @@ impl ReadDriver {
         response: EffectResult<ReadOutcome>,
     ) -> Result<ReadStep, DriverError> {
         let purpose = *pending.request();
-        let response = self.accept(editor, pending, EffectKind::Read, response)?;
+        let response = self.accept(pending, response)?;
         let outcome = match response {
             Ok(outcome) => outcome,
             Err(HostFailure::Cancelled) => {
@@ -372,11 +331,19 @@ impl ReadDriver {
             ReadOutcome::Bytes(bytes) => {
                 self.expanded_units = 0;
                 self.decoder.push(&bytes);
-                self.advance(editor)
+                if purpose == ReadEffect::AliasSelector {
+                    self.await_alias_selector(editor)
+                } else {
+                    self.advance(editor)
+                }
             }
             ReadOutcome::Unit(unit) => {
                 self.expanded_units = 0;
-                self.process_unit(editor, unit)
+                if purpose == ReadEffect::AliasSelector {
+                    self.request_alias(unit)
+                } else {
+                    self.process_unit(editor, unit)
+                }
             }
             ReadOutcome::Signal(signal) => self.handle_signal(editor, signal),
             ReadOutcome::TimedOut if purpose == ReadEffect::KeySequence => {
@@ -386,7 +353,11 @@ impl ReadDriver {
             ReadOutcome::EndOfInput => {
                 self.decoder.finish();
                 self.eof_pending = true;
-                self.advance(editor)
+                if purpose == ReadEffect::AliasSelector {
+                    self.await_alias_selector(editor)
+                } else {
+                    self.advance(editor)
+                }
             }
         }
     }
@@ -398,7 +369,7 @@ impl ReadDriver {
         pending: &Pending<HistoryNavigateEffect>,
         response: <HistoryNavigateEffect as Effect>::Response,
     ) -> Result<ReadStep, DriverError> {
-        let response = self.accept(editor, pending, EffectKind::History, response)?;
+        let response = self.accept(pending, response)?;
         let notify_boundary = self.repetition.is_none();
         match response {
             Ok(response) => {
@@ -423,7 +394,7 @@ impl ReadDriver {
         response: <CompletionEffect as Effect>::Response,
     ) -> Result<ReadStep, DriverError> {
         let query = pending.request().query.clone();
-        let response = self.accept(editor, pending, EffectKind::Completion, response)?;
+        let response = self.accept(pending, response)?;
         match response {
             Ok(candidates) => {
                 let outcome = editor
@@ -449,7 +420,7 @@ impl ReadDriver {
         pending: &Pending<UserCommandEffect>,
         response: <UserCommandEffect as Effect>::Response,
     ) -> Result<ReadStep, DriverError> {
-        let response = self.accept(editor, pending, EffectKind::UserCommand, response)?;
+        let response = self.accept(pending, response)?;
         match response {
             Ok(outcome) => self.after_outcome(editor, outcome),
             Err(HostFailure::Unavailable | HostFailure::Cancelled) => {
@@ -471,11 +442,11 @@ impl ReadDriver {
         response: <HistoryRecordEffect as Effect>::Response,
     ) -> Result<ReadStep, DriverError> {
         let line = pending.request().line.clone();
-        let response = self.accept(editor, pending, EffectKind::RecordHistory, response)?;
+        let response = self.accept(pending, response)?;
         match response {
             Ok(()) | Err(HostFailure::Unavailable) => {
                 self.completion = Some(ReadResult::Accepted(line));
-                self.schedule_display(editor, DisplayKind::FinishLine)
+                self.schedule_display(DisplayKind::FinishLine)
             }
             Err(error) => Err(self.fail(editor, DriverError::Host(error))),
         }
@@ -502,8 +473,7 @@ impl ReadDriver {
         } else {
             ReadEffect::KeySequence
         };
-        self.pending(editor, effect, EffectKind::Read)
-            .map(ReadStep::Read)
+        Ok(ReadStep::Read(self.pending(effect)))
     }
 
     fn process_unit<T: TerminalControl>(
@@ -513,9 +483,6 @@ impl ReadDriver {
     ) -> Result<ReadStep, DriverError> {
         if editor.config().buffering() == Buffering::Character {
             return self.complete(editor, ReadResult::Character(unit));
-        }
-        if let Some(step) = self.consume_pending_effect_input(editor, unit) {
-            return step;
         }
         if let Some(step) = self.consume_pending_unit(editor, unit) {
             return step;
@@ -579,7 +546,7 @@ impl ReadDriver {
         } else {
             self.repeat_argument = None;
             self.complete_command_after_display(editor);
-            self.schedule_display(editor, DisplayKind::Beep)
+            self.schedule_display(DisplayKind::Beep)
         }
     }
 
@@ -593,7 +560,7 @@ impl ReadDriver {
         } else {
             self.repeat_argument = None;
             self.complete_command_after_display(editor);
-            self.schedule_display(editor, DisplayKind::Beep)
+            self.schedule_display(DisplayKind::Beep)
         }
     }
 
@@ -608,7 +575,6 @@ impl ReadDriver {
         self.key_sequence.clear();
         self.repeat_argument = None;
         self.cancel_pending_sequence(editor)?;
-        self.cancel_pending_effect_command();
         self.complete(editor, ReadResult::EndOfInput)
     }
 
@@ -678,16 +644,11 @@ impl ReadDriver {
             .iter()
             .map(|token| token.value().clone())
             .collect();
-        self.pending(
-            editor,
-            UserCommandEffect {
-                name,
-                invoking,
-                arguments,
-            },
-            EffectKind::UserCommand,
-        )
-        .map(ReadStep::UserCommand)
+        Ok(ReadStep::UserCommand(self.pending(UserCommandEffect {
+            name,
+            invoking,
+            arguments,
+        })))
     }
 
     fn expand_macro(&mut self, text: Text, repeat: usize) -> Result<(), DriverError> {
@@ -726,20 +687,6 @@ impl ReadDriver {
         if let Action::Delete(EditTarget::Character(direction)) = action {
             return self.dispatch_counted_character_delete(editor, direction, repeat);
         }
-        if let Action::History(direction) = action {
-            self.live_line.get_or_insert_with(|| editor.line().clone());
-            return self
-                .pending(
-                    editor,
-                    HistoryNavigateEffect {
-                        direction,
-                        count: RepeatCount::new(repeat)
-                            .expect("dispatch rejects a zero repeat before effect creation"),
-                    },
-                    EffectKind::History,
-                )
-                .map(ReadStep::History);
-        }
         if action == Action::TransposeCharacters {
             return self.dispatch_transpose(editor);
         }
@@ -773,49 +720,24 @@ impl ReadDriver {
             if repetition.remaining != 0 {
                 self.repetition = Some(repetition);
             }
-            let step = editor
+            let outcome = editor
                 .execute(action)
                 .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
-            match step {
-                super::CommandStep::Applied(outcome) => {
-                    if echoes_end_of_input && outcome == Outcome::EndOfInput {
-                        self.repetition = None;
-                        self.completion = Some(ReadResult::EndOfInput);
-                        return self.schedule_display(editor, DisplayKind::Echo(invoking));
-                    }
-                    if matches!(outcome, Outcome::Accepted(_) | Outcome::EndOfInput) {
-                        self.repetition = None;
-                        return self.after_outcome(editor, outcome);
-                    }
-                    self.note_outcome(editor, outcome);
-                    if self.repetition.is_none() {
-                        if refreshes_cursor {
-                            self.clamp_vi_command_cursor(editor)?;
-                        }
-                        return self.schedule_command_display(editor);
-                    }
+            if echoes_end_of_input && outcome == Outcome::EndOfInput {
+                self.repetition = None;
+                self.completion = Some(ReadResult::EndOfInput);
+                return self.schedule_display(DisplayKind::Echo(invoking));
+            }
+            if matches!(outcome, Outcome::Accepted(_) | Outcome::EndOfInput) {
+                self.repetition = None;
+                return self.after_outcome(editor, outcome);
+            }
+            self.note_outcome(editor, outcome);
+            if self.repetition.is_none() {
+                if refreshes_cursor {
+                    self.clamp_vi_command_cursor(editor)?;
                 }
-                super::CommandStep::NeedsCompletion => {
-                    let query = editor
-                        .completion_query(&self.tokenizer)
-                        .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
-                    return self
-                        .pending(editor, CompletionEffect { query }, EffectKind::Completion)
-                        .map(ReadStep::Completion);
-                }
-                super::CommandStep::NeedsHistory(direction) => {
-                    self.live_line.get_or_insert_with(|| editor.line().clone());
-                    return self
-                        .pending(
-                            editor,
-                            HistoryNavigateEffect {
-                                direction,
-                                count: RepeatCount::ONE,
-                            },
-                            EffectKind::History,
-                        )
-                        .map(ReadStep::History);
-                }
+                return self.schedule_command_display(editor);
             }
         }
     }
@@ -853,12 +775,9 @@ impl ReadDriver {
         {
             self.queue_beep();
         } else {
-            let step = editor
+            let outcome = editor
                 .execute(Action::Move(Motion::Absolute(destination)))
                 .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
-            let super::CommandStep::Applied(outcome) = step else {
-                return Err(self.fail(editor, DriverError::InvalidSequenceState));
-            };
             self.note_outcome(editor, outcome);
         }
         self.clamp_vi_command_cursor(editor)?;
@@ -886,12 +805,9 @@ impl ReadDriver {
                 .line()
                 .span(range)
                 .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
-            let step = editor
+            let outcome = editor
                 .execute(Action::Delete(EditTarget::Span(span)))
                 .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
-            let super::CommandStep::Applied(outcome) = step else {
-                return Err(self.fail(editor, DriverError::InvalidSequenceState));
-            };
             self.note_outcome(editor, outcome);
         }
         self.clamp_vi_command_cursor(editor)?;
@@ -917,12 +833,9 @@ impl ReadDriver {
             self.queue_beep();
             return self.schedule_command_display(editor);
         }
-        let step = editor
+        let outcome = editor
             .execute(Action::TransposeCharacters)
             .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
-        let super::CommandStep::Applied(outcome) = step else {
-            return Err(self.fail(editor, DriverError::InvalidSequenceState));
-        };
         self.note_outcome(editor, outcome);
         self.clamp_vi_command_cursor(editor)?;
         self.schedule_command_display(editor)
@@ -956,12 +869,9 @@ impl ReadDriver {
         match outcome {
             Outcome::Accepted(line) => {
                 self.repetition = None;
-                self.pending(
-                    editor,
-                    HistoryRecordEffect { line },
-                    EffectKind::RecordHistory,
-                )
-                .map(ReadStep::RecordHistory)
+                Ok(ReadStep::RecordHistory(
+                    self.pending(HistoryRecordEffect { line }),
+                ))
             }
             Outcome::EndOfInput => {
                 self.repetition = None;
@@ -1017,7 +927,7 @@ impl ReadDriver {
         } else {
             DisplayKind::Refresh
         };
-        self.schedule_display(editor, kind)
+        self.schedule_display(kind)
     }
 
     fn complete_command_after_display<T: TerminalControl>(&mut self, editor: &Editor<T>) {
@@ -1026,11 +936,7 @@ impl ReadDriver {
         }
     }
 
-    fn schedule_display<T: TerminalControl>(
-        &mut self,
-        editor: &mut Editor<T>,
-        kind: DisplayKind,
-    ) -> Result<ReadStep, DriverError> {
+    fn schedule_display(&mut self, kind: DisplayKind) -> Result<ReadStep, DriverError> {
         self.display_kind = kind;
         if matches!(
             kind,
@@ -1040,100 +946,63 @@ impl ReadDriver {
             self.right_prompt = None;
             self.make_display()
         } else {
-            self.request_prompt(editor, PromptSide::Left)
+            self.request_prompt(PromptSide::Left)
         }
     }
 
     fn make_display(&mut self) -> Result<ReadStep, DriverError> {
-        let step = self.issue_step()?;
-        self.phase = Phase::Display { step };
+        let token = self.issue_token();
         Ok(ReadStep::Display(Display {
-            owner: Arc::clone(&self.owner),
-            step,
+            token,
             kind: self.display_kind,
             left: self.left_prompt.clone(),
             right: self.right_prompt.clone(),
         }))
     }
 
-    fn request_prompt<T: TerminalControl>(
-        &mut self,
-        editor: &mut Editor<T>,
-        side: PromptSide,
-    ) -> Result<ReadStep, DriverError> {
-        let kind = match side {
-            PromptSide::Left => EffectKind::PromptLeft,
-            PromptSide::Right => EffectKind::PromptRight,
-        };
-        self.pending(editor, PromptEffect { side }, kind)
-            .map(ReadStep::Prompt)
+    fn request_prompt(&mut self, side: PromptSide) -> Result<ReadStep, DriverError> {
+        Ok(ReadStep::Prompt(self.pending(PromptEffect { side })))
     }
 
-    fn pending<T: TerminalControl, E: Effect>(
-        &mut self,
-        editor: &mut Editor<T>,
-        effect: E,
-        kind: EffectKind,
-    ) -> Result<Pending<E>, DriverError> {
-        let step = self.issue_step()?;
-        let suspension = match editor.suspend(effect) {
-            Ok(suspension) => suspension,
-            Err(error) => {
-                self.phase = Phase::Idle;
-                return Err(DriverError::Effect(error));
-            }
-        };
-        self.phase = Phase::Effect { step, kind };
-        Ok(Pending {
-            owner: Arc::clone(&self.owner),
-            step,
-            suspension,
-        })
+    fn pending<E: Effect>(&mut self, request: E) -> Pending<E> {
+        Pending {
+            token: self.issue_token(),
+            request,
+        }
     }
 
-    fn accept<T: TerminalControl, E: Effect>(
+    fn accept<E: Effect>(
         &mut self,
-        editor: &mut Editor<T>,
         pending: &Pending<E>,
-        kind: EffectKind,
         response: E::Response,
     ) -> Result<E::Response, DriverError> {
-        if !Arc::ptr_eq(&self.owner, &pending.owner) {
-            return Err(DriverError::DifferentDriver);
-        }
-        if self.phase
-            != (Phase::Effect {
-                step: pending.step,
-                kind,
-            })
-        {
-            return Err(DriverError::StaleStep);
-        }
-        let response = editor
-            .resume(&pending.suspension, response)
-            .map_err(DriverError::Effect)?;
-        self.phase = Phase::Advancing;
+        self.accept_token(&pending.token)?;
         Ok(response)
     }
 
-    fn validate_display(&self, display: &Display) -> Result<(), DriverError> {
-        if !Arc::ptr_eq(&self.owner, &display.owner) {
+    fn accept_token(&mut self, token: &Arc<ContinuationToken>) -> Result<(), DriverError> {
+        if !Arc::ptr_eq(&self.owner, &token.owner) {
             return Err(DriverError::DifferentDriver);
         }
-        if self.phase != (Phase::Display { step: display.step }) {
+        let Some(active) = self.active.as_ref() else {
+            return Err(DriverError::StaleStep);
+        };
+        if active.generation != token.generation || !Arc::ptr_eq(active, token) {
             return Err(DriverError::StaleStep);
         }
+        self.active = None;
         Ok(())
     }
 
-    fn issue_step(&mut self) -> Result<u64, DriverError> {
-        let Some(step) = self.next_step.checked_add(1) else {
-            self.phase = Phase::Idle;
-            self.clear_transient(false);
-            return Err(DriverError::SequenceExhausted);
-        };
-        self.next_step = step;
-        Ok(step)
+    fn issue_token(&mut self) -> Arc<ContinuationToken> {
+        debug_assert!(self.active.is_none());
+        self.next_generation = self.next_generation.wrapping_add(1);
+        let token = Arc::new(ContinuationToken {
+            owner: Arc::clone(&self.owner),
+            generation: self.next_generation,
+        });
+        self.active = Some(Arc::clone(&token));
+        token
     }
 
     fn complete<T: TerminalControl>(
@@ -1146,12 +1015,10 @@ impl ReadDriver {
         let preserve_input = editor.config().buffering() != Buffering::Line;
         if !preserve_input {
             if let Err(error) = editor.set_terminal_mode(TerminalMode::Cooked) {
-                self.phase = Phase::Idle;
                 self.clear_transient(false);
                 return Err(DriverError::Terminal(error));
             }
         }
-        self.phase = Phase::Idle;
         self.clear_transient(preserve_input);
         Ok(ReadStep::Complete(result))
     }
@@ -1163,13 +1030,13 @@ impl ReadDriver {
     ) -> DriverError {
         self.finish_change(editor);
         editor.finish_all_edit_groups();
-        self.phase = Phase::Idle;
         self.clear_transient(false);
         let _ = editor.set_terminal_mode(TerminalMode::Cooked);
         error
     }
 
     fn clear_transient(&mut self, preserve_input: bool) {
+        self.active = None;
         if !preserve_input {
             self.decoder.clear();
             self.eof_pending = false;
@@ -1181,14 +1048,11 @@ impl ReadDriver {
         self.repetition = None;
         self.pending_unit = None;
         self.pending_operator = None;
-        self.alias_selector_pending = false;
-        self.after_history_line = None;
         self.meta_next = false;
         self.change_recording = None;
         self.semantic_replay.clear();
         self.replaying_change = false;
         self.expanded_units = 0;
-        self.signal_after_resize = None;
         self.pending_beeps = 0;
         self.left_prompt = Prompt::default();
         self.right_prompt = None;

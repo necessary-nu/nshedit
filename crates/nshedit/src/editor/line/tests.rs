@@ -2,8 +2,8 @@ use std::io;
 
 use super::*;
 use crate::domain::{
-    CommandSequence, EditingMode, ImmediateCommand, KeyLookup, OpaqueCodePoint, Refresh,
-    TerminalMode, TextUnit, ViOperator, ViSequence, WordKind, WordTraversal,
+    CommandSequence, EditingMode, EffectCommand, ImmediateCommand, KeyLookup, OpaqueCodePoint,
+    Refresh, TerminalMode, TextUnit, ViOperator, ViSequence, WordKind, WordTraversal,
 };
 use crate::editor::{Editor, TerminalControl};
 
@@ -33,10 +33,7 @@ fn vi_editor() -> Editor<TestTerminal> {
 }
 
 fn apply(editor: &mut Editor<TestTerminal>, action: Action) -> Outcome {
-    match editor.execute(action).unwrap() {
-        CommandStep::Applied(outcome) => outcome,
-        step => panic!("expected an applied command, got {step:?}"),
-    }
+    editor.execute(action).unwrap()
 }
 
 fn sequence(value: &str) -> KeySequence {
@@ -431,23 +428,23 @@ fn vi_maps_are_mode_typed() {
 }
 
 #[test]
-fn host_bound_actions_return_typed_steps() {
+fn host_commands_are_separate_effect_bindings() {
     let mut editor = editor();
     apply(&mut editor, Action::Insert(Text::from("echo")));
     assert_eq!(
         editor.execute(Action::AcceptLine).unwrap(),
-        CommandStep::Applied(Outcome::Accepted(Text::from("echo")))
+        Outcome::Accepted(Text::from("echo"))
     );
-    assert_eq!(
-        editor.execute(Action::Complete).unwrap(),
-        CommandStep::NeedsCompletion
-    );
-    assert_eq!(
-        editor
-            .execute(Action::History(Direction::Previous))
-            .unwrap(),
-        CommandStep::NeedsHistory(Direction::Previous)
-    );
+    assert!(matches!(
+        editor.key_binding(&sequence("\t")),
+        KeyLookup::Exact(Binding::Effect(EffectCommand::Complete))
+    ));
+    assert!(matches!(
+        editor.key_binding(&sequence("\u{10}")),
+        KeyLookup::Exact(Binding::Effect(EffectCommand::NavigateHistory(
+            Direction::Previous
+        )))
+    ));
 }
 
 #[test]

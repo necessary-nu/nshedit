@@ -2,7 +2,7 @@ use crate::domain::{
     Action, ArgumentCommand, Direction, EditTarget, ImmediateCommand, InputMode, Motion, Outcome,
     Text, TextIndex, TextTransform, TextUnit, WordKind, WordTraversal, YankPlacement,
 };
-use crate::editor::{CommandStep, Editor, TerminalControl};
+use crate::editor::{Editor, TerminalControl};
 
 use super::sequence::operator_span;
 use super::{DisplayKind, DriverError, ReadDriver, ReadResult, ReadStep};
@@ -245,7 +245,7 @@ impl ReadDriver {
         self.take_repeat(explicit_repeat);
         if editor.line().is_empty() {
             self.completion = Some(ReadResult::EndOfInput);
-            self.schedule_display(editor, DisplayKind::Echo(invoking))
+            self.schedule_display(DisplayKind::Echo(invoking))
         } else {
             self.queue_beep();
             self.queue_beep();
@@ -330,12 +330,12 @@ impl ReadDriver {
             .replace(start, Text::from("#"))
             .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
         self.apply_sequence_action(editor, Action::Move(Motion::StartOfBuffer))?;
-        let step = editor
+        let outcome = editor
             .execute(Action::AcceptLine)
             .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
-        let CommandStep::Applied(outcome @ Outcome::Accepted(_)) = step else {
+        if !matches!(outcome, Outcome::Accepted(_)) {
             return Err(self.fail(editor, DriverError::InvalidSequenceState));
-        };
+        }
         self.after_outcome(editor, outcome)
     }
 
@@ -476,7 +476,7 @@ impl ReadDriver {
         let start = editor.cursor().get();
         if editor.line().is_empty() {
             self.completion = Some(ReadResult::EndOfInput);
-            return self.schedule_display(editor, DisplayKind::Echo(invoking));
+            return self.schedule_display(DisplayKind::Echo(invoking));
         }
         if start == editor.line().len() {
             self.queue_beep();

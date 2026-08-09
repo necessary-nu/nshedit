@@ -1,19 +1,18 @@
 //! Typed suspension points for every host-controlled editor operation.
 //!
-//! A [`Suspension`] owns its request and contains no borrow of [`Editor`].
-//! Host code can therefore run, including permitted reentrant operations,
-//! before the driver borrows the editor again to [`Editor::resume`].
+//! Each effect owns its request and names exactly one response type. The read
+//! driver places it in an owned continuation, releases all editor borrows, and
+//! validates that same continuation before applying the response.
 
 use std::ffi::OsString;
 use std::fmt;
-use std::sync::Arc;
 
 use crate::domain::{
     CommandName, Direction, KeymapMode, Outcome, Prompt, RepeatCount, ScreenSize, Signal, Text,
     TextUnit,
 };
 
-use super::{CompletionCandidates, CompletionQuery, Editor, TerminalControl};
+use super::{CompletionCandidates, CompletionQuery};
 
 mod sealed {
     pub trait Sealed {}
@@ -56,6 +55,8 @@ pub enum ReadEffect {
     Input,
     /// Wait long enough to disambiguate a key-sequence prefix.
     KeySequence,
+    /// Read the one logical unit that selects an alias name.
+    AliasSelector,
 }
 
 impl sealed::Sealed for ReadEffect {}
@@ -156,8 +157,42 @@ pub enum HistoryPosition {
 /// Ask the host to select one exact history record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HistoryLineEffect {
+    position: HistoryPosition,
+    continuation: HistoryLineContinuation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum HistoryLineContinuation {
+    ReturnToInput,
+    ExternalEdit,
+}
+
+impl HistoryLineEffect {
+    /// Select a history line and then return to ordinary input processing.
+    #[must_use]
+    pub const fn select(position: HistoryPosition) -> Self {
+        Self {
+            position,
+            continuation: HistoryLineContinuation::ReturnToInput,
+        }
+    }
+
     /// Stable semantic selection rather than a callback operation code.
-    pub position: HistoryPosition,
+    #[must_use]
+    pub const fn position(&self) -> HistoryPosition {
+        self.position
+    }
+
+    pub(super) const fn before_external_edit(position: HistoryPosition) -> Self {
+        Self {
+            position,
+            continuation: HistoryLineContinuation::ExternalEdit,
+        }
+    }
+
+    pub(super) const fn continues_with_external_edit(&self) -> bool {
+        matches!(self.continuation, HistoryLineContinuation::ExternalEdit)
+    }
 }
 
 impl sealed::Sealed for HistoryLineEffect {}
@@ -446,109 +481,11 @@ impl fmt::Display for HostFailure {
 
 impl std::error::Error for HostFailure {}
 
-/// Misuse or exhaustion of the editor's suspension state machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum EffectStateError {
-    /// A second request was attempted before the first resumed.
-    AlreadySuspended,
-    /// A response was supplied when no request was waiting.
-    NoSuspendedEffect,
-    /// The suspension was issued by another editor instance.
-    DifferentEditor,
-    /// A newer request superseded this suspension sequence.
-    StaleSuspension,
-    /// No further unique sequence can be represented.
-    SequenceExhausted,
-}
-
-impl fmt::Display for EffectStateError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::AlreadySuspended => {
-                formatter.write_str("the editor already has a suspended effect")
-            }
-            Self::NoSuspendedEffect => formatter.write_str("the editor has no suspended effect"),
-            Self::DifferentEditor => {
-                formatter.write_str("the suspension belongs to another editor")
-            }
-            Self::StaleSuspension => formatter.write_str("the suspension is no longer current"),
-            Self::SequenceExhausted => formatter.write_str("the effect sequence is exhausted"),
-        }
-    }
-}
-
-impl std::error::Error for EffectStateError {}
-
-/// An owned host request that does not retain an editor borrow.
-pub struct Suspension<E: Effect> {
-    owner: Arc<()>,
-    sequence: u64,
-    request: E,
-}
-
-impl<E: Effect> Suspension<E> {
-    /// Inspect the request while the editor remains independently borrowable.
-    #[must_use]
-    pub fn request(&self) -> &E {
-        &self.request
-    }
-}
-
-#[derive(Debug, Default)]
-pub(super) struct Runtime {
-    owner: Arc<()>,
-    next_sequence: u64,
-    pending_sequence: Option<u64>,
-}
-
-impl<T: TerminalControl> Editor<T> {
-    /// Suspend one host request without retaining this mutable borrow.
-    pub fn suspend<E: Effect>(&mut self, request: E) -> Result<Suspension<E>, EffectStateError> {
-        if self.effects.pending_sequence.is_some() {
-            return Err(EffectStateError::AlreadySuspended);
-        }
-        let Some(sequence) = self.effects.next_sequence.checked_add(1) else {
-            return Err(EffectStateError::SequenceExhausted);
-        };
-        self.effects.next_sequence = sequence;
-        self.effects.pending_sequence = Some(sequence);
-
-        Ok(Suspension {
-            owner: Arc::clone(&self.effects.owner),
-            sequence,
-            request,
-        })
-    }
-
-    /// Validate a suspension and release its typed response to the driver.
-    ///
-    /// A rejected response does not clear the current suspension, so the
-    /// caller can retry with the right editor or token.
-    pub fn resume<E: Effect>(
-        &mut self,
-        suspension: &Suspension<E>,
-        response: E::Response,
-    ) -> Result<E::Response, EffectStateError> {
-        if !Arc::ptr_eq(&self.effects.owner, &suspension.owner) {
-            return Err(EffectStateError::DifferentEditor);
-        }
-        match self.effects.pending_sequence {
-            None => Err(EffectStateError::NoSuspendedEffect),
-            Some(sequence) if sequence != suspension.sequence => {
-                Err(EffectStateError::StaleSuspension)
-            }
-            Some(_) => {
-                self.effects.pending_sequence = None;
-                Ok(response)
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::EditorConfig;
+    use crate::editor::{Editor, TerminalControl};
     use std::io;
 
     struct TestTerminal;
@@ -569,66 +506,6 @@ mod tests {
 
     fn editor() -> Editor<TestTerminal> {
         Editor::new(EditorConfig::default(), TestTerminal).unwrap()
-    }
-
-    // [spec:nshedit:req:core.effect-hooks/test]
-    #[test]
-    fn suspension_releases_editor_borrow() {
-        let mut editor = editor();
-        let prompt = editor
-            .suspend(PromptEffect {
-                side: PromptSide::Left,
-            })
-            .unwrap();
-
-        assert_eq!(prompt.request().side, PromptSide::Left);
-        assert_eq!(editor.config(), EditorConfig::default());
-        assert_eq!(
-            editor.suspend(ReadEffect::default()).err(),
-            Some(EffectStateError::AlreadySuspended)
-        );
-
-        let response = editor
-            .resume(&prompt, Ok(Prompt::from("prompt> ")))
-            .unwrap();
-        assert_eq!(response, Ok(Prompt::from("prompt> ")));
-        assert!(editor.suspend(ReadEffect::default()).is_ok());
-    }
-
-    #[test]
-    fn wrong_editor_cannot_resume_effect() {
-        let mut first = editor();
-        let mut second = editor();
-        let pending = first.suspend(ReadEffect::default()).unwrap();
-
-        assert_eq!(
-            second.resume(&pending, Ok(ReadOutcome::EndOfInput)),
-            Err(EffectStateError::DifferentEditor)
-        );
-        assert_eq!(
-            first.resume(&pending, Ok(ReadOutcome::EndOfInput)),
-            Ok(Ok(ReadOutcome::EndOfInput))
-        );
-    }
-
-    #[test]
-    fn stale_suspension_cannot_replace_current() {
-        let mut editor = editor();
-        let old = editor.suspend(ReadEffect::default()).unwrap();
-        assert_eq!(
-            editor.resume(&old, Ok(ReadOutcome::EndOfInput)),
-            Ok(Ok(ReadOutcome::EndOfInput))
-        );
-        let current = editor.suspend(ReadEffect::default()).unwrap();
-
-        assert_eq!(
-            editor.resume(&old, Ok(ReadOutcome::EndOfInput)),
-            Err(EffectStateError::StaleSuspension)
-        );
-        assert_eq!(
-            editor.resume(&current, Err(HostFailure::Cancelled)),
-            Ok(Err(HostFailure::Cancelled))
-        );
     }
 
     #[test]
@@ -726,9 +603,7 @@ mod tests {
             }),
         );
         accepts(
-            HistoryLineEffect {
-                position: HistoryPosition::Oldest,
-            },
+            HistoryLineEffect::select(HistoryPosition::Oldest),
             Ok(HistoryResponse::boundary()),
         );
         accepts(
@@ -754,17 +629,6 @@ mod tests {
                 line: Text::from("cargo test"),
             },
             Err(HostFailure::Cancelled),
-        );
-    }
-
-    #[test]
-    fn sequence_exhaustion_is_reported() {
-        let mut editor = editor();
-        editor.effects.next_sequence = u64::MAX;
-
-        assert_eq!(
-            editor.suspend(ReadEffect::default()).err(),
-            Some(EffectStateError::SequenceExhausted)
         );
     }
 }

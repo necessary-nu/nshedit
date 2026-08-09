@@ -3,7 +3,7 @@ use crate::domain::{
     Direction, EditTarget, InputMode, KeymapMode, Motion, Outcome, SearchRepetition, TerminalMode,
     Text, TextIndex, TextSpan, TextUnit, ViInsertPlacement, ViOperator, ViSequence, ViSubstitution,
 };
-use crate::editor::{CommandStep, Editor, TerminalControl};
+use crate::editor::{Editor, TerminalControl};
 
 use super::{DriverError, ReadDriver, ReadStep};
 
@@ -876,12 +876,9 @@ impl ReadDriver {
         editor: &mut Editor<T>,
         action: Action,
     ) -> Result<Outcome, DriverError> {
-        let step = editor
+        let outcome = editor
             .execute(action)
             .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
-        let CommandStep::Applied(outcome) = step else {
-            return Err(self.fail(editor, DriverError::InvalidSequenceState));
-        };
         self.note_outcome(editor, outcome.clone());
         Ok(outcome)
     }
@@ -971,8 +968,6 @@ fn action_belongs_in_replay(action: &Action) -> bool {
         Action::Noop
             | Action::AcceptLine
             | Action::EndOfInput
-            | Action::Complete
-            | Action::History(_)
             | Action::Undo
             | Action::Redo
             | Action::Refresh(_)

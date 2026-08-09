@@ -3005,6 +3005,14 @@ children (
                             native-impl ([spec:nshedit:req:core.read-driver])
                         }
                         deps (rust-idiom-text)
+                        log (
+                            {
+                                at 2026-08-09T15:04:54.300865783Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+                        )
                     }
 
                     {

@@ -29,10 +29,10 @@ alternatives (
 )
 consequences {
     accepted (
-        "The editor advances until it completes or yields a typed effect such as prompt, input, history navigation or search, history selection, alias expansion, editor-command input, external editing, resize, completion, environment, or user command."
+        "The read driver advances until it finishes or yields a ReadStep variant for a typed effect such as prompt, input, history navigation or search, history selection, alias expansion, editor-command input, external editing, resize, completion, environment, or user command."
         "An effect owns or explicitly borrows all request data needed by the host and names the typed response accepted on resume."
-        "The closed Effect trait associates each owned request type with exactly one response type; Suspension<E> owns the request and carries a private editor identity and sequence."
-        "Resuming through a different editor or a stale suspension is a typed error and cannot clear the live suspension."
+        "The closed Effect trait associates each owned request type with exactly one response type. Its ReadStep variant owns the request and shares one private driver-owner and generation token with the driver; Editor carries no parallel suspension runtime."
+        "Resuming through a different driver or a stale ReadStep is a typed error and cannot clear the live continuation."
         "The driver releases the editor borrow before handling an effect. The ABI may therefore invoke foreign code and service permitted reentrant operations without aliasing Rust references."
         "Built-in operations remain ordinary typed core code; only host-controlled boundaries suspend."
         "Cancellation, EOF, interruption, and callback failure are typed responses and leave the editor resumable or safely finishable."
@@ -58,8 +58,10 @@ Foreign callback reentrancy is the hard ownership problem in this rewrite.
 Changing a function-pointer field into a closure field makes the syntax more
 Rust-like but does not solve calling out while the editor is mutably borrowed.
 
-A suspend/resume protocol does. The core produces data describing the next
-external operation, returns control, and is borrowed again only when a typed
-response is ready. Native callers can drive the same protocol safely, while
-the ABI adapter can temporarily expose its opaque handle to C without a live
-Rust reference into the editor.
+A suspend/resume protocol does. The read driver produces one owned continuation
+describing the next external operation, returns control, and is borrowed again
+only when the continuation's typed response is ready. The driver retains only
+a shared reference to that continuation token, not a second phase, effect kind,
+or editor-owned sequence. Native callers can drive the same protocol safely,
+while the ABI adapter can temporarily expose its opaque handle to C without a
+live Rust reference into the editor.

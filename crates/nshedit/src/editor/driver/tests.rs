@@ -104,6 +104,58 @@ fn vi_with_line(line: &str) -> Editor<TestTerminal> {
     editor
 }
 
+// [spec:nshedit:req:core.read-driver+1/test]
+#[test]
+fn continuation_token_guards_driver_state() {
+    let mut first_editor = editor(EditorConfig::default());
+    let mut second_editor = editor(EditorConfig::default());
+    let mut first = ReadDriver::default();
+    let mut second = ReadDriver::default();
+
+    let ReadStep::Resize(resize) = first.begin(&mut first_editor).unwrap() else {
+        panic!("a read did not begin with terminal preparation");
+    };
+    assert!(matches!(
+        first.begin(&mut first_editor),
+        Err(DriverError::Busy)
+    ));
+    assert!(matches!(
+        second.resume_resize(
+            &mut second_editor,
+            &resize,
+            Ok(ScreenSize::new(3, 24).unwrap())
+        ),
+        Err(DriverError::DifferentDriver)
+    ));
+
+    let next = first
+        .resume_resize(
+            &mut first_editor,
+            &resize,
+            Ok(ScreenSize::new(3, 24).unwrap()),
+        )
+        .unwrap();
+    assert!(matches!(
+        first.resume_resize(
+            &mut first_editor,
+            &resize,
+            Ok(ScreenSize::new(3, 24).unwrap())
+        ),
+        Err(DriverError::StaleStep)
+    ));
+
+    let ReadStep::Prompt(prompt) = next else {
+        panic!("terminal preparation did not request the left prompt");
+    };
+    assert_eq!(prompt.request().side, PromptSide::Left);
+    assert!(first_editor.line().is_empty());
+    assert!(
+        first
+            .resume_prompt(&mut first_editor, &prompt, Ok(Prompt::from("p> ")))
+            .is_ok()
+    );
+}
+
 #[test]
 fn driver_decodes_and_accepts_utf8() {
     let mut editor = editor(EditorConfig::default());
@@ -693,7 +745,7 @@ fn history_selection_chain() {
         panic!("counted external edit did not select history first");
     };
     assert_eq!(
-        selection.request().position,
+        selection.request().position(),
         HistoryPosition::Number(crate::domain::RepeatCount::new(2).unwrap())
     );
     let step = driver

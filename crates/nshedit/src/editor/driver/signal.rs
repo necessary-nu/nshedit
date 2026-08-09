@@ -4,9 +4,7 @@ use crate::domain::{Signal, SignalPolicy, TerminalMode};
 use crate::editor::effect::{Effect, HostFailure, ResizeEffect, SignalEffect};
 use crate::editor::{Editor, TerminalControl};
 
-use super::{
-    DisplayKind, DriverError, EffectKind, Pending, ReadDriver, ReadInterrupt, ReadResult, ReadStep,
-};
+use super::{DisplayKind, DriverError, Pending, ReadDriver, ReadInterrupt, ReadResult, ReadStep};
 
 // [spec:nshedit:req:abi.signal-lifecycle]
 impl ReadDriver {
@@ -18,7 +16,8 @@ impl ReadDriver {
         pending: &Pending<ResizeEffect>,
         response: <ResizeEffect as Effect>::Response,
     ) -> Result<ReadStep, DriverError> {
-        let response = self.accept(editor, pending, EffectKind::Resize, response)?;
+        let cause = *pending.request();
+        let response = self.accept(pending, response)?;
         match response {
             Ok(size) => editor
                 .resize_display(size)
@@ -29,11 +28,12 @@ impl ReadDriver {
             }
             Err(error) => return Err(self.fail(editor, DriverError::Host(error))),
         }
-        if let Some(signal) = self.signal_after_resize.take() {
-            self.pending(editor, SignalEffect { signal }, EffectKind::Signal)
-                .map(ReadStep::Signal)
+        if cause == ResizeEffect::Signal {
+            Ok(ReadStep::Signal(self.pending(SignalEffect {
+                signal: Signal::Resize,
+            })))
         } else {
-            self.schedule_display(editor, DisplayKind::Refresh)
+            self.schedule_display(DisplayKind::Refresh)
         }
     }
 
@@ -45,7 +45,7 @@ impl ReadDriver {
         response: <SignalEffect as Effect>::Response,
     ) -> Result<ReadStep, DriverError> {
         let signal = pending.request().signal;
-        let response = self.accept(editor, pending, EffectKind::Signal, response)?;
+        let response = self.accept(pending, response)?;
         match response {
             Ok(()) => {}
             Err(HostFailure::Interrupted) => {
@@ -55,23 +55,16 @@ impl ReadDriver {
         }
 
         match signal {
-            Signal::Resize => self.schedule_display(editor, DisplayKind::Refresh),
+            Signal::Resize => self.schedule_display(DisplayKind::Refresh),
             Signal::Suspend => {
                 editor
                     .set_terminal_mode(TerminalMode::Editing)
                     .map_err(|error| self.fail(editor, DriverError::Terminal(error)))?;
-                self.pending(
-                    editor,
-                    SignalEffect {
-                        signal: Signal::Continue,
-                    },
-                    EffectKind::Signal,
-                )
-                .map(ReadStep::Signal)
+                Ok(ReadStep::Signal(self.pending(SignalEffect {
+                    signal: Signal::Continue,
+                })))
             }
-            Signal::Continue => self
-                .pending(editor, ResizeEffect::Resume, EffectKind::Resize)
-                .map(ReadStep::Resize),
+            Signal::Continue => Ok(ReadStep::Resize(self.pending(ResizeEffect::Resume))),
             Signal::Interrupt | Signal::Quit | Signal::Hangup | Signal::Terminate => self.complete(
                 editor,
                 ReadResult::Interrupted(ReadInterrupt::Signal(signal)),
@@ -91,17 +84,12 @@ impl ReadDriver {
             );
         }
         match signal {
-            Signal::Resize => {
-                self.signal_after_resize = Some(signal);
-                self.pending(editor, ResizeEffect::Signal, EffectKind::Resize)
-                    .map(ReadStep::Resize)
-            }
+            Signal::Resize => Ok(ReadStep::Resize(self.pending(ResizeEffect::Signal))),
             Signal::Continue => {
                 editor
                     .set_terminal_mode(TerminalMode::Editing)
                     .map_err(|error| self.fail(editor, DriverError::Terminal(error)))?;
-                self.pending(editor, SignalEffect { signal }, EffectKind::Signal)
-                    .map(ReadStep::Signal)
+                Ok(ReadStep::Signal(self.pending(SignalEffect { signal })))
             }
             Signal::Interrupt
             | Signal::Quit
@@ -111,8 +99,7 @@ impl ReadDriver {
                 editor
                     .set_terminal_mode(TerminalMode::Cooked)
                     .map_err(|error| self.fail(editor, DriverError::Terminal(error)))?;
-                self.pending(editor, SignalEffect { signal }, EffectKind::Signal)
-                    .map(ReadStep::Signal)
+                Ok(ReadStep::Signal(self.pending(SignalEffect { signal })))
             }
         }
     }

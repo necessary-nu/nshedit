@@ -9,9 +9,9 @@ use std::io::{self, Read, Write};
 use std::os::fd::BorrowedFd;
 
 use crate::domain::{
-    Action, Binding, Direction, EditingMode, EditorConfig, Error, InputMode, KeyLookup,
-    KeySequence, KeymapMode, Outcome, Prompt, Screen, ScreenPosition, ScreenSize, TerminalMode,
-    Text, TextIndex, TextSpan,
+    Action, Binding, EditingMode, EditorConfig, Error, InputMode, KeyLookup, KeySequence,
+    KeymapMode, Outcome, Prompt, Screen, ScreenPosition, ScreenSize, TerminalMode, Text, TextIndex,
+    TextSpan,
 };
 
 // [spec:nshedit:req:core.effect-hooks]
@@ -138,17 +138,6 @@ impl std::error::Error for StartError {
     }
 }
 
-/// Result of dispatching one semantic action.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CommandStep {
-    /// The core applied the action without host work.
-    Applied(Outcome),
-    /// The driver must request completion for the current line and cursor.
-    NeedsCompletion,
-    /// The driver must request a neighbouring history entry.
-    NeedsHistory(Direction),
-}
-
 // [spec:nshedit:req:core.raii-lifecycle]
 /// A Rust-native editor with private state and an exactly-once cleanup owner.
 pub struct Editor<T: TerminalControl> {
@@ -157,7 +146,6 @@ pub struct Editor<T: TerminalControl> {
     terminal: Option<T>,
     terminal_mode: TerminalMode,
     renderer: render::State,
-    effects: effect::Runtime,
 }
 
 impl<T: TerminalControl> Editor<T> {
@@ -180,7 +168,6 @@ impl<T: TerminalControl> Editor<T> {
             terminal: Some(terminal),
             terminal_mode: TerminalMode::Editing,
             renderer: render::State::default(),
-            effects: effect::Runtime::default(),
         })
     }
 
@@ -258,7 +245,7 @@ impl<T: TerminalControl> Editor<T> {
     }
 
     /// Apply one typed semantic action to the private editor state.
-    pub fn execute(&mut self, action: Action) -> Result<CommandStep, Error> {
+    pub fn execute(&mut self, action: Action) -> Result<Outcome, Error> {
         self.state.execute(action)
     }
 
@@ -460,7 +447,6 @@ mod tests {
 
     use super::*;
     use crate::domain::{Buffering, EditingMode, TerminalLiteral};
-    use crate::editor::effect::CompletionEffect;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Event {
@@ -664,21 +650,15 @@ mod tests {
     }
 
     #[test]
-    fn completion_effect_owns_values() {
+    fn completion_query_and_candidates_are_owned() {
         let events = Rc::new(RefCell::new(Vec::new()));
         let mut editor =
             Editor::new(EditorConfig::default(), MockTerminal::recording(&events)).unwrap();
         editor.execute(Action::Insert(Text::from("ec"))).unwrap();
         let query = editor.completion_query(&Tokenizer::default()).unwrap();
-        let pending = editor
-            .suspend(CompletionEffect {
-                query: query.clone(),
-            })
-            .unwrap();
         let candidates = vec![CompletionCandidate::new("echo").with_suffix(" ")].into();
-        let response = editor.resume(&pending, Ok(candidates)).unwrap().unwrap();
 
-        editor.apply_completion(&query, response).unwrap();
+        editor.apply_completion(&query, candidates).unwrap();
         assert_eq!(editor.line(), &Text::from("echo "));
     }
 

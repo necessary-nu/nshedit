@@ -10,12 +10,7 @@ use crate::editor::effect::{
 };
 use crate::editor::{Editor, TerminalControl};
 
-use super::{DriverError, EffectKind, ReadDriver, ReadStep};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum AfterHistoryLine {
-    ExternalEdit,
-}
+use super::{DriverError, ReadDriver, ReadStep};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct StoredHistorySearch {
@@ -34,11 +29,28 @@ impl ReadDriver {
     ) -> Result<ReadStep, DriverError> {
         let repeat = self.take_optional_repeat(explicit_repeat);
         match command {
-            EffectCommand::SearchHistory(command) => self.dispatch_history_search(editor, command),
-            EffectCommand::ExpandAlias => {
-                self.alias_selector_pending = true;
-                self.advance(editor)
+            EffectCommand::Complete => {
+                if repeat == Some(0) {
+                    return self.schedule_command_display(editor);
+                }
+                let query = editor
+                    .completion_query(&self.tokenizer)
+                    .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
+                Ok(ReadStep::Completion(self.pending(
+                    crate::editor::effect::CompletionEffect { query },
+                )))
             }
+            EffectCommand::NavigateHistory(direction) => {
+                let Some(count) = RepeatCount::new(repeat.unwrap_or(1)) else {
+                    return self.schedule_command_display(editor);
+                };
+                self.live_line.get_or_insert_with(|| editor.line().clone());
+                Ok(ReadStep::History(self.pending(
+                    crate::editor::effect::HistoryNavigateEffect { direction, count },
+                )))
+            }
+            EffectCommand::SearchHistory(command) => self.dispatch_history_search(editor, command),
+            EffectCommand::ExpandAlias => self.await_alias_selector(editor),
             EffectCommand::SelectHistoryLine => {
                 let Some(position) = history_position(repeat) else {
                     self.queue_beep();
@@ -54,55 +66,50 @@ impl ReadDriver {
                     self.queue_beep();
                     return self.schedule_command_display(editor);
                 };
-                self.pending(
-                    editor,
-                    HistoryWordEffect { position },
-                    EffectKind::HistoryWord,
-                )
-                .map(ReadStep::HistoryWord)
+                Ok(ReadStep::HistoryWord(
+                    self.pending(HistoryWordEffect { position }),
+                ))
             }
-            EffectCommand::ReadEditorCommand => self
-                .pending(
-                    editor,
-                    EditorCommandEffect {
-                        prompt: Text::from("\n: "),
-                    },
-                    EffectKind::EditorCommand,
-                )
-                .map(ReadStep::EditorCommand),
+            EffectCommand::ReadEditorCommand => {
+                Ok(ReadStep::EditorCommand(self.pending(EditorCommandEffect {
+                    prompt: Text::from("\n: "),
+                })))
+            }
             EffectCommand::EditHistory => match repeat {
                 Some(count) => {
                     let Some(count) = RepeatCount::new(count) else {
                         self.queue_beep();
                         return self.schedule_command_display(editor);
                     };
-                    self.after_history_line = Some(AfterHistoryLine::ExternalEdit);
-                    self.request_history_line(editor, HistoryPosition::Number(count))
+                    self.request_history_line_for_external_edit(
+                        editor,
+                        HistoryPosition::Number(count),
+                    )
                 }
                 None => self.request_external_edit(editor),
             },
         }
     }
 
-    pub(super) fn consume_pending_effect_input<T: TerminalControl>(
-        &mut self,
-        editor: &mut Editor<T>,
-        unit: TextUnit,
-    ) -> Option<Result<ReadStep, DriverError>> {
-        if !std::mem::take(&mut self.alias_selector_pending) {
-            return None;
-        }
+    pub(super) fn request_alias(&mut self, unit: TextUnit) -> Result<ReadStep, DriverError> {
         let mut name = Text::from("_");
         name.push(unit);
-        Some(
-            self.pending(editor, AliasEffect { name }, EffectKind::Alias)
-                .map(ReadStep::Alias),
-        )
+        Ok(ReadStep::Alias(self.pending(AliasEffect { name })))
     }
 
-    pub(super) fn cancel_pending_effect_command(&mut self) {
-        self.alias_selector_pending = false;
-        self.after_history_line = None;
+    pub(super) fn await_alias_selector<T: TerminalControl>(
+        &mut self,
+        editor: &mut Editor<T>,
+    ) -> Result<ReadStep, DriverError> {
+        if let Some(unit) = self.replay.pop_front().or_else(|| self.decoder.pop()) {
+            return self.request_alias(unit);
+        }
+        if self.eof_pending {
+            return self.handle_eof(editor);
+        }
+        Ok(ReadStep::Read(
+            self.pending(crate::editor::effect::ReadEffect::AliasSelector),
+        ))
     }
 
     /// Resume a pattern-based host history search.
@@ -114,7 +121,7 @@ impl ReadDriver {
     ) -> Result<ReadStep, DriverError> {
         let direction = pending.request().direction;
         let clear_prompt_line = matches!(pending.request().input, HistorySearchInput::Prompted);
-        let response = self.accept(editor, pending, EffectKind::HistorySearch, response)?;
+        let response = self.accept(pending, response)?;
         if clear_prompt_line {
             editor
                 .replace_line_untracked(Text::default())
@@ -146,16 +153,13 @@ impl ReadDriver {
         pending: &super::Pending<HistoryLineEffect>,
         response: <HistoryLineEffect as Effect>::Response,
     ) -> Result<ReadStep, DriverError> {
-        let response = self.accept(editor, pending, EffectKind::HistoryLine, response)?;
-        let continuation = self.after_history_line.take();
+        let continue_with_external_edit = pending.request().continues_with_external_edit();
+        let response = self.accept(pending, response)?;
         match response {
             Ok(response) => {
                 let selected = !matches!(response.selection(), HistorySelection::Unchanged);
                 self.apply_history_response(editor, &response, true)?;
-                if selected
-                    && !response.reached_boundary()
-                    && continuation == Some(AfterHistoryLine::ExternalEdit)
-                {
+                if selected && !response.reached_boundary() && continue_with_external_edit {
                     return self.request_external_edit(editor);
                 }
             }
@@ -180,7 +184,7 @@ impl ReadDriver {
         pending: &super::Pending<HistoryWordEffect>,
         response: <HistoryWordEffect as Effect>::Response,
     ) -> Result<ReadStep, DriverError> {
-        let response = self.accept(editor, pending, EffectKind::HistoryWord, response)?;
+        let response = self.accept(pending, response)?;
         match response {
             Ok(HistoryWordResponse::Word(word)) => {
                 let mut insertion = Text::from(" ");
@@ -224,7 +228,7 @@ impl ReadDriver {
         pending: &super::Pending<AliasEffect>,
         response: <AliasEffect as Effect>::Response,
     ) -> Result<ReadStep, DriverError> {
-        let response = self.accept(editor, pending, EffectKind::Alias, response)?;
+        let response = self.accept(pending, response)?;
         match response {
             Ok(AliasResponse::Expansion(expansion)) => {
                 self.expand_macro(expansion, 1)
@@ -255,7 +259,7 @@ impl ReadDriver {
         pending: &super::Pending<EditorCommandEffect>,
         response: <EditorCommandEffect as Effect>::Response,
     ) -> Result<ReadStep, DriverError> {
-        let response = self.accept(editor, pending, EffectKind::EditorCommand, response)?;
+        let response = self.accept(pending, response)?;
         editor
             .replace_line_untracked(Text::default())
             .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
@@ -283,7 +287,7 @@ impl ReadDriver {
         pending: &super::Pending<ExternalEditEffect>,
         response: <ExternalEditEffect as Effect>::Response,
     ) -> Result<ReadStep, DriverError> {
-        let response = self.accept(editor, pending, EffectKind::ExternalEdit, response)?;
+        let response = self.accept(pending, response)?;
         match response {
             Ok(line) => {
                 editor
@@ -379,16 +383,11 @@ impl ReadDriver {
             }
         };
         self.live_line.get_or_insert_with(|| editor.line().clone());
-        self.pending(
-            editor,
-            HistorySearchEffect {
-                input,
-                direction,
-                matching,
-            },
-            EffectKind::HistorySearch,
-        )
-        .map(ReadStep::HistorySearch)
+        Ok(ReadStep::HistorySearch(self.pending(HistorySearchEffect {
+            input,
+            direction,
+            matching,
+        })))
     }
 
     fn request_history_line<T: TerminalControl>(
@@ -397,12 +396,20 @@ impl ReadDriver {
         position: HistoryPosition,
     ) -> Result<ReadStep, DriverError> {
         self.live_line.get_or_insert_with(|| editor.line().clone());
-        self.pending(
-            editor,
-            HistoryLineEffect { position },
-            EffectKind::HistoryLine,
-        )
-        .map(ReadStep::HistoryLine)
+        Ok(ReadStep::HistoryLine(
+            self.pending(HistoryLineEffect::select(position)),
+        ))
+    }
+
+    fn request_history_line_for_external_edit<T: TerminalControl>(
+        &mut self,
+        editor: &mut Editor<T>,
+        position: HistoryPosition,
+    ) -> Result<ReadStep, DriverError> {
+        self.live_line.get_or_insert_with(|| editor.line().clone());
+        Ok(ReadStep::HistoryLine(self.pending(
+            HistoryLineEffect::before_external_edit(position),
+        )))
     }
 
     fn request_external_edit<T: TerminalControl>(
@@ -413,12 +420,9 @@ impl ReadDriver {
             .set_terminal_mode(TerminalMode::Cooked)
             .map_err(|error| self.fail(editor, DriverError::Terminal(error)))?;
         let line = editor.line().clone();
-        self.pending(
-            editor,
-            ExternalEditEffect { line },
-            EffectKind::ExternalEdit,
-        )
-        .map(ReadStep::ExternalEdit)
+        Ok(ReadStep::ExternalEdit(
+            self.pending(ExternalEditEffect { line }),
+        ))
     }
 }
 

@@ -9,8 +9,6 @@ use crate::domain::{
     WordPolicy, YankPlacement,
 };
 
-use super::CommandStep;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Snapshot {
     line: Text,
@@ -196,7 +194,7 @@ impl State {
         self.keymaps.bindings(mode)
     }
 
-    pub(super) fn execute(&mut self, action: Action) -> Result<CommandStep, Error> {
+    pub(super) fn execute(&mut self, action: Action) -> Result<Outcome, Error> {
         let outcome = match action {
             Action::Noop => Outcome::Continue,
             Action::Insert(text) => self.insert(text)?,
@@ -234,13 +232,11 @@ impl State {
             }
             Action::AcceptLine => Outcome::Accepted(self.line.clone()),
             Action::EndOfInput => Outcome::EndOfInput,
-            Action::Complete => return Ok(CommandStep::NeedsCompletion),
-            Action::History(direction) => return Ok(CommandStep::NeedsHistory(direction)),
             Action::Undo => self.undo(),
             Action::Redo => self.redo(),
             Action::Refresh(refresh) => Outcome::Refresh(refresh),
         };
-        Ok(CommandStep::Applied(outcome))
+        Ok(outcome)
     }
 
     fn insert(&mut self, inserted: Text) -> Result<Outcome, Error> {

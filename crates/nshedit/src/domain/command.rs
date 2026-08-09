@@ -195,8 +195,8 @@ impl CommandName {
 // [spec:nshedit:req:core.line-commands]
 /// One semantic editor action.
 ///
-/// Pure line actions are applied immediately. Actions that require a host
-/// service are returned as a typed command step for the driver to suspend.
+/// Every action is applied immediately to private line state. Commands that
+/// require a host service are represented separately by [`EffectCommand`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Action {
     /// Leave editor state unchanged.
@@ -246,10 +246,6 @@ pub enum Action {
     AcceptLine,
     /// Report end of input.
     EndOfInput,
-    /// Ask the host completion service to inspect the current line.
-    Complete,
-    /// Ask the host history service for an adjacent entry.
-    History(Direction),
     /// Restore the most recent command-level text mutation.
     Undo,
     /// Reapply the most recently undone text mutation.

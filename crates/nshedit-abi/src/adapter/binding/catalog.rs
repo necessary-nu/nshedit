@@ -349,6 +349,8 @@ fn named_immediate(name: &str) -> Option<ImmediateCommand> {
 fn named_effect(name: &str) -> Option<EffectCommand> {
     let search = |command| EffectCommand::SearchHistory(command);
     match name {
+        "ed-prev-history" => Some(EffectCommand::NavigateHistory(Direction::Previous)),
+        "ed-next-history" => Some(EffectCommand::NavigateHistory(Direction::Next)),
         "ed-search-prev-history" => Some(search(HistorySearchCommand::Prefix(Direction::Previous))),
         "ed-search-next-history" => Some(search(HistorySearchCommand::Prefix(Direction::Next))),
         "em-inc-search-prev" => Some(search(HistorySearchCommand::Incremental(
@@ -460,8 +462,6 @@ fn named_common_action(name: &str) -> Option<Action> {
         "ed-clear-screen" => Some(Action::Refresh(Refresh::Full)),
         "ed-redisplay" => Some(Action::Refresh(Refresh::Redisplay)),
         "ed-start-over" => Some(Action::Delete(EditTarget::Buffer)),
-        "ed-prev-history" => Some(Action::History(Direction::Previous)),
-        "ed-next-history" => Some(Action::History(Direction::Next)),
         "ed-prev-line" => Some(Action::Move(Motion::Line(Direction::Previous))),
         "ed-next-line" => Some(Action::Move(Motion::Line(Direction::Next))),
         "em-yank" => Some(Action::Yank(YankPlacement::AtCursor)),
@@ -533,6 +533,9 @@ pub(super) fn sequence_name(sequence: CommandSequence) -> &'static str {
 
 pub(super) fn effect_name(command: EffectCommand) -> &'static str {
     match command {
+        EffectCommand::Complete => "em-delete-or-list",
+        EffectCommand::NavigateHistory(Direction::Previous) => "ed-prev-history",
+        EffectCommand::NavigateHistory(Direction::Next) => "ed-next-history",
         EffectCommand::SearchHistory(HistorySearchCommand::Prefix(Direction::Previous)) => {
             "ed-search-prev-history"
         }
@@ -669,9 +672,6 @@ pub(super) fn action_name(action: &Action) -> Option<&str> {
         Action::ToggleInputMode => Some("em-toggle-overwrite"),
         Action::AcceptLine => Some("ed-newline"),
         Action::EndOfInput => Some("ed-end-of-file"),
-        Action::Complete => Some("em-delete-or-list"),
-        Action::History(Direction::Previous) => Some("ed-prev-history"),
-        Action::History(Direction::Next) => Some("ed-next-history"),
         Action::Undo => Some("vi-undo"),
         Action::Refresh(Refresh::Full) => Some("ed-clear-screen"),
         Action::Refresh(Refresh::Redisplay) => Some("ed-redisplay"),

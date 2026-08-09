@@ -411,4 +411,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule abi.typed-completion}
     )}
+    {id rust-idiom-continuation, covered_rules (
+        core.read-driver
+    ), covered_claims (
+        {impl_name native-impl, rule core.read-driver}
+    )}
 )

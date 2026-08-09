@@ -30,6 +30,10 @@ pub enum HistorySearchRepetition {
 /// effects after resolving any count or later-input continuation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EffectCommand {
+    /// Complete the snapshot-bound token at the current cursor.
+    Complete,
+    /// Navigate the host's independent history cursor.
+    NavigateHistory(Direction),
     /// Search host-owned history with a native query protocol.
     SearchHistory(HistorySearchCommand),
     /// Read one alias selector and ask the host for its expansion.

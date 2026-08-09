@@ -87,9 +87,8 @@ fn history_effect_adapter() {
     assert_eq!(editor.history_depth(), 2);
 
     editor.set_history_depth(0);
-    let selection = HistoryLineEffect {
-        position: HistoryPosition::Number(RepeatCount::new(10).unwrap()),
-    };
+    let selection =
+        HistoryLineEffect::select(HistoryPosition::Number(RepeatCount::new(10).unwrap()));
     let response = unsafe { host_history_line(&raw mut *editor, &selection) }.unwrap();
     assert_eq!(
         response.selection(),

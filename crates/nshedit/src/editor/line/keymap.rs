@@ -118,8 +118,16 @@ impl Keymaps {
             Action::Kill(EditTarget::Motion(Motion::EndOfLine)),
         );
         insert(map, "\u{c}", Action::Refresh(Refresh::Full));
-        insert(map, "\u{e}", Action::History(Direction::Next));
-        insert(map, "\u{10}", Action::History(Direction::Previous));
+        insert_effect(
+            map,
+            "\u{e}",
+            EffectCommand::NavigateHistory(Direction::Next),
+        );
+        insert_effect(
+            map,
+            "\u{10}",
+            EffectCommand::NavigateHistory(Direction::Previous),
+        );
         insert_effect(
             map,
             "\u{12}",
@@ -146,7 +154,7 @@ impl Keymaps {
         );
         insert(map, "\u{19}", Action::Yank(YankPlacement::AtCursor));
         insert(map, "\u{1f}", Action::Undo);
-        insert(map, "\t", Action::Complete);
+        insert_effect(map, "\t", EffectCommand::Complete);
         insert(map, "\n", Action::AcceptLine);
         insert(map, "\r", Action::AcceptLine);
         insert(
