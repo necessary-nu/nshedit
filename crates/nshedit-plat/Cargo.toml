@@ -17,9 +17,8 @@ publish = false
 # (MIT OR Apache-2.0). Nothing in that tree is WTFPL.
 #
 # On x86_64 and aarch64 Linux rustix selects its linux_raw backend and issues
-# syscalls directly, so none of this goes near a libc. Cargo.lock still names
-# libc and errno because they are non-optional in rustix's libc-backend
-# target block; they are never compiled for our targets.
+# syscalls directly. Darwin intentionally selects rustix's libc backend, so
+# the locked libc and errno target dependencies are compiled on macOS.
 rustix = { version = "1.1", default-features = false, features = ["std", "termios", "process", "fs"] }
 
 [dev-dependencies]

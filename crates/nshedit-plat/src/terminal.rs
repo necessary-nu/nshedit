@@ -46,6 +46,7 @@ pub enum TerminalFlag {
     EnableInputFlowControl,
     RingBellOnInputOverflow,
     PostProcessOutput,
+    DiscardEndOfTransmissionOnOutput,
     MapLowercaseOutputToUppercase,
     MapNewlineToCarriageReturnNewline,
     MapCarriageReturnToNewlineOnOutput,
@@ -61,6 +62,7 @@ pub enum TerminalFlag {
     VerticalTabDelay,
     FormFeedDelay,
     OutputSpeedBits,
+    IgnoreControlFlags,
     TwoStopBits,
     EnableReceiver,
     EnableParity,
@@ -69,9 +71,13 @@ pub enum TerminalFlag {
     IgnoreModemControl,
     InputSpeedBits,
     HardwareFlowControl,
+    CtsOutputFlowControl,
+    RtsInputFlowControl,
+    ModemBufferFlowControl,
     GenerateSignals,
     CanonicalInput,
     CanonicalUppercase,
+    AlternateWordErase,
     EchoInput,
     EchoErase,
     EchoKill,
@@ -82,6 +88,7 @@ pub enum TerminalFlag {
     EchoErasedCharacters,
     VisuallyEraseKilledLine,
     OutputBeingFlushed,
+    SuppressKernelStatus,
     PendingInput,
     ExtendedProcessing,
     ExternalProcessing,
@@ -97,7 +104,8 @@ enum FlagWord {
 
 use TerminalFlag::*;
 
-const FLAG_REPRESENTATIONS: &[(TerminalFlag, FlagWord, u32)] = &[
+// [spec:nshedit:req:platform.darwin-termios]
+const FLAG_REPRESENTATIONS: &[(TerminalFlag, FlagWord, termios::FlagBits)] = &[
     (IgnoreBreak, FlagWord::Input, termios::IGNBRK),
     (SignalBreak, FlagWord::Input, termios::BRKINT),
     (IgnoreParityErrors, FlagWord::Input, termios::IGNPAR),
@@ -107,6 +115,7 @@ const FLAG_REPRESENTATIONS: &[(TerminalFlag, FlagWord, u32)] = &[
     (MapNewlineToCarriageReturn, FlagWord::Input, termios::INLCR),
     (IgnoreCarriageReturn, FlagWord::Input, termios::IGNCR),
     (MapCarriageReturnToNewline, FlagWord::Input, termios::ICRNL),
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     (
         MapUppercaseInputToLowercase,
         FlagWord::Input,
@@ -121,6 +130,13 @@ const FLAG_REPRESENTATIONS: &[(TerminalFlag, FlagWord, u32)] = &[
     (EnableInputFlowControl, FlagWord::Input, termios::IXOFF),
     (RingBellOnInputOverflow, FlagWord::Input, termios::IMAXBEL),
     (PostProcessOutput, FlagWord::Output, termios::OPOST),
+    #[cfg(target_os = "macos")]
+    (
+        DiscardEndOfTransmissionOnOutput,
+        FlagWord::Output,
+        termios::ONOEOT,
+    ),
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     (
         MapLowercaseOutputToUppercase,
         FlagWord::Output,
@@ -151,22 +167,37 @@ const FLAG_REPRESENTATIONS: &[(TerminalFlag, FlagWord, u32)] = &[
     (NewlineDelay, FlagWord::Output, termios::NLDLY),
     (CarriageReturnDelay, FlagWord::Output, termios::CRDLY),
     (TabDelay, FlagWord::Output, termios::TABDLY),
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     (ExpandTabs, FlagWord::Output, termios::XTABS),
     (BackspaceDelay, FlagWord::Output, termios::BSDLY),
     (VerticalTabDelay, FlagWord::Output, termios::VTDLY),
     (FormFeedDelay, FlagWord::Output, termios::FFDLY),
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     (OutputSpeedBits, FlagWord::Control, termios::CBAUD),
+    #[cfg(target_os = "macos")]
+    (IgnoreControlFlags, FlagWord::Control, termios::CIGNORE),
     (TwoStopBits, FlagWord::Control, termios::CSTOPB),
     (EnableReceiver, FlagWord::Control, termios::CREAD),
     (EnableParity, FlagWord::Control, termios::PARENB),
     (OddParity, FlagWord::Control, termios::PARODD),
     (HangUpOnClose, FlagWord::Control, termios::HUPCL),
     (IgnoreModemControl, FlagWord::Control, termios::CLOCAL),
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     (InputSpeedBits, FlagWord::Control, termios::CIBAUD),
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     (HardwareFlowControl, FlagWord::Control, termios::CRTSCTS),
+    #[cfg(target_os = "macos")]
+    (CtsOutputFlowControl, FlagWord::Control, termios::CCTS_OFLOW),
+    #[cfg(target_os = "macos")]
+    (RtsInputFlowControl, FlagWord::Control, termios::CRTS_IFLOW),
+    #[cfg(target_os = "macos")]
+    (ModemBufferFlowControl, FlagWord::Control, termios::MDMBUF),
     (GenerateSignals, FlagWord::Local, termios::ISIG),
     (CanonicalInput, FlagWord::Local, termios::ICANON),
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     (CanonicalUppercase, FlagWord::Local, termios::XCASE),
+    #[cfg(target_os = "macos")]
+    (AlternateWordErase, FlagWord::Local, termios::ALTWERASE),
     (EchoInput, FlagWord::Local, termios::ECHO),
     (EchoErase, FlagWord::Local, termios::ECHOE),
     (EchoKill, FlagWord::Local, termios::ECHOK),
@@ -177,18 +208,25 @@ const FLAG_REPRESENTATIONS: &[(TerminalFlag, FlagWord, u32)] = &[
     (EchoErasedCharacters, FlagWord::Local, termios::ECHOPRT),
     (VisuallyEraseKilledLine, FlagWord::Local, termios::ECHOKE),
     (OutputBeingFlushed, FlagWord::Local, termios::FLUSHO),
+    #[cfg(target_os = "macos")]
+    (SuppressKernelStatus, FlagWord::Local, termios::NOKERNINFO),
     (PendingInput, FlagWord::Local, termios::PENDIN),
     (ExtendedProcessing, FlagWord::Local, termios::IEXTEN),
     (ExternalProcessing, FlagWord::Local, termios::EXTPROC),
 ];
 
 impl TerminalFlag {
-    fn representation(self) -> (FlagWord, u32) {
-        let (_, word, mask) = FLAG_REPRESENTATIONS
+    fn representation(self) -> Option<(FlagWord, termios::FlagBits)> {
+        FLAG_REPRESENTATIONS
             .iter()
             .find(|(flag, _, _)| *flag == self)
-            .expect("every terminal flag has a private platform representation");
-        (*word, *mask)
+            .map(|(_, word, mask)| (*word, *mask))
+    }
+
+    /// Whether the active platform defines this behavior.
+    #[must_use]
+    pub fn is_supported(self) -> bool {
+        self.representation().is_some()
     }
 }
 
@@ -205,6 +243,8 @@ pub enum ControlCharacter {
     Start,
     Stop,
     Suspend,
+    DeferredSuspend,
+    Status,
     EndOfLine,
     Reprint,
     Discard,
@@ -213,26 +253,41 @@ pub enum ControlCharacter {
     AlternateEndOfLine,
 }
 
+const CONTROL_CHARACTER_REPRESENTATIONS: &[(ControlCharacter, usize)] = &[
+    (ControlCharacter::Interrupt, termios::VINTR),
+    (ControlCharacter::Quit, termios::VQUIT),
+    (ControlCharacter::Erase, termios::VERASE),
+    (ControlCharacter::Kill, termios::VKILL),
+    (ControlCharacter::EndOfFile, termios::VEOF),
+    (ControlCharacter::Timeout, termios::VTIME),
+    (ControlCharacter::MinimumBytes, termios::VMIN),
+    (ControlCharacter::Start, termios::VSTART),
+    (ControlCharacter::Stop, termios::VSTOP),
+    (ControlCharacter::Suspend, termios::VSUSP),
+    #[cfg(target_os = "macos")]
+    (ControlCharacter::DeferredSuspend, termios::VDSUSP),
+    #[cfg(target_os = "macos")]
+    (ControlCharacter::Status, termios::VSTATUS),
+    (ControlCharacter::EndOfLine, termios::VEOL),
+    (ControlCharacter::Reprint, termios::VREPRINT),
+    (ControlCharacter::Discard, termios::VDISCARD),
+    (ControlCharacter::WordErase, termios::VWERASE),
+    (ControlCharacter::LiteralNext, termios::VLNEXT),
+    (ControlCharacter::AlternateEndOfLine, termios::VEOL2),
+];
+
 impl ControlCharacter {
-    const fn index(self) -> usize {
-        match self {
-            Self::Interrupt => termios::VINTR,
-            Self::Quit => termios::VQUIT,
-            Self::Erase => termios::VERASE,
-            Self::Kill => termios::VKILL,
-            Self::EndOfFile => termios::VEOF,
-            Self::Timeout => termios::VTIME,
-            Self::MinimumBytes => termios::VMIN,
-            Self::Start => termios::VSTART,
-            Self::Stop => termios::VSTOP,
-            Self::Suspend => termios::VSUSP,
-            Self::EndOfLine => termios::VEOL,
-            Self::Reprint => termios::VREPRINT,
-            Self::Discard => termios::VDISCARD,
-            Self::WordErase => termios::VWERASE,
-            Self::LiteralNext => termios::VLNEXT,
-            Self::AlternateEndOfLine => termios::VEOL2,
-        }
+    fn index(self) -> Option<usize> {
+        CONTROL_CHARACTER_REPRESENTATIONS
+            .iter()
+            .find(|(character, _)| *character == self)
+            .map(|(_, index)| *index)
+    }
+
+    /// Whether the active platform defines this control-character slot.
+    #[must_use]
+    pub fn is_supported(self) -> bool {
+        self.index().is_some()
     }
 
     /// The platform's default value for this role.
@@ -249,6 +304,8 @@ impl ControlCharacter {
             Self::Start => termios::CSTART,
             Self::Stop => termios::CSTOP,
             Self::Suspend => termios::CSUSP,
+            Self::DeferredSuspend => termios::CDSUSP,
+            Self::Status => termios::CSTATUS,
             Self::EndOfLine => termios::CEOL,
             Self::Reprint => termios::CREPRINT,
             Self::Discard => termios::CDISCARD,
@@ -274,13 +331,17 @@ impl TerminalAttributes {
     /// Test a semantic terminal behavior.
     #[must_use]
     pub fn flag(&self, flag: TerminalFlag) -> bool {
-        let (word, mask) = flag.representation();
+        let Some((word, mask)) = flag.representation() else {
+            return false;
+        };
         self.word(word) & mask == mask
     }
 
     /// Enable or disable a semantic terminal behavior.
     pub fn set_flag(&mut self, flag: TerminalFlag, enabled: bool) {
-        let (word, mask) = flag.representation();
+        let Some((word, mask)) = flag.representation() else {
+            return;
+        };
         let value = self.word_mut(word);
         if enabled {
             *value |= mask;
@@ -291,13 +352,17 @@ impl TerminalAttributes {
 
     /// Read a terminal control character.
     #[must_use]
-    pub const fn control_character(&self, character: ControlCharacter) -> u8 {
-        self.0.c_cc[character.index()]
+    pub fn control_character(&self, character: ControlCharacter) -> u8 {
+        character
+            .index()
+            .map_or(termios::VDISABLE, |index| self.0.c_cc[index])
     }
 
     /// Set a terminal control character.
     pub fn set_control_character(&mut self, character: ControlCharacter, value: u8) {
-        self.0.c_cc[character.index()] = value;
+        if let Some(index) = character.index() {
+            self.0.c_cc[index] = value;
+        }
     }
 
     /// The configured output speed, without exposing the platform encoding.
@@ -366,7 +431,7 @@ impl TerminalAttributes {
         self
     }
 
-    fn word(&self, word: FlagWord) -> u32 {
+    fn word(&self, word: FlagWord) -> termios::FlagBits {
         match word {
             FlagWord::Input => self.0.c_iflag,
             FlagWord::Output => self.0.c_oflag,
@@ -375,7 +440,7 @@ impl TerminalAttributes {
         }
     }
 
-    fn word_mut(&mut self, word: FlagWord) -> &mut u32 {
+    fn word_mut(&mut self, word: FlagWord) -> &mut termios::FlagBits {
         match word {
             FlagWord::Input => &mut self.0.c_iflag,
             FlagWord::Output => &mut self.0.c_oflag,

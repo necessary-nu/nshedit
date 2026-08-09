@@ -3221,6 +3221,14 @@ children (
                     native-impl ([spec:nshedit:req:platform.per-os-layouts] [spec:nshedit:req:platform.darwin-termios])
                 }
                 deps (macos-contract)
+                log (
+                    {
+                        at 2026-08-09T20:50:06.620858833Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

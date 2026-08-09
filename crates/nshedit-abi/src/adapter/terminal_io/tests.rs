@@ -34,6 +34,7 @@ const TTY_FLAG_CASES: &[(&str, TerminalFlag)] = &[
     ("ixoff", TerminalFlag::EnableInputFlowControl),
     ("imaxbel", TerminalFlag::RingBellOnInputOverflow),
     ("opost", TerminalFlag::PostProcessOutput),
+    ("onoeot", TerminalFlag::DiscardEndOfTransmissionOnOutput),
     ("olcuc", TerminalFlag::MapLowercaseOutputToUppercase),
     ("onlcr", TerminalFlag::MapNewlineToCarriageReturnNewline),
     ("ocrnl", TerminalFlag::MapCarriageReturnToNewlineOnOutput),
@@ -49,6 +50,7 @@ const TTY_FLAG_CASES: &[(&str, TerminalFlag)] = &[
     ("vtdly", TerminalFlag::VerticalTabDelay),
     ("ffdly", TerminalFlag::FormFeedDelay),
     ("cbaud", TerminalFlag::OutputSpeedBits),
+    ("cignore", TerminalFlag::IgnoreControlFlags),
     ("cstopb", TerminalFlag::TwoStopBits),
     ("cread", TerminalFlag::EnableReceiver),
     ("parenb", TerminalFlag::EnableParity),
@@ -57,9 +59,13 @@ const TTY_FLAG_CASES: &[(&str, TerminalFlag)] = &[
     ("clocal", TerminalFlag::IgnoreModemControl),
     ("cibaud", TerminalFlag::InputSpeedBits),
     ("crtscts", TerminalFlag::HardwareFlowControl),
+    ("ccts_oflow", TerminalFlag::CtsOutputFlowControl),
+    ("crts_iflow", TerminalFlag::RtsInputFlowControl),
+    ("mdmbuf", TerminalFlag::ModemBufferFlowControl),
     ("isig", TerminalFlag::GenerateSignals),
     ("icanon", TerminalFlag::CanonicalInput),
     ("xcase", TerminalFlag::CanonicalUppercase),
+    ("altwerase", TerminalFlag::AlternateWordErase),
     ("echo", TerminalFlag::EchoInput),
     ("echoe", TerminalFlag::EchoErase),
     ("echok", TerminalFlag::EchoKill),
@@ -70,6 +76,7 @@ const TTY_FLAG_CASES: &[(&str, TerminalFlag)] = &[
     ("echoprt", TerminalFlag::EchoErasedCharacters),
     ("echoke", TerminalFlag::VisuallyEraseKilledLine),
     ("flusho", TerminalFlag::OutputBeingFlushed),
+    ("nokerninfo", TerminalFlag::SuppressKernelStatus),
     ("pendin", TerminalFlag::PendingInput),
     ("iexten", TerminalFlag::ExtendedProcessing),
     ("extproc", TerminalFlag::ExternalProcessing),
@@ -87,6 +94,8 @@ const TTY_CHARACTER_CASES: &[(&str, ControlCharacter)] = &[
     ("stop", ControlCharacter::Stop),
     ("werase", ControlCharacter::WordErase),
     ("susp", ControlCharacter::Suspend),
+    ("dsusp", ControlCharacter::DeferredSuspend),
+    ("status", ControlCharacter::Status),
     ("reprint", ControlCharacter::Reprint),
     ("discard", ControlCharacter::Discard),
     ("lnext", ControlCharacter::LiteralNext),
@@ -97,6 +106,9 @@ const TTY_CHARACTER_CASES: &[(&str, ControlCharacter)] = &[
 #[test]
 fn tty_flag_projection() {
     for &(name, flag) in TTY_FLAG_CASES {
+        if !flag.is_supported() {
+            continue;
+        }
         let mut editor = editor();
         let enabled = format!("+{name}");
         let disabled = format!("-{name}");
@@ -136,6 +148,9 @@ fn tty_flag_projection() {
 #[test]
 fn tty_character_projection() {
     for &(name, character) in TTY_CHARACTER_CASES {
+        if !character.is_supported() {
+            continue;
+        }
         let mut editor = editor();
         let enabled = format!("+{name}");
         let disabled = format!("-{name}");
@@ -167,6 +182,33 @@ fn tty_character_projection() {
                 .characters
                 .get(&character),
             None,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+// [spec:nshedit:req:platform.darwin-termios/test]
+fn unsupported_tty_names_are_unknown() {
+    for &(name, flag) in TTY_FLAG_CASES {
+        if flag.is_supported() {
+            continue;
+        }
+        let mut editor = editor();
+        assert_eq!(
+            terminal_command(&mut editor, &["setty", "-d", name]),
+            -1,
+            "{name}"
+        );
+    }
+    for &(name, character) in TTY_CHARACTER_CASES {
+        if character.is_supported() {
+            continue;
+        }
+        let mut editor = editor();
+        assert_eq!(
+            terminal_command(&mut editor, &["setty", "-d", name]),
+            -1,
             "{name}"
         );
     }

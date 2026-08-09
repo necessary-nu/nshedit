@@ -31,6 +31,7 @@ const TTY_FLAGS: &[TtyFlag] = &[
     TtyFlag::new("ixoff", 0, TerminalFlag::EnableInputFlowControl),
     TtyFlag::new("imaxbel", 0, TerminalFlag::RingBellOnInputOverflow),
     TtyFlag::new("opost", 1, TerminalFlag::PostProcessOutput),
+    TtyFlag::new("onoeot", 1, TerminalFlag::DiscardEndOfTransmissionOnOutput),
     TtyFlag::new("olcuc", 1, TerminalFlag::MapLowercaseOutputToUppercase),
     TtyFlag::new("onlcr", 1, TerminalFlag::MapNewlineToCarriageReturnNewline),
     TtyFlag::new("ocrnl", 1, TerminalFlag::MapCarriageReturnToNewlineOnOutput),
@@ -46,6 +47,7 @@ const TTY_FLAGS: &[TtyFlag] = &[
     TtyFlag::new("vtdly", 1, TerminalFlag::VerticalTabDelay),
     TtyFlag::new("ffdly", 1, TerminalFlag::FormFeedDelay),
     TtyFlag::new("cbaud", 2, TerminalFlag::OutputSpeedBits),
+    TtyFlag::new("cignore", 2, TerminalFlag::IgnoreControlFlags),
     TtyFlag::new("cstopb", 2, TerminalFlag::TwoStopBits),
     TtyFlag::new("cread", 2, TerminalFlag::EnableReceiver),
     TtyFlag::new("parenb", 2, TerminalFlag::EnableParity),
@@ -54,9 +56,13 @@ const TTY_FLAGS: &[TtyFlag] = &[
     TtyFlag::new("clocal", 2, TerminalFlag::IgnoreModemControl),
     TtyFlag::new("cibaud", 2, TerminalFlag::InputSpeedBits),
     TtyFlag::new("crtscts", 2, TerminalFlag::HardwareFlowControl),
+    TtyFlag::new("ccts_oflow", 2, TerminalFlag::CtsOutputFlowControl),
+    TtyFlag::new("crts_iflow", 2, TerminalFlag::RtsInputFlowControl),
+    TtyFlag::new("mdmbuf", 2, TerminalFlag::ModemBufferFlowControl),
     TtyFlag::new("isig", 3, TerminalFlag::GenerateSignals),
     TtyFlag::new("icanon", 3, TerminalFlag::CanonicalInput),
     TtyFlag::new("xcase", 3, TerminalFlag::CanonicalUppercase),
+    TtyFlag::new("altwerase", 3, TerminalFlag::AlternateWordErase),
     TtyFlag::new("echo", 3, TerminalFlag::EchoInput),
     TtyFlag::new("echoe", 3, TerminalFlag::EchoErase),
     TtyFlag::new("echok", 3, TerminalFlag::EchoKill),
@@ -67,6 +73,7 @@ const TTY_FLAGS: &[TtyFlag] = &[
     TtyFlag::new("echoprt", 3, TerminalFlag::EchoErasedCharacters),
     TtyFlag::new("echoke", 3, TerminalFlag::VisuallyEraseKilledLine),
     TtyFlag::new("flusho", 3, TerminalFlag::OutputBeingFlushed),
+    TtyFlag::new("nokerninfo", 3, TerminalFlag::SuppressKernelStatus),
     TtyFlag::new("pendin", 3, TerminalFlag::PendingInput),
     TtyFlag::new("iexten", 3, TerminalFlag::ExtendedProcessing),
     TtyFlag::new("extproc", 3, TerminalFlag::ExternalProcessing),
@@ -96,6 +103,8 @@ const TTY_CHARACTERS: &[TtyCharacter] = &[
     TtyCharacter::new("stop", ControlCharacter::Stop),
     TtyCharacter::new("werase", ControlCharacter::WordErase),
     TtyCharacter::new("susp", ControlCharacter::Suspend),
+    TtyCharacter::new("dsusp", ControlCharacter::DeferredSuspend),
+    TtyCharacter::new("status", ControlCharacter::Status),
     TtyCharacter::new("reprint", ControlCharacter::Reprint),
     TtyCharacter::new("discard", ControlCharacter::Discard),
     TtyCharacter::new("lnext", ControlCharacter::LiteralNext),
@@ -227,6 +236,7 @@ fn append_tty_listing_group(
 
 impl EditLine {
     // [spec:nshedit:req:abi.tty-modes]
+    // [spec:nshedit:req:platform.darwin-termios]
     pub(crate) fn set_tty_modes(&mut self, arguments: &[&[u32]]) -> c_int {
         let Some(command) = arguments.first().and_then(|word| wide_string(word)) else {
             return -1;
@@ -272,7 +282,7 @@ impl EditLine {
             {
                 let entries = TTY_FLAGS
                     .iter()
-                    .filter(move |flag| flag.group == group)
+                    .filter(move |flag| flag.group == group && flag.flag.is_supported())
                     .filter_map(|flag| {
                         let sign = match overrides.flags.get(&flag.flag) {
                             Some(TtyOverride::Disable) => Some('-'),
@@ -283,14 +293,17 @@ impl EditLine {
                     });
                 append_tty_listing_group(&mut output, header, entries, columns, group == 0);
             }
-            let characters = TTY_CHARACTERS.iter().filter_map(|character| {
-                let sign = match overrides.characters.get(&character.character) {
-                    Some(TtyOverride::Disable) => Some('-'),
-                    Some(TtyOverride::Enable) => Some('+'),
-                    None => None,
-                };
-                (sign.is_some() || show_all).then_some((sign, character.name))
-            });
+            let characters = TTY_CHARACTERS
+                .iter()
+                .filter(|character| character.character.is_supported())
+                .filter_map(|character| {
+                    let sign = match overrides.characters.get(&character.character) {
+                        Some(TtyOverride::Disable) => Some('-'),
+                        Some(TtyOverride::Enable) => Some('+'),
+                        None => None,
+                    };
+                    (sign.is_some() || show_all).then_some((sign, character.name))
+                });
             append_tty_listing_group(&mut output, "chars:", characters, columns, false);
             output.push(b'\n');
             drop(state);
@@ -305,10 +318,9 @@ impl EditLine {
                 _ => (None, argument.as_str()),
             };
             if let Some((name, value)) = body.split_once('=') {
-                let Some(character) = TTY_CHARACTERS
-                    .iter()
-                    .find(|character| character.name.starts_with(name))
-                else {
+                let Some(character) = TTY_CHARACTERS.iter().find(|character| {
+                    character.character.is_supported() && character.name.starts_with(name)
+                }) else {
                     self.invalid_tty_argument(&command, body);
                     return -1;
                 };
@@ -320,7 +332,10 @@ impl EditLine {
                 continue;
             }
 
-            if let Some(flag) = TTY_FLAGS.iter().find(|flag| flag.name == body) {
+            if let Some(flag) = TTY_FLAGS
+                .iter()
+                .find(|flag| flag.flag.is_supported() && flag.name == body)
+            {
                 let overrides = &mut self.boundary.terminal.state.borrow_mut().overrides[mode];
                 match sign {
                     Some(true) => {
@@ -337,7 +352,7 @@ impl EditLine {
             }
             if let Some(character) = TTY_CHARACTERS
                 .iter()
-                .find(|character| character.name == body)
+                .find(|character| character.character.is_supported() && character.name == body)
             {
                 let overrides = &mut self.boundary.terminal.state.borrow_mut().overrides[mode];
                 match sign {

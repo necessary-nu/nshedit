@@ -34,6 +34,9 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::UserId;
 
+#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+compile_error!("nshedit-plat has no struct passwd transcription for this target");
+
 static USER_DATABASE: Mutex<()> = Mutex::new(());
 
 /// `sem:filecomplete.fn-tilde-expand-fn`'s fixed scratch buffer. The size is
@@ -42,7 +45,7 @@ static USER_DATABASE: Mutex<()> = Mutex::new(());
 /// bigger buffer would expand names the C does not.
 const BUFLEN: usize = 1024;
 
-/// POSIX `struct passwd`, transcribed.
+/// The host's `<pwd.h>` `struct passwd`, transcribed.
 ///
 /// Only `pw_name` and `pw_dir` are read; underscore-prefixed fields retain the
 /// remaining libc layout without pretending they carry application state.
@@ -52,9 +55,15 @@ struct Passwd {
     _password: *mut c_char,
     _uid: u32,
     _gid: u32,
+    #[cfg(target_os = "macos")]
+    _change: i64,
+    #[cfg(target_os = "macos")]
+    _class: *mut c_char,
     _gecos: *mut c_char,
     pw_dir: *mut c_char,
     _shell: *mut c_char,
+    #[cfg(target_os = "macos")]
+    _expire: i64,
 }
 
 impl Passwd {
@@ -63,16 +72,53 @@ impl Passwd {
         _password: core::ptr::null_mut(),
         _uid: 0,
         _gid: 0,
+        #[cfg(target_os = "macos")]
+        _change: 0,
+        #[cfg(target_os = "macos")]
+        _class: core::ptr::null_mut(),
         _gecos: core::ptr::null_mut(),
         pw_dir: core::ptr::null_mut(),
         _shell: core::ptr::null_mut(),
+        #[cfg(target_os = "macos")]
+        _expire: 0,
     };
 }
 
-/// Checked rather than trusted: `sizeof(struct passwd)` is 48 on 64-bit
-/// glibc, five pointers and two 32-bit ids with no padding of its own.
+/// Checked rather than trusted against glibc's `<pwd.h>` layout.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 const _: () = {
-    assert!(size_of::<Passwd>() == 5 * size_of::<usize>() + 2 * size_of::<u32>());
+    use core::mem::{align_of, offset_of, size_of};
+
+    assert!(size_of::<Passwd>() == 48);
+    assert!(align_of::<Passwd>() == 8);
+    assert!(offset_of!(Passwd, pw_name) == 0);
+    assert!(offset_of!(Passwd, _password) == 8);
+    assert!(offset_of!(Passwd, _uid) == 16);
+    assert!(offset_of!(Passwd, _gid) == 20);
+    assert!(offset_of!(Passwd, _gecos) == 24);
+    assert!(offset_of!(Passwd, pw_dir) == 32);
+    assert!(offset_of!(Passwd, _shell) == 40);
+};
+
+/// Darwin's published `<pwd.h>` layout. Unlike glibc it carries account
+/// change/expiry times and the login class between the ids and GECOS.
+// [spec:nshedit:req:platform.per-os-layouts]
+#[cfg(target_os = "macos")]
+const _: () = {
+    use core::mem::{align_of, offset_of, size_of};
+
+    assert!(size_of::<Passwd>() == 72);
+    assert!(align_of::<Passwd>() == 8);
+    assert!(offset_of!(Passwd, pw_name) == 0);
+    assert!(offset_of!(Passwd, _password) == 8);
+    assert!(offset_of!(Passwd, _uid) == 16);
+    assert!(offset_of!(Passwd, _gid) == 20);
+    assert!(offset_of!(Passwd, _change) == 24);
+    assert!(offset_of!(Passwd, _class) == 32);
+    assert!(offset_of!(Passwd, _gecos) == 40);
+    assert!(offset_of!(Passwd, pw_dir) == 48);
+    assert!(offset_of!(Passwd, _shell) == 56);
+    assert!(offset_of!(Passwd, _expire) == 64);
 };
 
 /// The one libc `extern` block this module has.
@@ -246,10 +292,12 @@ fn next_user_name() -> Option<OsString> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     use core::mem::offset_of;
     use std::os::unix::ffi::OsStrExt;
 
     use super::*;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     use crate::cheader;
 
     /// The field offsets of `struct passwd`, which no header states and only a
@@ -272,6 +320,7 @@ mod tests {
     /// of these fields are ever read — so a `pw_dir` at the wrong offset would
     /// hand back `pw_shell`, which is also an absolute path and would look
     /// entirely plausible in a completion.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn the_struct_passwd_layout_is_the_one_gcc_lays_out() {
         assert_eq!(size_of::<Passwd>(), 48);
@@ -293,6 +342,7 @@ mod tests {
     /// libc's and not ours.
     #[test]
     fn nonzero_results_remain_platform_errors() {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         let erange = c_int::try_from(cheader::defines(&["asm-generic/errno-base.h"])["ERANGE"])
             .expect("ERANGE");
 
@@ -309,6 +359,7 @@ mod tests {
 
         // Platform failures remain errors here. The ABI adapter owns the
         // compatibility rule that flattens them to "no such user".
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         assert!(pw_dir(erange, result).is_err(), "ERANGE");
         assert!(pw_dir(-1, result).is_err(), "a negative return");
         assert!(pw_dir(2, result).is_err(), "ENOENT");

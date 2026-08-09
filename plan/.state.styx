@@ -1,12 +1,14 @@
 schema_version 7
 
-last_sync_at 2026-08-09T20:14:28.652368954Z
+last_sync_at 2026-08-09T21:20:11.202948978Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 0}
     {id abi.binding-dispatch, version 0}
     {id abi.bindings, version 0}
     {id abi.complete-surface, version 1}
+    {id abi.darwin-drop-in, version 0}
+    {id abi.darwin-runtime, version 0}
     {id abi.history-effects, version 1}
     {id abi.observational-coverage, version 0}
     {id abi.opaque-owner, version 0}
@@ -36,8 +38,11 @@ rule_versions (
     {id core.unsafe-free, version 0}
     {id histedit.el-resize-fn, version 1}
     {id histedit.el-set-fn, version 1}
+    {id platform.darwin-termios, version 0}
+    {id platform.per-os-layouts, version 0}
     {id platform.typed-boundary, version 0}
     {id terminal.typed-api, version 0}
+    {id workspace.darwin-cross-check, version 0}
     {id workspace.lint-policy, version 1}
     {id workspace.no-legacy-allows, version 0}
     {id workspace.self-contained, version 0}
@@ -508,4 +513,15 @@ impl_evidence (
     ), rule_versions_seen (
         {id core.text-screen-model, version 1}
     )}
+    {id macos-platform, covered_rules (
+        platform.darwin-termios
+        platform.per-os-layouts
+    ), covered_claims (
+        {impl_name native-impl, rule platform.darwin-termios}
+        {impl_name native-impl, rule platform.per-os-layouts}
+    )}
+)
+
+walk_frontier (
+    54e0ed9cea2d6b238dd98874feb57731b8e684ca
 )

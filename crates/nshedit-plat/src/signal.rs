@@ -32,12 +32,17 @@
 //! This rejects the C implementation's last-editor-wins pointer overwrite and
 //! makes both normal return and unwinding restore caller policy.
 
-use core::ffi::{c_int, c_ulong, c_void};
+use core::ffi::c_int;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use core::ffi::{c_ulong, c_void};
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
 mod handlers;
 
 pub use handlers::{BlockedSignals, SignalError, SignalHandlers};
+
+#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+compile_error!("nshedit-plat has no signal ABI transcription for this target");
 
 #[cfg(any(
     target_arch = "mips",
@@ -57,8 +62,9 @@ compile_error!(
 /// POSIX names signals; it does not fix their numbers, and the libc that
 /// would define them is not what supplies constants here. Five of the seven
 /// libedit traps agree everywhere in scope; only `SIGCONT` and `SIGTSTP`
-/// differ. Linux's alpha, mips, sparc and parisc ports renumber more widely
-/// and are not covered — see the `compile_error!` above.
+/// differ between Linux's generic ABI and Darwin. Linux's alpha, mips, sparc
+/// and parisc ports renumber more widely and are not covered — see the
+/// `compile_error!` above.
 mod signo {
     pub const SIGHUP: i32 = 1;
     pub const SIGINT: i32 = 2;
@@ -147,21 +153,40 @@ impl Signal {
     }
 }
 
-/// How many `unsigned long` words a `sigset_t` holds: 1024 bits, which is
-/// what glibc and musl both lay out.
+/// One word in the host's `<sys/signal.h>` `sigset_t`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+type SigSetWord = c_ulong;
+/// Darwin publishes `sigset_t` as one 32-bit mask.
+#[cfg(target_os = "macos")]
+type SigSetWord = u32;
+
+/// The host `sigset_t` word count. glibc and musl reserve 1024 bits; Darwin
+/// carries the complete set in one 32-bit word.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 const SIGSET_WORDS: usize = 1024 / SIGSET_BITS;
+#[cfg(target_os = "macos")]
+const SIGSET_WORDS: usize = 1;
 
 /// The width of one `sigset_t` word, in bits.
-const SIGSET_BITS: usize = c_ulong::BITS as usize;
+const SIGSET_BITS: usize = SigSetWord::BITS as usize;
 
 /// `SIG_BLOCK`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 const SIG_BLOCK: c_int = 0;
+#[cfg(target_os = "macos")]
+const SIG_BLOCK: c_int = 1;
 /// `SIG_SETMASK`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 const SIG_SETMASK: c_int = 2;
+#[cfg(target_os = "macos")]
+const SIG_SETMASK: c_int = 3;
 
 /// `SA_ONSTACK` — run on the alternate signal stack if the application
 /// installed one.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 const SA_ONSTACK: c_int = 0x0800_0000;
+#[cfg(target_os = "macos")]
+const SA_ONSTACK: c_int = 0x0001;
 
 /// POSIX `sigset_t`, transcribed.
 ///
@@ -171,7 +196,7 @@ const SA_ONSTACK: c_int = 0x0800_0000;
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct SigSet {
-    val: [c_ulong; SIGSET_WORDS],
+    val: [SigSetWord; SIGSET_WORDS],
 }
 
 impl SigSet {
@@ -214,7 +239,7 @@ impl Default for SigSet {
     }
 }
 
-/// POSIX `struct sigaction`, transcribed for the Linux generic ABI.
+/// The host's `<sys/signal.h>` `struct sigaction`, transcribed.
 ///
 /// libedit only ever stores one of these wholesale and puts it back, so
 /// nothing here reads the fields; they exist so that the displaced
@@ -227,6 +252,7 @@ struct SigAction {
     handler: usize,
     mask: SigSet,
     flags: c_int,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     restorer: *const c_void,
 }
 
@@ -240,6 +266,17 @@ unsafe impl Send for SigAction {}
 unsafe impl Sync for SigAction {}
 
 impl SigAction {
+    /// A fully initialised empty action suitable for an out-parameter.
+    const fn empty() -> Self {
+        Self {
+            handler: 0,
+            mask: SigSet::empty(),
+            flags: 0,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            restorer: core::ptr::null(),
+        }
+    }
+
     /// A fully initialised action for [`sig_trampoline`].
     ///
     /// Every member is set, not just the three the C assigns
@@ -255,6 +292,7 @@ impl SigAction {
             handler: sig_trampoline as *const () as usize,
             mask: *mask,
             flags: SA_ONSTACK,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             restorer: core::ptr::null(),
         }
     }
@@ -265,14 +303,34 @@ impl SigAction {
     }
 }
 
-/// The transcription is checked against the platform's own headers rather
-/// than trusted: on x86_64 and aarch64 glibc, `sizeof(struct sigaction)` is
-/// 152 and `sizeof(sigset_t)` is 128, and the field order is handler, mask,
-/// flags, restorer.
+/// The Linux generic transcription, checked against `<signal.h>`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 const _: () = {
+    use core::mem::{align_of, offset_of, size_of};
+
     assert!(size_of::<SigSet>() == 128);
     assert!(size_of::<SigAction>() == 8 + 128 + 8 + 8);
     assert!(align_of::<SigAction>() == align_of::<usize>());
+    assert!(offset_of!(SigAction, handler) == 0);
+    assert!(offset_of!(SigAction, mask) == 8);
+    assert!(offset_of!(SigAction, flags) == 136);
+    assert!(offset_of!(SigAction, restorer) == 144);
+};
+
+/// Darwin's published `<sys/signal.h>` layout: one 32-bit mask and no
+/// `sa_restorer` member.
+// [spec:nshedit:req:platform.per-os-layouts]
+#[cfg(target_os = "macos")]
+const _: () = {
+    use core::mem::{align_of, offset_of, size_of};
+
+    assert!(size_of::<SigSet>() == 4);
+    assert!(align_of::<SigSet>() == 4);
+    assert!(size_of::<SigAction>() == 16);
+    assert!(align_of::<SigAction>() == align_of::<usize>());
+    assert!(offset_of!(SigAction, handler) == 0);
+    assert!(offset_of!(SigAction, mask) == 8);
+    assert!(offset_of!(SigAction, flags) == 12);
 };
 
 /// What POSIX `sigaction(signo, &nsa, &osa)` says about the disposition it
@@ -379,12 +437,7 @@ pub fn raise(signal: Signal) -> Result<(), SignalError> {
 
 fn install_handler_default(signo: i32, mask: &SigSet) -> Installed {
     let nsa = SigAction::ours(mask);
-    let mut osa = SigAction {
-        handler: 0,
-        mask: SigSet::empty(),
-        flags: 0,
-        restorer: core::ptr::null(),
-    };
+    let mut osa = SigAction::empty();
     // SAFETY: both structs are the platform's `struct sigaction` layout, live
     // for the call, and not aliased.
     let rv = unsafe { sys::sigaction(signo, &raw const nsa, &raw mut osa) };
@@ -423,10 +476,12 @@ fn raise_default(signo: i32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     use core::mem::offset_of;
     use std::sync::{Mutex, MutexGuard, PoisonError};
 
     use super::*;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     use crate::cheader;
 
     /// The `SIGWINCH` disposition and the trampoline's slot are
@@ -472,6 +527,7 @@ mod tests {
     /// declines to fix. `SIGCONT` and `SIGTSTP` are the pair that actually
     /// differ across the platforms in scope, and getting either wrong would
     /// trap a signal the editor was never asked to handle.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn the_signal_numbers_are_the_ones_the_headers_define() {
         let h = cheader::defines(&["bits/signum-generic.h", "bits/signum-arch.h"]);
@@ -490,6 +546,7 @@ mod tests {
 
     /// The three `sigaction`/`sigprocmask` words this module transcribes,
     /// against `bits/sigaction.h`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn the_sigaction_words_are_the_ones_the_header_defines() {
         let h = sigaction_defines();
@@ -519,6 +576,7 @@ mod tests {
     /// and `sa_restorer` are both 8-aligned words and swapping them keeps the
     /// size — and a reorder is the mistake that makes the libc install a
     /// handler address it read out of `sa_mask`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn the_struct_sigaction_layout_is_the_one_gcc_lays_out() {
         assert_eq!(size_of::<SigAction>(), 152);
@@ -536,11 +594,13 @@ mod tests {
         // signal Linux numbers below 65.
         assert_eq!(set.val[0], (1 << 0) | (1 << 27));
 
-        // The word boundary, where the `signo - 1` arithmetic would show. 64
-        // is `SIGRTMAX`, the highest signal Linux has, and it belongs in the
-        // top bit of the first word; 65 is the first that does not exist.
-        assert_eq!(SigSet::of(&[64]).val[0], 1 << 63);
-        assert_eq!(SigSet::of(&[65]).val[1], 1);
+        // The Linux word boundary, where the `signo - 1` arithmetic would
+        // show. Darwin's complete signal set is the one 32-bit word above.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            assert_eq!(SigSet::of(&[64]).val[0], 1 << 63);
+            assert_eq!(SigSet::of(&[65]).val[1], 1);
+        }
 
         // Out of range is dropped rather than corrupting a neighbouring word.
         let mut wild = SigSet::empty();
@@ -559,7 +619,10 @@ mod tests {
     fn the_kernel_reads_back_exactly_the_bits_the_sigset_holds() {
         let saved = sigmask_block(&SigSet::empty()).expect("read the current mask");
 
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         let want = SigSet::of(&[signo::SIGHUP, signo::SIGWINCH, 64]);
+        #[cfg(target_os = "macos")]
+        let want = SigSet::of(&[signo::SIGHUP, signo::SIGWINCH]);
         assert!(sigmask_set(&want), "SIG_SETMASK");
         let now = sigmask_block(&SigSet::empty()).expect("read it back");
         assert_eq!(now.val, want.val);
@@ -597,12 +660,11 @@ mod tests {
         let saved_mask = sigmask_block(&SigSet::empty()).expect("read the current mask");
         assert!(sigmask_set(&SigSet::empty()));
 
-        let theirs = SigAction {
-            handler: application_handler as *const () as usize,
-            mask: SigSet::empty(),
-            flags: 0,
-            restorer: core::ptr::null(),
-        };
+        let theirs = action(
+            application_handler as *const () as usize,
+            SigSet::empty(),
+            0,
+        );
         assert!(install(signo::SIGWINCH, &theirs));
         APPLICATION_RAN.store(0, Ordering::Relaxed);
 
@@ -678,15 +740,13 @@ mod tests {
     #[test]
     fn an_applications_own_disposition_survives_being_displaced() {
         let _disposition = Disposition::take(signo::SIGWINCH);
-        let h = sigaction_defines();
-        let sa_restart = c_int::try_from(h["SA_RESTART"]).expect("SA_RESTART");
+        let sa_restart = sa_restart();
 
-        let theirs = SigAction {
-            handler: application_handler as *const () as usize,
-            mask: SigSet::of(&[signo::SIGINT, signo::SIGQUIT]),
-            flags: sa_restart,
-            restorer: core::ptr::null(),
-        };
+        let theirs = action(
+            application_handler as *const () as usize,
+            SigSet::of(&[signo::SIGINT, signo::SIGQUIT]),
+            sa_restart,
+        );
         assert!(install(signo::SIGWINCH, &theirs));
 
         let Installed::Displaced(osa) = install_handler(signo::SIGWINCH, &SigSet::empty()) else {
@@ -717,8 +777,7 @@ mod tests {
     #[test]
     fn the_installed_action_neither_restarts_nor_nests() {
         let _disposition = Disposition::take(signo::SIGWINCH);
-        let h = sigaction_defines();
-        let sa_restart = c_int::try_from(h["SA_RESTART"]).expect("SA_RESTART");
+        let sa_restart = sa_restart();
 
         let mask = SigSet::of(&[signo::SIGINT, signo::SIGWINCH, signo::SIGCONT]);
         let Installed::Displaced(osa) = install_handler(signo::SIGWINCH, &mask) else {
@@ -773,12 +832,11 @@ mod tests {
     #[test]
     fn propagation_rearm_and_drop_restore_policy() {
         let _disposition = Disposition::take(signo::SIGWINCH);
-        let application = SigAction {
-            handler: application_handler as *const () as usize,
-            mask: SigSet::empty(),
-            flags: 0,
-            restorer: core::ptr::null(),
-        };
+        let application = action(
+            application_handler as *const () as usize,
+            SigSet::empty(),
+            0,
+        );
         assert!(install(signo::SIGWINCH, &application));
         APPLICATION_RAN.store(0, Ordering::Relaxed);
 
@@ -844,12 +902,7 @@ mod tests {
 
     /// `sigaction(signo, NULL, &osa)` — what is installed right now.
     fn current(signo: i32) -> SigAction {
-        let mut osa = SigAction {
-            handler: 0,
-            mask: SigSet::empty(),
-            flags: 0,
-            restorer: core::ptr::null(),
-        };
+        let mut osa = SigAction::empty();
         // SAFETY: the out-parameter is live and correctly shaped; a NULL `act`
         // is POSIX's "report only".
         let rv = unsafe { sys::sigaction(signo, core::ptr::null(), &raw mut osa) };
@@ -864,6 +917,26 @@ mod tests {
         unsafe { sys::sigaction(signo, &raw const *sa, core::ptr::null_mut()) == 0 }
     }
 
+    fn action(handler: usize, mask: SigSet, flags: c_int) -> SigAction {
+        let mut action = SigAction::empty();
+        action.handler = handler;
+        action.mask = mask;
+        action.flags = flags;
+        action
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn sa_restart() -> c_int {
+        c_int::try_from(sigaction_defines()["SA_RESTART"]).expect("SA_RESTART")
+    }
+
+    #[cfg(target_os = "macos")]
+    const fn sa_restart() -> c_int {
+        // `<sys/signal.h>`.
+        0x0002
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn sigaction_defines() -> std::collections::HashMap<String, i64> {
         cheader::defines(&["bits/sigaction.h"])
     }

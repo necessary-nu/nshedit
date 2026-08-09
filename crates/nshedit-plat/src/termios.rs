@@ -1,133 +1,29 @@
 //! The termios ABI, the window-size query, and `isatty`.
 //!
 //! No libc here: `tcgetattr`, `tcsetattr`, `tcgetwinsize` and `isatty` all go
-//! through rustix, which on Linux issues the `ioctl`s directly. What rustix
-//! cannot supply portably — the flag-word bit values, the `V*` subscripts,
-//! `NCCS`, the `TCSA*` actions, `_POSIX_VDISABLE` and the `<sys/ttydefaults.h>`
-//! control-character defaults — is transcribed for Linux/glibc, because the
-//! `sem` rules address those numbers by name and POSIX does not fix them.
-//!
-//! **Scope of the numbers.** The BSDs use a different termios ABI throughout
-//! — different `V*` numbering, different flag bits, a `struct termios` with
-//! separate `c_ispeed`/`c_ospeed` — and this module does not carry it.
-//! `plan/decisions/posix-only-scope.md` puts POSIX on the target and the
-//! numbers are not POSIX's to give. The one place the split is reproduced is
-//! [`VDISABLE`], because `sem:tty.tty-bind-char-fn` requires it: the disable
-//! byte reaches the key map, and it is 0 on glibc and 0xff on the BSDs.
+//! through rustix. What rustix cannot supply as public constants — the flag
+//! bits, `V*` subscripts, `NCCS`, `_POSIX_VDISABLE`, and the complete C
+//! `struct termios` shape — is selected from an explicit Linux or Darwin
+//! transcription. POSIX fixes the names but not those representations.
 
 use std::io;
 use std::os::fd::BorrowedFd;
 
-use rustix::termios::{OptionalActions, SpecialCodeIndex};
+use rustix::termios::OptionalActions;
+#[cfg(all(test, any(target_os = "linux", target_os = "android")))]
+use rustix::termios::SpecialCodeIndex;
 
-/// `_POSIX_VDISABLE`. POSIX defines the constant but not its value;
-/// glibc/Linux uses 0 and the BSDs and macOS use 0xff. `tty.h` falls back to
-/// `(unsigned char)-1` where the platform defines neither `_POSIX_VDISABLE`
-/// nor `VDISABLE`, which is the 0xff arm.
+// [spec:nshedit:req:platform.per-os-layouts]
 #[cfg(any(target_os = "linux", target_os = "android"))]
-pub(crate) const VDISABLE: u8 = 0;
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-pub(crate) const VDISABLE: u8 = 0xff;
+#[path = "termios/linux.rs"]
+mod platform;
+#[cfg(target_os = "macos")]
+#[path = "termios/darwin.rs"]
+mod platform;
+#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+compile_error!("nshedit-plat has no termios ABI transcription for this target");
 
-/// `NCCS` — the length of a `struct termios`'s `c_cc`.
-///
-/// This is **glibc's** 32, which is the array libedit's own `struct termios`
-/// carries and therefore the one the `def` rules describe. The kernel's
-/// `struct termios` is 19 long, and glibc's `tcgetattr` copies those 19 and
-/// fills the tail with `_POSIX_VDISABLE`; [`tcgetattr`] below does the same,
-/// which on Linux means leaving it zero.
-pub(crate) const NCCS: usize = 32;
-
-// `c_iflag` bits.
-pub(crate) const IGNBRK: u32 = 0o0000001;
-pub(crate) const BRKINT: u32 = 0o0000002;
-pub(crate) const IGNPAR: u32 = 0o0000004;
-pub(crate) const PARMRK: u32 = 0o0000010;
-pub(crate) const INPCK: u32 = 0o0000020;
-pub(crate) const ISTRIP: u32 = 0o0000040;
-pub(crate) const INLCR: u32 = 0o0000100;
-pub(crate) const IGNCR: u32 = 0o0000200;
-pub(crate) const ICRNL: u32 = 0o0000400;
-/// Legacy SysV, Linux only. Note it is the *same bit* as [`ECHOCTL`], which
-/// is what makes ERR-terminal-36 the silent no-op it is.
-pub(crate) const IUCLC: u32 = 0o0001000;
-pub(crate) const IXON: u32 = 0o0002000;
-pub(crate) const IXANY: u32 = 0o0004000;
-pub(crate) const IXOFF: u32 = 0o0010000;
-pub(crate) const IMAXBEL: u32 = 0o0020000;
-
-// `c_oflag` bits.
-pub(crate) const OPOST: u32 = 0o0000001;
-pub(crate) const OLCUC: u32 = 0o0000002;
-pub(crate) const ONLCR: u32 = 0o0000004;
-pub(crate) const OCRNL: u32 = 0o0000010;
-pub(crate) const ONOCR: u32 = 0o0000020;
-pub(crate) const ONLRET: u32 = 0o0000040;
-pub(crate) const OFILL: u32 = 0o0000100;
-pub(crate) const OFDEL: u32 = 0o0000200;
-pub(crate) const NLDLY: u32 = 0o0000400;
-pub(crate) const CRDLY: u32 = 0o0003000;
-pub(crate) const TABDLY: u32 = 0o0014000;
-/// Expand tabs to spaces. Linux gives `XTABS`, `TAB3`, and `TABDLY` the same
-/// mask, so the compatibility names interact.
-pub(crate) const XTABS: u32 = 0o0014000;
-pub(crate) const BSDLY: u32 = 0o0020000;
-pub(crate) const VTDLY: u32 = 0o0040000;
-pub(crate) const FFDLY: u32 = 0o0100000;
-
-// `c_cflag` bits.
-pub(crate) const CBAUD: u32 = 0o0010017;
-pub(crate) const CSTOPB: u32 = 0o0000100;
-pub(crate) const CREAD: u32 = 0o0000200;
-pub(crate) const PARENB: u32 = 0o0000400;
-pub(crate) const PARODD: u32 = 0o0001000;
-pub(crate) const HUPCL: u32 = 0o0002000;
-pub(crate) const CLOCAL: u32 = 0o0004000;
-pub(crate) const CIBAUD: u32 = 0o02003600000;
-pub(crate) const CRTSCTS: u32 = 0o020000000000;
-
-// `c_lflag` bits.
-pub(crate) const ISIG: u32 = 0o0000001;
-pub(crate) const ICANON: u32 = 0o0000002;
-pub(crate) const XCASE: u32 = 0o0000004;
-pub(crate) const ECHO: u32 = 0o0000010;
-pub(crate) const ECHOE: u32 = 0o0000020;
-pub(crate) const ECHOK: u32 = 0o0000040;
-pub(crate) const ECHONL: u32 = 0o0000100;
-pub(crate) const NOFLSH: u32 = 0o0000200;
-pub(crate) const TOSTOP: u32 = 0o0000400;
-/// Echo control characters as `^X`. A `c_lflag` bit, and on glibc the same
-/// value as the `c_iflag` bit [`IUCLC`] — the coincidence ERR-terminal-36
-/// turns into a permanent -1.
-pub(crate) const ECHOCTL: u32 = 0o0001000;
-pub(crate) const ECHOPRT: u32 = 0o0002000;
-pub(crate) const ECHOKE: u32 = 0o0004000;
-pub(crate) const FLUSHO: u32 = 0o0010000;
-pub(crate) const PENDIN: u32 = 0o0040000;
-pub(crate) const IEXTEN: u32 = 0o0100000;
-pub(crate) const EXTPROC: u32 = 0o0200000;
-
-// The termios `V*` subscripts this platform defines, as the C sees them after
-// `tty.h`'s aliasing. glibc has no `VSWTCH` (only `VSWTC`, which `tty.c`
-// never names), no `VDSWTCH`, `VERASE2`, `VDSUSP`, `VSTATUS`, `VPAGE`,
-// `VPGOFF`, `VKILL2` or `VBRK`, so those rows of every table in `tty.rs` are
-// simply absent — which is what `#ifdef`ing them out means.
-pub(crate) const VINTR: usize = 0;
-pub(crate) const VQUIT: usize = 1;
-pub(crate) const VERASE: usize = 2;
-pub(crate) const VKILL: usize = 3;
-pub(crate) const VEOF: usize = 4;
-pub(crate) const VTIME: usize = 5;
-pub(crate) const VMIN: usize = 6;
-pub(crate) const VSTART: usize = 8;
-pub(crate) const VSTOP: usize = 9;
-pub(crate) const VSUSP: usize = 10;
-pub(crate) const VEOL: usize = 11;
-pub(crate) const VREPRINT: usize = 12;
-pub(crate) const VDISCARD: usize = 13;
-pub(crate) const VWERASE: usize = 14;
-pub(crate) const VLNEXT: usize = 15;
-pub(crate) const VEOL2: usize = 16;
+pub(crate) use platform::*;
 
 // The `C_*` control-character defaults, in `C_*` order. These come from
 // `<sys/ttydefaults.h>`, which glibc copied verbatim from BSD, so unlike the
@@ -153,25 +49,29 @@ pub(crate) const CSUSP: u8 = ctrl(b'z');
 pub(crate) const CREPRINT: u8 = ctrl(b'r');
 pub(crate) const CDISCARD: u8 = ctrl(b'o');
 pub(crate) const CLNEXT: u8 = ctrl(b'v');
+pub(crate) const CDSUSP: u8 = ctrl(b'y');
+pub(crate) const CSTATUS: u8 = ctrl(b't');
 pub(crate) const CMIN: u8 = 1;
 pub(crate) const CTIME: u8 = 0;
 
-/// The kernel's `struct termios`, as libedit's four flag words and `c_cc`.
+/// The platform `<termios.h>` structure projected into libedit's snapshot.
 ///
-/// Deliberately **not** rustix's `Termios`: `def:tty.el-tty-t` freezes
-/// libedit's own shape, whose `c_cc` is [`NCCS`] long and which carries no
-/// `c_ispeed`/`c_ospeed` because glibc's `cfgetospeed` reads the `CBAUD` bits
-/// of `c_cflag` and its `tcsetattr` sends the kernel a struct with no speed
-/// fields at all. Only `CBAUD` is load-bearing, which is exactly what this
-/// carries.
+/// Linux/glibc carries four 32-bit words and `NCCS == 32`; Darwin carries
+/// four 64-bit words, `NCCS == 20`, and explicit input/output speed fields.
+/// It remains deliberately distinct from rustix's private representation.
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Termios {
-    pub(crate) c_iflag: u32,
-    pub(crate) c_oflag: u32,
-    pub(crate) c_cflag: u32,
-    pub(crate) c_lflag: u32,
+    pub(crate) c_iflag: FlagBits,
+    pub(crate) c_oflag: FlagBits,
+    pub(crate) c_cflag: FlagBits,
+    pub(crate) c_lflag: FlagBits,
     /// Indexed by the `V*` subscripts above, not by libedit's `C_*` ones.
     pub(crate) c_cc: [u8; NCCS],
+    #[cfg(target_os = "macos")]
+    pub(crate) c_ispeed: u64,
+    #[cfg(target_os = "macos")]
+    pub(crate) c_ospeed: u64,
 }
 
 impl Default for Termios {
@@ -181,13 +81,48 @@ impl Default for Termios {
             c_oflag: 0,
             c_cflag: 0,
             c_lflag: 0,
-            c_cc: [0; NCCS],
+            c_cc: [VDISABLE; NCCS],
+            #[cfg(target_os = "macos")]
+            c_ispeed: 0,
+            #[cfg(target_os = "macos")]
+            c_ospeed: 0,
         }
     }
 }
 
+/// glibc's published 64-bit `<termios.h>` layout.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const _: () = {
+    use core::mem::{align_of, offset_of, size_of};
+
+    assert!(size_of::<Termios>() == 48);
+    assert!(align_of::<Termios>() == 4);
+    assert!(offset_of!(Termios, c_iflag) == 0);
+    assert!(offset_of!(Termios, c_oflag) == 4);
+    assert!(offset_of!(Termios, c_cflag) == 8);
+    assert!(offset_of!(Termios, c_lflag) == 12);
+    assert!(offset_of!(Termios, c_cc) == 16);
+};
+
+/// Darwin's published 64-bit `<sys/termios.h>` layout.
+#[cfg(target_os = "macos")]
+const _: () = {
+    use core::mem::{align_of, offset_of, size_of};
+
+    assert!(size_of::<Termios>() == 72);
+    assert!(align_of::<Termios>() == 8);
+    assert!(offset_of!(Termios, c_iflag) == 0);
+    assert!(offset_of!(Termios, c_oflag) == 8);
+    assert!(offset_of!(Termios, c_cflag) == 16);
+    assert!(offset_of!(Termios, c_lflag) == 24);
+    assert!(offset_of!(Termios, c_cc) == 32);
+    assert!(offset_of!(Termios, c_ispeed) == 56);
+    assert!(offset_of!(Termios, c_ospeed) == 64);
+};
+
 /// The Linux `speed_t` encoding carried by these attributes.
 #[must_use]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub(crate) const fn encoded_baud_rate(attributes: &Termios) -> u32 {
     attributes.c_cflag & CBAUD
 }
@@ -198,6 +133,7 @@ pub(crate) const fn encoded_baud_rate(attributes: &Termios) -> u32 {
 /// carries the encoding bits but not the separate arbitrary-speed fields of
 /// `termios2`, so no truthful semantic rate can be recovered for it.
 #[must_use]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub(crate) const fn baud_rate(attributes: &Termios) -> Option<u32> {
     match encoded_baud_rate(attributes) {
         0o0000000 => Some(0),
@@ -235,33 +171,16 @@ pub(crate) const fn baud_rate(attributes: &Termios) -> Option<u32> {
     }
 }
 
-/// Every `V*` subscript Linux names, paired with rustix's index token.
-///
-/// rustix's `SpecialCodeIndex` has a private field and only named constants,
-/// so the array cannot be walked by number; this table is the walk. Linux
-/// defines 0 through 16 and `NCCS` is 19 in the kernel, so slots 17 and 18
-/// are reserved, never populated and not carried. `VSWTC` (7) has no libedit
-/// use — `tty.c` never names it — but it round-trips here so that the
-/// original modes `tty_end` restores are the ones `tty_setup` captured.
-const CC_INDICES: [(usize, SpecialCodeIndex); 17] = [
-    (VINTR, SpecialCodeIndex::VINTR),
-    (VQUIT, SpecialCodeIndex::VQUIT),
-    (VERASE, SpecialCodeIndex::VERASE),
-    (VKILL, SpecialCodeIndex::VKILL),
-    (VEOF, SpecialCodeIndex::VEOF),
-    (VTIME, SpecialCodeIndex::VTIME),
-    (VMIN, SpecialCodeIndex::VMIN),
-    (7, SpecialCodeIndex::VSWTC),
-    (VSTART, SpecialCodeIndex::VSTART),
-    (VSTOP, SpecialCodeIndex::VSTOP),
-    (VSUSP, SpecialCodeIndex::VSUSP),
-    (VEOL, SpecialCodeIndex::VEOL),
-    (VREPRINT, SpecialCodeIndex::VREPRINT),
-    (VDISCARD, SpecialCodeIndex::VDISCARD),
-    (VWERASE, SpecialCodeIndex::VWERASE),
-    (VLNEXT, SpecialCodeIndex::VLNEXT),
-    (VEOL2, SpecialCodeIndex::VEOL2),
-];
+/// Darwin carries the actual output speed in `c_ospeed`, not a `CBAUD` mask.
+#[must_use]
+#[cfg(target_os = "macos")]
+pub(crate) const fn baud_rate(attributes: &Termios) -> Option<u32> {
+    if attributes.c_ospeed <= u32::MAX as u64 {
+        Some(attributes.c_ospeed as u32)
+    } else {
+        None
+    }
+}
 
 /// Whether a borrowed descriptor names a terminal, preserving failures other
 /// than the ordinary `NOTTY` answer.
@@ -284,7 +203,11 @@ pub(crate) fn read(fd: BorrowedFd<'_>) -> io::Result<Termios> {
         c_oflag: raw.output_modes.bits(),
         c_cflag: raw.control_modes.bits(),
         c_lflag: raw.local_modes.bits(),
-        c_cc: [0; NCCS],
+        c_cc: [VDISABLE; NCCS],
+        #[cfg(target_os = "macos")]
+        c_ispeed: u64::from(raw.input_speed()),
+        #[cfg(target_os = "macos")]
+        c_ospeed: u64::from(raw.output_speed()),
     };
     for (v, index) in CC_INDICES {
         t.c_cc[v] = raw.special_codes[index];
@@ -294,19 +217,27 @@ pub(crate) fn read(fd: BorrowedFd<'_>) -> io::Result<Termios> {
 
 /// Apply terminal attributes, retrying interrupted calls.
 ///
-/// The current settings are read first and the four flag words and `c_cc`
-/// written over them. That is not belt-and-braces: rustix uses `TCSETS2`,
-/// which carries `c_ispeed`/`c_ospeed`, and libedit's `struct termios` has
-/// neither. Seeding from the live settings is precisely what the kernel does
-/// for glibc's `TCSETS` (`tmp_termios = tty->termios` before the copy in),
-/// so an arbitrary `BOTHER` line speed survives a call that does not change
-/// `CBAUD` — where a zeroed seed would hang the line up.
+/// The current settings are read first, then the platform snapshot is written
+/// over them. On Linux this preserves rustix's separate arbitrary-speed state
+/// while applying the glibc `CBAUD` projection. On Darwin the snapshot's own
+/// `c_ispeed` and `c_ospeed` fields are applied explicitly.
 pub(crate) fn apply(fd: BorrowedFd<'_>, action: OptionalActions, t: &Termios) -> io::Result<()> {
     let mut raw = read_raw(fd)?;
     raw.input_modes = rustix::termios::InputModes::from_bits_retain(t.c_iflag);
     raw.output_modes = rustix::termios::OutputModes::from_bits_retain(t.c_oflag);
     raw.control_modes = rustix::termios::ControlModes::from_bits_retain(t.c_cflag);
     raw.local_modes = rustix::termios::LocalModes::from_bits_retain(t.c_lflag);
+    #[cfg(target_os = "macos")]
+    {
+        let input_speed = u32::try_from(t.c_ispeed).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "input speed exceeds speed_t")
+        })?;
+        let output_speed = u32::try_from(t.c_ospeed).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "output speed exceeds speed_t")
+        })?;
+        raw.set_input_speed(input_speed)?;
+        raw.set_output_speed(output_speed)?;
+    }
     for (v, index) in CC_INDICES {
         raw.special_codes[index] = t.c_cc[v];
     }
@@ -322,10 +253,9 @@ pub(crate) fn apply(fd: BorrowedFd<'_>, action: OptionalActions, t: &Termios) ->
 /// `ioctl(fd, TIOCGWINSZ, &ws)`, returning `(ws_row, ws_col)`. `None` is the
 /// C's -1, which `terminal_get_size` ignores.
 ///
-/// The C also tries `TIOCGSIZE`, the older BSD `struct ttysize` ioctl. Linux
-/// does not define it — `plan/decisions/posix-only-scope.md` makes Linux the
-/// whole target — so that block does not compile there and has no
-/// counterpart here.
+/// The C also has conditional support for the older `TIOCGSIZE`/`ttysize`
+/// interface. Both supported targets provide `TIOCGWINSZ`, which is the typed
+/// interface rustix exposes here.
 pub(crate) fn screen_size(fd: BorrowedFd<'_>) -> io::Result<(u16, u16)> {
     let ws = rustix::termios::tcgetwinsize(fd)?;
     Ok((ws.ws_row, ws.ws_col))
@@ -345,10 +275,12 @@ fn read_raw(fd: BorrowedFd<'_>) -> io::Result<rustix::termios::Termios> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     use std::collections::HashMap;
     use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 
     use super::*;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     use crate::cheader;
 
     /// Every `V*` name Linux defines, against the rustix token that carries
@@ -360,6 +292,7 @@ mod tests {
     /// number each stands for is read out of the header at run time. Sized
     /// from `CC_INDICES` so that an entry appearing there and not here fails
     /// to compile.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     const V_TOKENS: [(&str, SpecialCodeIndex); CC_INDICES.len()] = [
         ("VINTR", SpecialCodeIndex::VINTR),
         ("VQUIT", SpecialCodeIndex::VQUIT),
@@ -423,44 +356,21 @@ mod tests {
         }
     }
 
-    /// Every `V*` name this module defines a subscript for, against glibc's
-    /// own `bits/termios-c_cc.h` — the header libedit compiles against, and
-    /// therefore the numbering its `c_cc` accesses mean.
+    /// Every represented Linux `V*` name against glibc's header.
     ///
     /// An off-by-one in this table announces nothing; it silently rebinds the
     /// user's erase or interrupt character to whatever sits next to it.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn the_v_subscripts_are_the_ones_the_header_defines() {
         let h = v_defines();
-        for (name, ours) in [
-            ("VINTR", VINTR),
-            ("VQUIT", VQUIT),
-            ("VERASE", VERASE),
-            ("VKILL", VKILL),
-            ("VEOF", VEOF),
-            ("VTIME", VTIME),
-            ("VMIN", VMIN),
-            ("VSTART", VSTART),
-            ("VSTOP", VSTOP),
-            ("VSUSP", VSUSP),
-            ("VEOL", VEOL),
-            ("VREPRINT", VREPRINT),
-            ("VDISCARD", VDISCARD),
-            ("VWERASE", VWERASE),
-            ("VLNEXT", VLNEXT),
-            ("VEOL2", VEOL2),
-        ] {
-            assert_eq!(h[name], ours as i64, "{name}");
+        for &(name, token) in &V_TOKENS {
+            let (ours, _) = CC_INDICES
+                .iter()
+                .find(|(_, represented)| *represented == token)
+                .unwrap_or_else(|| panic!("{name} is missing from the platform table"));
+            assert_eq!(h[name], *ours as i64, "{name}");
         }
-        // `VSWTC` has no constant of its own — `tty.c` never names it — so its
-        // subscript is written inline in `CC_INDICES` and is read back out of
-        // the table here rather than restated. A wrong one loses a byte of the
-        // original modes `tty_end` puts back.
-        let (vswtc, _) = CC_INDICES
-            .iter()
-            .find(|(_, token)| *token == SpecialCodeIndex::VSWTC)
-            .expect("VSWTC is in the table");
-        assert_eq!(h["VSWTC"], *vswtc as i64);
     }
 
     /// The other half of the table: that rustix's token for a name really does
@@ -472,6 +382,7 @@ mod tests {
     /// header's subscript for that token's name — the write goes in by token
     /// and the read comes out by number, so a pairing that has drifted cannot
     /// cancel itself out.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn each_rustix_token_indexes_the_subscript_the_header_gives_its_name() {
         let h = v_defines();
@@ -493,15 +404,12 @@ mod tests {
             );
         }
 
-        // Linux numbers 0 through 16 and its kernel `c_cc` is 19 long, so 17
-        // and 18 are reserved and never populated. glibc's `tcgetattr` fills
-        // the tail of its own 32-byte array with `_POSIX_VDISABLE`; so does
-        // ours, which on Linux means leaving it zero.
-        assert!(got.c_cc[17..].iter().all(|&b| b == VDISABLE));
+        assert!(got.c_cc[17..].iter().all(|&byte| byte == VDISABLE));
     }
 
     /// And the same pairing in the direction `tcsetattr` uses it: written by
     /// number, read back by token.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn a_control_character_set_by_subscript_reaches_the_token_of_that_name() {
         let h = v_defines();
@@ -526,6 +434,7 @@ mod tests {
     /// These are addressed by name from the `sem` rules and are not POSIX's to
     /// fix, so every one of them is a number somebody typed in. A wrong bit
     /// here is a mode that quietly never takes effect.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn the_flag_words_are_the_ones_the_headers_define() {
         let h = flag_defines();
@@ -595,6 +504,7 @@ mod tests {
     /// Three collisions this module's documentation asserts, and which the
     /// port's behaviour is built on. Checked against the headers rather than
     /// against the transcription, because each one changes what code does.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn the_flag_collisions_the_port_relies_on_are_real() {
         let h = flag_defines();
@@ -614,6 +524,7 @@ mod tests {
     /// which glibc copied verbatim from BSD, so unlike the subscripts these
     /// really are portable — and against `src/tty.h`'s own fallbacks for the
     /// seven the header does not define.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn the_control_character_defaults_are_the_ones_the_headers_define() {
         let h = cchar_defines();
@@ -655,6 +566,7 @@ mod tests {
     /// `c_cflag`. Seed the call from a zeroed struct instead of the live
     /// settings and a `BOTHER` line loses its speed — which, at zero, is a
     /// hangup.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn an_arbitrary_line_speed_survives_a_call_that_does_not_touch_it() {
         const ODD_SPEED: u32 = 12_345;
@@ -683,6 +595,31 @@ mod tests {
             0,
             "the change we did ask for did not happen"
         );
+    }
+
+    /// Darwin stores input and output speeds in separate fields. Reading and
+    /// applying an unrelated local-mode change must preserve both values.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn darwin_preserves_separate_speeds() {
+        const INPUT_SPEED: u32 = 19_200;
+        const OUTPUT_SPEED: u32 = 38_400;
+
+        let pty = Pty::open();
+        let mut raw = pty.raw();
+        raw.set_input_speed(INPUT_SPEED).expect("input speed");
+        raw.set_output_speed(OUTPUT_SPEED).expect("output speed");
+        pty.set_raw(&raw);
+
+        let mut attributes = read(pty.fd()).expect("read terminal attributes");
+        assert_eq!(attributes.c_ispeed, u64::from(INPUT_SPEED));
+        assert_eq!(attributes.c_ospeed, u64::from(OUTPUT_SPEED));
+        attributes.c_lflag &= !ECHO;
+        apply(pty.fd(), OptionalActions::Now, &attributes).expect("apply terminal attributes");
+
+        let after = pty.raw();
+        assert_eq!(after.input_speed(), INPUT_SPEED);
+        assert_eq!(after.output_speed(), OUTPUT_SPEED);
     }
 
     /// The window size is rows then columns, in that order. `TIOCGWINSZ`
@@ -728,14 +665,17 @@ mod tests {
 
     /// A distinct, printable, non-zero byte per table position, so that a
     /// value landing in the wrong slot names the slot it came from.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn marker(i: usize) -> u8 {
         b'A' + u8::try_from(i).expect("a table position")
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn v_defines() -> HashMap<String, i64> {
         cheader::defines(&["bits/termios-c_cc.h"])
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn flag_defines() -> HashMap<String, i64> {
         cheader::defines(&[
             "bits/termios-c_iflag.h",
@@ -755,6 +695,7 @@ mod tests {
     /// supplies them and is read first, letting the system header win wherever
     /// both have an opinion. That is exactly the order the C preprocessor sees
     /// them in, since `tty.h` guards every one with `#ifndef`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn cchar_defines() -> HashMap<String, i64> {
         let tty_h = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/tty.h");
         let text =

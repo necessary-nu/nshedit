@@ -15,8 +15,8 @@
 //! rustix covers terminal attributes, window size, pending input, and process
 //! credentials.
 //! On x86_64 and aarch64 Linux it selects its `linux_raw` backend and issues
-//! those syscalls directly, so that part of this crate goes nowhere near a C
-//! library.
+//! those syscalls directly. On macOS it uses rustix's libc backend, which is
+//! the supported Darwin route for the same typed operations.
 //!
 //! It does not cover signals, and not by omission: rustix's
 //! `not_implemented.rs` lists `sigaction`, `sigprocmask` and `sigwait` as
@@ -36,12 +36,10 @@
 //!
 //! # Scope of the numbers
 //!
-//! Linux-shaped, following `plan/decisions/posix-only-scope.md`: the termios
-//! ABI, the `V*` subscripts, `_POSIX_VDISABLE`, the signal numbers and the
-//! `struct sigaction`/`sigset_t`/`struct passwd` layouts are all transcribed
-//! for Linux/glibc. rustix supplies the ones it can portably; the rest stay
-//! transcribed. A non-Linux build is not supported — rustix would fall back
-//! to its libc backend and the transcribed numbers would be wrong anyway.
+//! Linux/glibc and macOS/Darwin each select their own transcribed termios,
+//! signal, and passwd representations. There is no catch-all Unix arm: an OS
+//! without an explicit layout fails to compile rather than inheriting another
+//! platform's constants.
 
 // [spec:nshedit:req:platform.typed-boundary]
 pub mod passwd;
@@ -117,7 +115,7 @@ pub fn is_elevated() -> bool {
 ///
 /// No compiler is involved. A `#define` is text, and reading it is not the
 /// library hunt `plan/decisions/no-c-ffi.md` forbids a `build.rs` from doing.
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "android")))]
 pub(crate) mod cheader {
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -282,7 +280,7 @@ pub(crate) mod cheader {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "android")))]
 mod tests {
     use super::*;
 
