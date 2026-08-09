@@ -98,6 +98,10 @@ impl ReadDriver {
         explicit.unwrap_or_else(|| self.repeat_argument.take().map_or(1, RepeatArgument::value))
     }
 
+    pub(super) fn take_optional_repeat(&mut self, explicit: Option<usize>) -> Option<usize> {
+        explicit.or_else(|| self.repeat_argument.take().map(RepeatArgument::value))
+    }
+
     pub(super) fn take_meta_unit(&mut self, unit: TextUnit) -> TextUnit {
         if !std::mem::take(&mut self.meta_next) {
             return unit;

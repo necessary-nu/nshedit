@@ -2845,6 +2845,14 @@ children (
                     greenfield-token-completion
                     greenfield-effect-runtime
                 )
+                log (
+                    {
+                        at 2026-08-09T04:44:14.430872735Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

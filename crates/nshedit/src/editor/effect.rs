@@ -8,7 +8,9 @@ use std::ffi::OsString;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::domain::{CommandName, Direction, Outcome, Prompt, ScreenSize, Signal, Text, TextUnit};
+use crate::domain::{
+    CommandName, Direction, Outcome, Prompt, RepeatCount, ScreenSize, Signal, Text, TextUnit,
+};
 
 use super::{CompletionCandidates, CompletionQuery, Editor, TerminalControl};
 
@@ -88,6 +90,106 @@ impl sealed::Sealed for HistoryNavigateEffect {}
 
 impl Effect for HistoryNavigateEffect {
     type Response = EffectResult<HistoryResponse>;
+}
+
+/// How the history host compares a line with a search pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HistoryMatch {
+    /// Match only lines beginning with the complete pattern.
+    Prefix,
+    /// Match the pattern at any logical-text boundary in the line.
+    Contains,
+}
+
+/// Where a history-search effect obtains its logical pattern.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum HistorySearchInput {
+    /// Search immediately with this owned pattern.
+    Pattern(Text),
+    /// Collect a complete query using the host's interactive input facility.
+    Prompted,
+    /// Collect a query using the host's incremental-search interaction.
+    Incremental,
+}
+
+// [spec:nshedit:req:core.command-effects]
+/// Ask the host to search from its independent history position.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct HistorySearchEffect {
+    /// Whether the query is already owned or must be collected by the host.
+    pub input: HistorySearchInput,
+    /// Whether to inspect older or newer entries.
+    pub direction: Direction,
+    /// The native matching rule for this command.
+    pub matching: HistoryMatch,
+}
+
+impl sealed::Sealed for HistorySearchEffect {}
+
+impl Effect for HistorySearchEffect {
+    type Response = EffectResult<HistorySearchResponse>;
+}
+
+/// A completed history search and the query retained for later repetition.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct HistorySearchResponse {
+    /// History selection made by the host.
+    pub history: HistoryResponse,
+    /// Complete owned query used for the search.
+    pub pattern: Text,
+}
+
+/// Which host history record an exact-selection command requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HistoryPosition {
+    /// Select the oldest retained record.
+    Oldest,
+    /// Select the record carrying this displayed history number.
+    Number(RepeatCount),
+}
+
+/// Ask the host to select one exact history record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HistoryLineEffect {
+    /// Stable semantic selection rather than a callback operation code.
+    pub position: HistoryPosition,
+}
+
+impl sealed::Sealed for HistoryLineEffect {}
+
+impl Effect for HistoryLineEffect {
+    type Response = EffectResult<HistoryResponse>;
+}
+
+/// Which whitespace-delimited word to select from the newest history line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HistoryWordPosition {
+    /// Select the final word when the command has no count.
+    Last,
+    /// Select the counted word from the beginning.
+    Number(RepeatCount),
+}
+
+/// Ask the host to copy one owned word from its newest history record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HistoryWordEffect {
+    /// Semantic word position resolved from the driver's repeat argument.
+    pub position: HistoryWordPosition,
+}
+
+impl sealed::Sealed for HistoryWordEffect {}
+
+impl Effect for HistoryWordEffect {
+    type Response = EffectResult<HistoryWordResponse>;
+}
+
+/// Result of selecting a word from host-owned history.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum HistoryWordResponse {
+    /// Insert this owned logical word.
+    Word(Text),
+    /// The requested history line or word does not exist.
+    Missing,
 }
 
 // [spec:nshedit:req:core.history+1]
@@ -173,14 +275,58 @@ impl Effect for HistoryRecordEffect {
 /// Ask the host to expand one command alias.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AliasEffect {
-    /// Command word whose alias is requested.
-    pub name: CommandName,
+    /// Logical alias selector, including any native namespace prefix.
+    pub name: Text,
 }
 
 impl sealed::Sealed for AliasEffect {}
 
 impl Effect for AliasEffect {
-    type Response = EffectResult<Option<Text>>;
+    type Response = EffectResult<AliasResponse>;
+}
+
+/// Result of looking up an alias without an absence sentinel.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AliasResponse {
+    /// Reprocess this owned expansion through the active keymap.
+    Expansion(Text),
+    /// The host has no expansion for the requested alias.
+    Missing,
+}
+
+/// Ask the host to collect and execute one editor configuration command.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EditorCommandEffect {
+    /// Owned prompt text shown by hosts with an interactive command reader.
+    pub prompt: Text,
+}
+
+impl sealed::Sealed for EditorCommandEffect {}
+
+impl Effect for EditorCommandEffect {
+    type Response = EffectResult<EditorCommandResponse>;
+}
+
+/// Result of an editor configuration command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EditorCommandResponse {
+    /// The host accepted and applied the command.
+    Applied,
+    /// The host read a complete command but rejected its syntax or operation.
+    Rejected,
+}
+
+/// Ask the host to edit an owned line with an external facility.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ExternalEditEffect {
+    /// Snapshot supplied to the external editor.
+    pub line: Text,
+}
+
+impl sealed::Sealed for ExternalEditEffect {}
+
+impl Effect for ExternalEditEffect {
+    type Response = EffectResult<Text>;
 }
 
 /// Ask the host for the current terminal dimensions.
@@ -504,9 +650,9 @@ mod tests {
         );
         accepts(
             AliasEffect {
-                name: CommandName::new("ll").unwrap(),
+                name: Text::from("ll"),
             },
-            Ok(Some(Text::from("ls -l"))),
+            Ok(AliasResponse::Expansion(Text::from("ls -l"))),
         );
         accepts(ResizeEffect, Ok(ScreenSize::new(24, 80).unwrap()));
         accepts(
@@ -536,6 +682,54 @@ mod tests {
                 arguments: vec![Text::from("word")],
             },
             Ok(Outcome::Continue),
+        );
+    }
+
+    // [spec:nshedit:req:core.command-effects/test]
+    #[test]
+    fn command_effect_responses_are_typed() {
+        fn accepts<E: Effect>(_effect: E, _response: E::Response) {}
+
+        accepts(
+            HistorySearchEffect {
+                input: HistorySearchInput::Pattern(Text::from("cargo")),
+                direction: Direction::Previous,
+                matching: HistoryMatch::Prefix,
+            },
+            Ok(HistorySearchResponse {
+                history: HistoryResponse::entry(Text::from("cargo test")),
+                pattern: Text::from("cargo"),
+            }),
+        );
+        accepts(
+            HistoryLineEffect {
+                position: HistoryPosition::Oldest,
+            },
+            Ok(HistoryResponse::boundary()),
+        );
+        accepts(
+            HistoryWordEffect {
+                position: HistoryWordPosition::Number(RepeatCount::new(2).unwrap()),
+            },
+            Ok(HistoryWordResponse::Word(Text::from("test"))),
+        );
+        accepts(
+            AliasEffect {
+                name: Text::from("_g"),
+            },
+            Ok(AliasResponse::Missing),
+        );
+        accepts(
+            EditorCommandEffect {
+                prompt: Text::from(": "),
+            },
+            Ok(EditorCommandResponse::Rejected),
+        );
+        accepts(
+            ExternalEditEffect {
+                line: Text::from("cargo test"),
+            },
+            Err(HostFailure::Cancelled),
         );
     }
 

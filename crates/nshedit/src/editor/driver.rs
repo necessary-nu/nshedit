@@ -1,5 +1,6 @@
 //! Resumable input preparation, decoding, dispatch, and completion.
 
+mod command_effect;
 mod decode;
 mod error;
 mod sequence;
@@ -15,9 +16,10 @@ use crate::domain::{
 };
 
 use super::effect::{
-    CompletionEffect, Effect, EffectResult, HistoryNavigateEffect, HistoryRecordEffect,
-    HistorySelection, HostFailure, PromptEffect, PromptSide, ReadEffect, ReadOutcome, ResizeEffect,
-    SignalEffect, Suspension, UserCommandEffect,
+    AliasEffect, CompletionEffect, EditorCommandEffect, Effect, EffectResult, ExternalEditEffect,
+    HistoryLineEffect, HistoryNavigateEffect, HistoryRecordEffect, HistorySearchEffect,
+    HistoryWordEffect, HostFailure, PromptEffect, PromptSide, ReadEffect, ReadOutcome,
+    ResizeEffect, SignalEffect, Suspension, UserCommandEffect,
 };
 use super::{CompletionOutcome, Editor, RenderError, TerminalControl, Tokenizer};
 use decode::Decoder;
@@ -96,6 +98,18 @@ pub enum ReadStep {
     Read(Pending<ReadEffect>),
     /// Navigate the host's independent history cursor.
     History(Pending<HistoryNavigateEffect>),
+    /// Search host-owned history using an owned logical pattern.
+    HistorySearch(Pending<HistorySearchEffect>),
+    /// Select one exact host history record.
+    HistoryLine(Pending<HistoryLineEffect>),
+    /// Select one word from the newest host history record.
+    HistoryWord(Pending<HistoryWordEffect>),
+    /// Expand an owned alias selector.
+    Alias(Pending<AliasEffect>),
+    /// Collect and execute one editor configuration command.
+    EditorCommand(Pending<EditorCommandEffect>),
+    /// Edit an owned line using a host facility.
+    ExternalEdit(Pending<ExternalEditEffect>),
     /// Retain a line after it is accepted.
     RecordHistory(Pending<HistoryRecordEffect>),
     /// Complete the snapshot-bound token at the cursor.
@@ -117,6 +131,12 @@ enum EffectKind {
     Resize,
     Read,
     History,
+    HistorySearch,
+    HistoryLine,
+    HistoryWord,
+    Alias,
+    EditorCommand,
+    ExternalEdit,
     RecordHistory,
     Completion,
     UserCommand,
@@ -167,8 +187,11 @@ pub struct ReadDriver {
     repetition: Option<Repetition>,
     pending_unit: Option<sequence::PendingUnit>,
     pending_operator: Option<sequence::PendingOperator>,
+    alias_selector_pending: bool,
+    after_history_line: Option<command_effect::AfterHistoryLine>,
     meta_next: bool,
     last_character_search: Option<sequence::StoredCharacterSearch>,
+    last_history_search: Option<command_effect::StoredHistorySearch>,
     change_recording: Option<sequence::ChangeRecording>,
     last_change: Option<sequence::ChangeReplay>,
     semantic_replay: VecDeque<sequence::ReplayStep>,
@@ -207,8 +230,11 @@ impl ReadDriver {
             repetition: None,
             pending_unit: None,
             pending_operator: None,
+            alias_selector_pending: false,
+            after_history_line: None,
             meta_next: false,
             last_character_search: None,
+            last_history_search: None,
             change_recording: None,
             last_change: None,
             semantic_replay: VecDeque::new(),
@@ -385,23 +411,7 @@ impl ReadDriver {
     ) -> Result<ReadStep, DriverError> {
         let response = self.accept(editor, pending, EffectKind::History, response)?;
         match response {
-            Ok(response) => {
-                let redraw = !matches!(response.selection(), HistorySelection::Unchanged);
-                let line = match response.selection() {
-                    HistorySelection::Entry(line) => Some(line.clone()),
-                    HistorySelection::Live => self.live_line.clone(),
-                    HistorySelection::Unchanged => None,
-                };
-                if let Some(line) = line {
-                    editor
-                        .restore_history_line(line)
-                        .map_err(|error| self.fail(editor, DriverError::Editor(error)))?;
-                }
-                if redraw {
-                    editor.request_redraw();
-                }
-                self.beep_pending |= response.reached_boundary();
-            }
+            Ok(response) => self.apply_history_response(editor, &response)?,
             Err(HostFailure::Unavailable | HostFailure::Cancelled) => {
                 self.beep_pending = true;
             }
@@ -538,6 +548,9 @@ impl ReadDriver {
         if editor.config().buffering() == Buffering::Character {
             return self.complete(editor, ReadResult::Character(unit));
         }
+        if let Some(step) = self.consume_pending_effect_input(editor, unit) {
+            return step;
+        }
         if let Some(step) = self.consume_pending_unit(editor, unit) {
             return step;
         }
@@ -626,6 +639,7 @@ impl ReadDriver {
         self.key_sequence.clear();
         self.repeat_argument = None;
         self.cancel_pending_sequence(editor)?;
+        self.cancel_pending_effect_command();
         self.complete(editor, ReadResult::EndOfInput)
     }
 
@@ -651,6 +665,9 @@ impl ReadDriver {
             Binding::Action(action) if self.pending_operator.is_some() => {
                 self.dispatch_operator_action(editor, action, invoking, explicit_repeat)
             }
+            Binding::Effect(_) if self.pending_operator.is_some() => {
+                self.reject_effect_as_motion(editor)
+            }
             Binding::Action(action) => {
                 let repeat = self.take_repeat(explicit_repeat);
                 self.prepare_action_recording(editor, &action, invoking, repeat)?;
@@ -658,6 +675,9 @@ impl ReadDriver {
             }
             Binding::Sequence(sequence) => {
                 self.dispatch_sequence(editor, sequence, invoking, explicit_repeat)
+            }
+            Binding::Effect(command) => {
+                self.dispatch_effect_command(editor, command, invoking, explicit_repeat)
             }
             Binding::Macro(text) => {
                 let repeat = self.take_repeat(explicit_repeat);
@@ -1033,6 +1053,8 @@ impl ReadDriver {
         self.repetition = None;
         self.pending_unit = None;
         self.pending_operator = None;
+        self.alias_selector_pending = false;
+        self.after_history_line = None;
         self.meta_next = false;
         self.change_recording = None;
         self.semantic_replay.clear();

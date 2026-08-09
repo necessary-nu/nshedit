@@ -119,6 +119,24 @@ fn read_line<T: TerminalControl>(
                 };
                 driver.resume_history(editor, &pending, Ok(response))?
             }
+            ReadStep::HistorySearch(pending) => {
+                driver.resume_history_search(editor, &pending, Err(HostFailure::Unavailable))?
+            }
+            ReadStep::HistoryLine(pending) => {
+                driver.resume_history_line(editor, &pending, Err(HostFailure::Unavailable))?
+            }
+            ReadStep::HistoryWord(pending) => {
+                driver.resume_history_word(editor, &pending, Err(HostFailure::Unavailable))?
+            }
+            ReadStep::Alias(pending) => {
+                driver.resume_alias(editor, &pending, Err(HostFailure::Unavailable))?
+            }
+            ReadStep::EditorCommand(pending) => {
+                driver.resume_editor_command(editor, &pending, Err(HostFailure::Unavailable))?
+            }
+            ReadStep::ExternalEdit(pending) => {
+                driver.resume_external_edit(editor, &pending, Err(HostFailure::Unavailable))?
+            }
             ReadStep::RecordHistory(pending) => {
                 let response = host
                     .history

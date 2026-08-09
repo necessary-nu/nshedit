@@ -8,6 +8,7 @@ scope {
     rules (
         [spec:nshedit:req:core.effect-hooks]
         [spec:nshedit:req:core.read-driver]
+        [spec:nshedit:req:core.command-effects]
         [spec:nshedit:req:abi.opaque-owner]
     )
 }
@@ -28,7 +29,7 @@ alternatives (
 )
 consequences {
     accepted (
-        "The editor advances until it completes or yields a typed effect such as prompt, input, history, alias, resize, completion, environment, or user command."
+        "The editor advances until it completes or yields a typed effect such as prompt, input, history navigation or search, history selection, alias expansion, editor-command input, external editing, resize, completion, environment, or user command."
         "An effect owns or explicitly borrows all request data needed by the host and names the typed response accepted on resume."
         "The closed Effect trait associates each owned request type with exactly one response type; Suspension<E> owns the request and carries a private editor identity and sequence."
         "Resuming through a different editor or a stale suspension is a typed error and cannot clear the live suspension."
@@ -47,6 +48,7 @@ edges {
 codifies (
     [spec:nshedit:req:core.effect-hooks]
     [spec:nshedit:req:core.read-driver]
+    [spec:nshedit:req:core.command-effects]
 )
 ---
 

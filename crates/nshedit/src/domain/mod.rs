@@ -9,6 +9,7 @@
 // [spec:nshedit:req:core.read-driver]
 
 mod command;
+mod command_effect;
 mod keymap;
 mod prompt;
 mod screen;
@@ -20,6 +21,7 @@ pub use command::{
     Action, CommandName, Direction, EditTarget, KeymapMode, Motion, Outcome, Refresh, Signal,
     TextTransform, WordKind, YankPlacement,
 };
+pub use command_effect::{EffectCommand, HistorySearchCommand, HistorySearchRepetition};
 pub use keymap::{Binding, KeyLookup, KeySequence};
 pub use prompt::{Prompt, PromptPart, TerminalLiteral};
 pub use screen::{Screen, ScreenCell, ScreenGlyph, ScreenPosition, ScreenSize};

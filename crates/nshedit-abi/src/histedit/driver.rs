@@ -1,7 +1,18 @@
 //! Typed host-effect execution for the native read driver.
 
 use super::*;
-use std::io::{self, Write};
+use std::ffi::{CString, OsString};
+use std::fs::OpenOptions;
+use std::io::{self, Read, Seek, Write};
+use std::os::unix::ffi::OsStringExt;
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use nshedit::editor::effect::{
+    AliasEffect, AliasResponse, EditorCommandEffect, EditorCommandResponse, ExternalEditEffect,
+    HistoryLineEffect, HistoryMatch, HistoryPosition, HistorySearchEffect, HistorySearchInput,
+    HistorySearchResponse, HistoryWordEffect, HistoryWordPosition, HistoryWordResponse,
+};
 
 /// A safe writer over the caller-owned output stream for one driver step.
 struct CompatibilityOutput {
@@ -218,12 +229,17 @@ enum HistoryFetch {
     },
 }
 
-unsafe fn history_entry(el: *mut EditLine, operation: c_int) -> Option<Text> {
+struct HistoryItem {
+    number: c_int,
+    line: Text,
+}
+
+unsafe fn history_item(el: *mut EditLine, operation: c_int) -> Option<HistoryItem> {
     let (callback, cookie) = unsafe { (&*el).history_callback() }?;
     if cookie.is_null() {
         return None;
     }
-    let mut line: Text = if unsafe { (&*el).narrow_history() } {
+    let (number, mut line): (c_int, Text) = if unsafe { (&*el).narrow_history() } {
         let mut event = HistEvent {
             num: 0,
             str: core::ptr::null(),
@@ -241,11 +257,12 @@ unsafe fn history_entry(el: *mut EditLine, operation: c_int) -> Option<Text> {
         }
         let bytes = unsafe { cbytes(event.str) }?;
         let mut conversion = crate::conversion::ConversionBuffer::new();
-        crate::conversion::decode_bytes(Some(bytes), &mut conversion)?
+        let line = crate::conversion::decode_bytes(Some(bytes), &mut conversion)?
             .iter()
             .copied()
             .map(TextUnit::from_wide)
-            .collect()
+            .collect();
+        (event.num, line)
     } else {
         let mut event = HistEventW {
             num: 0,
@@ -262,11 +279,12 @@ unsafe fn history_entry(el: *mut EditLine, operation: c_int) -> Option<Text> {
         {
             return None;
         }
-        unsafe { wstr(event.str) }?
+        let line = unsafe { wstr(event.str) }?
             .iter()
             .copied()
             .map(TextUnit::from_wide)
-            .collect()
+            .collect();
+        (event.num, line)
     };
 
     let mut end = line.len();
@@ -279,26 +297,27 @@ unsafe fn history_entry(el: *mut EditLine, operation: c_int) -> Option<Text> {
     if end != line.len() {
         line = line.as_units()[..end].iter().copied().collect();
     }
-    Some(line)
+    Some(HistoryItem { number, line })
 }
 
 unsafe fn fetch_history(el: *mut EditLine, depth: usize) -> HistoryFetch {
     debug_assert!(depth > 0);
-    let Some(mut line) = (unsafe { history_entry(el, H_FIRST) }) else {
+    let Some(first) = (unsafe { history_item(el, H_FIRST) }) else {
         return HistoryFetch::Missing {
             last_depth: 0,
             last_entry: None,
         };
     };
+    let mut line = first.line;
     let mut reached = 1;
     while reached < depth {
-        let Some(next) = (unsafe { history_entry(el, H_NEXT) }) else {
+        let Some(next) = (unsafe { history_item(el, H_NEXT) }) else {
             return HistoryFetch::Missing {
                 last_depth: reached,
                 last_entry: Some(line),
             };
         };
-        line = next;
+        line = next.line;
         reached += 1;
     }
     HistoryFetch::Entry(line)
@@ -377,6 +396,270 @@ unsafe fn host_history(
     }
 }
 
+const MAX_HOST_TEXT: usize = 4096;
+const MAX_HISTORY_SCAN: usize = 4096;
+static NEXT_EDIT_FILE: AtomicU64 = AtomicU64::new(0);
+
+unsafe fn read_host_text(
+    el: *mut EditLine,
+    prompt: &Text,
+    cancel_on_escape: bool,
+) -> Result<Text, HostFailure> {
+    unsafe { (&*el).write_compatibility_stream(1, &terminal_bytes(prompt.as_units())) };
+    let mut text = Text::default();
+    loop {
+        let mut value = 0;
+        match unsafe { read_wide_character(el, &raw mut value) } {
+            1 => {}
+            0 => return Err(HostFailure::Cancelled),
+            _ => return Err(HostFailure::Failed("command input failed".into())),
+        }
+        let unit = TextUnit::from_wide(value);
+        match unit {
+            TextUnit::Scalar('\r' | '\n') => {
+                unsafe { (&*el).write_compatibility_stream(1, b"\n") };
+                return Ok(text);
+            }
+            TextUnit::Scalar('\u{1b}') if cancel_on_escape => {
+                return Err(HostFailure::Cancelled);
+            }
+            TextUnit::Scalar('\u{7}') => return Err(HostFailure::Cancelled),
+            TextUnit::Scalar('\u{8}' | '\u{7f}') => {
+                if !text.is_empty() {
+                    let end = text.len();
+                    let span = text
+                        .span(end - 1..end)
+                        .expect("the final unit is inside the owned command text");
+                    let _removed = text
+                        .remove(span)
+                        .expect("the checked final-unit span remains valid");
+                    unsafe { (&*el).write_compatibility_stream(1, b"\x08 \x08") };
+                }
+            }
+            unit => {
+                if text.len() == MAX_HOST_TEXT {
+                    return Err(HostFailure::Failed("command input is too long".into()));
+                }
+                text.push(unit);
+                unsafe { (&*el).write_compatibility_stream(1, &terminal_bytes(&[unit])) };
+            }
+        }
+    }
+}
+
+unsafe fn history_items(el: *mut EditLine) -> Result<Vec<HistoryItem>, HostFailure> {
+    if unsafe { (&*el).history_callback() }.is_none_or(|(_, cookie)| cookie.is_null()) {
+        return Err(HostFailure::Unavailable);
+    }
+    let mut items = Vec::new();
+    let mut operation = H_FIRST;
+    while let Some(item) = unsafe { history_item(el, operation) } {
+        if items.len() == MAX_HISTORY_SCAN {
+            return Err(HostFailure::Failed("history scan limit exceeded".into()));
+        }
+        items.push(item);
+        operation = H_NEXT;
+    }
+    Ok(items)
+}
+
+unsafe fn host_history_search(
+    el: *mut EditLine,
+    request: &HistorySearchEffect,
+) -> Result<HistorySearchResponse, HostFailure> {
+    let pattern = match &request.input {
+        HistorySearchInput::Pattern(pattern) => pattern.clone(),
+        HistorySearchInput::Prompted => {
+            let prompt = match request.direction {
+                Direction::Previous => Text::from("\n/"),
+                Direction::Next => Text::from("\n?"),
+            };
+            unsafe { read_host_text(el, &prompt, true) }?
+        }
+        HistorySearchInput::Incremental => {
+            let prompt = match request.direction {
+                Direction::Previous => Text::from("\nbck: "),
+                Direction::Next => Text::from("\nfwd: "),
+            };
+            unsafe { read_host_text(el, &prompt, true) }?
+        }
+    };
+    let items = unsafe { history_items(el) }?;
+    let depth = unsafe { (&*el).history_depth() };
+    if depth == 0 {
+        unsafe { (&mut *el).save_history_live_line() };
+    }
+
+    let found = match request.direction {
+        Direction::Previous => items
+            .iter()
+            .enumerate()
+            .skip(depth)
+            .find(|(_, item)| history_matches(&item.line, &pattern, request.matching)),
+        Direction::Next => items
+            .iter()
+            .enumerate()
+            .take(depth.saturating_sub(1))
+            .rev()
+            .find(|(_, item)| history_matches(&item.line, &pattern, request.matching)),
+    };
+    let history = if let Some((index, item)) = found {
+        unsafe { (&mut *el).set_history_depth(index + 1) };
+        HistoryResponse::entry(item.line.clone())
+    } else if request.direction == Direction::Next
+        && depth != 0
+        && history_matches(
+            unsafe { (&*el).history_live_line() },
+            &pattern,
+            request.matching,
+        )
+    {
+        unsafe { (&mut *el).set_history_depth(0) };
+        HistoryResponse::live()
+    } else {
+        HistoryResponse::boundary()
+    };
+    Ok(HistorySearchResponse { history, pattern })
+}
+
+fn history_matches(line: &Text, pattern: &Text, matching: HistoryMatch) -> bool {
+    let line = line.as_units();
+    let pattern = pattern.as_units();
+    if pattern.is_empty() {
+        return true;
+    }
+    match matching {
+        HistoryMatch::Prefix => line.starts_with(pattern) && line != pattern,
+        HistoryMatch::Contains => line.windows(pattern.len()).any(|window| window == pattern),
+    }
+}
+
+unsafe fn host_history_line(
+    el: *mut EditLine,
+    request: &HistoryLineEffect,
+) -> Result<HistoryResponse, HostFailure> {
+    let items = unsafe { history_items(el) }?;
+    if unsafe { (&*el).history_depth() } == 0 {
+        unsafe { (&mut *el).save_history_live_line() };
+    }
+    let selected = match request.position {
+        HistoryPosition::Oldest => items.iter().enumerate().next_back(),
+        HistoryPosition::Number(number) => items
+            .iter()
+            .enumerate()
+            .find(|(_, item)| usize::try_from(item.number).ok() == Some(number.get())),
+    };
+    let Some((index, item)) = selected else {
+        return Ok(HistoryResponse::boundary());
+    };
+    unsafe { (&mut *el).set_history_depth(index + 1) };
+    Ok(HistoryResponse::entry(item.line.clone()))
+}
+
+unsafe fn host_history_word(
+    el: *mut EditLine,
+    request: &HistoryWordEffect,
+) -> Result<HistoryWordResponse, HostFailure> {
+    if unsafe { (&*el).history_callback() }.is_none_or(|(_, cookie)| cookie.is_null()) {
+        return Err(HostFailure::Unavailable);
+    }
+    let Some(item) = (unsafe { history_item(el, H_FIRST) }) else {
+        return Ok(HistoryWordResponse::Missing);
+    };
+    let words: Vec<&[TextUnit]> = item
+        .line
+        .as_units()
+        .split(is_history_space)
+        .filter(|word| !word.is_empty())
+        .collect();
+    let selected = match request.position {
+        HistoryWordPosition::Last => words.last().copied(),
+        HistoryWordPosition::Number(number) => words.get(number.get() - 1).copied(),
+    };
+    Ok(selected.map_or(HistoryWordResponse::Missing, |word| {
+        HistoryWordResponse::Word(word.iter().copied().collect())
+    }))
+}
+
+fn is_history_space(unit: &TextUnit) -> bool {
+    match unit {
+        TextUnit::Scalar(character) => character.is_whitespace(),
+        TextUnit::RawByte(byte) => byte.is_ascii_whitespace(),
+        TextUnit::CompatibilityWide(_) => false,
+    }
+}
+
+unsafe fn host_alias(
+    el: *mut EditLine,
+    request: &AliasEffect,
+) -> Result<AliasResponse, HostFailure> {
+    let Some((callback, cookie)) = (unsafe { (&*el).alias_callback() }) else {
+        return Err(HostFailure::Unavailable);
+    };
+    let name = CString::new(terminal_bytes(request.name.as_units()))
+        .map_err(|_| HostFailure::Failed("alias name contains a null byte".into()))?;
+    let expansion = unsafe { callback(cookie, name.as_ptr()) };
+    let Some(bytes) = (unsafe { cbytes(expansion) }) else {
+        return Ok(AliasResponse::Missing);
+    };
+    Ok(AliasResponse::Expansion(text_from_bytes(bytes)))
+}
+
+unsafe fn host_editor_command(
+    el: *mut EditLine,
+    request: &EditorCommandEffect,
+) -> Result<EditorCommandResponse, HostFailure> {
+    let command = unsafe { read_host_text(el, &request.prompt, true) }?;
+    Ok(
+        if unsafe { parse_editrc_line(el, command.as_units()) } == 0 {
+            EditorCommandResponse::Applied
+        } else {
+            EditorCommandResponse::Rejected
+        },
+    )
+}
+
+unsafe fn host_external_edit(
+    el: *mut EditLine,
+    request: &ExternalEditEffect,
+) -> Result<Text, HostFailure> {
+    let serial = NEXT_EDIT_FILE.fetch_add(1, Ordering::Relaxed);
+    let mut path = std::env::temp_dir();
+    path.push(format!("nshedit-{}-{serial}.tmp", std::process::id()));
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| HostFailure::Failed(error.to_string().into_boxed_str()))?;
+    let result = (|| {
+        file.write_all(&terminal_bytes(request.line.as_units()))
+            .and_then(|()| file.write_all(b"\n"))
+            .and_then(|()| file.flush())
+            .map_err(|error| HostFailure::Failed(error.to_string().into_boxed_str()))?;
+        let editor = unsafe { environment_value(el, "EDITOR") }
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| b"vi".to_vec());
+        let executable = OsString::from_vec(editor);
+        Command::new(executable)
+            .arg(&path)
+            .status()
+            .map_err(|error| HostFailure::Failed(error.to_string().into_boxed_str()))?;
+        file.rewind()
+            .map_err(|error| HostFailure::Failed(error.to_string().into_boxed_str()))?;
+        let mut edited = Vec::new();
+        file.read_to_end(&mut edited)
+            .map_err(|error| HostFailure::Failed(error.to_string().into_boxed_str()))?;
+        if edited.last() == Some(&b'\n') {
+            edited.pop();
+        }
+        Ok(text_from_bytes(&edited))
+    })();
+    drop(file);
+    let _cleanup = std::fs::remove_file(path);
+    result
+}
+
 unsafe fn host_command(
     el: *mut EditLine,
     name: &nshedit::domain::CommandName,
@@ -433,6 +716,48 @@ pub(super) unsafe fn drive_read(el: *mut EditLine) -> Result<ReadResult, ()> {
                 let (editor, driver) = unsafe { (&mut *el).split_driver() };
                 driver
                     .resume_history(editor, &pending, response)
+                    .map_err(|_| ())?
+            }
+            ReadStep::HistorySearch(pending) => {
+                let response = unsafe { host_history_search(el, pending.request()) };
+                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                driver
+                    .resume_history_search(editor, &pending, response)
+                    .map_err(|_| ())?
+            }
+            ReadStep::HistoryLine(pending) => {
+                let response = unsafe { host_history_line(el, pending.request()) };
+                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                driver
+                    .resume_history_line(editor, &pending, response)
+                    .map_err(|_| ())?
+            }
+            ReadStep::HistoryWord(pending) => {
+                let response = unsafe { host_history_word(el, pending.request()) };
+                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                driver
+                    .resume_history_word(editor, &pending, response)
+                    .map_err(|_| ())?
+            }
+            ReadStep::Alias(pending) => {
+                let response = unsafe { host_alias(el, pending.request()) };
+                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                driver
+                    .resume_alias(editor, &pending, response)
+                    .map_err(|_| ())?
+            }
+            ReadStep::EditorCommand(pending) => {
+                let response = unsafe { host_editor_command(el, pending.request()) };
+                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                driver
+                    .resume_editor_command(editor, &pending, response)
+                    .map_err(|_| ())?
+            }
+            ReadStep::ExternalEdit(pending) => {
+                let response = unsafe { host_external_edit(el, pending.request()) };
+                let (editor, driver) = unsafe { (&mut *el).split_driver() };
+                driver
+                    .resume_external_edit(editor, &pending, response)
                     .map_err(|_| ())?
             }
             ReadStep::RecordHistory(pending) => {
@@ -526,3 +851,6 @@ pub(super) unsafe fn read_unedited(el: *mut EditLine) -> Result<bool, ()> {
         .ok_or(())?;
     Ok(has_line)
 }
+
+#[cfg(test)]
+mod command_effect_tests;

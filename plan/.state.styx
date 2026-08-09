@@ -367,4 +367,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule core.command-sequences}
     )}
+    {id greenfield-command-effects, covered_rules (
+        core.command-effects
+    ), covered_claims (
+        {impl_name native-impl, rule core.command-effects}
+    )}
 )

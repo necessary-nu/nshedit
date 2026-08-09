@@ -11,7 +11,8 @@ mod catalog;
 mod codec;
 
 use catalog::{
-    BUILTIN_COMMANDS, TERMINAL_KEYS, action_name, is_builtin, named_binding, sequence_name,
+    BUILTIN_COMMANDS, TERMINAL_KEYS, action_name, effect_name, is_builtin, named_binding,
+    sequence_name,
 };
 use codec::{decode_key_sequence, text_bytes, visual_text, wide_bytes};
 
@@ -415,6 +416,7 @@ fn binding_description(binding: &Binding) -> String {
     match binding {
         Binding::Action(action) => action_name(action).unwrap_or("ed-unassigned").to_owned(),
         Binding::Sequence(sequence) => sequence_name(*sequence).to_owned(),
+        Binding::Effect(command) => effect_name(*command).to_owned(),
         Binding::Macro(expansion) => visual_text(expansion, true),
     }
 }
@@ -469,7 +471,8 @@ fn append_named_line(output: &mut Vec<u8>, key: &str, description: &str) {
 mod tests {
     use nshedit::domain::{
         ArgumentCommand, CharacterSearch, CharacterSearchLanding, CommandSequence, Direction,
-        ViOperator, ViSequence, ViSubstitution,
+        EffectCommand, HistorySearchCommand, HistorySearchRepetition, ViOperator, ViSequence,
+        ViSubstitution,
     };
 
     use super::*;
@@ -601,6 +604,36 @@ mod tests {
         for (name, sequence) in cases {
             assert_eq!(named_binding(name), Some(Binding::Sequence(sequence)));
             assert_eq!(sequence_name(sequence), name);
+        }
+    }
+
+    #[test]
+    fn typed_effect_projection() {
+        let cases = [
+            (
+                "ed-search-prev-history",
+                EffectCommand::SearchHistory(HistorySearchCommand::Prefix(Direction::Previous)),
+            ),
+            (
+                "em-inc-search-next",
+                EffectCommand::SearchHistory(HistorySearchCommand::Incremental(Direction::Next)),
+            ),
+            (
+                "vi-repeat-search-prev",
+                EffectCommand::SearchHistory(HistorySearchCommand::Repeat(
+                    HistorySearchRepetition::OppositeDirection,
+                )),
+            ),
+            ("vi-alias", EffectCommand::ExpandAlias),
+            ("vi-to-history-line", EffectCommand::SelectHistoryLine),
+            ("vi-history-word", EffectCommand::InsertHistoryWord),
+            ("ed-command", EffectCommand::ReadEditorCommand),
+            ("vi-histedit", EffectCommand::EditHistory),
+        ];
+
+        for (name, command) in cases {
+            assert_eq!(named_binding(name), Some(Binding::Effect(command)));
+            assert_eq!(effect_name(command), name);
         }
     }
 

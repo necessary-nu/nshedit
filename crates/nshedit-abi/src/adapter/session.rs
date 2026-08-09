@@ -251,6 +251,10 @@ impl EditLine {
         self.boundary.callbacks.alias = callback.map(|callback| (callback, cookie));
     }
 
+    pub(crate) fn alias_callback(&self) -> Option<(AliasCallback, *mut c_void)> {
+        self.boundary.callbacks.alias
+    }
+
     pub(crate) fn set_read_callback(&mut self, callback: Option<ReadCallback>) {
         self.boundary.callbacks.read = callback;
     }

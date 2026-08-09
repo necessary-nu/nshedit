@@ -1,7 +1,8 @@
 use nshedit::domain::{
     Action, ArgumentCommand, Binding, CharacterSearch, CharacterSearchLanding, CommandSequence,
-    Direction, EditTarget, Motion, Refresh, RepeatCount, SearchRepetition, TextTransform,
-    ViInsertPlacement, ViOperator, ViSequence, ViSubstitution, WordKind, YankPlacement,
+    Direction, EditTarget, EffectCommand, HistorySearchCommand, HistorySearchRepetition, Motion,
+    Refresh, RepeatCount, SearchRepetition, TextTransform, ViInsertPlacement, ViOperator,
+    ViSequence, ViSubstitution, WordKind, YankPlacement,
 };
 
 pub(super) struct CommandHelp {
@@ -285,7 +286,34 @@ pub(super) fn is_builtin(name: &str) -> bool {
 pub(super) fn named_binding(name: &str) -> Option<Binding> {
     named_sequence(name)
         .map(Binding::Sequence)
+        .or_else(|| named_effect(name).map(Binding::Effect))
         .or_else(|| named_action(name).map(Binding::Action))
+}
+
+fn named_effect(name: &str) -> Option<EffectCommand> {
+    let search = |command| EffectCommand::SearchHistory(command);
+    match name {
+        "ed-search-prev-history" => Some(search(HistorySearchCommand::Prefix(Direction::Previous))),
+        "ed-search-next-history" => Some(search(HistorySearchCommand::Prefix(Direction::Next))),
+        "em-inc-search-prev" => Some(search(HistorySearchCommand::Incremental(
+            Direction::Previous,
+        ))),
+        "em-inc-search-next" => Some(search(HistorySearchCommand::Incremental(Direction::Next))),
+        "vi-search-prev" => Some(search(HistorySearchCommand::Prompt(Direction::Previous))),
+        "vi-search-next" => Some(search(HistorySearchCommand::Prompt(Direction::Next))),
+        "vi-repeat-search-next" => Some(search(HistorySearchCommand::Repeat(
+            HistorySearchRepetition::SameDirection,
+        ))),
+        "vi-repeat-search-prev" => Some(search(HistorySearchCommand::Repeat(
+            HistorySearchRepetition::OppositeDirection,
+        ))),
+        "vi-alias" => Some(EffectCommand::ExpandAlias),
+        "vi-to-history-line" => Some(EffectCommand::SelectHistoryLine),
+        "vi-history-word" => Some(EffectCommand::InsertHistoryWord),
+        "ed-command" => Some(EffectCommand::ReadEditorCommand),
+        "vi-histedit" => Some(EffectCommand::EditHistory),
+        _ => None,
+    }
 }
 
 fn named_sequence(name: &str) -> Option<CommandSequence> {
@@ -471,6 +499,40 @@ pub(super) fn sequence_name(sequence: CommandSequence) -> &'static str {
             SearchRepetition::OppositeDirection,
         )) => "vi-repeat-prev-char",
         CommandSequence::Vi(ViSequence::RepeatChange) => "vi-redo",
+    }
+}
+
+pub(super) fn effect_name(command: EffectCommand) -> &'static str {
+    match command {
+        EffectCommand::SearchHistory(HistorySearchCommand::Prefix(Direction::Previous)) => {
+            "ed-search-prev-history"
+        }
+        EffectCommand::SearchHistory(HistorySearchCommand::Prefix(Direction::Next)) => {
+            "ed-search-next-history"
+        }
+        EffectCommand::SearchHistory(HistorySearchCommand::Prompt(Direction::Previous)) => {
+            "vi-search-prev"
+        }
+        EffectCommand::SearchHistory(HistorySearchCommand::Prompt(Direction::Next)) => {
+            "vi-search-next"
+        }
+        EffectCommand::SearchHistory(HistorySearchCommand::Incremental(Direction::Previous)) => {
+            "em-inc-search-prev"
+        }
+        EffectCommand::SearchHistory(HistorySearchCommand::Incremental(Direction::Next)) => {
+            "em-inc-search-next"
+        }
+        EffectCommand::SearchHistory(HistorySearchCommand::Repeat(
+            HistorySearchRepetition::SameDirection,
+        )) => "vi-repeat-search-next",
+        EffectCommand::SearchHistory(HistorySearchCommand::Repeat(
+            HistorySearchRepetition::OppositeDirection,
+        )) => "vi-repeat-search-prev",
+        EffectCommand::ExpandAlias => "vi-alias",
+        EffectCommand::SelectHistoryLine => "vi-to-history-line",
+        EffectCommand::InsertHistoryWord => "vi-history-word",
+        EffectCommand::ReadEditorCommand => "ed-command",
+        EffectCommand::EditHistory => "vi-histedit",
     }
 }
 

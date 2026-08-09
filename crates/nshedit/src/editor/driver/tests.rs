@@ -2,9 +2,14 @@ use std::io;
 
 use crate::domain::{
     Action, ArgumentCommand, Binding, CommandName, CommandSequence, EditingMode, EditorConfig,
-    KeySequence, KeymapMode, Motion, Prompt, ScreenSize, Signal, TerminalMode, Text, TextUnit,
+    EffectCommand, HistorySearchCommand, HistorySearchRepetition, KeySequence, KeymapMode, Motion,
+    Prompt, ScreenSize, Signal, TerminalMode, Text, TextUnit,
 };
-use crate::editor::effect::{HistoryResponse, PromptSide, ReadEffect, ReadOutcome};
+use crate::editor::effect::{
+    AliasResponse, HistoryMatch, HistoryPosition, HistoryResponse, HistorySearchInput,
+    HistorySearchResponse, HistoryWordPosition, HistoryWordResponse, PromptSide, ReadEffect,
+    ReadOutcome,
+};
 use crate::editor::{CompletionCandidate, CompletionCandidates, TerminalProfile};
 
 use super::*;
@@ -505,5 +510,188 @@ fn semantic_replay_bound() {
         Err(DriverError::WorkLimitExceeded { limit: 3 })
     ));
     assert_eq!(editor.line(), &Text::from("cdef"));
+    assert_eq!(editor.terminal_mode(), TerminalMode::Cooked);
+}
+
+// [spec:nshedit:req:core.command-effects/test]
+#[test]
+fn history_search_effect() {
+    let mut editor = editor(EditorConfig::default());
+    editor.execute(Action::Insert(Text::from("car"))).unwrap();
+    editor.bind(
+        KeymapMode::Emacs,
+        KeySequence::try_from("q").unwrap(),
+        Binding::Effect(EffectCommand::SearchHistory(HistorySearchCommand::Prefix(
+            crate::domain::Direction::Previous,
+        ))),
+    );
+    editor.bind(
+        KeymapMode::Emacs,
+        KeySequence::try_from("r").unwrap(),
+        Binding::Effect(EffectCommand::SearchHistory(HistorySearchCommand::Repeat(
+            HistorySearchRepetition::OppositeDirection,
+        ))),
+    );
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+
+    let step = send(&mut driver, &mut editor, begin, &mut output, 'q');
+    let ReadStep::HistorySearch(search) = step else {
+        panic!("search command did not suspend");
+    };
+    assert_eq!(
+        search.request().input,
+        HistorySearchInput::Pattern(Text::from("car"))
+    );
+    assert_eq!(search.request().matching, HistoryMatch::Prefix);
+    let step = driver
+        .resume_history_search(
+            &mut editor,
+            &search,
+            Ok(HistorySearchResponse {
+                history: HistoryResponse::entry(Text::from("cargo test")),
+                pattern: Text::from("car"),
+            }),
+        )
+        .unwrap();
+    let step = settle(&mut driver, &mut editor, step, &mut output);
+    assert_eq!(editor.line(), &Text::from("cargo test"));
+
+    let step = send(&mut driver, &mut editor, step, &mut output, 'r');
+    let ReadStep::HistorySearch(repeated) = step else {
+        panic!("repeat search did not suspend");
+    };
+    assert_eq!(repeated.request().direction, crate::domain::Direction::Next);
+    assert_eq!(
+        repeated.request().input,
+        HistorySearchInput::Pattern(Text::from("car"))
+    );
+}
+
+// [spec:nshedit:req:core.command-effects/test]
+#[test]
+fn alias_expansion_effect() {
+    let mut editor = vi_with_line("a");
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+
+    let step = send(&mut driver, &mut editor, begin, &mut output, '@');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'g');
+    let ReadStep::Alias(alias) = step else {
+        panic!("alias selector did not suspend");
+    };
+    assert_eq!(alias.request().name, Text::from("_g"));
+    let step = driver
+        .resume_alias(
+            &mut editor,
+            &alias,
+            Ok(AliasResponse::Expansion(Text::from("iX\u{1b}"))),
+        )
+        .unwrap();
+    let _pending = read(settle(&mut driver, &mut editor, step, &mut output));
+    assert_eq!(editor.line(), &Text::from("Xa"));
+    assert_eq!(editor.keymap_mode(), KeymapMode::ViCommand);
+}
+
+// [spec:nshedit:req:core.command-effects/test]
+#[test]
+fn history_selection_chain() {
+    let mut editor = vi_with_line("draft");
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+
+    let step = send(&mut driver, &mut editor, begin, &mut output, '2');
+    let step = send(&mut driver, &mut editor, step, &mut output, 'v');
+    let ReadStep::HistoryLine(selection) = step else {
+        panic!("counted external edit did not select history first");
+    };
+    assert_eq!(
+        selection.request().position,
+        HistoryPosition::Number(crate::domain::RepeatCount::new(2).unwrap())
+    );
+    let step = driver
+        .resume_history_line(
+            &mut editor,
+            &selection,
+            Ok(HistoryResponse::entry(Text::from("old"))),
+        )
+        .unwrap();
+    let ReadStep::ExternalEdit(external) = step else {
+        panic!("history selection did not continue to external editing");
+    };
+    assert_eq!(external.request().line, Text::from("old"));
+    assert_eq!(editor.terminal_mode(), TerminalMode::Cooked);
+    let step = driver
+        .resume_external_edit(&mut editor, &external, Ok(Text::from("edited")))
+        .unwrap();
+    let ReadStep::RecordHistory(record) = step else {
+        panic!("external editing did not accept the edited line");
+    };
+    let step = driver
+        .resume_history_record(&mut editor, &record, Ok(()))
+        .unwrap();
+    let step = settle(&mut driver, &mut editor, step, &mut output);
+    assert!(matches!(
+        step,
+        ReadStep::Complete(ReadResult::Accepted(ref line)) if line == &Text::from("edited")
+    ));
+}
+
+// [spec:nshedit:req:core.command-effects/test]
+#[test]
+fn history_word_effect() {
+    let mut editor = vi_with_line("one");
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+
+    let step = send(&mut driver, &mut editor, begin, &mut output, '$');
+    let step = send(&mut driver, &mut editor, step, &mut output, '_');
+    let ReadStep::HistoryWord(word) = step else {
+        panic!("history-word command did not suspend");
+    };
+    assert_eq!(word.request().position, HistoryWordPosition::Last);
+    let step = driver
+        .resume_history_word(
+            &mut editor,
+            &word,
+            Ok(HistoryWordResponse::Word(Text::from("two"))),
+        )
+        .unwrap();
+    let _pending = read(settle(&mut driver, &mut editor, step, &mut output));
+    assert_eq!(editor.line(), &Text::from("one two"));
+    assert_eq!(editor.keymap_mode(), KeymapMode::ViInsert);
+}
+
+// [spec:nshedit:req:core.command-effects/test]
+#[test]
+fn command_failure_is_typed() {
+    let mut editor = editor(EditorConfig::default());
+    editor.bind(
+        KeymapMode::Emacs,
+        KeySequence::try_from("q").unwrap(),
+        Binding::Effect(EffectCommand::ReadEditorCommand),
+    );
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+    let step = send(&mut driver, &mut editor, begin, &mut output, 'q');
+    let ReadStep::EditorCommand(command) = step else {
+        panic!("editor command did not suspend");
+    };
+    assert_eq!(command.request().prompt, Text::from("\n: "));
+    let error = driver.resume_editor_command(
+        &mut editor,
+        &command,
+        Err(HostFailure::Failed("parse failed".into())),
+    );
+    assert!(matches!(
+        error,
+        Err(DriverError::Host(HostFailure::Failed(ref message)))
+            if message.as_ref() == "parse failed"
+    ));
     assert_eq!(editor.terminal_mode(), TerminalMode::Cooked);
 }

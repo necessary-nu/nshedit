@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use crate::domain::{
     Action, Binding, CharacterSearch, CharacterSearchLanding, CommandSequence, Direction,
-    EditTarget, KeyLookup, KeySequence, KeymapMode, Motion, Refresh, SearchRepetition, Text,
-    TextTransform, ViInsertPlacement, ViOperator, ViSequence, ViSubstitution, WordKind,
-    YankPlacement,
+    EditTarget, EffectCommand, HistorySearchCommand, HistorySearchRepetition, KeyLookup,
+    KeySequence, KeymapMode, Motion, Refresh, SearchRepetition, Text, TextTransform,
+    ViInsertPlacement, ViOperator, ViSequence, ViSubstitution, WordKind, YankPlacement,
 };
 
 #[derive(Debug)]
@@ -119,6 +119,16 @@ impl Keymaps {
         insert(map, "\u{c}", Action::Refresh(Refresh::Full));
         insert(map, "\u{e}", Action::History(Direction::Next));
         insert(map, "\u{10}", Action::History(Direction::Previous));
+        insert_effect(
+            map,
+            "\u{12}",
+            EffectCommand::SearchHistory(HistorySearchCommand::Incremental(Direction::Previous)),
+        );
+        insert_effect(
+            map,
+            "\u{13}",
+            EffectCommand::SearchHistory(HistorySearchCommand::Incremental(Direction::Next)),
+        );
         insert(map, "\u{14}", Action::TransposeCharacters);
         insert(
             map,
@@ -158,6 +168,16 @@ impl Keymaps {
             },
         );
         insert(map, "\u{1b}f", word_motion(Direction::Next));
+        insert_effect(
+            map,
+            "\u{1b}n",
+            EffectCommand::SearchHistory(HistorySearchCommand::Prefix(Direction::Next)),
+        );
+        insert_effect(
+            map,
+            "\u{1b}p",
+            EffectCommand::SearchHistory(HistorySearchCommand::Prefix(Direction::Previous)),
+        );
         insert(
             map,
             "\u{1b}l",
@@ -182,6 +202,7 @@ impl Keymaps {
         );
         insert(map, "\u{e2}", word_motion(Direction::Previous));
         insert(map, "\u{e6}", word_motion(Direction::Next));
+        insert_effect(map, "\u{1b}x", EffectCommand::ReadEditorCommand);
     }
 
     fn install_vi_insert(&mut self) {
@@ -354,6 +375,34 @@ impl Keymaps {
             )),
         );
         insert_sequence(map, ".", CommandSequence::Vi(ViSequence::RepeatChange));
+        insert_effect(
+            map,
+            "/",
+            EffectCommand::SearchHistory(HistorySearchCommand::Prompt(Direction::Previous)),
+        );
+        insert_effect(
+            map,
+            "?",
+            EffectCommand::SearchHistory(HistorySearchCommand::Prompt(Direction::Next)),
+        );
+        insert_effect(
+            map,
+            "n",
+            EffectCommand::SearchHistory(HistorySearchCommand::Repeat(
+                HistorySearchRepetition::SameDirection,
+            )),
+        );
+        insert_effect(
+            map,
+            "N",
+            EffectCommand::SearchHistory(HistorySearchCommand::Repeat(
+                HistorySearchRepetition::OppositeDirection,
+            )),
+        );
+        insert_effect(map, "@", EffectCommand::ExpandAlias);
+        insert_effect(map, "G", EffectCommand::SelectHistoryLine);
+        insert_effect(map, "_", EffectCommand::InsertHistoryWord);
+        insert_effect(map, "v", EffectCommand::EditHistory);
         insert(map, "\u{12}", Action::Refresh(Refresh::Redisplay));
         insert(map, "\n", Action::AcceptLine);
         insert(map, "\r", Action::AcceptLine);
@@ -370,6 +419,12 @@ fn insert_sequence(map: &mut BTreeMap<KeySequence, Binding>, key: &str, sequence
     let key =
         KeySequence::new(Text::from(key)).expect("built-in key sequences are statically non-empty");
     map.insert(key, Binding::Sequence(sequence));
+}
+
+fn insert_effect(map: &mut BTreeMap<KeySequence, Binding>, key: &str, command: EffectCommand) {
+    let key =
+        KeySequence::new(Text::from(key)).expect("built-in key sequences are statically non-empty");
+    map.insert(key, Binding::Effect(command));
 }
 
 fn character_search(direction: Direction, landing: CharacterSearchLanding) -> CommandSequence {
