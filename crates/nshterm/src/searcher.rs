@@ -31,41 +31,11 @@ use crate::Result;
 /// sequences that get written to a terminal. Honouring them in a set-uid
 /// process lets whoever started it choose those bytes, so the decision is a
 /// value the caller passes rather than something discovery assumes.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum EnvironmentTrust {
-    /// Read the environment: the process runs with its invoker's privileges.
-    Honoured,
-    /// Ignore it, leaving the compiled-in locations alone — which is exactly
-    /// what ncurses does through `use_terminfo_vars()`; see
-    /// `ncurses/tinfo/db_iterator.c:226,327` and `home_terminfo.c:52`, each
-    /// of which gates the same three sources.
-    Ignored,
-}
-
-impl EnvironmentTrust {
-    /// What this process may do, from whether it is running elevated.
-    ///
-    /// libedit already routed `TERM` through `secure_getenv`, so before this
-    /// the terminal *type* was guarded and the *database it was looked up in*
-    /// was not, which is the wrong half.
-    #[must_use]
-    pub fn for_process() -> Self {
-        #[cfg(unix)]
-        if nshedit_plat::is_elevated() {
-            return Self::Ignored;
-        }
-
-        #[cfg(unix)]
-        return Self::Honoured;
-
-        #[cfg(not(unix))]
-        Self::Ignored
-    }
-
-    fn honoured(self) -> bool {
-        self == Self::Honoured
-    }
-}
+///
+/// The policy and its process query live at the platform boundary; this
+/// re-export preserves `nshterm`'s typed discovery API without duplicating
+/// privilege classification here.
+pub use nshedit_plat::EnvironmentTrust;
 
 // The default terminfo location should be /usr/lib/terminfo but that's not guaranteed, so we check
 // a few more locations. See https://tldp.org/HOWTO/Text-Terminal-HOWTO-16.html#ss16.2
@@ -93,7 +63,7 @@ fn search(
     trust_env: EnvironmentTrust,
     environment: impl Fn(&str) -> Option<OsString>,
 ) -> Result<Option<PathBuf>> {
-    let trust_env = trust_env.honoured();
+    let trust_env = trust_env.permits_environment();
     let mut dirs_to_search = Vec::new();
     let mut default_locations = DEFAULT_LOCATIONS.iter().map(PathBuf::from);
     let Some(first_char) = term.chars().next() else {
@@ -186,24 +156,11 @@ mod test {
     use super::search;
     use super::{DEFAULT_LOCATIONS, EnvironmentTrust, database_path};
 
-    /// The guard is a property of the process, and this test process is not
-    /// elevated, so what can be asserted here is that the trusted path still
-    /// works — `TERMINFO` is honoured — and that the untrusted path is
-    /// reachable at all.
-    ///
-    /// Proving the refusal needs a set-uid binary, which a unit test cannot
-    /// make. `nshedit_plat::is_elevated` is the whole of the decision and it
-    /// is three comparisons; keeping it that small is what makes this
-    /// inspectable instead of testable.
+    /// Search-path policy is an explicit input here; platform classification
+    /// is tested at the platform boundary.
     #[cfg(unix)]
     #[test]
-    fn terminfo_is_honoured_when_the_process_is_not_elevated() {
-        assert_eq!(
-            EnvironmentTrust::for_process(),
-            EnvironmentTrust::Honoured,
-            "the test runner is set-uid; this test cannot say anything"
-        );
-
+    fn explicit_trust_honours_terminfo() {
         let dir = tempdir();
         // ncurses' layout: $TERMINFO/<first character of the name>/<name>.
         let sub = dir.join("f");

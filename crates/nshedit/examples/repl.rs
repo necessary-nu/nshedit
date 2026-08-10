@@ -257,9 +257,8 @@ fn install_terminal_bindings<T: TerminalControl>(
 
 #[cfg(unix)]
 fn terminal_profile() -> TerminalProfile {
-    std::env::var("TERM")
+    nshterm::TermInfo::from_env(nshterm::EnvironmentTrust::for_process())
         .ok()
-        .and_then(|name| nshterm::TermInfo::from_name(&name).ok())
         .map(|entry| TerminalProfile::from_terminfo(&entry))
         .unwrap_or_else(TerminalProfile::ansi)
 }

@@ -10,7 +10,7 @@
 //! # How the kernel is reached
 //!
 //! POSIX targets use `rustix` wherever `rustix` reaches, and the platform's
-//! libc for the two families it declines. Other targets expose only the safe
+//! libc for the narrow families it declines. Other targets expose only the safe
 //! facilities they implement; they do not receive placeholder POSIX layouts.
 //!
 //! rustix covers terminal attributes, window size, pending input, and process
@@ -29,10 +29,12 @@
 //! whom they are defined. NSS backends are `dlopen`ed C objects with no
 //! pure-Rust route at all. So the **signal family** ([`signal`]) and the
 //! **passwd family** ([`passwd`]) are libc symbols, declared here under the
-//! second site on `plan/decisions/no-c-ffi.md`'s enumeration.
+//! second site on `plan/decisions/no-c-ffi.md`'s enumeration. Darwin's
+//! `issetugid(2)` is the third and final platform family; Linux reads the
+//! kernel-published `AT_SECURE` value without a foreign call.
 //!
-//! The whole libc surface of this workspace is therefore two `extern`
-//! blocks, one in each of those two modules, and a reader can count them.
+//! The whole libc surface of this crate is therefore three `extern` blocks,
+//! one in each of those modules, and a reader can count them.
 //! The core crate names no libc symbol and no `build.rs` anywhere hunts for
 //! a library.
 //!
@@ -60,6 +62,7 @@ compile_error!(
 // [spec:nshedit:req:platform.typed-boundary]
 #[cfg(unix)]
 pub mod passwd;
+mod secure_execution;
 #[cfg(unix)]
 pub mod signal;
 #[cfg(unix)]
@@ -69,6 +72,8 @@ pub mod terminal;
 pub mod terminal;
 #[cfg(unix)]
 mod termios;
+
+pub use secure_execution::EnvironmentTrust;
 
 // ---------------------------------------------------------------------------
 // Process credentials
@@ -94,41 +99,6 @@ impl UserId {
 #[cfg(unix)]
 pub fn current_user() -> UserId {
     UserId(rustix::process::getuid().as_raw())
-}
-
-/// Whether this process is running with privileges its invoker did not have —
-/// set-uid or set-gid — and must therefore not trust the environment it was
-/// handed.
-///
-/// This is ncurses' `is_elevated()`, from `ncurses/tinfo/access.c:190`, in the
-/// form it falls back to when `issetugid(2)` and `getauxval(AT_SECURE)` are
-/// both unavailable:
-///
-/// ```c
-/// #define is_posix_elevated() \
-///         (getuid() != geteuid() \
-///          || getgid() != getegid())
-/// ```
-///
-/// The POSIX form and not the other two because rustix exposes neither:
-/// `issetugid` is BSD and macOS, and `AT_SECURE` needs `getauxval`, which
-/// `dec:libedit:no-c-ffi` gives no route to. The difference matters in one
-/// case and it is worth naming: `AT_SECURE` is also set when a program gains
-/// capabilities or crosses a `nosuid` boundary without any uid changing, so a
-/// process elevated *only* that way reads as unelevated here. That is a
-/// narrower guard than glibc's `secure_getenv`, not a wrong one.
-///
-/// What this deliberately does NOT test is whether the process is root.
-/// ncurses guards that separately, behind `--disable-root-environ`, and
-/// Debian does not pass it — `debian/rules:137` passes
-/// `--disable-setuid-environ` and nothing about root. So a root shell on a
-/// deployed system does honour `TERMINFO`, and matching what is actually
-/// installed beats matching a build nobody ships.
-#[must_use]
-#[cfg(unix)]
-pub fn is_elevated() -> bool {
-    rustix::process::getuid() != rustix::process::geteuid()
-        || rustix::process::getgid() != rustix::process::getegid()
 }
 
 /// Reading the C's own headers, so that a number transcribed into this crate
@@ -300,8 +270,8 @@ pub(crate) mod cheader {
 mod tests {
     use super::*;
 
-    /// The four credential queries and the elevation test they feed, against
-    /// the kernel's own report of this process rather than against rustix.
+    /// The user-id query against the kernel's own report of this process
+    /// rather than against rustix.
     ///
     /// `/proc/self/status` spells `Uid:` and `Gid:` as real, effective, saved,
     /// filesystem — so the first two fields are exactly what `getuid` and
@@ -321,9 +291,7 @@ mod tests {
             (ids.next().expect("real"), ids.next().expect("effective"))
         };
 
-        let (uid, euid) = field("Uid:");
-        let (gid, egid) = field("Gid:");
+        let (uid, _) = field("Uid:");
         assert_eq!(current_user().as_raw(), uid);
-        assert_eq!(is_elevated(), uid != euid || gid != egid);
     }
 }

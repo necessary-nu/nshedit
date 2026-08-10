@@ -696,7 +696,7 @@ fn wide_string(input: &[u32]) -> Option<String> {
 pub(crate) fn secure_environment(name: &str) -> Option<Vec<u8>> {
     use std::os::unix::ffi::OsStrExt;
 
-    if nshedit_plat::is_elevated() {
+    if !nshedit_plat::EnvironmentTrust::for_process().permits_environment() {
         None
     } else {
         std::env::var_os(name).map(|value| value.as_os_str().as_bytes().to_vec())

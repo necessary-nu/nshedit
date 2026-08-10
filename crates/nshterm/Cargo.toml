@@ -11,7 +11,7 @@ authors = ["The Rust Project Developers", "Brendan Molloy <brendan@necessary.nu>
 keywords = ["terminfo", "terminal", "termcap", "tty"]
 categories = ["command-line-interface", "parser-implementations"]
 
-[target.'cfg(unix)'.dependencies]
+[dependencies]
 nshedit-plat.workspace = true
 
 [lints]

@@ -1,6 +1,6 @@
 ---
 id [dec:libedit:platform-layer]
-epitome "nshedit-plat is the safe system boundary: rustix where available, narrowly enumerated libc for signals and NSS."
+epitome "nshedit-plat is the safe system boundary: rustix and std where available, narrowly enumerated libc for signals, NSS, and Darwin privilege state."
 state @decided
 category @existence
 scope {
@@ -94,7 +94,7 @@ consequences {
     accepted (
         "nshedit-plat is the only crate that owns syscall and platform-ABI implementation details. nshedit and nshedit-abi consume its safe interfaces."
         "rustix 1.1.x supplies termios, window-size ioctl, fcntl, uid/gid queries, and FIONREAD. The event-hook poll and any supported typeahead check use its safe ioctl_fionread interface."
-        "Signals use the platform libc because raw signal syscalls are unsound in a process containing libc. NSS passwd lookup and enumeration use libc because the configured name-service backends are C modules."
+        "Signals use the platform libc because raw signal syscalls are unsound in a process containing libc. NSS passwd lookup and enumeration use libc because the configured name-service backends are C modules. Darwin privilege classification uses issetugid because it is the platform's sticky secure-execution marker; Linux reads AT_SECURE from the kernel-published auxiliary vector. Windows is explicitly ordinary because it has no POSIX set-id executable transition."
         "Platform ABI declarations, transcribed structs, constants, and syscall conversions are private to nshedit-plat and covered by focused platform tests. A C-provided integer descriptor is scoped into BorrowedFd only by nshedit-abi's handle adapter; nshedit-plat never accepts the raw integer."
         "Public safe operations take BorrowedFd or typed platform values and return io::Result or a descriptive typed error. They never fabricate a 'static descriptor lifetime or flatten syscall failure into bool or Option."
         "The core receives safe typed results and never exposes termios, sigaction, passwd, ioctl, or raw ownership mechanics in its public API."
@@ -129,7 +129,14 @@ earlier deferral became obsolete once the dependency exposed a safe wrapper.
 Signals are different: libc expects to participate in their runtime and raw
 signal syscalls are not sound in a process already using libc. User lookup is
 likewise a libc boundary because NSS dynamically loads configured providers.
-Those two families remain the enumerated platform exception.
+Darwin's sticky secure-execution state is available only through
+`issetugid(2)`, so that one operation is the third platform family. Linux's
+corresponding `AT_SECURE` value is read from `/proc/self/auxv` with safe Rust.
+An absent or malformed marker denies environment access rather than falling
+back to credential equality. Windows does not have a set-id executable
+transition, so its result is explicitly ordinary rather than indeterminate;
+native callers may therefore use `TERM` or `MSYSCON` even though Windows editor
+construction selects its ANSI terminal profile directly.
 
 The platform boundary is selected by a proved target ABI, not by an
 operating-system family name. On Linux that proof currently exists only for

@@ -36,7 +36,7 @@ consequences {
     accepted (
         "No build script searches for or links an optional C library. Terminal capabilities and other former library facilities are implemented in Rust."
         "nshedit contains no foreign declarations or unsafe code. It returns typed errors and operates on safe platform and I/O interfaces."
-        "nshedit-plat owns the platform libc facilities for which no sound pure-Rust route exists: the signal family and NSS passwd family. It exposes safe operations to its consumers."
+        "nshedit-plat owns the platform libc facilities for which no sound pure-Rust route exists: the signal family, NSS passwd family, and Darwin issetugid privilege marker. Linux reads AT_SECURE through its safe auxiliary-vector path. The crate exposes only typed safe policy and operations to consumers."
         "nshedit-abi owns C interoperability facilities: the thread-local errno accessor; one cstdio module for fileno, position, buffered writes, formatting, flushing when the reference requires it, and the actual standard streams; borrowed environment identity; and C-locale collation."
         "stdin, stdout, and stderr are part of the existing cstdio exception, not a fourth category. The cstdio module uses target-specific functions, data symbols, or documented accessors behind cfg while presenting one internal interface."
         "The cstdio boundary declares vsnprintf for rl_message because an erased C varargs list can contain arbitrary printf argument types and locale-sensitive conversions; no Rust formatter can interpret it without changing the ABI contract."
@@ -66,9 +66,11 @@ interoperate with C without touching the platform libc already used by Rust's
 standard library. Most facilities have a sound Rust route and must take it.
 The remaining cases are narrow and dictated by an observable contract.
 
-Signals and NSS belong to the platform boundary because native Rust consumers
-need them too and rustix deliberately does not replace them. Errno, stdio,
-borrowed environment identity, and C-locale collation belong to the ABI
+Signals, NSS, and Darwin's `issetugid` privilege marker belong to the platform
+boundary because native Rust consumers need them too and no safe library route
+supplies those facilities. Linux needs no matching foreign declaration: its
+`AT_SECURE` marker is available through the kernel auxiliary vector. Errno,
+stdio, borrowed environment identity, and C-locale collation belong to the ABI
 because they exist only as C caller or process state. In particular, a
 `FILE *` is not its descriptor: buffering, position, write ordering, and the
 identity of the process standard streams reside in the C library's opaque

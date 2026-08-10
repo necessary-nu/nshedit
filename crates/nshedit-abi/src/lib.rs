@@ -409,6 +409,9 @@ mod cenv {
 
     #[cfg(target_os = "linux")]
     pub(crate) fn get(name: &CStr) -> *mut c_char {
+        if !nshedit_plat::EnvironmentTrust::for_process().permits_environment() {
+            return core::ptr::null_mut();
+        }
         // SAFETY: `name` is NUL-terminated and lives across the call. The
         // returned pointer is borrowed from the environment and is not freed.
         unsafe { secure_getenv(name.as_ptr()) }
@@ -423,6 +426,9 @@ mod cenv {
 
     #[cfg(target_os = "macos")]
     pub(crate) fn get(name: &CStr) -> *mut c_char {
+        if !nshedit_plat::EnvironmentTrust::for_process().permits_environment() {
+            return core::ptr::null_mut();
+        }
         // SAFETY: as the Linux arm; Darwin owns the returned environment
         // storage and the caller only borrows it.
         unsafe { getenv(name.as_ptr()) }

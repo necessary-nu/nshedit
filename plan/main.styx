@@ -3545,12 +3545,20 @@ children (
             {
                 id quality-secure-execution
                 title "Detect secure execution correctly on Linux and macOS"
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:17.587446192Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: environment trust currently relies on uid/gid comparisons and misses Linux AT_SECURE and Darwin issetugid semantics across nshedit-plat and ABI callers. Expose one typed platform query using the native secure-execution mechanisms, treat an indeterminate result as untrusted, and route terminfo discovery plus editor/external-command environment use through it."
+                    }
+
+                    {
+                        at 2026-08-10T14:15:00.842250137Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }

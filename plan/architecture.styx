@@ -84,6 +84,8 @@ elements (
             {at "2026-08-09T22:42:58Z", kind @modified, by "[dec:libedit:platform-targets]"}
             {at "2026-08-10T13:13:16Z", kind @modified, by "[dec:libedit:checked-delete-range]"}
             {at "2026-08-10T13:25:05Z", kind @modified, by "[dec:libedit:history-save-failure-reporting]"}
+            {at "2026-08-10T13:59:37Z", kind @modified, by "[dec:libedit:platform-layer]"}
+            {at "2026-08-10T13:59:37Z", kind @modified, by "[dec:libedit:no-c-ffi]"}
             {at "2026-08-10T14:01:59Z", kind @modified, by "[dec:libedit:secure-temporary-files]"}
         )
     }
@@ -138,7 +140,7 @@ elements (
     }
     {
         id [arch:libedit:platform]
-        name "Platform layer: syscalls through rustix, signals and passwd through libc"
+        name "Platform layer: safe OS access with narrowly enumerated libc"
         kind @boundary
         lifecycle @active
         owns ([spec:nshedit:req:platform.typed-boundary])
@@ -157,6 +159,8 @@ elements (
             {at "2026-08-09T09:19:15Z", kind @modified, by "[dec:libedit:platform-layer]"}
             {at "2026-08-09T12:49:10Z", kind @modified, by "[dec:libedit:rust-internal-boundary]"}
             {at "2026-08-09T22:42:58Z", kind @modified, by "[dec:libedit:platform-targets]"}
+            {at "2026-08-10T13:59:37Z", kind @modified, by "[dec:libedit:platform-layer]"}
+            {at "2026-08-10T13:59:37Z", kind @modified, by "[dec:libedit:no-c-ffi]"}
         )
     }
     {
