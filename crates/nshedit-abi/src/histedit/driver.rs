@@ -2,11 +2,11 @@
 
 use super::*;
 use std::ffi::{CString, OsString};
-use std::fs::OpenOptions;
 use std::io::{self, Read, Seek, Write};
 use std::os::unix::ffi::OsStringExt;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use nshedit::domain::{KeymapMode, RepeatCount};
 use nshedit::editor::effect::{
@@ -446,7 +446,7 @@ unsafe fn host_history(
 
 const MAX_HOST_TEXT: usize = 4096;
 const MAX_HISTORY_SCAN: usize = 4096;
-static NEXT_EDIT_FILE: AtomicU64 = AtomicU64::new(0);
+const EXTERNAL_EDIT_DIRECTORY: &str = "/tmp";
 
 unsafe fn read_host_text(
     el: *mut EditLine,
@@ -712,45 +712,49 @@ unsafe fn host_editor_command(
     )
 }
 
+fn external_edit_file_in(directory: &Path) -> io::Result<tempfile::NamedTempFile> {
+    tempfile::Builder::new()
+        .prefix("histedit.")
+        .permissions(std::fs::Permissions::from_mode(0o600))
+        .tempfile_in(directory)
+}
+
+fn edit_external_file(
+    directory: &Path,
+    editor: &std::ffi::OsStr,
+    line: &[u8],
+) -> io::Result<Vec<u8>> {
+    let mut temporary = external_edit_file_in(directory)?;
+    temporary.write_all(line)?;
+    temporary.write_all(b"\n")?;
+    temporary.flush()?;
+
+    Command::new(editor).arg(temporary.path()).status()?;
+
+    temporary.as_file_mut().rewind()?;
+    let mut edited = Vec::new();
+    temporary.as_file_mut().read_to_end(&mut edited)?;
+    if edited.last() == Some(&b'\n') {
+        edited.pop();
+    }
+    Ok(edited)
+}
+
 unsafe fn host_external_edit(
     el: *mut EditLine,
     request: &ExternalEditEffect,
 ) -> Result<Text, HostFailure> {
-    let serial = NEXT_EDIT_FILE.fetch_add(1, Ordering::Relaxed);
-    let mut path = std::env::temp_dir();
-    path.push(format!("nshedit-{}-{serial}.tmp", std::process::id()));
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .map_err(|error| HostFailure::Failed(error.to_string().into_boxed_str()))?;
-    let result = (|| {
-        file.write_all(&terminal_bytes(request.line.as_units()))
-            .and_then(|()| file.write_all(b"\n"))
-            .and_then(|()| file.flush())
-            .map_err(|error| HostFailure::Failed(error.to_string().into_boxed_str()))?;
-        let editor = unsafe { environment_value(el, "EDITOR") }
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| b"vi".to_vec());
-        let executable = OsString::from_vec(editor);
-        Command::new(executable)
-            .arg(&path)
-            .status()
-            .map_err(|error| HostFailure::Failed(error.to_string().into_boxed_str()))?;
-        file.rewind()
-            .map_err(|error| HostFailure::Failed(error.to_string().into_boxed_str()))?;
-        let mut edited = Vec::new();
-        file.read_to_end(&mut edited)
-            .map_err(|error| HostFailure::Failed(error.to_string().into_boxed_str()))?;
-        if edited.last() == Some(&b'\n') {
-            edited.pop();
-        }
-        Ok(text_from_bytes(&edited))
-    })();
-    drop(file);
-    let _cleanup = std::fs::remove_file(path);
-    result
+    let editor = unsafe { environment_value(el, "EDITOR") }
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| b"vi".to_vec());
+    let executable = OsString::from_vec(editor);
+    edit_external_file(
+        Path::new(EXTERNAL_EDIT_DIRECTORY),
+        executable.as_os_str(),
+        &terminal_bytes(request.line.as_units()),
+    )
+    .map(|edited| text_from_bytes(&edited))
+    .map_err(|error| HostFailure::Failed(error.to_string().into_boxed_str()))
 }
 
 unsafe fn host_command(
@@ -978,6 +982,37 @@ pub(super) unsafe fn read_unedited(el: *mut EditLine) -> Result<bool, ()> {
 
 #[cfg(test)]
 mod command_effect_tests;
+
+#[cfg(test)]
+mod temporary_file_tests {
+    use super::*;
+
+    // [spec:libedit:sem:vi.vi-histedit-fn/test]
+    #[test]
+    fn external_edit_temp_private_and_cleaned() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let temporary = external_edit_file_in(directory.path()).expect("external-edit file");
+        let path = temporary.path().to_path_buf();
+
+        assert_eq!(
+            temporary.as_file().metadata().unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(path.is_file());
+        drop(temporary);
+        assert!(!path.exists());
+
+        let missing_editor = directory.path().join("missing-editor");
+        let error = edit_external_file(directory.path(), missing_editor.as_os_str(), b"secret")
+            .expect_err("spawning a missing editor must fail");
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert_eq!(
+            std::fs::read_dir(directory.path()).unwrap().count(),
+            0,
+            "a post-creation failure must remove the editor-visible file"
+        );
+    }
+}
 
 #[cfg(test)]
 mod read_tests {

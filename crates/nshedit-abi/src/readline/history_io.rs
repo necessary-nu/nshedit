@@ -1,35 +1,26 @@
 use super::*;
 
-/// C: `static const char _history_tmp_template[] = "/tmp/.historyXXXXXX";`
-const HISTORY_TMP_TEMPLATE: &str = "/tmp/.historyXXXXXX";
+const HISTORY_SCRATCH_DIRECTORY: &str = "/tmp";
 
-/// `mkstemp(template)` — a fresh file in `/tmp`, created exclusively.
+/// Create the truncation scratch file privately, then remove its name before
+/// any history bytes are copied into it.
 ///
-/// The scratch file is always in `/tmp` regardless of where the history file
-/// lives, so private history contents transit a world-writable directory and
-/// the operation fails if `/tmp` is not writable. That is observable, so it
-/// is preserved rather than quietly moved next to the target
-/// (ERR-readline-14).
-fn mkstemp() -> std::io::Result<(std::fs::File, std::path::PathBuf)> {
-    let stem = HISTORY_TMP_TEMPLATE.trim_end_matches('X');
-    let mut seed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.subsec_nanos() as u64 ^ d.as_secs());
-    let mut last = std::io::Error::from(std::io::ErrorKind::AlreadyExists);
-    for _ in 0..64 {
-        seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-        let name = format!("{stem}{:06}", seed % 1_000_000);
-        match std::fs::File::options()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&name)
-        {
-            Ok(f) => return Ok((f, std::path::PathBuf::from(name))),
-            Err(e) => last = e,
-        }
-    }
-    Err(last)
+/// `NamedTempFile` supplies the exclusive random-name creation and the 0600
+/// mode. Converting it into a `File` immediately unlinks that name, so cleanup
+/// is owned by the descriptor even if unwinding or process termination skips
+/// Rust destructors.
+fn history_scratch_file_in(directory: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::PermissionsExt;
+
+    tempfile::Builder::new()
+        .prefix(".history")
+        .permissions(std::fs::Permissions::from_mode(0o600))
+        .tempfile_in(directory)
+        .map(tempfile::NamedTempFile::into_file)
+}
+
+fn history_scratch_file() -> std::io::Result<std::fs::File> {
+    history_scratch_file_in(std::path::Path::new(HISTORY_SCRATCH_DIRECTORY))
 }
 
 /// The C's `return errno;` after a failing stdio call.
@@ -71,8 +62,8 @@ unsafe fn history_file_path(filename: *const c_char) -> Result<std::path::PathBu
     Ok(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(name)))
 }
 
-// [spec:libedit:def:readline.history-truncate-file-fn]
-// [spec:libedit:sem:readline.history-truncate-file-fn]
+// [spec:libedit:def:readline.history-truncate-file-fn+1]
+// [spec:libedit:sem:readline.history-truncate-file-fn+1]
 #[unsafe(no_mangle)]
 #[doc = include_str!("../ffi_safety.md")]
 pub unsafe extern "C" fn history_truncate_file(filename: *const c_char, nlines: c_int) -> c_int {
@@ -85,18 +76,12 @@ pub unsafe extern "C" fn history_truncate_file(filename: *const c_char, nlines: 
         Ok(f) => f,
         Err(e) => return errno_of(&e),
     };
-    let (mut tp, template) = match mkstemp() {
-        Ok(t) => t,
+    let mut tp = match history_scratch_file() {
+        Ok(file) => file,
         Err(e) => return errno_of(&e),
     };
 
-    // The whole operation, with the temporary always unlinked on the way out —
-    // the C's `out3`/`out2`/`out1` chain, which the success path falls through
-    // as well.
-    let ret = truncate_through_temp(&mut fp, &mut tp, nlines);
-    drop(tp);
-    let _ = std::fs::remove_file(&template);
-    ret
+    truncate_through_temp(&mut fp, &mut tp, nlines)
 }
 
 /// The three phases of [`history_truncate_file`], with the file handles
@@ -320,5 +305,34 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
             return if e != 0 { e } else { EINVAL };
         }
         0
+    }
+}
+
+#[cfg(test)]
+mod temporary_file_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    // [spec:libedit:sem:readline.history-truncate-file-fn+1/test]
+    #[test]
+    fn history_scratch_private_and_anonymous() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let mut scratch = history_scratch_file_in(directory.path()).expect("history scratch file");
+
+        assert_eq!(
+            scratch.metadata().unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::read_dir(directory.path()).unwrap().count(),
+            0,
+            "the scratch name must be gone before history bytes are written"
+        );
+
+        scratch.write_all(b"private history").unwrap();
+        scratch.rewind().unwrap();
+        let mut round_trip = Vec::new();
+        scratch.read_to_end(&mut round_trip).unwrap();
+        assert_eq!(round_trip, b"private history");
     }
 }

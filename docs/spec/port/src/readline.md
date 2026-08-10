@@ -933,22 +933,23 @@
 >
 > Return value: total bytes, or -1 if the initial H_CURR failed.
 
-> [spec:libedit:def:readline.history-truncate-file-fn]
+> [spec:libedit:def:readline.history-truncate-file-fn+1]
 > int history_truncate_file (const char *filename, int nlines)
 
-> [spec:libedit:sem:readline.history-truncate-file-fn]
+> [spec:libedit:sem:readline.history-truncate-file-fn+1]
 > Truncates a history file in place so that only its last `nlines` lines
 > remain, using a temporary file as scratch.
 >
 > Setup: if `filename` is NULL, substitutes `_default_history_file()`; if
-> that is also NULL returns `errno`. Opens the target with `fopen(filename,
-> "r+")`; on failure returns `errno`. Copies the template
-> `"/tmp/.historyXXXXXX"` into a stack buffer, `mkstemp`s it, and `fdopen`s
-> the descriptor `"r+"`. Failures return `errno` after the appropriate
-> cleanup. The temporary file is always `unlink`ed before return, on every
-> path after `mkstemp` succeeded — including the success path, which falls
-> through the same three labels (`fclose(tp)`, `unlink(template)`,
-> `fclose(fp)`).
+> that is also NULL returns `errno`. Opens the target read/write; on failure
+> returns `errno`. Creates a scratch descriptor in the hardcoded `/tmp`
+> directory through exclusive unpredictable-name creation with mode 0600,
+> then unlinks the scratch name before copying any history bytes. Failures
+> return `errno` after closing every acquired descriptor. The scratch file is
+> therefore owned only by its open descriptor and the operating system removes
+> it when that descriptor closes, including when normal Rust cleanup cannot
+> run. This anonymous lifetime is the C-visible security correction authorized
+> by [dec:libedit:secure-temporary-files].
 >
 > Phase 1 — copy the whole file to the temporary. Reads 4096-byte blocks
 > with `fread(buf, 4096, 1, fp)` and writes each with `fwrite(buf, 4096, 1,
@@ -984,16 +985,16 @@
 > Flushes `fp`, and if `ftello(fp)` is positive truncates the file to that
 > length with `ftruncate`.
 >
-> Cleanup and return: closes the temporary, unlinks it, closes the target,
-> returns `ret`. Return convention: 0 on success, a positive errno value (or
-> `EAGAIN` for an internal inconsistency) on failure — never -1.
+> Cleanup and return: closes the anonymous scratch and the target, then returns
+> `ret`. Return convention: 0 on success, a positive errno value (or `EAGAIN`
+> for an internal inconsistency) on failure — never -1.
 >
-> Notes the port must preserve or consciously change: the scratch file is
-> always created in `/tmp` regardless of where the history file lives, so
-> private history contents transit a world-writable directory and the
-> operation fails if `/tmp` is not writable; and the rewrite is not atomic —
-> a crash between the seek-to-0 and the `ftruncate` leaves a corrupted
-> history file.
+> The `/tmp` location and its resulting failure when `/tmp` is unavailable are
+> preserved, but private history contents never occupy a name in that
+> world-writable directory. The target rewrite remains deliberately non-atomic:
+> a crash between the seek-to-0 and the truncation can leave a corrupted
+> history file. Named complete-history saves have a distinct atomic replacement
+> contract in [spec:libedit:sem:history.history-save-fn].
 
 > [spec:libedit:def:readline.next-history-fn]
 > HIST_ENTRY * next_history(void)

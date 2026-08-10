@@ -3614,6 +3614,9 @@ children (
             {
                 id quality-secure-temp-files
                 title "Create history and external-edit temporary files securely"
+                implements {
+                    target-impl ([spec:libedit:sem:readline.history-truncate-file-fn+1])
+                }
                 log (
                     {
                         at 2026-08-10T12:59:17.786432105Z

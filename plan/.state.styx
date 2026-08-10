@@ -637,4 +637,9 @@ impl_evidence (
     ), rule_versions_seen (
         {id platform.windows-console, version 0}
     )}
+    {id quality-secure-temp-files, covered_rules (
+        readline.history-truncate-file-fn
+    ), covered_claims (
+        {impl_name target-impl, rule readline.history-truncate-file-fn}
+    )}
 )

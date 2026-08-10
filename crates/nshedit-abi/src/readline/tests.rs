@@ -795,7 +795,7 @@ impl Drop for Piped {
 /// Readline's history file entry points take filesystem bytes, not UTF-8.
 /// A non-UTF-8 name must identify the same directory entry when it is opened
 /// for truncation and later for append.
-// [spec:libedit:sem:readline.history-truncate-file-fn/test]
+// [spec:libedit:sem:readline.history-truncate-file-fn+1/test]
 // [spec:libedit:sem:readline.append-history-fn+1/test]
 #[test]
 fn history_paths_preserve_non_utf8_bytes() {
