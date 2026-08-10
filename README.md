@@ -15,8 +15,8 @@ implementation in the repository.
 | Target | Rust API | C compatibility |
 | --- | --- | --- |
 | Linux | Supported and conformance-gated | ELF shared/static library, generated headers, `libedit` compatibility names, and end-to-end loader tests |
-| macOS (`x86_64` and Apple silicon) | Cross-compiles | Darwin layouts and runtime symbols are implemented; native Mach-O install, link, and runtime acceptance is still pending |
-| Windows | Planned | The native Rust surface is planned; a libedit C ABI is not |
+| macOS (`x86_64` and Apple silicon) | Supported and native-acceptance-gated | Mach-O shared/static library, generated headers, `libedit` compatibility names, and native install, link, and runtime tests |
+| Windows | Supported and native-acceptance-gated | Not provided; the libedit C ABI remains POSIX-only |
 
 The exported Readline functions are **libedit's Readline compatibility
 surface**, not a complete implementation of GNU Readline. In particular,
@@ -66,19 +66,21 @@ Build the shared and static ABI artifacts with:
 cargo build -p nshedit-abi --release
 ```
 
-On Linux this produces `target/release/libnshedit.so` and
+On Linux this produces `target/release/libnshedit.so`; on macOS it produces
+`target/release/libnshedit.dylib`. Both platforms also produce
 `target/release/libnshedit.a`. The committed, generated headers are:
 
 - [`crates/nshedit-abi/include/histedit.h`](crates/nshedit-abi/include/histedit.h)
 - [`crates/nshedit-abi/include/editline/readline.h`](crates/nshedit-abi/include/editline/readline.h)
 
-The committed ELF export contract is
+The committed C export contract, shared by ELF and Mach-O builds, is
 [`crates/nshedit-abi/exports.txt`](crates/nshedit-abi/exports.txt).
 
-The Linux installer lays out the versioned library, headers, `pkg-config`
-metadata, and—unless `--no-compat` is supplied—the `libedit.so`,
-`libedit.so.0`, and `libedit.so.2` compatibility names. Preview a staged
-installation before writing it:
+The installer lays out the platform's versioned library, headers, `pkg-config`
+metadata, and libedit compatibility names. Linux receives `libedit.so`,
+`libedit.so.0`, and `libedit.so.2`; macOS receives `libedit.dylib` and
+`libedit.3.dylib`. Pass `--no-compat` to install only the `libnshedit` names.
+Preview a staged installation before writing it:
 
 ```sh
 ./packaging/install.sh \
@@ -142,8 +144,24 @@ for both supported Darwin architectures with:
 ./ci/darwin-cross-check.sh
 ```
 
-This proves the Darwin-gated code compiles; it does not replace the pending
-native macOS acceptance run.
+Native macOS acceptance builds and tests the workspace, checks the Mach-O
+export set and install name, stages both installer modes, and compiles, links,
+and runs the unchanged C consumer through `-ledit`:
+
+```sh
+./ci/macos-acceptance.sh
+```
+
+CI runs that script on both Apple silicon and Intel macOS hosts. Windows CI
+likewise exercises the native editor against a real console, ConPTY, and
+redirected streams with:
+
+```sh
+./ci/windows-acceptance.sh
+```
+
+The Windows script requires a Windows host and `NSHEDIT_REPL_EXE` pointing to
+the built `repl.exe`, as configured by the workflow.
 
 ## Compatibility policy
 
