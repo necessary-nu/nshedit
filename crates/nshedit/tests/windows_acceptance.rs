@@ -13,7 +13,7 @@ use std::process::{Command, Stdio};
 use std::ptr::{null, null_mut};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nshedit::domain::{
     Action, Binding, Direction, EditTarget, EditorConfig, EffectCommand, KeySequence, KeymapMode,
@@ -517,10 +517,13 @@ impl Write for FailingWriter {
 }
 
 fn conpty_editor_session() -> AcceptanceResult {
-    let mut input =
-        b"ac\x1b[Db\x1b[HX\x1b[F\x08c\x1b[D\x1b[3~\x1b[F\xf0\x9f\x98\x80\rhe\t\r\x1b[A\r".to_vec();
-    input.extend(conpty_control_key(VK_C, '\u{3}'));
-    let output = run_in_conpty(&input, Some(COORD { X: 100, Y: 30 }))?;
+    let input = b"ac\x1b[Db\x1b[HX\x1b[F\x08c\x1b[D\x1b[3~\x1b[F\xf0\x9f\x98\x80\rhe\t\r\x1b[Ax\r";
+    let interrupt = conpty_control_key(VK_C, '\u{3}');
+    let output = run_in_conpty(
+        input,
+        Some(COORD { X: 100, Y: 30 }),
+        Some((b"accepted: help x", &interrupt)),
+    )?;
     let output = String::from_utf8_lossy(&output);
     assert!(
         output.contains("accepted: Xab😀"),
@@ -534,7 +537,7 @@ fn conpty_editor_session() -> AcceptanceResult {
 }
 
 fn conpty_end_of_input() -> AcceptanceResult {
-    let output = run_in_conpty(&conpty_control_key(VK_Z, '\u{1a}'), None)?;
+    let output = run_in_conpty(&conpty_control_key(VK_Z, '\u{1a}'), None, None)?;
     assert!(String::from_utf8_lossy(&output).contains("nshedit> "));
     Ok(())
 }
@@ -576,7 +579,11 @@ fn redirected_stream_session() -> AcceptanceResult {
     Ok(())
 }
 
-fn run_in_conpty(input: &[u8], resize: Option<COORD>) -> AcceptanceResult<Vec<u8>> {
+fn run_in_conpty(
+    input: &[u8],
+    resize: Option<COORD>,
+    follow_up: Option<(&[u8], &[u8])>,
+) -> AcceptanceResult<Vec<u8>> {
     let (pseudo_input, host_input) = pipe()?;
     let (host_output, pseudo_output) = pipe()?;
     let pseudo_console = PseudoConsole::new(COORD { X: 80, Y: 24 }, &pseudo_input, &pseudo_output)?;
@@ -584,43 +591,38 @@ fn run_in_conpty(input: &[u8], resize: Option<COORD>) -> AcceptanceResult<Vec<u8
     let process = pseudo_console.spawn(&repl_executable()?)?;
     drop(pseudo_input);
     drop(pseudo_output);
-    let (prompt_sender, prompt_receiver) = mpsc::channel();
+    let (output_sender, output_receiver) = mpsc::channel();
     let output_reader = thread::spawn(move || {
         let mut output = Vec::new();
         let mut output_file = File::from(host_output);
         let mut buffer = [0; 4096];
-        let mut prompt_seen = false;
         loop {
             let read = output_file.read(&mut buffer)?;
             if read == 0 {
                 break;
             }
             output.extend_from_slice(&buffer[..read]);
-            if !prompt_seen
-                && output
-                    .windows(b"nshedit> ".len())
-                    .any(|window| window == b"nshedit> ")
-            {
-                prompt_seen = true;
-                let _ = prompt_sender.send(());
-            }
+            let _ = output_sender.send(buffer[..read].to_vec());
         }
         Ok::<_, io::Error>(output)
     });
-    prompt_receiver
-        .recv_timeout(Duration::from_millis(u64::from(CHILD_TIMEOUT_MS)))
-        .map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!("ConPTY child did not render its prompt: {error}"),
-            )
-        })?;
+    let mut observed = Vec::new();
+    wait_for_conpty_output(&output_receiver, &mut observed, |output| {
+        contains_bytes(output, b"nshedit> ")
+    })?;
     let mut input_file = File::from(host_input);
     if let Some(size) = resize {
         pseudo_console.resize(size)?;
     }
     input_file.write_all(input)?;
     input_file.flush()?;
+    if let Some((after, bytes)) = follow_up {
+        wait_for_conpty_output(&output_receiver, &mut observed, |output| {
+            contains_bytes_after(output, b"nshedit> ", after)
+        })?;
+        input_file.write_all(bytes)?;
+        input_file.flush()?;
+    }
     drop(input_file);
 
     let exit_code = process.wait(CHILD_TIMEOUT_MS)?;
@@ -633,6 +635,49 @@ fn run_in_conpty(input: &[u8], resize: Option<COORD>) -> AcceptanceResult<Vec<u8
         return Err(format!("ConPTY child exited with status {exit_code}: {output:?}").into());
     }
     Ok(output)
+}
+
+fn wait_for_conpty_output(
+    receiver: &mpsc::Receiver<Vec<u8>>,
+    observed: &mut Vec<u8>,
+    ready: impl Fn(&[u8]) -> bool,
+) -> io::Result<()> {
+    let deadline = Instant::now() + Duration::from_millis(u64::from(CHILD_TIMEOUT_MS));
+    while !ready(observed) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "ConPTY child did not produce the expected output: {:?}",
+                    String::from_utf8_lossy(observed)
+                ),
+            ));
+        }
+        observed.extend(receiver.recv_timeout(remaining).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("ConPTY output ended before the expected marker: {error}"),
+            )
+        })?);
+    }
+    Ok(())
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+fn contains_bytes_after(haystack: &[u8], needle: &[u8], anchor: &[u8]) -> bool {
+    let Some(anchor_start) = haystack
+        .windows(anchor.len())
+        .position(|window| window == anchor)
+    else {
+        return false;
+    };
+    contains_bytes(&haystack[anchor_start + anchor.len()..], needle)
 }
 
 fn pipe() -> io::Result<(OwnedHandle, OwnedHandle)> {
