@@ -3670,12 +3670,27 @@ children (
             {
                 id quality-history-append-contract
                 title "Make native history append atomicity claims truthful"
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:24.288009549Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: crates/nshedit/src/history_file.rs invokes generic Write::write_all while claiming regular-file record atomicity from PIPE_BUF, which does not apply. Replace the generic claim with a concrete append protocol that serializes competing writers and defines crash boundaries for a framed record, or narrow the public contract to guarantees actually provided; align implementation, API docs, and tests."
+                    }
+
+                    {
+                        at 2026-08-10T13:11:47.799711251Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Keep the public generic Write surface and narrow its guarantee instead of inventing file ownership behind it. The native-history decision leaves persistence and durability as host integrations; an arbitrary Write cannot select O_APPEND, coordinate processes, repair a tail, lock a regular file, or sync storage. The API now promises only complete frame construction before I/O and reports that write errors may leave a prefix. Callers own serialized header creation, tail repair, append mode, and durability. The focused failure test drives append_record through a genuinely partial writer and verifies that complete preceding records survive with Error::Truncated."
+                    }
+
+                    {
+                        at 2026-08-10T13:12:09.573967612Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

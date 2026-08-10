@@ -49,9 +49,25 @@
 //! which is why `bash` ships `histappend` and `zsh` ships `HIST_FCNTL_LOCK`.
 //! With a delimiter you scan forward to the next `0x00` and lose one record.
 //!
-//! It also makes appending trivial, which matters when several shells share a
-//! file: one `write(2)` of one frame under `PIPE_BUF` is atomic on the
-//! platforms we target, so records cannot interleave.
+//! # Appending and failure boundaries
+//!
+//! Framing limits damage; it does not make regular-file writes atomic.
+//! `append_record` accepts an arbitrary `Write`, so it cannot select
+//! append mode, lock a file, flush it, or make it durable. In particular,
+//! `PIPE_BUF` applies to pipes, not regular files, and `Write::write_all`
+//! may use more than one underlying write. Callers sharing a file between
+//! processes must therefore provide one serialization protocol covering
+//! header creation, tail repair, and every append. The file must also be
+//! opened in append mode, and durability requires the caller to flush and
+//! synchronise its file according to its own policy.
+//!
+//! `append_record` constructs the complete encoded frame before doing I/O,
+//! but an I/O error may still leave a prefix of that frame in the writer. If
+//! the file ends there, `read_nshedit` returns every complete earlier record
+//! together with `Error::Truncated`. The delimiter lets a reader
+//! resynchronise after damaged data once a later complete delimiter exists;
+//! callers should normally repair or truncate an incomplete tail before they
+//! resume appending.
 //!
 //! # Layout
 //!
@@ -264,16 +280,27 @@ fn unvis_line(line: &[u8]) -> Option<Vec<u8>> {
     bsd::vis::decode(line, bsd::vis::Flags::NONE).ok()
 }
 
-/// Writes the header frame. Call once, when creating the file; appending to
-/// an existing one must not repeat it.
+/// Writes the header frame at the writer's current position.
+///
+/// Call once when creating an empty file; appending to an existing one must
+/// not repeat it. The caller owns exclusive creation and recovery: an I/O
+/// error may leave a partial header, and success does not imply that the bytes
+/// reached stable storage. See the module-level "Appending and failure
+/// boundaries" contract.
 pub fn write_header<W: Write>(writer: &mut W) -> io::Result<()> {
     let mut head = MAGIC.to_vec();
     head.push(VERSION);
     write_frame(writer, &head)
 }
 
-/// Appends one record. Emits a single `write_all`, so that under `O_APPEND`
-/// two shells writing at once interleave whole records rather than bytes.
+/// Writes one complete encoded record at the writer's current position.
+///
+/// The record is serialized before the writer is touched. An I/O error can
+/// nevertheless leave a frame prefix because [`Write::write_all`] may perform
+/// several writes. This function provides neither append mode nor locking,
+/// flushing, or durability; callers that share a regular file must arrange
+/// those guarantees themselves. See the module-level "Appending and failure
+/// boundaries" contract.
 pub fn append_record<W: Write>(writer: &mut W, record: &Record) -> io::Result<()> {
     let body = postcard::to_stdvec(&(record.text.as_slice(), record.blob.as_slice()))
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -488,18 +515,18 @@ mod test {
         }
     }
 
-    /// A shell killed mid-write. The point of the format is that this costs
-    /// one entry, not the file.
+    /// A failed append can leave a prefix in any `Write`. The framing contract
+    /// keeps every preceding entry readable and reports the incomplete tail.
     #[test]
-    fn a_truncated_tail_keeps_everything_before_it() {
-        let whole = file(&[
-            Record::new(&b"first"[..]),
-            Record::new(&b"second"[..]),
-            Record::new(&b"third"[..]),
-        ]);
-        // Cut inside the last record.
-        let cut = whole.len() - 3;
-        let (back, fault) = read_nshedit(&whole[..cut]);
+    fn failed_append_preserves_complete_prefix() {
+        let mut bytes = file(&[Record::new(&b"first"[..]), Record::new(&b"second"[..])]);
+        let mut partial = [0; 4];
+        let error = append_record(&mut &mut partial[..], &Record::new(&b"third"[..]))
+            .expect_err("the fixed-size writer cannot hold the frame");
+        assert_eq!(error.kind(), io::ErrorKind::WriteZero);
+        bytes.extend_from_slice(&partial);
+
+        let (back, fault) = read_nshedit(&bytes);
         assert_eq!(fault, Some(Error::Truncated));
         assert_eq!(back.len(), 2);
         assert_eq!(back[0].text, b"first");

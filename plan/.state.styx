@@ -254,6 +254,7 @@ assertions (
     {id release-metadata-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-09T22:59:49.047931183Z}
     {id greenfield-addressed-render-diff, kind @complete, author "brendan@necessary.nu", at 2026-08-09T23:15:33.938291651Z}
     {id windows-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-09T23:38:06.505008059Z}
+    {id quality-history-append-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-10T13:12:09.573967612Z}
 )
 
 impl_evidence (
