@@ -33,7 +33,7 @@ dependency.
 
 ## Quick start
 
-With a current Rust toolchain installed:
+With a current stable Rust toolchain installed:
 
 ```sh
 git clone https://github.com/necessary-nu/nshedit.git
@@ -41,8 +41,13 @@ cd nshedit
 cargo run -p nshedit --example repl
 ```
 
-Only `nshedit-abi` declares an MSRV: Rust 1.99, for its C-variadic exports.
-The native Rust crates do not pin a minimum compiler version.
+The repository deliberately has no toolchain override. The native crates
+(`nshedit`, `nshedit-plat`, and `nshterm`) build on current stable Rust and do
+not declare an MSRV. Only `nshedit-abi` declares an MSRV: Rust 1.99, for its
+C-variadic exports. On a host whose default stable toolchain is older than
+1.99, use an installed current nightly explicitly for commands that select the
+ABI crate or the whole workspace. Once the selected stable compiler is 1.99 or
+newer, the corresponding unqualified `cargo` commands work as well.
 
 The example is a complete safe Rust consumer with editing, history,
 completion, terminal resize handling, and explicit terminal restoration. See
@@ -69,7 +74,7 @@ The native API is intentionally host-driven:
 Build the shared and static ABI artifacts with:
 
 ```sh
-cargo build -p nshedit-abi --release
+cargo +nightly build -p nshedit-abi --release
 ```
 
 On `x86_64-unknown-linux-gnu` this produces
@@ -120,13 +125,22 @@ the Rust crates and exercised through the generated C interface.
 
 ## Testing
 
-The ordinary Rust quality gates are:
+The native crates' ordinary stable quality gates are:
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo build --workspace
-cargo test --workspace
+cargo clippy -p nshedit -p nshedit-plat -p nshterm --all-targets -- -D warnings
+cargo build -p nshedit -p nshedit-plat -p nshterm
+cargo test -p nshedit -p nshedit-plat -p nshterm --all-targets
+```
+
+The full workspace adds `nshedit-abi`. While the default stable toolchain is
+older than its Rust 1.99 MSRV, run those gates with an installed nightly:
+
+```sh
+cargo +nightly clippy --workspace --all-targets -- -D warnings
+cargo +nightly build --workspace
+cargo +nightly test --workspace
 ```
 
 The `x86_64-unknown-linux-gnu` ABI tests run by default. They compare the
@@ -138,18 +152,21 @@ layout.
 For the same checks with a stage-by-stage report:
 
 ```sh
-./conformance/run.sh
+rustup run nightly ./conformance/run.sh
 ```
 
 The full conformance harness requires an `x86_64-unknown-linux-gnu` host. It
 expects a C compiler, `pkg-config`, standard ELF/binutils tools, and installed
-terminfo entries. It does not require Autotools or a system libedit.
+terminfo entries. It does not require Autotools or a system libedit. The
+`rustup run` wrapper selects nightly for the unqualified workspace Cargo
+command inside the script; it is unnecessary when the default compiler is
+Rust 1.99 or newer.
 
 From a Linux development host, compile every workspace crate and test target
 for both supported Darwin architectures with:
 
 ```sh
-./ci/darwin-cross-check.sh
+rustup run nightly ./ci/darwin-cross-check.sh
 ```
 
 Native macOS acceptance builds and tests the workspace, checks the Mach-O
@@ -157,7 +174,7 @@ export set and install name, stages both installer modes, and compiles, links,
 and runs the unchanged C consumer through `-ledit`:
 
 ```sh
-./ci/macos-acceptance.sh
+rustup run nightly ./ci/macos-acceptance.sh
 ```
 
 CI runs that script on both Apple silicon and Intel macOS hosts. Windows CI

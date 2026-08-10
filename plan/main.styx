@@ -3877,12 +3877,20 @@ children (
                 id quality-toolchain-usage-docs
                 title "Document stable and nightly Cargo entry points accurately"
                 kind @docs
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:24.523456331Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: unqualified workspace and ABI Cargo commands imply stable support even though the variadic ABI currently needs nightly, while native crates build on stable. Document stable native commands and explicit +nightly ABI/workspace commands without adding a nightly pin, and keep MSRV metadata scoped to the ABI crate only."
+                    }
+
+                    {
+                        at 2026-08-10T14:59:50.694772037Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
