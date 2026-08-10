@@ -22,9 +22,9 @@ pub enum RenderError {
     /// Typed editor state failed revalidation while building the frame.
     InvalidState(Error),
     /// The selected terminal cannot position the requested multiline frame.
-    CursorAddressUnavailable { rows: usize },
-    /// A terminal coordinate cannot be represented by terminfo parameters.
-    CoordinateTooLarge { row: usize, column: usize },
+    RegionAddressUnavailable { rows: usize },
+    /// A failed region setup left no trustworthy physical origin.
+    RegionOriginUnavailable,
     /// A parsed terminal capability contains an invalid expression.
     CapabilityExpansion {
         capability: CapabilityKind,
@@ -39,13 +39,12 @@ impl fmt::Display for RenderError {
         match self {
             Self::DisplayNotConfigured => formatter.write_str("display is not configured"),
             Self::InvalidState(error) => write!(formatter, "invalid render state: {error}"),
-            Self::CursorAddressUnavailable { rows } => write!(
+            Self::RegionAddressUnavailable { rows } => write!(
                 formatter,
                 "terminal cannot position a frame using {rows} rows"
             ),
-            Self::CoordinateTooLarge { row, column } => write!(
-                formatter,
-                "terminal coordinate ({row}, {column}) exceeds terminfo parameters"
+            Self::RegionOriginUnavailable => formatter.write_str(
+                "terminal region origin is unavailable; reconfigure the display before rendering",
             ),
             Self::CapabilityExpansion { capability, source } => write!(
                 formatter,
@@ -64,8 +63,8 @@ impl std::error::Error for RenderError {
             Self::CapabilityExpansion { source, .. } => Some(source),
             Self::Io(error) => Some(error),
             Self::DisplayNotConfigured
-            | Self::CursorAddressUnavailable { .. }
-            | Self::CoordinateTooLarge { .. } => None,
+            | Self::RegionAddressUnavailable { .. }
+            | Self::RegionOriginUnavailable => None,
         }
     }
 }
@@ -125,8 +124,34 @@ struct Configured {
     cursor: ScreenPosition,
     rows_used: usize,
     variables: Variables,
+    region: PhysicalRegion,
     redraw: bool,
     damaged: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum RegionOrigin {
+    #[default]
+    Unanchored,
+    Saved,
+    Lost,
+}
+
+/// Physical rows owned by the editor from its saved current-line anchor.
+///
+/// `extent` is a high-water mark: shrinking a frame or the reported terminal
+/// height does not release rows that may still contain editor output.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct PhysicalRegion {
+    origin: RegionOrigin,
+    extent: usize,
+}
+
+struct RegionPlan {
+    bytes: Vec<u8>,
+    variables: Variables,
+    region: PhysicalRegion,
+    establishes_origin: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -134,24 +159,54 @@ struct Committed<'a> {
     screen: &'a Screen,
     rows: &'a [layout::Row],
     cursor: ScreenPosition,
+    region: PhysicalRegion,
     redraw: bool,
     damaged: bool,
 }
 
 impl State {
     pub(super) fn configure(&mut self, profile: TerminalProfile, size: ScreenSize) {
-        self.configured = Some(Configured {
-            profile,
-            screen: Screen::new(size),
-            rows: Vec::new(),
-            cursor: size
+        let Some(configured) = &mut self.configured else {
+            self.configured = Some(Configured {
+                profile,
+                screen: Screen::new(size),
+                rows: Vec::new(),
+                cursor: size
+                    .position(0, 0)
+                    .expect("a validated screen has an origin"),
+                rows_used: 0,
+                variables: Variables::new(),
+                region: PhysicalRegion::default(),
+                redraw: false,
+                damaged: false,
+            });
+            return;
+        };
+
+        configured.profile = profile;
+        configured.variables = Variables::new();
+        if configured.region.origin == RegionOrigin::Lost {
+            configured.region = PhysicalRegion::default();
+            configured.screen = Screen::new(size);
+            configured.rows.clear();
+            configured.cursor = size
                 .position(0, 0)
-                .expect("a validated screen has an origin"),
-            rows_used: 0,
-            variables: Variables::new(),
-            redraw: false,
-            damaged: false,
-        });
+                .expect("a validated screen has an origin");
+            configured.rows_used = 0;
+            configured.redraw = false;
+            configured.damaged = false;
+            return;
+        }
+        if configured.screen.size() != size {
+            configured.screen = Screen::new(size);
+            configured.rows.clear();
+            configured.cursor = size
+                .position(0, 0)
+                .expect("a validated screen has an origin");
+            configured.rows_used = 0;
+        }
+        configured.redraw = false;
+        configured.damaged = true;
     }
 
     pub(super) fn resize(&mut self, size: ScreenSize) -> Result<(), RenderError> {
@@ -212,25 +267,35 @@ impl State {
             .as_ref()
             .ok_or(RenderError::DisplayNotConfigured)?;
         let frame = layout::build(configured.screen.size(), left, right, line, cursor)?;
-        let mut variables = configured.variables.clone();
+        let mut plan = Self::plan_region(configured, frame.rows_used())?;
+        let setup_cursor = plan.establishes_origin.then(|| {
+            configured
+                .screen
+                .size()
+                .position(0, 0)
+                .expect("a configured screen has an origin")
+        });
         let committed = Committed {
             screen: &configured.screen,
             rows: &configured.rows,
-            cursor: configured.cursor,
-            redraw: configured.redraw,
-            damaged: configured.damaged,
+            cursor: setup_cursor.unwrap_or(configured.cursor),
+            region: plan.region,
+            redraw: configured.redraw && !plan.establishes_origin,
+            damaged: configured.damaged || plan.establishes_origin,
         };
-        let bytes = encode(&configured.profile, &frame, committed, &mut variables)?;
+        let frame_bytes = encode(&configured.profile, &frame, committed, &mut plan.variables)?;
+        plan.bytes.extend_from_slice(&frame_bytes);
 
-        if let Err(error) = output.write_all(&bytes).and_then(|()| output.flush()) {
-            self.configured
+        if let Err(error) = output.write_all(&plan.bytes).and_then(|()| output.flush()) {
+            let configured = self
+                .configured
                 .as_mut()
-                .expect("display configuration cannot disappear during a write")
-                .redraw = false;
-            self.configured
-                .as_mut()
-                .expect("display configuration cannot disappear during a write")
-                .damaged = true;
+                .expect("display configuration cannot disappear during a write");
+            if plan.establishes_origin {
+                configured.region.origin = RegionOrigin::Lost;
+            }
+            configured.redraw = false;
+            configured.damaged = true;
             return Err(RenderError::Io(error));
         }
 
@@ -239,7 +304,7 @@ impl State {
             size: frame.screen.size(),
             cursor: frame.cursor,
             rows_used,
-            bytes_written: bytes.len(),
+            bytes_written: plan.bytes.len(),
         };
         let configured = self
             .configured
@@ -249,10 +314,93 @@ impl State {
         configured.rows = frame.rows;
         configured.cursor = frame.cursor;
         configured.rows_used = rows_used;
-        configured.variables = variables;
+        configured.variables = plan.variables;
+        configured.region = plan.region;
         configured.redraw = false;
         configured.damaged = false;
         Ok(summary)
+    }
+
+    fn plan_region(
+        configured: &Configured,
+        required_rows: usize,
+    ) -> Result<RegionPlan, RenderError> {
+        if !configured.profile.has_relative_region_addressing() {
+            return Ok(RegionPlan {
+                bytes: Vec::new(),
+                variables: configured.variables.clone(),
+                region: configured.region,
+                establishes_origin: false,
+            });
+        }
+        if configured.region.origin == RegionOrigin::Lost {
+            return Err(RenderError::RegionOriginUnavailable);
+        }
+        if configured.region.origin == RegionOrigin::Saved
+            && configured.region.extent >= required_rows
+        {
+            return Ok(RegionPlan {
+                bytes: Vec::new(),
+                variables: configured.variables.clone(),
+                region: configured.region,
+                establishes_origin: false,
+            });
+        }
+
+        let mut bytes = Vec::new();
+        let mut variables = configured.variables.clone();
+        let prior_extent = configured.region.extent;
+        if configured.region.origin == RegionOrigin::Saved {
+            append_required_capability(
+                &configured.profile,
+                &mut bytes,
+                CapabilityKind::RestoreCursor,
+                1,
+                &mut variables,
+            )?;
+            for _ in 1..prior_extent {
+                append_required_capability(
+                    &configured.profile,
+                    &mut bytes,
+                    CapabilityKind::CursorDown,
+                    1,
+                    &mut variables,
+                )?;
+            }
+        } else {
+            append_carriage_return(&configured.profile, &mut bytes, &mut variables)?;
+        }
+
+        let occupied = prior_extent.max(1);
+        for _ in occupied..required_rows {
+            bytes.extend_from_slice(b"\r\n");
+        }
+        for _ in 1..required_rows {
+            append_required_capability(
+                &configured.profile,
+                &mut bytes,
+                CapabilityKind::CursorUp,
+                1,
+                &mut variables,
+            )?;
+        }
+        append_required_capability(
+            &configured.profile,
+            &mut bytes,
+            CapabilityKind::SaveCursor,
+            1,
+            &mut variables,
+        )?;
+
+        Ok(RegionPlan {
+            bytes,
+            variables,
+            region: PhysicalRegion {
+                origin: RegionOrigin::Saved,
+                extent: required_rows.max(prior_extent),
+            },
+            establishes_origin: true,
+        })
     }
 
     pub(super) fn beep(&mut self, output: &mut dyn Write) -> Result<usize, RenderError> {
@@ -292,13 +440,14 @@ impl State {
             .position(0, 0)
             .expect("a validated screen has an origin");
         configured.rows_used = 0;
+        configured.region = PhysicalRegion::default();
         configured.redraw = false;
         configured.damaged = false;
         Ok(1)
     }
 }
 
-// [spec:nshedit:req:core.incremental-render]
+// [spec:nshedit:req:core.incremental-render+1]
 fn encode(
     profile: &TerminalProfile,
     frame: &Frame,
@@ -306,7 +455,7 @@ fn encode(
     variables: &mut Variables,
 ) -> Result<Vec<u8>, RenderError> {
     let mut output = Vec::new();
-    if profile.has_cursor_address() {
+    if profile.has_relative_region_addressing() {
         encode_addressed(profile, frame, committed, &mut output, variables)?;
     } else {
         encode_plain(profile, frame, committed, &mut output, variables)?;
@@ -321,29 +470,22 @@ fn encode_addressed(
     output: &mut Vec<u8>,
     variables: &mut Variables,
 ) -> Result<(), RenderError> {
-    let cleared = committed.damaged
-        && append_capability(
-            profile,
-            output,
-            CapabilityKind::ClearScreen,
-            &[],
-            frame.rows_used(),
-            variables,
-        )?;
     let columns = frame.screen.size().columns();
-    let mut terminal_cursor =
-        (!committed.damaged).then_some((committed.cursor.row(), committed.cursor.column()));
-    let rows = if cleared {
-        frame.rows_used()
-    } else if committed.damaged {
-        frame.screen.size().rows()
+    let mut terminal_cursor = if committed.damaged {
+        append_required_capability(profile, output, CapabilityKind::RestoreCursor, 1, variables)?;
+        Some((0, 0))
+    } else {
+        Some((committed.cursor.row(), committed.cursor.column()))
+    };
+    let rows = if committed.damaged {
+        committed.region.extent.max(frame.rows_used())
     } else {
         frame.rows_used().max(committed.rows.len())
     };
     for row in 0..rows {
         let current = frame.rows.get(row);
         let previous = committed.rows.get(row);
-        let rewrite = cleared || committed.redraw || committed.damaged;
+        let rewrite = committed.redraw || committed.damaged;
         let start = if rewrite {
             0
         } else {
@@ -352,10 +494,15 @@ fn encode_addressed(
             };
             if start < columns { start } else { 0 }
         };
-        if terminal_cursor != Some((row, start)) {
-            append_cursor(profile, output, row, start, variables)?;
-            terminal_cursor = Some((row, start));
-        }
+        move_addressed_cursor(
+            profile,
+            output,
+            &mut terminal_cursor,
+            row,
+            start,
+            current.or(previous),
+            variables,
+        )?;
         let used = match current {
             Some(content) => {
                 append_atom_range(output, content, start, content.used(), true);
@@ -367,7 +514,7 @@ fn encode_addressed(
             None => 0,
         };
         let previous_used = previous.map_or(0, layout::Row::used);
-        if !cleared && (rewrite || previous_used > used) {
+        if used < columns && (rewrite || previous_used > used) {
             let cleared_to_end = append_capability(
                 profile,
                 output,
@@ -392,14 +539,76 @@ fn encode_addressed(
     }
     let target = (frame.cursor.row(), frame.cursor.column());
     if terminal_cursor != Some(target) {
-        append_cursor(
+        move_addressed_cursor(
             profile,
             output,
+            &mut terminal_cursor,
             frame.cursor.row(),
             frame.cursor.column(),
+            frame.rows.get(frame.cursor.row()),
             variables,
         )?;
     }
+    Ok(())
+}
+
+fn move_addressed_cursor(
+    profile: &TerminalProfile,
+    output: &mut Vec<u8>,
+    cursor: &mut Option<(usize, usize)>,
+    target_row: usize,
+    target_column: usize,
+    displayed_row: Option<&layout::Row>,
+    variables: &mut Variables,
+) -> Result<(), RenderError> {
+    let (mut row, mut column) = if let Some(position) = *cursor {
+        position
+    } else {
+        append_required_capability(profile, output, CapabilityKind::RestoreCursor, 1, variables)?;
+        (0, 0)
+    };
+
+    if row != target_row {
+        if column != 0 {
+            append_carriage_return(profile, output, variables)?;
+            column = 0;
+        }
+        let (kind, distance) = if row < target_row {
+            (CapabilityKind::CursorDown, target_row - row)
+        } else {
+            (CapabilityKind::CursorUp, row - target_row)
+        };
+        for _ in 0..distance {
+            append_required_capability(profile, output, kind, 1, variables)?;
+        }
+        row = target_row;
+    }
+
+    match target_column.cmp(&column) {
+        std::cmp::Ordering::Less => {
+            append_cursor_left(profile, output, column - target_column, variables)?;
+        }
+        std::cmp::Ordering::Greater if profile.has_cursor_right() => {
+            for _ in column..target_column {
+                append_required_capability(
+                    profile,
+                    output,
+                    CapabilityKind::CursorRight,
+                    1,
+                    variables,
+                )?;
+            }
+        }
+        std::cmp::Ordering::Greater => {
+            if let Some(content) = displayed_row {
+                append_atom_range(output, content, column, target_column, false);
+            } else {
+                output.extend(std::iter::repeat_n(b' ', target_column - column));
+            }
+        }
+        std::cmp::Ordering::Equal => {}
+    }
+    *cursor = Some((row, target_column));
     Ok(())
 }
 
@@ -437,12 +646,22 @@ fn encode_plain(
     output: &mut Vec<u8>,
     variables: &mut Variables,
 ) -> Result<(), RenderError> {
-    if frame.rows_used() > 1 || committed.rows.len() > 1 || frame.cursor.row() > 0 {
-        return Err(RenderError::CursorAddressUnavailable {
-            rows: frame.rows_used().max(committed.rows.len()),
+    if frame.rows_used() > 1
+        || committed.rows.len() > 1
+        || committed.region.extent > 1
+        || frame.cursor.row() > 0
+    {
+        return Err(RenderError::RegionAddressUnavailable {
+            rows: frame
+                .rows_used()
+                .max(committed.rows.len())
+                .max(committed.region.extent),
         });
     }
     let row = &frame.rows[0];
+    if committed.damaged {
+        return append_plain_redraw(profile, frame, 0, true, output, variables);
+    }
     let Some(previous) = committed.rows.first() else {
         append_atoms(output, &row.atoms);
         return append_plain_reposition(
@@ -455,12 +674,8 @@ fn encode_plain(
         );
     };
 
-    if committed.damaged {
-        return append_plain_redraw(profile, frame, previous, true, output, variables);
-    }
-
     if committed.redraw {
-        return append_plain_redraw(profile, frame, previous, false, output, variables);
+        return append_plain_redraw(profile, frame, previous.used(), false, output, variables);
     }
 
     if row == previous {
@@ -515,13 +730,13 @@ fn encode_plain(
         return Ok(());
     }
 
-    append_plain_redraw(profile, frame, previous, false, output, variables)
+    append_plain_redraw(profile, frame, previous.used(), false, output, variables)
 }
 
 fn append_plain_redraw(
     profile: &TerminalProfile,
     frame: &Frame,
-    previous: &layout::Row,
+    previous_used: usize,
     damaged: bool,
     output: &mut Vec<u8>,
     variables: &mut Variables,
@@ -543,7 +758,7 @@ fn append_plain_redraw(
         let erase_to = if damaged {
             frame.screen.size().columns()
         } else {
-            previous.used().max(row.used())
+            previous_used.max(row.used())
         };
         output.extend(std::iter::repeat_n(
             b' ',
@@ -680,27 +895,6 @@ fn append_atom_range(
     }
 }
 
-fn append_cursor(
-    profile: &TerminalProfile,
-    output: &mut Vec<u8>,
-    row: usize,
-    column: usize,
-    variables: &mut Variables,
-) -> Result<(), RenderError> {
-    let (Ok(row_param), Ok(column_param)) = (i32::try_from(row), i32::try_from(column)) else {
-        return Err(RenderError::CoordinateTooLarge { row, column });
-    };
-    append_capability(
-        profile,
-        output,
-        CapabilityKind::CursorAddress,
-        &[Param::Number(row_param), Param::Number(column_param)],
-        1,
-        variables,
-    )?;
-    Ok(())
-}
-
 fn append_capability(
     profile: &TerminalProfile,
     output: &mut Vec<u8>,
@@ -712,6 +906,22 @@ fn append_capability(
     profile
         .append(output, capability, params, affected_lines, variables)
         .map_err(|source| RenderError::CapabilityExpansion { capability, source })
+}
+
+fn append_required_capability(
+    profile: &TerminalProfile,
+    output: &mut Vec<u8>,
+    capability: CapabilityKind,
+    affected_lines: usize,
+    variables: &mut Variables,
+) -> Result<(), RenderError> {
+    if append_capability(profile, output, capability, &[], affected_lines, variables)? {
+        Ok(())
+    } else {
+        Err(RenderError::RegionAddressUnavailable {
+            rows: affected_lines,
+        })
+    }
 }
 
 fn append_atoms(output: &mut Vec<u8>, atoms: &[Atom]) {
@@ -787,7 +997,7 @@ mod tests {
         ));
     }
 
-    // [spec:nshedit:req:core.incremental-render/test]
+    // [spec:nshedit:req:core.incremental-render+1/test]
     #[test]
     fn addressed_frames_diff_from_first_change() {
         let mut state = configured(TerminalProfile::ansi(), 2, 20);
@@ -809,19 +1019,178 @@ mod tests {
             output.clone()
         };
 
-        assert_eq!(present(&mut state, "", 0), b"> ");
+        assert_eq!(present(&mut state, "", 0), b"\r\x1b7\x1b8> \x1b[K");
         assert_eq!(present(&mut state, "h", 1), b"h");
         assert_eq!(present(&mut state, "hello", 5), b"ello");
-        assert_eq!(present(&mut state, "hallo", 2), b"\x1b[1;4Hallo\x1b[1;5H");
-        assert_eq!(present(&mut state, "hall", 4), b"\x1b[1;7H\x1b[K");
+        assert_eq!(
+            present(&mut state, "hallo", 2),
+            b"\x08\x08\x08\x08allo\x08\x08\x08"
+        );
+        assert_eq!(present(&mut state, "hall", 4), b"\x1b[C\x1b[C\x1b[K");
+    }
+
+    // [spec:nshedit:req:core.incremental-render+1/test]
+    #[test]
+    fn anchors_region_at_current_line() {
+        let mut state = configured(TerminalProfile::ansi(), 3, 4);
+        let line = Text::from("abcd");
+        let prefix = b"host output on earlier rows\r\n";
+        let mut output = prefix.to_vec();
+        let summary = state
+            .present(
+                &Prompt::from(">"),
+                None,
+                &line,
+                line.index(line.len()).unwrap(),
+                &mut output,
+            )
+            .unwrap();
+
+        assert_eq!(&output[..prefix.len()], prefix);
+        assert_eq!(
+            &output[prefix.len()..],
+            b"\r\r\n\x1b[A\x1b7\x1b8>abc\x1b8\x1b[Bd\x1b[K"
+        );
+        assert_eq!(summary.rows_used(), 2);
+    }
+
+    // [spec:nshedit:req:core.incremental-render+1/test]
+    #[test]
+    fn damage_stays_within_owned_rows() {
+        let mut state = configured(TerminalProfile::ansi(), 4, 4);
+        let line = Text::from("abcd");
+        state
+            .present(
+                &Prompt::from(">"),
+                None,
+                &line,
+                line.index(line.len()).unwrap(),
+                &mut Vec::new(),
+            )
+            .unwrap();
+
+        state.damage();
+        let mut output = Vec::new();
+        state
+            .present(
+                &Prompt::from(">"),
+                None,
+                &line,
+                line.index(line.len()).unwrap(),
+                &mut output,
+            )
+            .unwrap();
+
+        assert_eq!(output, b"\x1b8>abc\x1b8\x1b[Bd\x1b[K");
+        assert_eq!(
+            output
+                .windows(b"\x1b[K".len())
+                .filter(|window| *window == b"\x1b[K")
+                .count(),
+            1
+        );
+        assert!(!output.windows(4).any(|window| window == b"\x1b[2J"));
+    }
+
+    // [spec:nshedit:req:core.incremental-render+1/test]
+    #[test]
+    fn resize_repairs_high_water_rows() {
+        let mut state = configured(TerminalProfile::ansi(), 3, 4);
+        let line = Text::from("abcd");
+        state
+            .present(
+                &Prompt::from(">"),
+                None,
+                &line,
+                line.index(line.len()).unwrap(),
+                &mut Vec::new(),
+            )
+            .unwrap();
+        state.resize(ScreenSize::new(1, 8).unwrap()).unwrap();
+        assert_eq!(state.configured.as_ref().unwrap().region.extent, 2);
+
+        let mut output = Vec::new();
+        state
+            .present(
+                &Prompt::from(">"),
+                None,
+                &line,
+                line.index(line.len()).unwrap(),
+                &mut output,
+            )
+            .unwrap();
+
+        assert_eq!(
+            output,
+            b"\x1b8>abcd\x1b[K\r\x1b[B\x1b[K\x1b[A\x1b[C\x1b[C\x1b[C\x1b[C\x1b[C"
+        );
+        assert_eq!(
+            output
+                .windows(b"\x1b[K".len())
+                .filter(|window| *window == b"\x1b[K")
+                .count(),
+            2
+        );
+        assert!(!output.windows(4).any(|window| window == b"\x1b[2J"));
+    }
+
+    // [spec:nshedit:req:core.incremental-render+1/test]
+    #[test]
+    fn reconfigure_preserves_multiline_region() {
+        let size = ScreenSize::new(3, 4).unwrap();
+        let mut state = configured(TerminalProfile::ansi(), 3, 4);
+        let line = Text::from("abcd");
+        state
+            .present(
+                &Prompt::from(">"),
+                None,
+                &line,
+                line.index(line.len()).unwrap(),
+                &mut Vec::new(),
+            )
+            .unwrap();
+
+        state.configure(TerminalProfile::plain(), size);
+        let region = state.configured.as_ref().unwrap().region;
+        assert_eq!(region.origin, RegionOrigin::Saved);
+        assert_eq!(region.extent, 2);
+        let mut output = Vec::new();
+        let error = state
+            .present(
+                &Prompt::from(">"),
+                None,
+                &line,
+                line.index(line.len()).unwrap(),
+                &mut output,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            RenderError::RegionAddressUnavailable { rows: 2 }
+        ));
+        assert!(output.is_empty());
+        assert_eq!(state.configured.as_ref().unwrap().region.extent, 2);
+
+        state.configure(TerminalProfile::ansi(), size);
+        state
+            .present(
+                &Prompt::from(">"),
+                None,
+                &line,
+                line.index(line.len()).unwrap(),
+                &mut output,
+            )
+            .unwrap();
+        assert_eq!(output, b"\x1b8>abc\x1b8\x1b[Bd\x1b[K");
+        assert_eq!(state.configured.as_ref().unwrap().region, region);
     }
 
     #[test]
-    fn failed_write_keeps_committed_screen() {
+    fn failed_anchor_setup_marks_origin_lost() {
         let mut state = configured(TerminalProfile::ansi(), 2, 10);
         let before = state.screen().unwrap().clone();
         let mut writer = FailingWriter {
-            limit: 3,
+            limit: 1,
             written: 0,
             fail_flush: false,
         };
@@ -836,6 +1205,59 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, RenderError::Io(_)));
         assert_eq!(state.screen(), Some(&before));
+        assert_eq!(
+            state.configured.as_ref().unwrap().region.origin,
+            RegionOrigin::Lost
+        );
+
+        let error = state
+            .present(
+                &Prompt::default(),
+                None,
+                &Text::from("changed"),
+                TextIndex::START,
+                &mut Vec::new(),
+            )
+            .unwrap_err();
+        assert!(matches!(error, RenderError::RegionOriginUnavailable));
+    }
+
+    #[test]
+    fn failed_frame_preserves_committed_state() {
+        let mut state = configured(TerminalProfile::ansi(), 2, 10);
+        state
+            .present(
+                &Prompt::default(),
+                None,
+                &Text::from("before"),
+                TextIndex::START,
+                &mut Vec::new(),
+            )
+            .unwrap();
+        let before = state.screen().unwrap().clone();
+        let region = state.configured.as_ref().unwrap().region;
+
+        let mut writer = FailingWriter {
+            limit: 3,
+            written: 0,
+            fail_flush: false,
+        };
+        assert!(
+            state
+                .present(
+                    &Prompt::default(),
+                    None,
+                    &Text::from("changed"),
+                    TextIndex::START,
+                    &mut writer,
+                )
+                .is_err()
+        );
+        assert_eq!(state.screen(), Some(&before));
+        assert_eq!(
+            state.configured.as_ref().unwrap().region.origin,
+            region.origin
+        );
 
         let mut writer = FailingWriter {
             limit: usize::MAX,
@@ -856,7 +1278,7 @@ mod tests {
         assert_eq!(state.screen(), Some(&before));
     }
 
-    // [spec:nshedit:req:core.incremental-render/test]
+    // [spec:nshedit:req:core.incremental-render+1/test]
     #[test]
     fn plans_plain_incremental_transitions() {
         let mut state = configured(TerminalProfile::plain(), 1, 20);
@@ -905,7 +1327,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             error,
-            RenderError::CursorAddressUnavailable { .. }
+            RenderError::RegionAddressUnavailable { .. }
         ));
     }
 

@@ -30,23 +30,29 @@ impl BaudRate {
 /// A terminal operation whose terminfo expression may fail to expand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CapabilityKind {
-    ClearScreen,
     ClearToEndOfLine,
-    CursorAddress,
     Bell,
     CarriageReturn,
+    SaveCursor,
+    RestoreCursor,
+    CursorUp,
+    CursorDown,
     CursorLeft,
+    CursorRight,
 }
 
 impl CapabilityKind {
     pub(super) const fn description(self) -> &'static str {
         match self {
-            Self::ClearScreen => "clear screen",
             Self::ClearToEndOfLine => "clear to end of line",
-            Self::CursorAddress => "cursor address",
             Self::Bell => "bell",
             Self::CarriageReturn => "carriage return",
+            Self::SaveCursor => "save cursor",
+            Self::RestoreCursor => "restore cursor",
+            Self::CursorUp => "cursor up",
+            Self::CursorDown => "cursor down",
             Self::CursorLeft => "cursor left",
+            Self::CursorRight => "cursor right",
         }
     }
 }
@@ -81,12 +87,15 @@ impl From<Box<[u8]>> for Capability {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalProfile {
     name: Box<str>,
-    clear_screen: Option<Capability>,
     clear_to_end: Option<Capability>,
-    cursor_address: Option<Capability>,
     bell: Capability,
     carriage_return: Capability,
+    save_cursor: Option<Capability>,
+    restore_cursor: Option<Capability>,
+    cursor_up: Option<Capability>,
+    cursor_down: Option<Capability>,
     cursor_left: Capability,
+    cursor_right: Option<Capability>,
     pad_byte: u8,
     flow_controlled: bool,
     baud_rate: Option<BaudRate>,
@@ -98,12 +107,15 @@ impl TerminalProfile {
     pub fn ansi() -> Self {
         Self {
             name: "ansi".into(),
-            clear_screen: Some(Capability::from(&b"\x1b[H\x1b[2J"[..])),
             clear_to_end: Some(Capability::from(&b"\x1b[K"[..])),
-            cursor_address: Some(Capability::from(&b"\x1b[%i%p1%d;%p2%dH"[..])),
             bell: Capability::from(&b"\x07"[..]),
             carriage_return: Capability::from(&b"\r"[..]),
+            save_cursor: Some(Capability::from(&b"\x1b7"[..])),
+            restore_cursor: Some(Capability::from(&b"\x1b8"[..])),
+            cursor_up: Some(Capability::from(&b"\x1b[A"[..])),
+            cursor_down: Some(Capability::from(&b"\x1b[B"[..])),
             cursor_left: Capability::from(&b"\x08"[..]),
+            cursor_right: Some(Capability::from(&b"\x1b[C"[..])),
             pad_byte: 0,
             flow_controlled: false,
             baud_rate: None,
@@ -115,12 +127,15 @@ impl TerminalProfile {
     pub fn plain() -> Self {
         Self {
             name: "plain".into(),
-            clear_screen: None,
             clear_to_end: None,
-            cursor_address: None,
             bell: Capability::from(&b"\x07"[..]),
             carriage_return: Capability::from(&b"\r"[..]),
+            save_cursor: None,
+            restore_cursor: None,
+            cursor_up: None,
+            cursor_down: None,
             cursor_left: Capability::from(&b"\x08"[..]),
+            cursor_right: None,
             pad_byte: 0,
             flow_controlled: false,
             baud_rate: None,
@@ -141,12 +156,15 @@ impl TerminalProfile {
                 .names()
                 .first()
                 .map_or_else(|| Box::<str>::from("terminfo"), |name| name.clone().into()),
-            clear_screen: cap("clear"),
             clear_to_end: cap("el"),
-            cursor_address: cap("cup"),
             bell: cap("bel").unwrap_or_else(|| Capability::from(&b"\x07"[..])),
             carriage_return: cap("cr").unwrap_or_else(|| Capability::from(&b"\r"[..])),
+            save_cursor: cap("sc"),
+            restore_cursor: cap("rc"),
+            cursor_up: cap("cuu1"),
+            cursor_down: cap("cud1"),
             cursor_left: cap("cub1").unwrap_or_else(|| Capability::from(&b"\x08"[..])),
+            cursor_right: cap("cuf1"),
             pad_byte: entry
                 .string(CapabilityName::Terminfo("pad"))
                 .and_then(|bytes| bytes.first().copied())
@@ -196,8 +214,15 @@ impl TerminalProfile {
         Ok(output)
     }
 
-    pub(super) fn has_cursor_address(&self) -> bool {
-        self.cursor_address.is_some()
+    pub(super) fn has_relative_region_addressing(&self) -> bool {
+        self.save_cursor.is_some()
+            && self.restore_cursor.is_some()
+            && self.cursor_up.is_some()
+            && self.cursor_down.is_some()
+    }
+
+    pub(super) fn has_cursor_right(&self) -> bool {
+        self.cursor_right.is_some()
     }
 
     pub(super) fn append(
@@ -209,12 +234,15 @@ impl TerminalProfile {
         variables: &mut Variables,
     ) -> Result<bool, ExpansionError> {
         let capability = match kind {
-            CapabilityKind::ClearScreen => self.clear_screen.as_ref(),
             CapabilityKind::ClearToEndOfLine => self.clear_to_end.as_ref(),
-            CapabilityKind::CursorAddress => self.cursor_address.as_ref(),
             CapabilityKind::Bell => Some(&self.bell),
             CapabilityKind::CarriageReturn => Some(&self.carriage_return),
+            CapabilityKind::SaveCursor => self.save_cursor.as_ref(),
+            CapabilityKind::RestoreCursor => self.restore_cursor.as_ref(),
+            CapabilityKind::CursorUp => self.cursor_up.as_ref(),
+            CapabilityKind::CursorDown => self.cursor_down.as_ref(),
             CapabilityKind::CursorLeft => Some(&self.cursor_left),
+            CapabilityKind::CursorRight => self.cursor_right.as_ref(),
         };
         let Some(capability) = capability else {
             return Ok(false);
@@ -310,12 +338,14 @@ mod tests {
     fn terminfo_profile_owns_capabilities() {
         let entry = TermInfoBuilder::default()
             .named("test")
-            .string("cup", b"[%p1%d,%p2%d]")
+            .string("sc", b"<save>")
+            .string("rc", b"<restore>")
+            .string("cuu1", b"<up>")
+            .string("cud1", b"<down>")
             .build();
         let profile = TerminalProfile::from_terminfo(&entry);
         assert_eq!(profile.name(), "test");
-        assert!(profile.has_cursor_address());
-        assert!(profile.clear_screen.is_none());
+        assert!(profile.has_relative_region_addressing());
     }
 
     #[test]

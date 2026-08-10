@@ -358,12 +358,14 @@ impl<T: TerminalControl> Editor<T> {
         Ok(())
     }
 
-    /// Install an owned terminal profile and reset the committed screen.
+    /// Install an owned terminal profile without abandoning an established
+    /// physical editor region.
     pub fn configure_display(&mut self, profile: TerminalProfile, size: ScreenSize) {
         self.renderer.configure(profile, size);
     }
 
-    /// Resize the configured display and discard its previous screen image.
+    /// Resize the configured display and repair its owned rows on the next
+    /// render.
     pub fn resize_display(&mut self, size: ScreenSize) -> Result<(), RenderError> {
         self.renderer.resize(size)
     }

@@ -280,6 +280,7 @@ assertions (
     {id quality-key-sequence-timeout, kind @complete, author "brendan@necessary.nu", at 2026-08-10T13:47:58.819986107Z}
     {id quality-nonutf8-history-paths, kind @complete, author "brendan@necessary.nu", at 2026-08-10T13:51:55.474426347Z}
     {id quality-secure-execution, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:15:00.842250137Z}
+    {id quality-renderer-region-origin, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:26:02.39028752Z}
 )
 
 impl_evidence (

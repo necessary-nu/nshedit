@@ -3511,12 +3511,20 @@ children (
             {
                 id quality-renderer-region-origin
                 title "Track the renderer's physical terminal-region origin"
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:17.492566368Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: crates/nshedit/src/editor/render.rs models frame rows as local but emits them through absolute CUP coordinates, including CUP 1 assumptions, and damage/resize recovery can erase terminal content outside the editor. Track the physical origin and extent of the editor-owned region, make all cursor addressing and erasure respect that region, and remove tests that bless local-row-as-screen-row behaviour."
+                    }
+
+                    {
+                        at 2026-08-10T14:26:02.39028752Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }

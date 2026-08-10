@@ -241,14 +241,24 @@ states where those semantics may live and what the native Rust API must be.
 > those existing compatibility modules; `core.no-compat-internals` governs
 > its final removal.
 
-> [spec:nshedit:req:core.incremental-render]
+> [spec:nshedit:req:core.incremental-render+1]
 > Native rendering MUST plan deterministic terminal operations from the
 > committed typed screen and cursor to the next complete frame. Unchanged
-> cells MUST NOT force a complete redraw; the planner MUST use only capabilities
+> cells MUST NOT force a complete redraw. The committed image MUST belong to
+> an explicit physical editor region anchored at the current terminal line,
+> with an extent covering every row the renderer has reserved or drawn.
+> Multiline movement MUST be relative to that origin; an editor-local frame row
+> MUST NOT be used as a screen-absolute cursor coordinate. Damage and resize
+> recovery MUST erase only rows inside the tracked extent and MUST NOT clear the
+> whole terminal for local invalidation. Reconfiguring the terminal profile MUST
+> preserve an established region; a profile that cannot address an owned
+> multiline region MUST return a typed error without abandoning or overwriting
+> it. The planner MUST use only capabilities
 > present in the selected profile, MUST support a one-line terminal through
 > carriage return, backspace, forward text, and explicit erasure, and MUST
-> commit the new screen, cursor, capability variables, and damage state only
-> after the complete byte plan is written and flushed successfully.
+> commit the new screen, cursor, capability variables, origin, extent, and
+> damage state only after the corresponding byte plan is written and flushed
+> successfully.
 
 > [spec:nshedit:req:core.read-driver+1]
 > Input preparation, decoding, key dispatch, signal transitions, and editing
