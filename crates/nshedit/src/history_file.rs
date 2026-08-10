@@ -77,9 +77,9 @@
 //!
 //! The header is a frame like any other, so a reader that does not care about
 //! it can skip one frame rather than a magic number of bytes. It carries
-//! [`MAGIC`] and a format version, and it exists so that an nshedit file is
-//! *positively identified* rather than being whatever failed to look like
-//! something else.
+//! [`MAGIC`](crate::history_file::MAGIC) and a format version, and it exists so
+//! that an nshedit file is *positively identified* rather than being whatever
+//! failed to look like something else.
 
 use bstr::BString;
 #[cfg(feature = "bsd")]

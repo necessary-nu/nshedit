@@ -143,6 +143,16 @@ cargo +nightly build --workspace
 cargo +nightly test --workspace
 ```
 
+Generate the native Rust API documentation with every rustdoc warning denied:
+
+```sh
+RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
+```
+
+The `nshedit-abi` library target is intentionally omitted from rustdoc. It is
+a C-only adapter whose public documentation is the generated headers and
+export manifest above; the native `nshedit` crate owns the Rust API docs.
+
 The `x86_64-unknown-linux-gnu` ABI tests run by default. They compare the
 built symbol table with the committed export contract, compile direct C
 consumers against the generated headers, exercise defined handling of

@@ -40,7 +40,7 @@
 //!
 //! `term` is a terminal *formatting* library that happens to contain a
 //! terminfo parser. Upstream has been unmaintained since 2018
-//! ([Stebalien/term#93], "[LFM] Looking For Maintainer"), and the ecosystem's
+//! ([Stebalien/term#93], "\[LFM\] Looking For Maintainer"), and the ecosystem's
 //! successor for its users, `termcolor`, does not read terminfo at all. The
 //! terminfo half is what we depend on, so we took it.
 //!
@@ -364,7 +364,7 @@ impl TermInfo {
     /// Create a `TermInfo` for the named terminal.
     ///
     /// A database directory or entry that exists but cannot be read is
-    /// reported as the [`Io`][Error::Io] failure it is, rather than as a
+    /// reported as the [`Io`] failure it is, rather than as a
     /// terminal the database does not describe. A name that is not one safe
     /// cross-platform filename component is rejected before discovery reads
     /// any search directory.
@@ -562,7 +562,7 @@ impl TermInfo {
 /// bytes, it is `Eq`, and nothing about expanding a `%` sequence needs to
 /// know about files. It reaches this enum through `ParameterizedExpansion`.
 ///
-/// This type deliberately does not implement [`PartialEq`]. An [`Io`][Error::Io]
+/// This type deliberately does not implement [`PartialEq`]. An [`Io`]
 /// variant retains an arbitrary [`io::Error`], including a custom source that
 /// has no equality operation. Callers should match the variant they handle and
 /// inspect its typed payload instead of comparing complete errors.

@@ -13,6 +13,9 @@ platforms (
                 cmd "cargo clippy --workspace --all-targets -- -D warnings"
                 fix "cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged"
             }
+            documentation {
+                cmd "bash -c \"RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps\""
+            }
             test {
                 cmd "bash -c \"cargo build --workspace && cargo test --workspace\""
             }

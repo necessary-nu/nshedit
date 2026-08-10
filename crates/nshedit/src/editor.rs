@@ -1,8 +1,9 @@
 //! A native editor session with one owner for terminal restoration.
 //!
 //! The editor owns its private domain state and terminal lifecycle, but not
-//! its input and output streams. [`SessionIo`] stays with the driver so the
-//! editor borrow can end before an effect performs host-controlled work.
+//! its input and output streams. [`SessionIo`](crate::editor::SessionIo) stays
+//! with the driver so the editor borrow can end before an effect performs
+//! host-controlled work.
 
 use std::fmt;
 use std::io::{self, Read, Write};

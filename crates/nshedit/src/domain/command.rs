@@ -196,7 +196,8 @@ impl CommandName {
 /// One semantic editor action.
 ///
 /// Every action is applied immediately to private line state. Commands that
-/// require a host service are represented separately by [`EffectCommand`].
+/// require a host service are represented separately by
+/// [`EffectCommand`](super::EffectCommand).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Action {
     /// Leave editor state unchanged.

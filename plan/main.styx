@@ -3907,12 +3907,34 @@ children (
             {
                 id quality-workspace-rustdoc
                 title "Make strict workspace rustdoc generation pass"
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:24.569352394Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: cargo doc --workspace collides because the core and ABI library targets both document as nshedit, and strict per-crate docs contain broken/private links. Give the C-only ABI target a non-conflicting documentation policy without changing its produced library ABI, repair all rustdoc diagnostics, and gate workspace documentation with warnings denied and dependencies excluded."
+                    }
+
+                    {
+                        at 2026-08-10T15:05:41.649783973Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-10T15:09:03.368374433Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Treat nshedit-abi as C-only for rustdoc: its lib target keeps the exact nshedit name and cdylib/staticlib artifact types but sets doc=false. The generated headers and committed export manifest remain that crate's public documentation, while the native nshedit crate owns the Rust API docs. Strict workspace documentation now runs with dependencies excluded and every rustdoc warning denied in both nplan checks and Linux CI."
+                    }
+
+                    {
+                        at 2026-08-10T15:09:03.41739595Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

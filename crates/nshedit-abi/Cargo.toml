@@ -24,6 +24,10 @@ publish = false
 # cannot write the same filename.
 name = "nshedit"
 crate-type = ["cdylib", "staticlib"]
+# This crate is the C-only adapter. Its public contract is the generated
+# headers and exported symbols, not a Rust API, and documenting it would
+# collide with the native `nshedit` crate's rustdoc output directory.
+doc = false
 
 [dependencies]
 bsd.workspace = true

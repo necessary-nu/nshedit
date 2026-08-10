@@ -284,6 +284,7 @@ assertions (
     {id quality-terminfo-name-component, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:40:05.313199849Z}
     {id quality-terminfo-zero-precision, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:54:59.892381722Z}
     {id quality-toolchain-usage-docs, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:59:50.694772037Z}
+    {id quality-workspace-rustdoc, kind @complete, author "brendan@necessary.nu", at 2026-08-10T15:09:03.41739595Z}
 )
 
 impl_evidence (
