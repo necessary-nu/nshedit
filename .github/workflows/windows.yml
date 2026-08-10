@@ -1,0 +1,23 @@
+name: Windows native acceptance
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-native:
+    runs-on: windows-latest
+    env:
+      NSHEDIT_REPL_EXE: ${{ github.workspace }}\target\debug\examples\repl.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy -p nshedit -p nshedit-plat -p nshterm --all-targets -- -D warnings
+      - shell: bash
+        run: ./ci/windows-acceptance.sh

@@ -1,16 +1,16 @@
 schema_version 7
 
-last_sync_at 2026-08-09T22:14:18.64205798Z
+last_sync_at 2026-08-10T01:22:06.742031951Z
 
 rule_versions (
-    {id abi.behavioural-conformance, version 0}
+    {id abi.behavioural-conformance, version 1}
     {id abi.binding-dispatch, version 0}
     {id abi.bindings, version 0}
     {id abi.complete-surface, version 1}
     {id abi.darwin-drop-in, version 0}
     {id abi.darwin-runtime, version 0}
     {id abi.history-effects, version 1}
-    {id abi.observational-coverage, version 0}
+    {id abi.observational-coverage, version 1}
     {id abi.opaque-owner, version 0}
     {id abi.rust-internals, version 0}
     {id abi.signal-lifecycle, version 0}
@@ -36,17 +36,22 @@ rule_versions (
     {id core.text-screen-model, version 1}
     {id core.typed-domain, version 1}
     {id core.unsafe-free, version 0}
+    {id core.windows-session, version 0}
     {id histedit.el-resize-fn, version 1}
     {id histedit.el-set-fn, version 1}
     {id platform.darwin-termios, version 0}
     {id platform.per-os-layouts, version 0}
     {id platform.typed-boundary, version 0}
+    {id platform.windows-console, version 0}
+    {id platform.windows-input, version 0}
     {id terminal.typed-api, version 0}
     {id workspace.darwin-cross-check, version 0}
     {id workspace.lint-policy, version 1}
     {id workspace.no-legacy-allows, version 0}
     {id workspace.self-contained, version 0}
     {id workspace.semantic-naming, version 0}
+    {id workspace.windows-acceptance, version 0}
+    {id workspace.windows-native-build, version 0}
 )
 
 derived_priorities (
@@ -87,6 +92,7 @@ derived_priorities (
     {id errata-reconcile, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
     {id errata-reconcile-2, priority 1, derived_at 2026-08-05T14:55:02.217492383Z}
     {id greenfield-acceptance, priority 3, derived_at 2026-08-09T01:10:13.531298798Z}
+    {id greenfield-addressed-render-diff, priority 3, derived_at 2026-08-10T01:22:06.742031951Z}
     {id greenfield-binding-compat, priority 3, derived_at 2026-08-09T01:10:13.531298798Z}
     {id greenfield-history-compat, priority 3, derived_at 2026-08-09T01:10:13.531298798Z}
     {id greenfield-incremental-render, priority 3, derived_at 2026-08-09T02:16:15.652816609Z}
@@ -127,6 +133,7 @@ derived_priorities (
     {id readline-compat-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
     {id readline-compat-translate, priority 1, derived_at 2026-08-05T08:37:17.415060629Z}
     {id readline-globals-rules, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id release-metadata-cleanup, priority 3, derived_at 2026-08-10T01:22:06.742031951Z}
     {id retire-c, priority 3, derived_at 2026-08-09T22:14:18.64205798Z}
     {id rust-idiom-acceptance, priority 3, derived_at 2026-08-09T19:32:53.60057205Z}
     {id rust-idiom-completion, priority 3, derived_at 2026-08-09T19:32:53.60057205Z}
@@ -150,6 +157,7 @@ derived_priorities (
     {id windows-acceptance, priority 3, derived_at 2026-08-09T20:14:28.652368954Z}
     {id windows-contract, priority 2, derived_at 2026-08-09T20:14:28.652368954Z}
     {id windows-editor, priority 3, derived_at 2026-08-09T20:14:28.652368954Z}
+    {id windows-input, priority 3, derived_at 2026-08-10T01:22:06.742031951Z}
     {id windows-platform, priority 3, derived_at 2026-08-09T20:14:28.652368954Z}
     {id windows-terminal, priority 3, derived_at 2026-08-09T20:14:28.652368954Z}
 )
@@ -246,7 +254,6 @@ assertions (
     {id release-metadata-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-09T22:59:49.047931183Z}
     {id greenfield-addressed-render-diff, kind @complete, author "brendan@necessary.nu", at 2026-08-09T23:15:33.938291651Z}
     {id windows-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-09T23:38:06.505008059Z}
-    {id windows-acceptance, kind @doing, author "brendan@necessary.nu", at 2026-08-10T01:01:54.227668955Z}
 )
 
 impl_evidence (
@@ -543,24 +550,37 @@ impl_evidence (
     ), rule_versions_seen (
         {id core.text-screen-model, version 1}
     )}
-    {id windows-platform, covered_rules (
-        workspace.windows-native-build
+    {id windows-acceptance, covered_rules (
+        workspace.windows-acceptance
     ), covered_claims (
-        {impl_name native-impl, rule workspace.windows-native-build}
-    )}
-    {id windows-terminal, covered_rules (
-        platform.windows-console
-    ), covered_claims (
-        {impl_name native-impl, rule platform.windows-console}
-    )}
-    {id windows-input, covered_rules (
-        platform.windows-input
-    ), covered_claims (
-        {impl_name native-impl, rule platform.windows-input}
+        {impl_name native-impl, rule workspace.windows-acceptance}
     )}
     {id windows-editor, covered_rules (
         core.windows-session
     ), covered_claims (
         {impl_name native-impl, rule core.windows-session}
+    ), rule_versions_seen (
+        {id core.windows-session, version 0}
+    )}
+    {id windows-input, covered_rules (
+        platform.windows-input
+    ), covered_claims (
+        {impl_name native-impl, rule platform.windows-input}
+    ), rule_versions_seen (
+        {id platform.windows-input, version 0}
+    )}
+    {id windows-platform, covered_rules (
+        workspace.windows-native-build
+    ), covered_claims (
+        {impl_name native-impl, rule workspace.windows-native-build}
+    ), rule_versions_seen (
+        {id workspace.windows-native-build, version 0}
+    )}
+    {id windows-terminal, covered_rules (
+        platform.windows-console
+    ), covered_claims (
+        {impl_name native-impl, rule platform.windows-console}
+    ), rule_versions_seen (
+        {id platform.windows-console, version 0}
     )}
 )
