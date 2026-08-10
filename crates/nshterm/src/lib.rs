@@ -88,6 +88,13 @@
 //!   past the table. The table is now read with `read_exact`, making a short
 //!   one the same clean [`Error::Io`] as every other short read in the format,
 //!   and a stray offset is [`Error::StringOffsetOutOfRange`].
+//! * **Fixed**: compiled capability sentinels are decoded in their signed
+//!   on-disk widths. The extended-number format's `-1` and `-2` used to become
+//!   large usable numbers, the legacy numeric `-2` became `65534`, and a
+//!   cancelled string became an executable empty string. [`CapabilityState`]
+//!   now preserves absence and cancellation separately from real values, while
+//!   the value-only accessors and iterators keep both non-values out of terminal
+//!   profiles.
 //! * **Fixed**: two printf-style conversions that `terminfo(5)` defines by
 //!   reference to `printf(3)` — ncurses hands the whole specification to
 //!   `sprintf`, so C is the spec. The `0` flag did not exist: `Flags` had no
@@ -169,6 +176,65 @@ pub enum CapabilityName<'a> {
     Termcap(&'a str),
 }
 
+// [spec:nshedit:req:terminal.compiled-capability-state]
+/// The state of one capability in a terminfo entry.
+///
+/// A cancellation is not an empty or zero-valued capability. It records that
+/// an inherited capability was explicitly removed, while absence says that
+/// the entry never supplied one. Value-only accessors deliberately discard
+/// both states, but the `*_state` accessors and builder methods preserve the
+/// distinction for callers that inspect or assemble compiled-entry semantics.
+#[derive(Debug, Clone, Copy, Default, Eq, Hash, PartialEq)]
+pub enum CapabilityState<T> {
+    /// The entry does not define the capability.
+    #[default]
+    Absent,
+    /// The entry explicitly cancels the capability.
+    Cancelled,
+    /// The entry defines the enclosed usable value.
+    Value(T),
+}
+
+impl<T> CapabilityState<T> {
+    /// Borrow a capability value without changing its state.
+    #[must_use]
+    pub const fn as_ref(&self) -> CapabilityState<&T> {
+        match self {
+            Self::Absent => CapabilityState::Absent,
+            Self::Cancelled => CapabilityState::Cancelled,
+            Self::Value(value) => CapabilityState::Value(value),
+        }
+    }
+
+    /// Transform a defined value while preserving absence or cancellation.
+    #[must_use]
+    pub fn map<U>(self, map: impl FnOnce(T) -> U) -> CapabilityState<U> {
+        match self {
+            Self::Absent => CapabilityState::Absent,
+            Self::Cancelled => CapabilityState::Cancelled,
+            Self::Value(value) => CapabilityState::Value(map(value)),
+        }
+    }
+
+    /// Return the usable value, if this capability defines one.
+    #[must_use]
+    pub const fn as_value(&self) -> Option<&T> {
+        match self {
+            Self::Value(value) => Some(value),
+            Self::Absent | Self::Cancelled => None,
+        }
+    }
+
+    /// Consume the state and return its usable value, if any.
+    #[must_use]
+    pub fn into_value(self) -> Option<T> {
+        match self {
+            Self::Value(value) => Some(value),
+            Self::Absent | Self::Cancelled => None,
+        }
+    }
+}
+
 // [spec:nshedit:req:terminal.typed-api]
 /// A parsed terminfo database entry.
 ///
@@ -178,9 +244,9 @@ pub enum CapabilityName<'a> {
 #[derive(Debug, Clone)]
 pub struct TermInfo {
     names: Vec<String>,
-    bools: HashMap<&'static str, bool>,
-    numbers: HashMap<&'static str, u32>,
-    strings: HashMap<&'static str, Vec<u8>>,
+    bools: HashMap<&'static str, CapabilityState<bool>>,
+    numbers: HashMap<&'static str, CapabilityState<u32>>,
+    strings: HashMap<&'static str, CapabilityState<Vec<u8>>>,
 }
 
 /// Assembles a [`TermInfo`] from capabilities a caller already holds.
@@ -192,9 +258,9 @@ pub struct TermInfo {
 #[derive(Debug, Clone, Default)]
 pub struct TermInfoBuilder {
     names: Vec<String>,
-    bools: HashMap<&'static str, bool>,
-    numbers: HashMap<&'static str, u32>,
-    strings: HashMap<&'static str, Vec<u8>>,
+    bools: HashMap<&'static str, CapabilityState<bool>>,
+    numbers: HashMap<&'static str, CapabilityState<u32>>,
+    strings: HashMap<&'static str, CapabilityState<Vec<u8>>>,
 }
 
 impl TermInfoBuilder {
@@ -208,21 +274,43 @@ impl TermInfoBuilder {
     /// Define one boolean capability.
     #[must_use]
     pub fn boolean(mut self, capname: &'static str, value: bool) -> Self {
-        self.bools.insert(capname, value);
+        self.bools.insert(capname, CapabilityState::Value(value));
+        self
+    }
+
+    /// Set the complete state of one boolean capability.
+    #[must_use]
+    pub fn boolean_state(mut self, capname: &'static str, state: CapabilityState<bool>) -> Self {
+        self.bools.insert(capname, state);
         self
     }
 
     /// Define one numeric capability.
     #[must_use]
     pub fn number(mut self, capname: &'static str, value: u32) -> Self {
-        self.numbers.insert(capname, value);
+        self.numbers.insert(capname, CapabilityState::Value(value));
+        self
+    }
+
+    /// Set the complete state of one numeric capability.
+    #[must_use]
+    pub fn number_state(mut self, capname: &'static str, state: CapabilityState<u32>) -> Self {
+        self.numbers.insert(capname, state);
         self
     }
 
     /// Define one string capability, raw and unexpanded.
     #[must_use]
     pub fn string(mut self, capname: &'static str, value: impl Into<Vec<u8>>) -> Self {
-        self.strings.insert(capname, value.into());
+        self.strings
+            .insert(capname, CapabilityState::Value(value.into()));
+        self
+    }
+
+    /// Set the complete state of one string capability.
+    #[must_use]
+    pub fn string_state(mut self, capname: &'static str, state: CapabilityState<Vec<u8>>) -> Self {
+        self.strings.insert(capname, state);
         self
     }
 
@@ -315,20 +403,66 @@ impl TermInfo {
         &self.names
     }
 
+    /// The complete state of the named boolean capability.
+    ///
+    /// Unknown names have the same [`Absent`][CapabilityState::Absent] state
+    /// as known capabilities omitted from the entry.
+    #[must_use]
+    pub fn boolean_state(&self, name: CapabilityName<'_>) -> CapabilityState<bool> {
+        self.capname(name)
+            .and_then(|capname| self.bools.get(capname))
+            .copied()
+            .unwrap_or(CapabilityState::Absent)
+    }
+
     /// Whether this terminal has the named boolean capability.
     ///
-    /// A capability the entry does not define is absent, which for a boolean
-    /// is the same as false — the distinction is kept so a caller can tell an
-    /// unknown name from a defined one.
+    /// Absence and cancellation both return `None`; use [`Self::boolean_state`]
+    /// when that distinction matters.
     #[must_use]
     pub fn boolean(&self, name: CapabilityName<'_>) -> Option<bool> {
-        self.bools.get(self.capname(name)?).copied()
+        self.boolean_state(name).into_value()
+    }
+
+    /// The complete state of the named numeric capability.
+    ///
+    /// Unknown names have the same [`Absent`][CapabilityState::Absent] state
+    /// as known capabilities omitted from the entry.
+    #[must_use]
+    pub fn number_state(&self, name: CapabilityName<'_>) -> CapabilityState<u32> {
+        self.capname(name)
+            .and_then(|capname| self.numbers.get(capname))
+            .copied()
+            .unwrap_or(CapabilityState::Absent)
     }
 
     /// The value of the named numeric capability.
+    ///
+    /// Absence and cancellation both return `None`; use [`Self::number_state`]
+    /// when that distinction matters.
     #[must_use]
     pub fn number(&self, name: CapabilityName<'_>) -> Option<u32> {
-        self.numbers.get(self.capname(name)?).copied()
+        self.number_state(name).into_value()
+    }
+
+    /// The complete state of the named raw string capability.
+    ///
+    /// Most termcap codes are a plain namespace translation. `me` is not:
+    /// termcap has no `sgr` operation and therefore requires its reset string
+    /// to preserve alternate-character-set state, so a termcap value for it
+    /// may be owned. Cancellation is preserved without invoking that
+    /// projection.
+    #[must_use]
+    pub fn string_state(&self, name: CapabilityName<'_>) -> CapabilityState<Cow<'_, [u8]>> {
+        match name {
+            CapabilityName::Terminfo(capname) => self
+                .strings
+                .get(capname)
+                .map(CapabilityState::as_ref)
+                .unwrap_or(CapabilityState::Absent)
+                .map(|value| Cow::Borrowed(value.as_slice())),
+            CapabilityName::Termcap(code) => termcap::string(self, code).map(Cow::Owned),
+        }
     }
 
     /// The raw, unexpanded bytes of the named string capability.
@@ -337,35 +471,32 @@ impl TermInfo {
     /// borrowed. `me` is not: termcap has no `sgr` operation and therefore
     /// requires its reset string to preserve alternate-character-set state, so
     /// a termcap lookup for it is a projection ncurses makes as well, and it
-    /// is owned.
+    /// is owned. Absence and cancellation both return `None`; use
+    /// [`Self::string_state`] when that distinction matters.
     #[must_use]
     pub fn string(&self, name: CapabilityName<'_>) -> Option<Cow<'_, [u8]>> {
-        match name {
-            CapabilityName::Terminfo(capname) => self
-                .strings
-                .get(capname)
-                .map(|value| Cow::Borrowed(&value[..])),
-            CapabilityName::Termcap(code) => termcap::string(self, code).map(Cow::Owned),
-        }
+        self.string_state(name).into_value()
     }
 
     /// Every boolean capability this entry defines.
     pub fn booleans(&self) -> impl Iterator<Item = (&'static str, bool)> + '_ {
-        self.bools.iter().map(|(&capname, &value)| (capname, value))
+        self.bools
+            .iter()
+            .filter_map(|(&capname, &state)| state.into_value().map(|value| (capname, value)))
     }
 
     /// Every numeric capability this entry defines.
     pub fn numbers(&self) -> impl Iterator<Item = (&'static str, u32)> + '_ {
         self.numbers
             .iter()
-            .map(|(&capname, &value)| (capname, value))
+            .filter_map(|(&capname, &state)| state.into_value().map(|value| (capname, value)))
     }
 
     /// Every string capability this entry defines, raw and unexpanded.
     pub fn strings(&self) -> impl Iterator<Item = (&'static str, &[u8])> + '_ {
-        self.strings
-            .iter()
-            .map(|(&capname, value)| (capname, &value[..]))
+        self.strings.iter().filter_map(|(&capname, state)| {
+            state.as_value().map(|value| (capname, value.as_slice()))
+        })
     }
 
     /// The terminfo capname `name` selects, in whichever vocabulary it is
@@ -379,7 +510,7 @@ impl TermInfo {
 
     /// Retrieve a capability `cmd` and expand it with `params`, writing result to `out`.
     pub fn apply_cap(&self, cmd: &str, params: &[Param], out: &mut dyn io::Write) -> Result<()> {
-        match self.strings.get(cmd) {
+        match self.strings.get(cmd).and_then(CapabilityState::as_value) {
             Some(cmd) => match expand(cmd, params, &mut Variables::new()) {
                 Ok(s) => {
                     out.write_all(&s)?;
@@ -401,7 +532,12 @@ impl TermInfo {
             ("op", &[]),
         ]
         .iter()
-        .filter_map(|&(cap, params)| self.strings.get(cap).map(|c| (c, params)))
+        .filter_map(|&(cap, params)| {
+            self.strings
+                .get(cap)
+                .and_then(CapabilityState::as_value)
+                .map(|capability| (capability, params))
+        })
         .next()
         {
             Some((op, params)) => expand(op, params, &mut Variables::new())?,
@@ -467,6 +603,12 @@ pub enum Error {
     TooManyStrings,
     /// The length of some field was not >= -1.
     InvalidLength,
+    /// A boolean capability contained neither absent, cancelled, nor true.
+    InvalidBoolean(u8),
+    /// A numeric capability contained an illegal negative value.
+    InvalidNumber(i32),
+    /// A string capability contained an illegal negative table offset.
+    InvalidStringOffset(i16),
     /// The names table was missing a trailing null terminator.
     NamesMissingNull,
     /// The strings table was missing a trailing null terminator.
@@ -502,6 +644,13 @@ impl std::fmt::Display for Error {
             TooManyNumbers => f.write_str("more number properties than nshterm knows about"),
             TooManyStrings => f.write_str("more string properties than nshterm knows about"),
             InvalidLength => f.write_str("invalid length field value, must be >= -1"),
+            InvalidBoolean(value) => {
+                write!(f, "invalid boolean capability value 0x{value:02x}")
+            }
+            InvalidNumber(value) => write!(f, "invalid numeric capability value {value}"),
+            InvalidStringOffset(value) => {
+                write!(f, "invalid string capability offset {value}")
+            }
             NamesMissingNull => f.write_str("names table missing NUL terminator"),
             StringsMissingNull => f.write_str("string table missing NUL terminator"),
             StringOffsetOutOfRange => {

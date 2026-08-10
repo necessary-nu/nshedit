@@ -285,6 +285,17 @@ states where those semantics may live and what the native Rust API must be.
 > arguments, public mutable representation maps, and swallowed I/O failures are
 > forbidden in its maintained public API.
 
+> [spec:nshedit:req:terminal.compiled-capability-state]
+> The terminal-capability crate MUST decode compiled numeric fields as signed
+> 16- or 32-bit values according to the entry magic and compiled string offsets
+> as signed 16-bit values; boolean bytes `0`, `0xfe`, and `1` mean absent,
+> cancelled, and true respectively. It MUST represent absence, cancellation,
+> and an explicit value as distinct `CapabilityState` variants through parsing,
+> focused lookup, and building; native APIs MUST NOT expose the on-disk sentinel
+> integers as capability values. Value-only accessors and iterators MUST exclude
+> absent and cancelled fields, while retaining a real zero number or empty
+> string as a usable value.
+
 > [spec:nshedit:req:core.no-compat-internals]
 > Once replacement concerns are active, the transliterated C-shaped core,
 > file-for-file module facade, legacy conversion buffers, core errno storage,

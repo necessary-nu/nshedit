@@ -3661,6 +3661,9 @@ children (
             {
                 id quality-terminfo-sentinels
                 title "Parse compiled terminfo absent and cancelled sentinels correctly"
+                implements {
+                    native-impl ([spec:nshedit:req:terminal.compiled-capability-state])
+                }
                 log (
                     {
                         at 2026-08-10T12:59:17.832950637Z

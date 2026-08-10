@@ -13,6 +13,7 @@ scope {
         [spec:libedit:def:terminal.tgoto-fn]
         [spec:libedit:def:terminal.tputs-fn]
         [spec:nshedit:req:abi.termcap-view]
+        [spec:nshedit:req:terminal.compiled-capability-state]
         [spec:nshedit:req:terminal.typed-api]
     )
 }
@@ -44,6 +45,7 @@ consequences {
         "TERMINFO, TERMINFO_DIRS, and HOME-derived search paths are ignored for a privileged process according to the secure environment guard."
         "Filesystem terminfo trees are the supported database layout. The current Linux package matrix does not require ncurses' opt-in hashed layout, so nshterm does not probe or parse it."
         "Public format, name, and environment choices are enums or policy values; capability maps remain private; parser and discovery errors retain their opaque source and expose no whole-error equality that the source cannot uphold. Callers match typed variants and inspect their payloads."
+        "Compiled absent, cancelled, and explicit capability values remain distinct typed states. On-disk signed sentinels never enter the native API as usable integers or byte strings, while a real zero number or empty string remains usable."
     )
     deferred (
         "A future platform that ships only a hashed terminfo database must specify and verify its database format before entering the support matrix."
@@ -57,6 +59,7 @@ codifies (
     [spec:libedit:def:terminal.tgetent-fn]
     [spec:libedit:def:terminal.tputs-fn]
     [spec:nshedit:req:abi.termcap-view]
+    [spec:nshedit:req:terminal.compiled-capability-state]
     [spec:nshedit:req:terminal.typed-api]
 )
 establishes ([arch:libedit:terminal-caps])
@@ -76,6 +79,15 @@ few provider semantics that are not plain aliases. The ABI stores the result
 per handle. Padding is similarly preserved as structured information until
 `tputs` knows the writer speed, avoiding the C provider's global callback
 destination.
+
+The compiled format uses signed storage metadata rather than capability
+values for absence and cancellation. Numeric fields use the width selected by
+the file magic, while string offsets remain signed 16-bit fields. `nshterm`
+decodes those details into `CapabilityState` at the parser boundary. Focused
+state lookup and building preserve the distinction for inspection and
+round-tripping; the value views consumed by the renderer and compatibility
+profile admit only `Value`, so cancellation cannot become an empty escape
+sequence or a large positive number.
 
 `nshterm::Error` retains `std::io::Error` rather than flattening it into a
 string, errno, or selected fields. Because an I/O error may contain an

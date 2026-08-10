@@ -1,8 +1,8 @@
 //! Termcap-visible projections that are not plain capability-name aliases.
 
-use crate::TermInfo;
 use crate::parm::{Param, Variables, expand};
 use crate::parser::names::{STRING_CODES, STRING_NAMES};
+use crate::{CapabilityState, TermInfo};
 
 fn capname(code: &str) -> Option<&'static str> {
     STRING_CODES
@@ -12,33 +12,45 @@ fn capname(code: &str) -> Option<&'static str> {
 }
 
 // [spec:nshedit:req:abi.termcap-view]
-pub(super) fn string(entry: &TermInfo, code: &str) -> Option<Vec<u8>> {
-    let name = capname(code)?;
-    let raw = entry.strings.get(name)?;
-    if code == "me" {
-        Some(trim_attribute_reset(entry).unwrap_or_else(|| raw.clone()))
-    } else {
-        Some(raw.clone())
+pub(super) fn string(entry: &TermInfo, code: &str) -> CapabilityState<Vec<u8>> {
+    let Some(name) = capname(code) else {
+        return CapabilityState::Absent;
+    };
+    let Some(state) = entry.strings.get(name) else {
+        return CapabilityState::Absent;
+    };
+    match state {
+        CapabilityState::Absent => CapabilityState::Absent,
+        CapabilityState::Cancelled => CapabilityState::Cancelled,
+        CapabilityState::Value(raw) if code == "me" => {
+            CapabilityState::Value(trim_attribute_reset(entry).unwrap_or_else(|| raw.clone()))
+        }
+        CapabilityState::Value(raw) => CapabilityState::Value(raw.clone()),
     }
 }
 
+fn raw_string<'a>(entry: &'a TermInfo, name: &str) -> Option<&'a Vec<u8>> {
+    entry.strings.get(name).and_then(CapabilityState::as_value)
+}
+
 fn trim_attribute_reset(entry: &TermInfo) -> Option<Vec<u8>> {
-    let raw = entry.strings.get("sgr0")?;
-    let set_attributes = entry.strings.get("sgr")?;
+    let reset = raw_string(entry, "sgr0")?;
+    let set_attributes = raw_string(entry, "sgr")?;
     let mut off = expand_attributes(set_attributes, 0)?;
     let mut on = expand_attributes(set_attributes, 1)?;
-    let mut end = raw.clone();
+    let mut end = reset.clone();
 
-    move_prefix_to_end(&mut on, entry.strings.get("smacs").map(Vec::as_slice));
-    move_prefix_to_end(&mut off, entry.strings.get("rmacs").map(Vec::as_slice));
-    move_prefix_to_end(&mut end, entry.strings.get("rmacs").map(Vec::as_slice));
+    move_prefix_to_end(&mut on, raw_string(entry, "smacs").map(Vec::as_slice));
+    move_prefix_to_end(&mut off, raw_string(entry, "rmacs").map(Vec::as_slice));
+    move_prefix_to_end(&mut end, raw_string(entry, "rmacs").map(Vec::as_slice));
     if !similar_sgr(&off, &end) || similar_sgr(&off, &on) {
-        return Some(raw.clone());
+        return Some(reset.clone());
     }
 
     let mut changed = entry
         .strings
         .get("rmacs")
+        .and_then(CapabilityState::as_value)
         .and_then(|part| remove_part(&mut off, part));
     if changed.is_none() {
         changed = remove_sgr_ten(&mut off);
@@ -49,9 +61,9 @@ fn trim_attribute_reset(entry: &TermInfo) -> Option<Vec<u8>> {
         end.drain(start..start + off.len());
         end
     } else {
-        raw.clone()
+        reset.clone()
     };
-    Some(if result == *raw {
+    Some(if result == *reset {
         result
     } else {
         without_padding(&result)

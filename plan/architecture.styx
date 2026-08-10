@@ -14,6 +14,7 @@ elements (
             [spec:libedit:def:terminal.tgoto-fn]
             [spec:libedit:def:terminal.tputs-fn]
             [spec:nshedit:req:abi.termcap-view]
+            [spec:nshedit:req:terminal.compiled-capability-state]
             [spec:nshedit:req:terminal.typed-api]
         )
         exposes ("crates/nshterm/src/**")
@@ -31,6 +32,7 @@ elements (
             {at "2026-08-09T12:49:10Z", kind @modified, by "[dec:libedit:rust-internal-boundary]"}
             {at "2026-08-09T22:42:58Z", kind @modified, by "[dec:libedit:platform-targets]"}
             {at "2026-08-10T14:20:56Z", kind @modified, by "[dec:libedit:terminal-caps-via-term-crate]"}
+            {at "2026-08-10T14:42:12Z", kind @modified, by "[dec:libedit:terminal-caps-via-term-crate]"}
         )
     }
     {

@@ -10,7 +10,9 @@ pub mod common;
 
 use common::{fixture, fixture_names};
 use nshterm::parm::Param;
-use nshterm::{CapabilityName, Error, InvalidTerminalName, TermInfo, TermInfoBuilder};
+use nshterm::{
+    CapabilityName, CapabilityState, Error, InvalidTerminalName, TermInfo, TermInfoBuilder,
+};
 
 /// Every fixture parses, and parses into something usable.
 ///
@@ -255,6 +257,35 @@ fn capabilities_answer_by_vocabulary() {
         term.numbers().find(|&(capname, _)| capname == "cols"),
         Some(("cols", 80))
     );
+}
+
+/// Builder input retains cancellation as metadata while value views expose
+/// only capabilities that a terminal can actually use.
+// [spec:nshedit:req:terminal.compiled-capability-state/test]
+#[test]
+fn builder_preserves_capability_state() {
+    let term = TermInfoBuilder::default()
+        .named("states")
+        .number_state("cols", CapabilityState::Cancelled)
+        .number("lines", 24)
+        .string_state("bel", CapabilityState::Cancelled)
+        .string("cr", Vec::new())
+        .build();
+
+    assert_eq!(
+        term.number_state(CapabilityName::Terminfo("cols")),
+        CapabilityState::Cancelled
+    );
+    assert_eq!(
+        term.string_state(CapabilityName::Terminfo("bel")),
+        CapabilityState::Cancelled
+    );
+    assert_eq!(term.numbers().collect::<Vec<_>>(), [("lines", 24)]);
+    assert_eq!(
+        term.string(CapabilityName::Terminfo("cr")).as_deref(),
+        Some(&b""[..])
+    );
+    assert_eq!(term.strings().count(), 1);
 }
 
 /// The name table is a parsing decision the caller states, not a mode flag.

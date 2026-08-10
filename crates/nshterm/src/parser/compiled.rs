@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::io;
 use std::io::prelude::*;
 
+use crate::CapabilityState;
 use crate::Error::*;
 use crate::NameTable;
 use crate::Result;
@@ -21,18 +22,18 @@ use crate::TermInfo;
 
 pub use crate::parser::names::*;
 
-// These are the orders ncurses uses in its compiled format (as of 5.9). Not
-// sure if portable.
+const LEGACY_MAGIC: u16 = 0x011a;
+const EXTENDED_NUMBER_MAGIC: u16 = 0x021e;
 
-fn read_le_u16(r: &mut dyn io::Read) -> io::Result<u32> {
+fn read_le_i16(r: &mut dyn io::Read) -> io::Result<i32> {
     let mut buf = [0; 2];
     r.read_exact(&mut buf)
-        .map(|()| u32::from(u16::from_le_bytes(buf)))
+        .map(|()| i32::from(i16::from_le_bytes(buf)))
 }
 
-fn read_le_u32(r: &mut dyn io::Read) -> io::Result<u32> {
+fn read_le_i32(r: &mut dyn io::Read) -> io::Result<i32> {
     let mut buf = [0; 4];
-    r.read_exact(&mut buf).map(|()| u32::from_le_bytes(buf))
+    r.read_exact(&mut buf).map(|()| i32::from_le_bytes(buf))
 }
 
 fn read_byte(r: &mut dyn io::Read) -> io::Result<u8> {
@@ -43,7 +44,37 @@ fn read_byte(r: &mut dyn io::Read) -> io::Result<u8> {
     }
 }
 
+fn decode_number(value: i32) -> Result<CapabilityState<u32>> {
+    match value {
+        -1 => Ok(CapabilityState::Absent),
+        -2 => Ok(CapabilityState::Cancelled),
+        0.. => Ok(CapabilityState::Value(value as u32)),
+        _ => Err(InvalidNumber(value)),
+    }
+}
+
+fn decode_string_offset(value: i16) -> Result<CapabilityState<usize>> {
+    match value {
+        -1 => Ok(CapabilityState::Absent),
+        -2 => Ok(CapabilityState::Cancelled),
+        0.. => Ok(CapabilityState::Value(value as usize)),
+        _ => Err(InvalidStringOffset(value)),
+    }
+}
+
+fn decode_boolean(value: u8) -> Result<CapabilityState<bool>> {
+    match value {
+        0 => Ok(CapabilityState::Absent),
+        1 => Ok(CapabilityState::Value(true)),
+        0xfe => Ok(CapabilityState::Cancelled),
+        _ => Err(InvalidBoolean(value)),
+    }
+}
+
+// The capability orders are ncurses' standard tables. The header counts let
+// older readers stop before any later additions.
 // [spec:nshedit:req:terminal.typed-api]
+// [spec:nshedit:req:terminal.compiled-capability-state]
 /// Parse a compiled terminfo entry, keying its capabilities by `names`.
 pub fn parse(file: &mut dyn io::Read, names: NameTable) -> Result<TermInfo> {
     let (bnames, snames, nnames) = match names {
@@ -57,18 +88,16 @@ pub fn parse(file: &mut dyn io::Read, names: NameTable) -> Result<TermInfo> {
     let magic = u16::from_le_bytes(buf);
 
     let read_number = match magic {
-        0x011A => read_le_u16,
-        0x021e => read_le_u32,
+        LEGACY_MAGIC => read_le_i16,
+        EXTENDED_NUMBER_MAGIC => read_le_i32,
         _ => return Err(BadMagic(magic)),
     };
 
-    // According to the spec, these fields must be >= -1 where -1 means that the
-    // feature is not
-    // supported. Using 0 instead of -1 works because we skip sections with length
-    // 0.
+    // Header sizes are signed 16-bit fields. Minus one means that the section
+    // is absent; treating it as zero is exact because no bytes follow.
     macro_rules! read_nonneg {
         () => {{
-            match read_le_u16(file)? as i16 {
+            match read_le_i16(file)? {
                 n if n >= 0 => n as usize,
                 -1 => 0,
                 _ => return Err(InvalidLength),
@@ -114,64 +143,54 @@ pub fn parse(file: &mut dyn io::Read, names: NameTable) -> Result<TermInfo> {
     }
 
     let bools_map = (0..bools_bytes)
-        .filter_map(|i| match read_byte(file) {
-            Err(e) => Some(Err(e)),
-            Ok(1) => Some(Ok((bnames[i], true))),
-            Ok(_) => None,
-        })
-        .collect::<io::Result<HashMap<_, _>>>()?;
+        .map(|i| Ok((bnames[i], decode_boolean(read_byte(file)?)?)))
+        .collect::<Result<HashMap<_, _>>>()?;
 
     if (bools_bytes + names_bytes) % 2 == 1 {
         read_byte(file)?; // compensate for padding
     }
 
     let numbers_map = (0..numbers_count)
-        .filter_map(|i| match read_number(file) {
-            Ok(0xFFFF) => None,
-            Ok(n) => Some(Ok((nnames[i], n))),
-            Err(e) => Some(Err(e)),
-        })
-        .collect::<io::Result<HashMap<_, _>>>()?;
+        .map(|i| Ok((nnames[i], decode_number(read_number(file)?)?)))
+        .collect::<Result<HashMap<_, _>>>()?;
 
-    let string_map: HashMap<&str, Vec<u8>> = if string_offsets_count > 0 {
+    let string_map: HashMap<&str, CapabilityState<Vec<u8>>> = if string_offsets_count > 0 {
         let string_offsets = (0..string_offsets_count)
             .map(|_| {
                 let mut buf = [0; 2];
-                file.read_exact(&mut buf).map(|()| u16::from_le_bytes(buf))
+                file.read_exact(&mut buf)?;
+                decode_string_offset(i16::from_le_bytes(buf))
             })
-            .collect::<io::Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>>>()?;
 
         // `read_exact` rather than `take(..).read_to_end(..)`: a file that
         // ends inside its own string table has to fail here, the same way
         // every other short read in this format does. Reading what is there
         // and trusting the declared length instead left the slices below out
-        // of range. The length is a `u16` read through `read_nonneg!`, so
-        // the allocation is bounded by 32767 bytes.
+        // of range. The length is a signed 16-bit header value accepted only
+        // when non-negative, so the allocation is bounded by 32767 bytes.
         let mut string_table = vec![0; string_table_bytes];
         file.read_exact(&mut string_table)?;
 
         string_offsets
             .into_iter()
             .enumerate()
-            .filter(|&(_, offset)| {
-                // non-entry
-                offset != 0xFFFF
-            })
             .map(|(i, offset)| {
-                let offset = offset as usize;
-
                 let name = if snames[i] == "_" {
                     STRING_LONG_NAMES[i]
                 } else {
                     snames[i]
                 };
 
-                if offset == 0xFFFE {
-                    // undocumented: FFFE indicates cap@, which means the capability
-                    // is not present
-                    // unsure if the handling for this is correct
-                    return Ok((name, Vec::new()));
-                }
+                let offset = match offset {
+                    CapabilityState::Absent => {
+                        return Ok((name, CapabilityState::Absent));
+                    }
+                    CapabilityState::Cancelled => {
+                        return Ok((name, CapabilityState::Cancelled));
+                    }
+                    CapabilityState::Value(offset) => offset,
+                };
 
                 // The offset is a claim the file makes about itself, and
                 // nothing above has measured it against the table that is
@@ -180,7 +199,7 @@ pub fn parse(file: &mut dyn io::Read, names: NameTable) -> Result<TermInfo> {
 
                 // Find the offset of the NUL we want to go to
                 match tail.iter().position(|&b| b == 0) {
-                    Some(len) => Ok((name, tail[..len].to_vec())),
+                    Some(len) => Ok((name, CapabilityState::Value(tail[..len].to_vec()))),
                     None => Err(StringsMissingNull),
                 }
             })
@@ -207,10 +226,10 @@ mod test {
     use std::path::PathBuf;
 
     use super::{
-        BOOL_LONG_NAMES, BOOL_NAMES, NUMBER_LONG_NAMES, NUMBER_NAMES, STRING_LONG_NAMES,
-        STRING_NAMES, parse,
+        BOOL_LONG_NAMES, BOOL_NAMES, EXTENDED_NUMBER_MAGIC, LEGACY_MAGIC, NUMBER_LONG_NAMES,
+        NUMBER_NAMES, STRING_LONG_NAMES, STRING_NAMES, parse,
     };
-    use crate::{Error, Result, TermInfo};
+    use crate::{CapabilityName, CapabilityState, Error, Result, TermInfo};
 
     #[test]
     fn test_veclens() {
@@ -233,8 +252,8 @@ mod test {
         /// Without the terminating NUL, which `bytes` appends.
         names: Vec<u8>,
         bools: Vec<u8>,
-        numbers: Vec<u16>,
-        offsets: Vec<u16>,
+        numbers: Vec<i32>,
+        offsets: Vec<i16>,
         table: Vec<u8>,
     }
 
@@ -248,11 +267,11 @@ mod test {
         /// of every kind, so that both branches of each section's filter run.
         fn minimal() -> Entry {
             Entry {
-                magic: 0x011A,
+                magic: LEGACY_MAGIC,
                 names: b"nsh|nshterm test entry".to_vec(),
                 bools: vec![0, 1],
                 numbers: vec![80],
-                offsets: vec![0xFFFF, 0],
+                offsets: vec![-1, 0],
                 table: b"\x07\0".to_vec(),
             }
         }
@@ -277,7 +296,15 @@ mod test {
                 v.push(0);
             }
             for n in &self.numbers {
-                v.extend(n.to_le_bytes());
+                if self.magic == EXTENDED_NUMBER_MAGIC {
+                    v.extend(n.to_le_bytes());
+                } else {
+                    v.extend(
+                        i16::try_from(*n)
+                            .expect("legacy fixture number must fit i16")
+                            .to_le_bytes(),
+                    );
+                }
             }
             for o in &self.offsets {
                 v.extend(o.to_le_bytes());
@@ -316,12 +343,41 @@ mod test {
     fn a_minimal_entry_round_trips() {
         let term = parse_bytes(&Entry::minimal().bytes()).expect("minimal entry should parse");
         assert_eq!(term.names, ["nsh", "nshterm test entry"]);
-        assert_eq!(term.numbers["cols"], 80);
-        assert_eq!(term.strings["bel"], b"\x07");
-        // A boolean stored as 0 is absent, not present-and-false; callers
-        // read these with `get(..).is_some()`.
-        assert_eq!(term.bools.get("am"), Some(&true));
-        assert_eq!(term.bools.get("bw"), None);
+        assert_eq!(term.number(CapabilityName::Terminfo("cols")), Some(80));
+        assert_eq!(
+            term.string(CapabilityName::Terminfo("bel")).as_deref(),
+            Some(&b"\x07"[..])
+        );
+        assert_eq!(
+            term.boolean_state(CapabilityName::Terminfo("am")),
+            CapabilityState::Value(true)
+        );
+        assert_eq!(
+            term.boolean_state(CapabilityName::Terminfo("bw")),
+            CapabilityState::Absent
+        );
+    }
+
+    // [spec:nshedit:req:terminal.compiled-capability-state/test]
+    #[test]
+    fn boolean_states_follow_compiled_encoding() {
+        let mut entry = Entry::minimal();
+        entry.bools = vec![0, 0xfe, 1];
+        let term = parse_bytes(&entry.bytes()).expect("boolean states should parse");
+
+        assert_eq!(
+            term.boolean_state(CapabilityName::Terminfo("bw")),
+            CapabilityState::Absent
+        );
+        assert_eq!(
+            term.boolean_state(CapabilityName::Terminfo("am")),
+            CapabilityState::Cancelled
+        );
+        assert_eq!(
+            term.boolean_state(CapabilityName::Terminfo("xsb")),
+            CapabilityState::Value(true)
+        );
+        assert_eq!(term.booleans().collect::<Vec<_>>(), [("xsb", true)]);
     }
 
     #[test]
@@ -331,43 +387,67 @@ mod test {
         let mut e = Entry::minimal();
         e.names.pop();
         let term = parse_bytes(&e.bytes()).expect("odd-length entry should parse");
-        assert_eq!(term.numbers["cols"], 80);
-        assert_eq!(term.strings["bel"], b"\x07");
+        assert_eq!(term.number(CapabilityName::Terminfo("cols")), Some(80));
+        assert_eq!(
+            term.string(CapabilityName::Terminfo("bel")).as_deref(),
+            Some(&b"\x07"[..])
+        );
     }
 
+    // [spec:nshedit:req:terminal.compiled-capability-state/test]
     #[test]
-    fn the_32_bit_number_format_is_accepted() {
-        // Magic 0x021e widens the number section to `u32`, for `cps` and the
-        // other capabilities that outgrew 16 bits.
-        let e = Entry::minimal();
-        let mut bytes = with_header(&e.bytes(), 0, 0x021e);
-        // Widen the single number in place.
-        let numbers_at = bytes.len() - (e.numbers.len() * 2 + e.offsets.len() * 2 + e.table.len());
-        bytes.splice(numbers_at + 2..numbers_at + 2, [0, 0]);
-        let term = parse_bytes(&bytes).expect("32-bit entry should parse");
-        assert_eq!(term.numbers["cols"], 80);
+    fn numeric_states_decode_at_both_widths() {
+        for magic in [LEGACY_MAGIC, EXTENDED_NUMBER_MAGIC] {
+            let mut entry = Entry::minimal();
+            entry.magic = magic;
+            entry.numbers = vec![-1, -2, 0];
+            let term = parse_bytes(&entry.bytes()).expect("numeric states should parse");
+
+            assert_eq!(
+                term.number_state(CapabilityName::Terminfo("cols")),
+                CapabilityState::Absent,
+                "magic {magic:#06x}"
+            );
+            assert_eq!(
+                term.number_state(CapabilityName::Terminfo("it")),
+                CapabilityState::Cancelled,
+                "magic {magic:#06x}"
+            );
+            assert_eq!(
+                term.number_state(CapabilityName::Terminfo("lines")),
+                CapabilityState::Value(0),
+                "magic {magic:#06x}"
+            );
+            assert_eq!(term.numbers().collect::<Vec<_>>(), [("lines", 0)]);
+        }
     }
 
+    // [spec:nshedit:req:terminal.compiled-capability-state/test]
     #[test]
-    fn absent_capabilities_stay_out_of_the_maps() {
-        let mut e = Entry::minimal();
-        // 0xFFFF is "not in this entry" for both numbers and strings.
-        e.numbers = vec![0xFFFF];
-        e.offsets = vec![0xFFFF, 0xFFFF];
-        let term = parse_bytes(&e.bytes()).expect("entry should parse");
-        assert!(term.numbers.is_empty());
-        assert!(term.strings.is_empty());
-    }
+    fn string_states_distinguish_cancelled_and_empty() {
+        let mut entry = Entry::minimal();
+        entry.offsets = vec![-1, -2, 0, 1];
+        entry.table = b"\0X\0".to_vec();
+        let term = parse_bytes(&entry.bytes()).expect("string states should parse");
 
-    #[test]
-    fn a_cancelled_capability_reads_as_an_empty_string() {
-        // Offset 0xFFFE is terminfo's `cap@` — the capability is explicitly
-        // cancelled rather than merely missing.
-        let mut e = Entry::minimal();
-        e.offsets = vec![0xFFFE, 0];
-        let term = parse_bytes(&e.bytes()).expect("entry should parse");
-        assert_eq!(term.strings["cbt"], b"");
-        assert_eq!(term.strings["bel"], b"\x07");
+        assert_eq!(
+            term.string_state(CapabilityName::Terminfo("cbt")),
+            CapabilityState::Absent
+        );
+        assert_eq!(
+            term.string_state(CapabilityName::Terminfo("bel")),
+            CapabilityState::Cancelled
+        );
+        assert_eq!(
+            term.string_state(CapabilityName::Terminfo("cr")),
+            CapabilityState::Value(std::borrow::Cow::Borrowed(&b""[..]))
+        );
+        assert_eq!(
+            term.string_state(CapabilityName::Terminfo("csr")),
+            CapabilityState::Value(std::borrow::Cow::Borrowed(&b"X"[..]))
+        );
+        assert_eq!(term.strings().count(), 2);
+        assert_eq!(term.string(CapabilityName::Terminfo("bel")), None);
     }
 
     #[test]
@@ -544,10 +624,25 @@ mod test {
 
     #[test]
     fn capability_values_survive_the_string_table() {
-        assert_eq!(fixture("xterm").strings["cup"], b"\x1b[%i%p1%d;%p2%dH");
-        assert_eq!(fixture("linux").strings["setaf"], b"\x1b[3%p1%dm");
+        assert_eq!(
+            fixture("xterm")
+                .string(CapabilityName::Terminfo("cup"))
+                .as_deref(),
+            Some(&b"\x1b[%i%p1%d;%p2%dH"[..])
+        );
+        assert_eq!(
+            fixture("linux")
+                .string(CapabilityName::Terminfo("setaf"))
+                .as_deref(),
+            Some(&b"\x1b[3%p1%dm"[..])
+        );
         // dumb is the degenerate entry: a handful of strings, no parameters.
-        assert_eq!(fixture("dumb").strings["bel"], b"\x07");
+        assert_eq!(
+            fixture("dumb")
+                .string(CapabilityName::Terminfo("bel"))
+                .as_deref(),
+            Some(&b"\x07"[..])
+        );
     }
 
     #[test]
@@ -556,22 +651,50 @@ mod test {
         // raw bytes, and it must **not** be parameter-expanded here", and "it
         // still carries its `$<...>` padding markers, which is what `tputs`
         // needs". The parser is where that could be lost, so pin it.
-        assert_eq!(fixture("vt100").strings["cup"], b"\x1b[%i%p1%d;%p2%dH$<5>");
         assert_eq!(
-            fixture("xterm").strings["flash"],
-            b"\x1b[?5h$<100/>\x1b[?5l"
+            fixture("vt100")
+                .string(CapabilityName::Terminfo("cup"))
+                .as_deref(),
+            Some(&b"\x1b[%i%p1%d;%p2%dH$<5>"[..])
+        );
+        assert_eq!(
+            fixture("xterm")
+                .string(CapabilityName::Terminfo("flash"))
+                .as_deref(),
+            Some(&b"\x1b[?5h$<100/>\x1b[?5l"[..])
         );
     }
 
     #[test]
     fn numeric_and_boolean_capabilities_are_read() {
-        assert_eq!(fixture("linux").numbers["colors"], 8);
-        assert_eq!(fixture("xterm-256color").numbers["colors"], 256);
-        assert_eq!(fixture("xterm-256color").numbers["pairs"], 65536);
-        assert_eq!(fixture("dumb").numbers["cols"], 80);
-        assert_eq!(fixture("xterm").bools.get("am"), Some(&true));
+        assert_eq!(
+            fixture("linux").number(CapabilityName::Terminfo("colors")),
+            Some(8)
+        );
+        assert_eq!(
+            fixture("xterm-256color").number(CapabilityName::Terminfo("colors")),
+            Some(256)
+        );
+        assert_eq!(
+            fixture("xterm-256color").number(CapabilityName::Terminfo("pairs")),
+            Some(65_536)
+        );
+        assert_eq!(
+            fixture("dumb").number(CapabilityName::Terminfo("cols")),
+            Some(80)
+        );
+        assert_eq!(
+            fixture("xterm").boolean(CapabilityName::Terminfo("am")),
+            Some(true)
+        );
         // `dumb` is not auto-margin and carries no colour count at all.
-        assert_eq!(fixture("dumb").bools.get("mir"), None);
-        assert_eq!(fixture("dumb").numbers.get("colors"), None);
+        assert_eq!(
+            fixture("dumb").boolean(CapabilityName::Terminfo("mir")),
+            None
+        );
+        assert_eq!(
+            fixture("dumb").number(CapabilityName::Terminfo("colors")),
+            None
+        );
     }
 }
