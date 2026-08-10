@@ -278,6 +278,7 @@ assertions (
     {id quality-double-quote-completion, kind @complete, author "brendan@necessary.nu", at 2026-08-10T13:18:25.536068913Z}
     {id quality-linux-target-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-10T13:46:13.177979833Z}
     {id quality-key-sequence-timeout, kind @complete, author "brendan@necessary.nu", at 2026-08-10T13:47:58.819986107Z}
+    {id quality-nonutf8-history-paths, kind @complete, author "brendan@necessary.nu", at 2026-08-10T13:51:55.474426347Z}
 )
 
 impl_evidence (

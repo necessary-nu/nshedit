@@ -3699,12 +3699,20 @@ children (
             {
                 id quality-nonutf8-history-paths
                 title "Preserve non-UTF-8 history path bytes"
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:24.237826073Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: append_history and history_truncate_file in crates/nshedit-abi/src/readline/history_io.rs convert C path bytes through lossy UTF-8 unlike sibling APIs. On Unix, construct paths directly from the original byte slice via OsStrExt; reject only invalid C input, not valid non-UTF-8 filesystem names, and keep path handling consistent across readline history functions."
+                    }
+
+                    {
+                        at 2026-08-10T13:51:55.474426347Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }

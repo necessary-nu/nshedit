@@ -68,9 +68,7 @@ unsafe fn history_file_name(filename: *const c_char) -> Result<*const c_char, c_
 unsafe fn history_file_path(filename: *const c_char) -> Result<std::path::PathBuf, c_int> {
     // SAFETY: the caller guarantees the string.
     let name = unsafe { c_bytes(history_file_name(filename)?) };
-    Ok(std::path::PathBuf::from(
-        String::from_utf8_lossy(name).into_owned(),
-    ))
+    Ok(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(name)))
 }
 
 // [spec:libedit:def:readline.history-truncate-file-fn]

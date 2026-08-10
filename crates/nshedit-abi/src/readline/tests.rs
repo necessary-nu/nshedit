@@ -792,6 +792,54 @@ impl Drop for Piped {
     }
 }
 
+/// Readline's history file entry points take filesystem bytes, not UTF-8.
+/// A non-UTF-8 name must identify the same directory entry when it is opened
+/// for truncation and later for append.
+// [spec:libedit:sem:readline.history-truncate-file-fn/test]
+// [spec:libedit:sem:readline.append-history-fn+1/test]
+#[test]
+fn history_paths_preserve_non_utf8_bytes() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let _g = globals();
+    let _ed = Piped::install();
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory
+        .path()
+        .join(std::ffi::OsStr::from_bytes(b"history-\xff"));
+    std::fs::write(&path, b"first\nsecond\nthird\n").expect("seed history file");
+    let filename = std::ffi::CString::new(path.as_os_str().as_bytes()).expect("C pathname");
+
+    // SAFETY: the exported calls are serialized by `globals`; `filename` and
+    // the history entry are live NUL-terminated strings.
+    let saved_globals = unsafe {
+        let saved = (history_base, history_length, history_offset);
+        history_base = 1;
+        history_length = 0;
+        history_offset = 0;
+
+        assert_eq!(history_truncate_file(filename.as_ptr(), 2), 0);
+        assert_eq!(std::fs::read(&path).unwrap(), b"second\nthird\n");
+
+        assert!(history::execute(HistoryRequest::SetSize(1)).is_ok());
+        add_history(c"fourth".as_ptr());
+        assert_eq!(append_history(1, filename.as_ptr()), 0);
+
+        saved
+    };
+
+    assert_eq!(
+        std::fs::read(&path).expect("read history file"),
+        b"second\nthird\nfourth\n"
+    );
+
+    // SAFETY: still serialized by `globals`; restore the process-global
+    // readline mirrors before another test acquires the lock.
+    unsafe {
+        (history_base, history_length, history_offset) = saved_globals;
+    }
+}
+
 /// `rl_message` delegates the erased argument list to the platform's C
 /// formatter, then applies libedit's fixed 159-byte payload limit.
 // [spec:libedit:sem:readline.rl-message-fn/test]
