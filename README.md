@@ -14,9 +14,15 @@ implementation in the repository.
 
 | Target | Rust API | C compatibility |
 | --- | --- | --- |
-| Linux | Supported and conformance-gated | ELF shared/static library, generated headers, `libedit` compatibility names, and end-to-end loader tests |
+| Linux (`x86_64-unknown-linux-gnu`) | Supported and conformance-gated | ELF shared/static library, generated headers, `libedit` compatibility names, and end-to-end loader tests |
 | macOS (`x86_64` and Apple silicon) | Supported and native-acceptance-gated | Mach-O shared/static library, generated headers, `libedit` compatibility names, and native install, link, and runtime tests |
 | Windows | Supported and native-acceptance-gated | Not provided; the libedit C ABI remains POSIX-only |
+
+The Linux row is an exact target contract, not an `any Linux` promise.
+Other architectures, x32, musl, and Android are unsupported and rejected at
+compile time; adding one requires its own platform layouts and acceptance
+evidence. In particular, `x86_64-unknown-linux-musl` drops the `cdylib`
+required by the Linux C compatibility product.
 
 The exported Readline functions are **libedit's Readline compatibility
 surface**, not a complete implementation of GNU Readline. In particular,
@@ -66,8 +72,9 @@ Build the shared and static ABI artifacts with:
 cargo build -p nshedit-abi --release
 ```
 
-On Linux this produces `target/release/libnshedit.so`; on macOS it produces
-`target/release/libnshedit.dylib`. Both platforms also produce
+On `x86_64-unknown-linux-gnu` this produces
+`target/release/libnshedit.so`; on macOS it produces
+`target/release/libnshedit.dylib`. Both supported POSIX targets also produce
 `target/release/libnshedit.a`. The committed, generated headers are:
 
 - [`crates/nshedit-abi/include/histedit.h`](crates/nshedit-abi/include/histedit.h)
@@ -122,10 +129,11 @@ cargo build --workspace
 cargo test --workspace
 ```
 
-The Linux ABI tests run by default. They compare the built symbol table with
-the committed export contract, compile direct C consumers against the
-generated headers, exercise defined handling of historically unsafe inputs,
-and verify the staged installer and loader layout.
+The `x86_64-unknown-linux-gnu` ABI tests run by default. They compare the
+built symbol table with the committed export contract, compile direct C
+consumers against the generated headers, exercise defined handling of
+historically unsafe inputs, and verify the staged installer and loader
+layout.
 
 For the same checks with a stage-by-stage report:
 
@@ -133,9 +141,9 @@ For the same checks with a stage-by-stage report:
 ./conformance/run.sh
 ```
 
-The full conformance harness is currently Linux-oriented. It expects a C
-compiler, `pkg-config`, standard ELF/binutils tools, and installed terminfo
-entries. It does not require Autotools or a system libedit.
+The full conformance harness requires an `x86_64-unknown-linux-gnu` host. It
+expects a C compiler, `pkg-config`, standard ELF/binutils tools, and installed
+terminfo entries. It does not require Autotools or a system libedit.
 
 From a Linux development host, compile every workspace crate and test target
 for both supported Darwin architectures with:

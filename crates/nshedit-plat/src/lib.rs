@@ -15,9 +15,10 @@
 //!
 //! rustix covers terminal attributes, window size, pending input, and process
 //! credentials.
-//! On x86_64 and aarch64 Linux it selects its `linux_raw` backend and issues
-//! those syscalls directly. On macOS it uses rustix's libc backend, which is
-//! the supported Darwin route for the same typed operations.
+//! On the supported `x86_64-unknown-linux-gnu` target it selects its
+//! `linux_raw` backend and issues those syscalls directly. On macOS it uses
+//! rustix's libc backend, which is the supported Darwin route for the same
+//! typed operations.
 //!
 //! It does not cover signals, and not by omission: rustix's
 //! `not_implemented.rs` lists `sigaction`, `sigprocmask` and `sigwait` as
@@ -37,10 +38,24 @@
 //!
 //! # Scope of the numbers
 //!
-//! Linux/glibc and macOS/Darwin each select their own transcribed termios,
-//! signal, and passwd representations. Windows has none of those POSIX
-//! representations. There is no catch-all arm that lets one platform inherit
-//! another platform's constants.
+//! GNU x86-64 Linux and macOS/Darwin each select their own transcribed
+//! termios, signal, and passwd representations. Windows has none of those
+//! POSIX representations. There is no catch-all arm that lets one platform
+//! inherit another platform's constants.
+
+#[cfg(all(
+    any(target_os = "linux", target_os = "android"),
+    not(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        target_vendor = "unknown",
+        target_env = "gnu",
+        target_pointer_width = "64",
+    )),
+))]
+compile_error!(
+    "nshedit supports Linux only on x86_64-unknown-linux-gnu; other Linux ABIs and Android are unsupported"
+);
 
 // [spec:nshedit:req:platform.typed-boundary]
 #[cfg(unix)]
@@ -194,7 +209,6 @@ pub(crate) mod cheader {
         [
             format!("/usr/include/{arch}-linux-gnu"),
             "/usr/include".to_owned(),
-            format!("/usr/include/{arch}-linux-musl"),
         ]
         .into_iter()
         .map(|root| PathBuf::from(root).join(relative))

@@ -84,8 +84,14 @@ impl Passwd {
     };
 }
 
-/// Checked rather than trusted against glibc's `<pwd.h>` layout.
-#[cfg(any(target_os = "linux", target_os = "android"))]
+/// Checked rather than trusted against x86-64 glibc's `<pwd.h>` layout.
+#[cfg(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    target_vendor = "unknown",
+    target_env = "gnu",
+    target_pointer_width = "64",
+))]
 const _: () = {
     use core::mem::{align_of, offset_of, size_of};
 

@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_void};
+use core::ffi::{c_char, c_int, c_void};
 use std::ffi::{CStr, CString};
 
 use nshedit::domain::{Direction, RepeatCount, Text};
@@ -39,7 +39,7 @@ unsafe extern "C" fn history_callback(
     0
 }
 
-unsafe extern "C" fn alias_callback(cookie: *mut c_void, name: *const i8) -> *const i8 {
+unsafe extern "C" fn alias_callback(cookie: *mut c_void, name: *const c_char) -> *const c_char {
     let name = unsafe { CStr::from_ptr(name) };
     if name.to_bytes() != b"_g" {
         return core::ptr::null();

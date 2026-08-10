@@ -5,6 +5,10 @@
 set -uo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
+host=$(rustc -vV | sed -n 's/^host: //p')
+[[ $host == x86_64-unknown-linux-gnu ]] ||
+    die "the supported Linux target is x86_64-unknown-linux-gnu, not ${host:-unknown}"
+
 declare -a names=()
 declare -a results=()
 overall=0

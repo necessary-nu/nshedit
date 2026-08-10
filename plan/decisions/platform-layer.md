@@ -99,10 +99,10 @@ consequences {
         "Public safe operations take BorrowedFd or typed platform values and return io::Result or a descriptive typed error. They never fabricate a 'static descriptor lifetime or flatten syscall failure into bool or Option."
         "The core receives safe typed results and never exposes termios, sigaction, passwd, ioctl, or raw ownership mechanics in its public API."
         "There are no public process-global override hooks. Scoped disposition ownership follows [dec:libedit:signal-lifecycle], while editor-level customization suspends through [dec:libedit:effect-driven-hooks]."
-        "Linux is the supported system ABI until another target supplies and verifies its constants, layouts, libc accessors, and conformance matrix."
+        "The Linux system ABI is exactly x86_64-unknown-linux-gnu. nshedit-plat rejects other Linux triples before they can inherit its x86-64 glibc transcriptions; macOS and Windows use their separately decided platform boundaries."
     )
     deferred (
-        "Support for a non-Linux system ABI."
+        "Another Linux triple requires its own verified constants, layouts, libc accessors, build artifacts, and conformance matrix."
     )
 }
 edges {
@@ -130,6 +130,11 @@ Signals are different: libc expects to participate in their runtime and raw
 signal syscalls are not sound in a process already using libc. User lookup is
 likewise a libc boundary because NSS dynamically loads configured providers.
 Those two families remain the enumerated platform exception.
+
+The platform boundary is selected by a proved target ABI, not by an
+operating-system family name. On Linux that proof currently exists only for
+`x86_64-unknown-linux-gnu`; other Linux triples fail the build instead of
+receiving records transcribed from x86-64 glibc.
 
 The platform crate provides typed operations and defaults, not a C-shaped
 public syscall facade or process-global injection points. Platform layouts,

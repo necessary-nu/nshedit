@@ -1,10 +1,12 @@
 # Supported platforms and their ABIs
 
 `plan/decisions/platform-targets.md` makes macOS a supported target and keeps
-Linux the proven one. These rules state what "supported" obliges the workspace
-to spell, assert, and gate. Behavioural semantics stay in the `libedit`
-corpus; this corpus states which platform's numbers those semantics are read
-against.
+`x86_64-unknown-linux-gnu` as the only supported Linux target. Linux support
+is not inferred from `target_os = "linux"`: another architecture, libc, data
+model, or Android requires its own transcriptions and acceptance evidence.
+These rules state what "supported" obliges the workspace to spell, assert,
+and gate. Behavioural semantics stay in the `libedit` corpus; this corpus
+states which platform's numbers those semantics are read against.
 
 ## Per-operating-system platform ABI
 

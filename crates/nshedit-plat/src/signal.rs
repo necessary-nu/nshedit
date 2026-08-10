@@ -44,27 +44,13 @@ pub use handlers::{BlockedSignals, SignalError, SignalHandlers};
 #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
 compile_error!("nshedit-plat has no signal ABI transcription for this target");
 
-#[cfg(any(
-    target_arch = "mips",
-    target_arch = "mips32r6",
-    target_arch = "mips64",
-    target_arch = "mips64r6",
-    target_arch = "sparc",
-    target_arch = "sparc64",
-))]
-compile_error!(
-    "the struct sigaction layout and the signal numbers transcribed here are \
-     the Linux generic ABI; mips and sparc renumber and reorder both"
-);
-
 /// The signal numbers this port names.
 ///
 /// POSIX names signals; it does not fix their numbers, and the libc that
 /// would define them is not what supplies constants here. Five of the seven
 /// libedit traps agree everywhere in scope; only `SIGCONT` and `SIGTSTP`
-/// differ between Linux's generic ABI and Darwin. Linux's alpha, mips, sparc
-/// and parisc ports renumber more widely and are not covered — see the
-/// `compile_error!` above.
+/// differ between GNU x86-64 Linux and Darwin. Other Linux targets are
+/// rejected at the crate boundary rather than inheriting these numbers.
 mod signo {
     pub const SIGHUP: i32 = 1;
     pub const SIGINT: i32 = 2;
@@ -160,8 +146,8 @@ type SigSetWord = c_ulong;
 #[cfg(target_os = "macos")]
 type SigSetWord = u32;
 
-/// The host `sigset_t` word count. glibc and musl reserve 1024 bits; Darwin
-/// carries the complete set in one 32-bit word.
+/// The host `sigset_t` word count. glibc reserves 1024 bits; Darwin carries
+/// the complete set in one 32-bit word.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 const SIGSET_WORDS: usize = 1024 / SIGSET_BITS;
 #[cfg(target_os = "macos")]
@@ -303,8 +289,14 @@ impl SigAction {
     }
 }
 
-/// The Linux generic transcription, checked against `<signal.h>`.
-#[cfg(any(target_os = "linux", target_os = "android"))]
+/// The x86-64 glibc transcription, checked against `<signal.h>`.
+#[cfg(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    target_vendor = "unknown",
+    target_env = "gnu",
+    target_pointer_width = "64",
+))]
 const _: () = {
     use core::mem::{align_of, offset_of, size_of};
 

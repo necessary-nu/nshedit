@@ -15,9 +15,10 @@ publish = false
 # Linux it is exactly linux-raw-sys (same triple) and bitflags
 # (MIT OR Apache-2.0). Nothing in that tree is WTFPL.
 #
-# On x86_64 and aarch64 Linux rustix selects its linux_raw backend and issues
-# syscalls directly. Darwin intentionally selects rustix's libc backend, so
-# the locked libc and errno target dependencies are compiled on macOS.
+# On the supported x86_64-unknown-linux-gnu target rustix selects its
+# linux_raw backend and issues syscalls directly. Darwin intentionally selects
+# rustix's libc backend, so the locked libc and errno target dependencies are
+# compiled on macOS.
 rustix = { version = "1.1", default-features = false, features = ["std", "termios", "process", "fs"] }
 
 [target.'cfg(windows)'.dependencies]

@@ -1,6 +1,6 @@
 ---
 id [dec:libedit:platform-targets]
-epitome "Linux and macOS are supported POSIX targets; Windows is planned for the native Rust surface only."
+epitome "Linux support is exactly x86_64-unknown-linux-gnu; macOS supports Intel and Apple silicon, and Windows supports the native Rust surface only."
 state @decided
 category @executive
 scope {
@@ -20,9 +20,15 @@ alternatives (
         option "Treat Windows as a separate editor project."
         rejected_because "The core editor and renderer are OS-agnostic Rust. Only the platform seam (nshedit-plat) and the capability source (nshterm) differ; modern Windows consoles speak VT through ConPTY, so the render model transfers. Same crates, new backends."
     }
+    {
+        option "Promise support for every target whose operating system is Linux."
+        rejected_because "Linux triples disagree on pointer width, libc records and symbols, signal layouts and numbers, C char signedness, and whether Rust can emit the shared library the compatibility product requires. An operating-system cfg is not evidence for an ABI."
+    }
 )
 consequences {
     accepted (
+        "The supported Linux matrix contains exactly x86_64-unknown-linux-gnu. Its x86-64 glibc passwd and sigaction layouts, signed C char, ELF cdylib, exports, installer, loader, and unchanged C consumer are all exercised on the target that ships them."
+        "nshedit-plat rejects every other Linux ABI and Android at compile time. A new Linux triple is a platform port with its own transcriptions and acceptance evidence, not another value added to a broad cfg arm."
         "nshedit-plat grows true Darwin arms: passwd and sigaction/sigset layouts, spelled from the stable Darwin ABI and self-checked with target-gated layout assertions."
         "nshedit-abi grows the Darwin stdio data symbols (__stdinp/__stdoutp/__stderrp) and a Mach-O export/install-name story; the ELF shape gates gain Mach-O counterparts."
         "Final macOS proof (native test suite, direct C consumer, Mach-O exports, install names, and runtime linking) requires macOS hardware or CI; until then Darwin support is compile-proven from Linux via a cross-check gate."
@@ -33,6 +39,7 @@ consequences {
     )
     deferred (
         "Legacy Windows consoles without VT processing and a Windows C ABI remain outside the supported target."
+        "Other Linux architectures, x32, musl, and Android remain unsupported until separately specified and proven."
     )
 }
 edges {
@@ -51,6 +58,22 @@ assumption that remains is individually marked in the tree — the
 `Passwd` and `SigAction` layouts, glibc's `NCCS = 32`. That containment
 is what makes target expansion a bounded piece of work rather than a
 rewrite.
+
+## Why Linux names one triple
+
+The maintained Linux evidence is specifically x86-64 glibc. `Passwd` and
+`SigAction` carry sizes and offsets produced by that C compiler and checked
+against that system's headers; the conformance harness then verifies the ELF
+shared object, generated headers, compatibility names, loader path, and a
+direct C consumer on the same target. That evidence cannot be generalized by
+changing `target_arch` or `target_env` in a cfg.
+
+The rejected cases fail for different reasons: armv7 has different pointer-
+sized record layouts, s390x exposes assumptions that C `char` is signed, and
+`x86_64-unknown-linux-musl` drops the `cdylib` needed by the C compatibility
+product. Those are separate ports if they ever become valuable. Until then
+the build rejects them before a glibc x86-64 transcription can masquerade as
+their ABI.
 
 macOS is POSIX and ships libedit; supporting it is the same product on
 a second POSIX. Windows is a different terminal lineage, but modern console

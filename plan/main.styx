@@ -3648,12 +3648,27 @@ children (
             {
                 id quality-linux-target-contract
                 title "Make the supported Linux target matrix exact and enforced"
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:23.912017204Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: README claims generic Linux support while passwd/signal layouts and build outputs are target-specific; armv7, s390x, and musl expose contradictory assumptions. Declare the exact supported Linux triples, enforce unsupported combinations at configuration time, and either add correct per-target layouts/build outputs or remove those triples from claims and CI. Do not use an open-ended any-Linux promise."
+                    }
+
+                    {
+                        at 2026-08-10T13:46:13.124044815Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "The supported Linux matrix is exactly x86_64-unknown-linux-gnu. It is the only Linux target with matching x86-64 glibc passwd and sigaction transcriptions, native ELF cdylib output, and end-to-end C ABI acceptance. Other Linux architectures, x32, musl, and Android fail at the nshedit-plat boundary; adding one requires its own ABI transcription and acceptance evidence."
+                    }
+
+                    {
+                        at 2026-08-10T13:46:13.177979833Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
