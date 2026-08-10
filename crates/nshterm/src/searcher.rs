@@ -182,7 +182,9 @@ fn exists(path: &Path) -> Result<bool> {
 
 #[cfg(test)]
 mod test {
-    use super::{DEFAULT_LOCATIONS, EnvironmentTrust, database_path, search};
+    #[cfg(unix)]
+    use super::search;
+    use super::{DEFAULT_LOCATIONS, EnvironmentTrust, database_path};
 
     /// The guard is a property of the process, and this test process is not
     /// elevated, so what can be asserted here is that the trusted path still
@@ -193,6 +195,7 @@ mod test {
     /// make. `nshedit_plat::is_elevated` is the whole of the decision and it
     /// is three comparisons; keeping it that small is what makes this
     /// inspectable instead of testable.
+    #[cfg(unix)]
     #[test]
     fn terminfo_is_honoured_when_the_process_is_not_elevated() {
         assert_eq!(
@@ -277,6 +280,7 @@ mod test {
         );
     }
 
+    #[cfg(unix)]
     fn tempdir() -> std::path::PathBuf {
         let base = std::env::temp_dir().join(format!(
             "nshterm-searcher-{}-{:?}",
