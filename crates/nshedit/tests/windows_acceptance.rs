@@ -11,7 +11,9 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::ptr::{null, null_mut};
+use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 use nshedit::domain::{
     Action, Binding, Direction, EditTarget, EditorConfig, EffectCommand, KeySequence, KeymapMode,
@@ -573,12 +575,37 @@ fn run_in_conpty(input: &[u8], resize: Option<COORD>) -> AcceptanceResult<Vec<u8
     drop(pseudo_output);
 
     let process = pseudo_console.spawn(&repl_executable()?)?;
+    let (prompt_sender, prompt_receiver) = mpsc::channel();
     let output_reader = thread::spawn(move || {
         let mut output = Vec::new();
         let mut output_file = File::from(host_output);
-        output_file.read_to_end(&mut output)?;
+        let mut buffer = [0; 4096];
+        let mut prompt_seen = false;
+        loop {
+            let read = output_file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            output.extend_from_slice(&buffer[..read]);
+            if !prompt_seen
+                && output
+                    .windows(b"nshedit> ".len())
+                    .any(|window| window == b"nshedit> ")
+            {
+                prompt_seen = true;
+                let _ = prompt_sender.send(());
+            }
+        }
         Ok::<_, io::Error>(output)
     });
+    prompt_receiver
+        .recv_timeout(Duration::from_millis(u64::from(CHILD_TIMEOUT_MS)))
+        .map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("ConPTY child did not render its prompt: {error}"),
+            )
+        })?;
     let mut input_file = File::from(host_input);
     if let Some(size) = resize {
         pseudo_console.resize(size)?;
