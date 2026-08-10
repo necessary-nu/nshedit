@@ -285,6 +285,7 @@ name = "nshedit-plat"
 version = "0.0.0"
 dependencies = [
  "rustix",
+ "windows-sys",
 ]
 
 [[package]]

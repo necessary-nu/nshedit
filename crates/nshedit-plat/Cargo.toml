@@ -20,6 +20,10 @@ publish = false
 # the locked libc and errno target dependencies are compiled on macOS.
 rustix = { version = "1.1", default-features = false, features = ["std", "termios", "process", "fs"] }
 
+[target.'cfg(windows)'.dependencies]
+# Win32 representations and calls stay inside this crate's safe boundary.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+
 [target.'cfg(unix)'.dev-dependencies]
 # The termios tests need a terminal to talk to, and must not need the one the
 # test runner was started from: `cargo test` is routinely run with its standard

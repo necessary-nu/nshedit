@@ -49,6 +49,9 @@ pub mod passwd;
 pub mod signal;
 #[cfg(unix)]
 pub mod terminal;
+#[cfg(windows)]
+#[path = "windows.rs"]
+pub mod terminal;
 #[cfg(unix)]
 mod termios;
 

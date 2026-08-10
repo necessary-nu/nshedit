@@ -547,4 +547,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule workspace.windows-native-build}
     )}
+    {id windows-terminal, covered_rules (
+        platform.windows-console
+    ), covered_claims (
+        {impl_name native-impl, rule platform.windows-console}
+    )}
 )
