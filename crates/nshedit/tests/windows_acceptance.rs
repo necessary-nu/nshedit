@@ -751,7 +751,7 @@ impl AttributeList {
                 pointer,
                 0,
                 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE as usize,
-                (&pseudo_console as *const HPCON).cast(),
+                pseudo_console as *const std::ffi::c_void,
                 size_of::<HPCON>(),
                 null_mut(),
                 null(),
