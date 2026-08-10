@@ -477,10 +477,14 @@ fn read_format_byte(flags: &mut Flags, fstate: &mut FormatState, cur: char) -> R
         (FormatState::Width, '0'..='9') => {
             flags.width = push_format_digit(flags.width, cur).ok_or(Error::FormatWidthOverflow)?;
         }
-        (FormatState::Flags | FormatState::Width, '.') => *fstate = FormatState::Precision,
+        (FormatState::Flags | FormatState::Width, '.') => {
+            flags.precision = Some(0);
+            *fstate = FormatState::Precision;
+        }
         (FormatState::Precision, '0'..='9') => {
-            flags.precision =
-                push_format_digit(flags.precision, cur).ok_or(Error::FormatPrecisionOverflow)?;
+            let precision = flags.precision.get_or_insert_default();
+            *precision =
+                push_format_digit(*precision, cur).ok_or(Error::FormatPrecisionOverflow)?;
         }
         _ => return Err(Error::UnrecognizedFormatOption(cur)),
     }
@@ -518,9 +522,9 @@ const MAX_FORMAT_VALUE: usize = 10_000;
 /// `usize::MAX` — which is all the previous `checked_mul` asked for — still
 /// reached two places that cannot take one:
 ///
-/// - `format!("{:01$}", d, flags.precision)` panics with "Formatting argument
-///   out of range" from a precision of 65536, because Rust packs a formatting
-///   width into a `u16`. `%p1%.65536d` is eleven bytes.
+/// - The numeric formatter panics with "Formatting argument out of range"
+///   from a precision of 65536, because Rust packs a formatting width into a
+///   `u16`. `%p1%.65536d` is eleven bytes.
 /// - [`pad`] hands `flags.width` to `Vec::with_capacity`, so `%p1%99999999999d`
 ///   aborts the process on a failed 99999999999-byte allocation.
 ///
@@ -541,7 +545,8 @@ fn push_format_digit(value: usize, cur: char) -> Option<usize> {
 #[derive(Copy, PartialEq, Clone, Default)]
 struct Flags {
     width: usize,
-    precision: usize,
+    /// `None` when no dot appeared; `Some(0)` for both `.` and `.0`.
+    precision: Option<usize>,
     alternate: bool,
     left: bool,
     sign: bool,
@@ -574,24 +579,38 @@ impl FormatOp {
 }
 
 fn format(val: Param, op: FormatOp, flags: Flags) -> Result<Vec<u8>, Error> {
-    use self::FormatOp::*;
     match val {
         Number(d) => {
             let s = match op {
-                Digit => {
-                    // C doesn't take sign into account in precision calculation.
-                    if flags.sign {
-                        format!("{:+01$}", d, flags.precision + 1)
-                    } else if d < 0 {
-                        format!("{:01$}", d, flags.precision + 1)
-                    } else if flags.space {
-                        format!(" {:01$}", d, flags.precision)
+                FormatOp::Digit => {
+                    if d == 0 && flags.precision == Some(0) {
+                        if flags.sign {
+                            "+".to_owned()
+                        } else if flags.space {
+                            " ".to_owned()
+                        } else {
+                            String::new()
+                        }
                     } else {
-                        format!("{:01$}", d, flags.precision)
+                        let precision = flags.precision.unwrap_or_default();
+                        // C doesn't take sign into account in precision calculation.
+                        if flags.sign {
+                            format!("{:+01$}", d, precision + 1)
+                        } else if d < 0 {
+                            format!("{:01$}", d, precision + 1)
+                        } else if flags.space {
+                            format!(" {:01$}", d, precision)
+                        } else {
+                            format!("{:01$}", d, precision)
+                        }
                     }
                 }
-                Octal => {
-                    let s = format!("{:01$o}", d, flags.precision);
+                FormatOp::Octal => {
+                    let s = if d == 0 && flags.precision == Some(0) {
+                        String::new()
+                    } else {
+                        format!("{:01$o}", d, flags.precision.unwrap_or_default())
+                    };
                     // The alternate form guarantees a leading zero, it does
                     // not add one to a value that already has it: C and
                     // ncurses render `%#o` of 0 as "0", not "00".
@@ -601,33 +620,37 @@ fn format(val: Param, op: FormatOp, flags: Flags) -> Result<Vec<u8>, Error> {
                         s
                     }
                 }
-                Hex => {
-                    if flags.alternate && d != 0 {
-                        format!("0x{:01$x}", d, flags.precision)
+                FormatOp::Hex => {
+                    if d == 0 && flags.precision == Some(0) {
+                        String::new()
+                    } else if flags.alternate && d != 0 {
+                        format!("0x{:01$x}", d, flags.precision.unwrap_or_default())
                     } else {
-                        format!("{:01$x}", d, flags.precision)
+                        format!("{:01$x}", d, flags.precision.unwrap_or_default())
                     }
                 }
-                UpperHex => {
-                    if flags.alternate && d != 0 {
-                        format!("0X{:01$X}", d, flags.precision)
+                FormatOp::UpperHex => {
+                    if d == 0 && flags.precision == Some(0) {
+                        String::new()
+                    } else if flags.alternate && d != 0 {
+                        format!("0X{:01$X}", d, flags.precision.unwrap_or_default())
                     } else {
-                        format!("{:01$X}", d, flags.precision)
+                        format!("{:01$X}", d, flags.precision.unwrap_or_default())
                     }
                 }
-                String => return Err(Error::TypeMismatch),
+                FormatOp::String => return Err(Error::TypeMismatch),
             }
             .into_bytes();
             // C ignores the `0` flag once a precision is given, since the
             // precision has already decided how many digits there are.
-            let zero_after = (flags.zero && flags.precision == 0).then(|| number_prefix(&s));
+            let zero_after = (flags.zero && flags.precision.is_none()).then(|| number_prefix(&s));
             Ok(pad(s, flags, zero_after))
         }
         Words(s) => match op {
-            String => {
+            FormatOp::String => {
                 let mut s = s.into_bytes();
-                if flags.precision > 0 && flags.precision < s.len() {
-                    s.truncate(flags.precision);
+                if let Some(precision) = flags.precision {
+                    s.truncate(precision);
                 }
                 // `0` is defined for the numeric conversions only, and glibc
                 // pads `%05s` with spaces, so a string never zero-pads.

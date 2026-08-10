@@ -62,6 +62,36 @@ fn precision_pads_integers_and_truncates_strings() {
 }
 
 #[test]
+fn omitted_and_zero_precision_differ() {
+    assert_eq!(s(b"%p1%d", &nums(&[0])), "0");
+    assert_eq!(s(b"%p1%.d", &nums(&[0])), "");
+    assert_eq!(s(b"%p1%.0d", &nums(&[0])), "");
+    assert_eq!(s(b"%p1%.0d", &nums(&[7])), "7");
+
+    let word = [Param::Words("xterm".to_owned())];
+    assert_eq!(s(b"%p1%s", &word), "xterm");
+    assert_eq!(s(b"%p1%.s", &word), "");
+    assert_eq!(s(b"%p1%.0s", &word), "");
+}
+
+#[test]
+fn zero_precision_obeys_format_flags() {
+    assert_eq!(s(b"%p1%5.0d|", &nums(&[0])), "     |");
+    assert_eq!(s(b"%p1%:+5.0d|", &nums(&[0])), "    +|");
+    assert_eq!(s(b"%p1% 5.0d|", &nums(&[0])), "     |");
+    assert_eq!(s(b"%p1%05.0d|", &nums(&[0])), "     |");
+    assert_eq!(
+        s(b"%p1%5.0s|", &[Param::Words("xterm".to_owned())]),
+        "     |"
+    );
+
+    assert_eq!(s(b"%p1%#.0o", &nums(&[0])), "0");
+    assert_eq!(s(b"%p1%#5.0o|", &nums(&[0])), "    0|");
+    assert_eq!(s(b"%p1%#.0x", &nums(&[0])), "");
+    assert_eq!(s(b"%p1%#.0X", &nums(&[0])), "");
+}
+
+#[test]
 fn width_and_precision_combine() {
     assert_eq!(s(b"%p1%5.3d", &nums(&[7])), "  007");
     assert_eq!(s(b"%p1%:-5.3d|", &nums(&[7])), "007  |");

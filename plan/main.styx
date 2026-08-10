@@ -3827,12 +3827,20 @@ children (
             {
                 id quality-terminfo-zero-precision
                 title "Distinguish absent terminfo precision from explicit zero"
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:24.425863482Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: crates/nshterm/src/parm.rs cannot distinguish no precision from an explicit .0 precision. Represent precision as Option<usize>, preserve explicit zero through parsing, and apply the correct width/precision semantics for string and numeric expansions."
+                    }
+
+                    {
+                        at 2026-08-10T14:54:59.892381722Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
