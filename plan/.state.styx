@@ -282,6 +282,7 @@ assertions (
     {id quality-secure-execution, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:15:00.842250137Z}
     {id quality-renderer-region-origin, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:26:02.39028752Z}
     {id quality-terminfo-error-equality, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:27:18.672747332Z}
+    {id quality-signal-slot-lifetime, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:30:07.677472918Z}
 )
 
 impl_evidence (

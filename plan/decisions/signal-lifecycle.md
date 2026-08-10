@@ -41,8 +41,8 @@ alternatives (
 )
 consequences {
     accepted (
-        "One thread-bound SignalHandlers value owns a selected disposition set. It publishes a stable boxed atomic through a compare-and-swap slot, stores displaced dispositions as consumable options, fails construction if any requested installation fails, restores them before withdrawing the slot, reports explicit-restoration failures, and rejects a second simultaneous owner."
-        "The installed trampoline performs only an atomic load and store. Terminal modes, display allocation, callbacks, restoration, re-raising, and rearming run from normal context after the read boundary observes the recorded signal."
+        "One thread-bound SignalHandlers value owns a selected disposition set. It claims one generation of process-lifetime pending-signal storage, stores displaced dispositions as consumable options, fails construction if any requested installation fails, restores them before withdrawing the activation, reports explicit-restoration failures, and rejects a second simultaneous owner."
+        "The installed trampoline performs only a lock-free atomic state transition against process-lifetime storage. An activation generation prevents a handler delayed across teardown from publishing into a later owner. Terminal modes, display allocation, callbacks, restoration, re-raising, and rearming run from normal context after the read boundary observes the recorded signal."
         "A thread-bound BlockedSignals guard restores the caller's exact signal mask and protects window-size queries and display rebuilds from SIGWINCH re-entry."
         "The core represents delivery as a closed Signal value and separates prepare, signal, and resume resize causes. Stop and terminating signals request Cooked mode before propagation; continue requests Editing mode; suspend resumes through a distinct Continue propagation before display reconstruction."
         "The C adapter maps platform delivery into the native protocol. Buffered edited reads own a local handler guard, unbuffered mode retains one on the opaque handle, signal-disabled reads never mutate caller dispositions, and every normal exit or handle destruction restores what was displaced."
@@ -83,10 +83,13 @@ control, and leaves caller policy intact when the scope ends. None of those
 observations requires editor work to execute in an asynchronous handler.
 
 The platform layer therefore owns the irreducible process-global mechanism and
-publishes only typed, scoped operations. A stable atomic is the handler's sole
-connection to ordinary code. Blocking the selected family makes installation,
-propagation, restoration, and withdrawal atomic with respect to the delivery
-thread; optional saved dispositions prevent stale actions from surviving into a
+publishes only typed, scoped operations. A process-lifetime atomic is the
+handler's sole connection to ordinary code, while a generation token confines
+each pending delivery to its owning guard without lending the handler scoped
+memory. Blocking the selected family closes same-thread delivery windows during
+installation, propagation, restoration, and withdrawal; the generation check
+rejects an in-flight trampoline that resumes on another thread after its scope
+ends. Optional saved dispositions prevent stale actions from surviving into a
 later read.
 
 The native core owns meaning rather than mechanism. Its driver requests terminal

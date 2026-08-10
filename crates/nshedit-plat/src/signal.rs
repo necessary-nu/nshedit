@@ -20,22 +20,26 @@
 //! # Handler ownership
 //!
 //! `sig_trampoline` is what `sigaction` installs, and it is the whole of
-//! the async-signal-safe work: two atomic operations, no allocation, no lock,
-//! no buffered write. It records the signal number into the stable atomic
-//! owned by one [`SignalHandlers`] value. The read loop observes that value
-//! and performs terminal transitions, resize work, and previous-disposition
-//! propagation from ordinary context.
+//! the async-signal-safe work: a lock-free atomic state transition, no
+//! allocation, no lock, no buffered write. It records the signal number in
+//! process-lifetime storage while one [`SignalHandlers`] activation owns it.
+//! The read loop observes that value and performs terminal transitions,
+//! resize work, and previous-disposition propagation from ordinary context.
 //!
 //! Signal dispositions are process-global, so only one scoped owner may be
 //! live at a time. Construction claims that ownership atomically; destruction
-//! restores every displaced disposition before withdrawing the stable slot.
-//! This rejects the C implementation's last-editor-wins pointer overwrite and
-//! makes both normal return and unwinding restore caller policy.
+//! restores every displaced disposition before withdrawing its activation.
+//! The handler never receives a pointer into scoped storage, so a delivery
+//! racing teardown cannot dereference a freed owner. This rejects the C
+//! implementation's last-editor-wins pointer overwrite and makes both normal
+//! return and unwinding restore caller policy.
 
 use core::ffi::c_int;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::{c_ulong, c_void};
-use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
+#[cfg(test)]
+use core::sync::atomic::AtomicI32;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 mod handlers;
 
@@ -365,24 +369,143 @@ mod sys {
 // The installed handler and where it records
 // ---------------------------------------------------------------------------
 
-/// Where [`sig_trampoline`] records the signal it saw.
+/// The lower half of [`SignalSlot::state`] carries the pending `c_int`.
+const PENDING_MASK: u64 = u32::MAX as u64;
+/// The upper bit distinguishes a live owner from an inactive generation.
+const ACTIVE_BIT: u64 = 1 << 63;
+/// Advancing by one in the upper half gives each activation a fresh token.
+const GENERATION_STEP: u64 = 1 << 32;
+const GENERATION_MASK: u64 = !(ACTIVE_BIT | PENDING_MASK);
+const OWNER_MASK: u64 = !PENDING_MASK;
+
+/// One scoped claim on the process-wide pending-signal state.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SignalActivation(u64);
+
+/// Process-lifetime state shared with [`sig_trampoline`].
 ///
-/// The port's counterpart of libedit's file-static `sel`: process-global,
-/// because a C signal handler carries no user data and there is nowhere else
-/// to put it. Null means nothing is armed.
-static PENDING_SLOT: AtomicPtr<AtomicI32> = AtomicPtr::new(core::ptr::null_mut());
+/// A single atomic keeps ownership and the pending signal in one modification
+/// order. In particular, a handler preempted after loading an activation can
+/// only publish while that exact activation still owns the slot. Teardown or
+/// a later owner changes the upper half, making the stale compare-exchange a
+/// no-op.
+struct SignalSlot {
+    state: AtomicU64,
+}
+
+impl SignalSlot {
+    const fn new() -> Self {
+        Self {
+            state: AtomicU64::new(0),
+        }
+    }
+
+    fn activate(&self) -> Option<SignalActivation> {
+        let mut observed = self.state.load(Ordering::Acquire);
+        loop {
+            if observed & ACTIVE_BIT != 0 {
+                return None;
+            }
+            let mut generation =
+                (observed & GENERATION_MASK).wrapping_add(GENERATION_STEP) & GENERATION_MASK;
+            if generation == 0 {
+                generation = GENERATION_STEP;
+            }
+            let activation = SignalActivation(ACTIVE_BIT | generation);
+            match self.state.compare_exchange_weak(
+                observed,
+                activation.0,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(activation),
+                Err(actual) => observed = actual,
+            }
+        }
+    }
+
+    fn record(&self, signo: c_int) {
+        self.record_observed(self.state.load(Ordering::Relaxed), signo);
+    }
+
+    fn record_observed(&self, mut observed: u64, signo: c_int) {
+        let owner = observed & OWNER_MASK;
+        if owner & ACTIVE_BIT == 0 {
+            return;
+        }
+        let desired = owner | (u64::from(signo.cast_unsigned()) & PENDING_MASK);
+        loop {
+            match self.state.compare_exchange_weak(
+                observed,
+                desired,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return,
+                Err(actual) if actual & OWNER_MASK == owner => observed = actual,
+                Err(_) => return,
+            }
+        }
+    }
+
+    fn take(&self, activation: SignalActivation) -> Option<c_int> {
+        let mut observed = self.state.load(Ordering::Acquire);
+        loop {
+            if observed & OWNER_MASK != activation.0 {
+                return None;
+            }
+            let signo = (observed & PENDING_MASK) as u32 as c_int;
+            if signo == 0 {
+                return None;
+            }
+            match self.state.compare_exchange_weak(
+                observed,
+                activation.0,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(signo),
+                Err(actual) => observed = actual,
+            }
+        }
+    }
+
+    fn deactivate(&self, activation: SignalActivation) -> bool {
+        let mut observed = self.state.load(Ordering::Acquire);
+        loop {
+            if observed & OWNER_MASK != activation.0 {
+                return false;
+            }
+            let inactive = activation.0 & GENERATION_MASK;
+            match self.state.compare_exchange_weak(
+                observed,
+                inactive,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(actual) => observed = actual,
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn force_inactive(&self) {
+        self.state.fetch_and(GENERATION_MASK, Ordering::AcqRel);
+    }
+}
+
+/// The port's counterpart of libedit's file-static `sel`.
+///
+/// A C signal handler carries no user data, so its communication storage must
+/// be process-global. The activation embedded in the same word supplies the
+/// scoped ownership that the storage itself deliberately does not have.
+static PENDING_SLOT: SignalSlot = SignalSlot::new();
 
 /// The disposition `sigaction` installs. Async-signal-safe by construction:
-/// one atomic load, one atomic store, nothing else.
+/// one atomic load followed by a compare-exchange, nothing else.
 extern "C" fn sig_trampoline(signo: c_int) {
-    let slot = PENDING_SLOT.load(Ordering::Acquire);
-    if !slot.is_null() {
-        // SAFETY: `SignalHandlers` publishes a boxed atomic, restores every
-        // installed disposition, and withdraws this pointer before freeing
-        // that box. Reading the atomic through the stable pointer is the only
-        // use.
-        unsafe { (*slot).store(signo, Ordering::Relaxed) };
-    }
+    PENDING_SLOT.record(signo);
 }
 
 // ---------------------------------------------------------------------------
@@ -508,7 +631,7 @@ mod tests {
 
     impl Drop for Disposition {
         fn drop(&mut self) {
-            PENDING_SLOT.store(core::ptr::null_mut(), Ordering::Release);
+            PENDING_SLOT.force_inactive();
             // Not asserted: a failure here during an unwind would abort the
             // runner and hide the failure that caused it.
             install(self.signo, &self.saved);
@@ -797,11 +920,10 @@ mod tests {
     /// The handler runs on whatever thread the kernel picks, so the slot
     /// `sig_set` publishes has to be visible from one that never touched it.
     ///
-    /// This is what the `Release`/`Acquire` pair on `PENDING_SLOT` is for.
     /// Spawning is itself a synchronisation point, so this cannot catch a
     /// weakened ordering on its own; what it does pin is that the trampoline
     /// records for a thread other than the one that armed, which is the
-    /// arrangement the ordering exists to make sound.
+    /// arrangement the atomic slot exists to make sound.
     #[test]
     fn the_trampoline_records_from_a_thread_that_never_armed() {
         let _disposition = Disposition::take(signo::SIGWINCH);
@@ -811,6 +933,26 @@ mod tests {
             .join()
             .expect("the raising thread");
         assert_eq!(handlers.take_pending(), Some(Signal::Resize));
+    }
+
+    /// A handler can be preempted after reading process-global state and
+    /// resume after its owner has gone away. The activation token makes that
+    /// delayed write fail instead of attributing the old delivery to a later
+    /// editor scope.
+    #[test]
+    fn delayed_record_stays_in_its_activation() {
+        let slot = SignalSlot::new();
+        let first = slot.activate().expect("first activation");
+        let delayed_observation = slot.state.load(Ordering::Relaxed);
+
+        assert!(slot.deactivate(first));
+        let second = slot.activate().expect("second activation");
+        slot.record_observed(delayed_observation, signo::SIGWINCH);
+
+        assert_eq!(slot.take(second), None);
+        slot.record(signo::SIGWINCH);
+        assert_eq!(slot.take(second), Some(signo::SIGWINCH));
+        assert!(slot.deactivate(second));
     }
 
     /// `sig_clr` drops the registration, which the C never does — after its

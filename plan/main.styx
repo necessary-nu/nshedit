@@ -3498,12 +3498,27 @@ children (
             {
                 id quality-signal-slot-lifetime
                 title "Make the signal pending slot process-lifetime safe"
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:17.444733331Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: crates/nshedit-plat/src/signal.rs publishes an AtomicPtr to an AtomicI32 owned by the scoped SignalHandlers allocation, so teardown can withdraw and free storage while an installed handler still reaches it. Replace the borrowed pointer handshake with process-lifetime signal-visible storage and scoped activation state; installation, restoration, and teardown must leave no signal path capable of dereferencing freed memory."
+                    }
+
+                    {
+                        at 2026-08-10T14:30:07.624739723Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Keep [spec:nshedit:req:abi.signal-lifecycle] at version 0: it already requires RAII-safe platform ownership, so removing the dangling handler path corrects the implementation without changing observable behaviour. The trampoline now records into one process-lifetime atomic word whose per-scope generation is owned by SignalHandlers; a delayed compare-exchange cannot publish after teardown or into a later owner, and no scoped address enters signal context."
+                    }
+
+                    {
+                        at 2026-08-10T14:30:07.677472918Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }

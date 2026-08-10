@@ -2,12 +2,11 @@
 
 use core::fmt;
 use core::marker::PhantomData;
-use core::sync::atomic::{AtomicI32, Ordering};
 use std::rc::Rc;
 
 use super::{
-    Installed, PENDING_SLOT, SigAction, SigSet, Signal, install_handler, raise_default,
-    restore_handler, sigmask_block, sigmask_set,
+    Installed, PENDING_SLOT, SigAction, SigSet, Signal, SignalActivation, install_handler,
+    raise_default, restore_handler, sigmask_block, sigmask_set,
 };
 
 /// Why a scoped signal-handler operation could not preserve its ownership
@@ -118,11 +117,10 @@ impl Drop for BlockedSignals {
 /// `raise` delivery are thread-local even though dispositions are global.
 /// Dropping it restores every disposition it displaced.
 pub struct SignalHandlers {
-    pending: Box<AtomicI32>,
     enabled: [bool; Signal::EDITOR.len()],
     saved: [Option<SigAction>; Signal::EDITOR.len()],
     mask: SigSet,
-    registered: bool,
+    activation: Option<SignalActivation>,
     _thread_bound: PhantomData<Rc<()>>,
 }
 
@@ -139,11 +137,10 @@ impl SignalHandlers {
             mask.add(signal.number());
         }
         let mut handlers = Self {
-            pending: Box::new(AtomicI32::new(0)),
             enabled,
             saved: [None; Signal::EDITOR.len()],
             mask,
-            registered: false,
+            activation: None,
             _thread_bound: PhantomData,
         };
         if signals.is_empty() {
@@ -151,20 +148,11 @@ impl SignalHandlers {
         }
 
         let previous_mask = sigmask_block(&handlers.mask).ok_or(SignalError::SignalMask)?;
-        let slot = core::ptr::from_ref(handlers.pending.as_ref()).cast_mut();
-        if PENDING_SLOT
-            .compare_exchange(
-                core::ptr::null_mut(),
-                slot,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_err()
-        {
+        let Some(activation) = PENDING_SLOT.activate() else {
             let _ = sigmask_set(&previous_mask);
             return Err(SignalError::AlreadyActive);
-        }
-        handlers.registered = true;
+        };
+        handlers.activation = Some(activation);
 
         if let Err(error) = handlers.install_missing() {
             let _ = handlers.restore_saved();
@@ -182,7 +170,9 @@ impl SignalHandlers {
 
     /// Take the most recently recorded delivery, if any.
     pub fn take_pending(&self) -> Option<Signal> {
-        Signal::from_number(self.pending.swap(0, Ordering::AcqRel))
+        self.activation
+            .and_then(|activation| PENDING_SLOT.take(activation))
+            .and_then(Signal::from_number)
     }
 
     /// Restore every displaced disposition and report cleanup failures.
@@ -267,22 +257,17 @@ impl SignalHandlers {
     }
 
     fn withdraw(&mut self) -> Result<(), SignalError> {
-        if !self.registered {
+        let Some(activation) = self.activation.take() else {
             return Ok(());
-        }
-        let slot = core::ptr::from_ref(self.pending.as_ref()).cast_mut();
-        let result = PENDING_SLOT.compare_exchange(
-            slot,
-            core::ptr::null_mut(),
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
-        self.registered = false;
-        result.map(|_| ()).map_err(|_| SignalError::OwnershipLost)
+        };
+        PENDING_SLOT
+            .deactivate(activation)
+            .then_some(())
+            .ok_or(SignalError::OwnershipLost)
     }
 
     fn disarm(&mut self) -> Result<(), SignalError> {
-        if !self.registered {
+        if self.activation.is_none() {
             return Ok(());
         }
         let previous_mask = sigmask_block(&self.mask);
