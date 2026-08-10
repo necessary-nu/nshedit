@@ -517,9 +517,10 @@ impl Write for FailingWriter {
 }
 
 fn conpty_editor_session() -> AcceptanceResult {
-    let input =
-        b"ac\x1b[Db\x1b[HX\x1b[F\x08c\x1b[D\x1b[3~\x1b[F\xf0\x9f\x98\x80\rhe\t\r\x1b[A\r\x03";
-    let output = run_in_conpty(input, Some(COORD { X: 100, Y: 30 }))?;
+    let mut input =
+        b"ac\x1b[Db\x1b[HX\x1b[F\x08c\x1b[D\x1b[3~\x1b[F\xf0\x9f\x98\x80\rhe\t\r\x1b[A\r".to_vec();
+    input.extend(conpty_control_key(VK_C, '\u{3}'));
+    let output = run_in_conpty(&input, Some(COORD { X: 100, Y: 30 }))?;
     let output = String::from_utf8_lossy(&output);
     assert!(
         output.contains("accepted: Xab😀"),
@@ -533,9 +534,17 @@ fn conpty_editor_session() -> AcceptanceResult {
 }
 
 fn conpty_end_of_input() -> AcceptanceResult {
-    let output = run_in_conpty(b"\x1a", None)?;
+    let output = run_in_conpty(&conpty_control_key(VK_Z, '\u{1a}'), None)?;
     assert!(String::from_utf8_lossy(&output).contains("nshedit> "));
     Ok(())
+}
+
+fn conpty_control_key(virtual_key: u16, character: char) -> Vec<u8> {
+    format!(
+        "\u{1b}[{virtual_key};0;{};1;{LEFT_CTRL_PRESSED};1_",
+        u32::from(character)
+    )
+    .into_bytes()
 }
 
 fn redirected_stream_session() -> AcceptanceResult {
