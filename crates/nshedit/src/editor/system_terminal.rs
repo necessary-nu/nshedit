@@ -1,7 +1,10 @@
 //! Safe host-terminal integration for native Rust consumers.
 
 use std::io;
-use std::os::fd::BorrowedFd;
+#[cfg(unix)]
+use std::os::fd::BorrowedFd as BorrowedIo;
+#[cfg(windows)]
+use std::os::windows::io::BorrowedHandle as BorrowedIo;
 
 use crate::domain::{EditorConfig, ScreenSize, TerminalMode};
 
@@ -12,28 +15,29 @@ use super::TerminalControl;
 /// The descriptors are borrowed for the controller's lifetime. The editor
 /// owns this controller and therefore owns its single restoration obligation;
 /// input and output streams remain with the caller.
-pub struct SystemTerminal<'fd> {
-    inner: nshedit_plat::terminal::TerminalController<'fd>,
+pub struct SystemTerminal<'io> {
+    inner: nshedit_plat::terminal::TerminalController<'io>,
 }
 
-impl<'fd> SystemTerminal<'fd> {
-    /// Borrow the input and output terminal descriptors.
+impl<'io> SystemTerminal<'io> {
+    /// Borrow the input and output terminal descriptors or handles.
     #[must_use]
-    pub const fn new(input: BorrowedFd<'fd>, output: BorrowedFd<'fd>) -> Self {
+    pub const fn new(input: BorrowedIo<'io>, output: BorrowedIo<'io>) -> Self {
         Self {
             inner: nshedit_plat::terminal::TerminalController::new(input, output),
         }
     }
 
     /// Read validated display dimensions from a terminal descriptor.
-    pub fn screen_size(output: BorrowedFd<'_>) -> io::Result<ScreenSize> {
+    pub fn screen_size(output: BorrowedIo<'_>) -> io::Result<ScreenSize> {
         let (rows, columns) = nshedit_plat::terminal::screen_size(output)?;
         ScreenSize::new(rows, columns)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
     }
 
     /// Count input bytes available without blocking.
-    pub fn bytes_ready(input: BorrowedFd<'_>) -> io::Result<u64> {
+    #[cfg(unix)]
+    pub fn bytes_ready(input: BorrowedIo<'_>) -> io::Result<u64> {
         nshedit_plat::terminal::bytes_ready(input)
     }
 }

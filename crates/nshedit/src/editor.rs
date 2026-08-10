@@ -33,7 +33,7 @@ mod host;
 // [spec:nshedit:req:core.terminal-render+1]
 mod render;
 
-#[cfg(unix)]
+mod system_input;
 mod system_terminal;
 mod token;
 
@@ -42,7 +42,7 @@ pub use completion::{
 };
 pub use driver::{Display, DriverError, Pending, ReadDriver, ReadInterrupt, ReadResult, ReadStep};
 pub use render::{BaudRate, CapabilityKind, RenderError, RenderSummary, TerminalProfile};
-#[cfg(unix)]
+pub use system_input::SystemInput;
 pub use system_terminal::SystemTerminal;
 pub use token::{
     Continuation, QuoteStyle, Token, TokenCursor, TokenIndex, TokenOffset, Tokenization,
@@ -71,9 +71,9 @@ pub trait TerminalControl {
 
 /// Borrowed descriptors associated with a session's safe streams.
 ///
-/// A stream need not have a descriptor. When it does, [`BorrowedFd`] carries
-/// the lifetime without transferring ownership or admitting an invalid raw
-/// descriptor.
+/// A stream need not expose an operating-system I/O object. When it does, the
+/// borrowed descriptor or handle carries its lifetime without transferring
+/// ownership or admitting an invalid raw value.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IoDescriptors<'a> {
     /// Descriptor borrowed from the input stream, when it has one.

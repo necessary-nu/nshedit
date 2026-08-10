@@ -557,4 +557,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule platform.windows-input}
     )}
+    {id windows-editor, covered_rules (
+        core.windows-session
+    ), covered_claims (
+        {impl_name native-impl, rule core.windows-session}
+    )}
 )

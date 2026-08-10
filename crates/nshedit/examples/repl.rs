@@ -2,54 +2,75 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(unix)]
 use std::error::Error;
+use std::io::{self, Write};
 #[cfg(unix)]
-use std::io::{self, Read, Write};
-#[cfg(unix)]
-use std::os::fd::{AsFd, BorrowedFd};
+use std::os::fd::AsFd;
+#[cfg(windows)]
+use std::os::windows::io::AsHandle;
 
-#[cfg(unix)]
 use nshedit::domain::{
     Action, Binding, Direction, EditTarget, EditorConfig, EffectCommand, KeySequence, KeymapMode,
     Motion, Prompt, ScreenSize, SignalPolicy, Text, TextUnit,
 };
-#[cfg(unix)]
-use nshedit::editor::effect::{HistoryResponse, HostFailure, PromptSide, ReadEffect, ReadOutcome};
-#[cfg(unix)]
+use nshedit::editor::effect::{HistoryResponse, HostFailure, PromptSide};
 use nshedit::editor::{
-    CompletionCandidate, Editor, ReadDriver, ReadResult, ReadStep, SystemTerminal, TerminalControl,
-    TerminalProfile,
+    CompletionCandidate, Editor, IoDescriptors, ReadDriver, ReadResult, ReadStep, SessionIo,
+    SystemInput, SystemTerminal, TerminalControl, TerminalProfile,
 };
-#[cfg(unix)]
 use nshedit::history::{HistoryCursor, HistoryStore, Navigation};
 
-#[cfg(unix)]
 const COMMANDS: [&str; 3] = ["exit", "help", "history"];
 
 // [spec:nshedit:req:core.native-consumer]
-#[cfg(unix)]
 fn main() -> Result<(), Box<dyn Error>> {
     let stdin = io::stdin();
     let stdout = io::stdout();
-    let terminal = SystemTerminal::new(stdin.as_fd(), stdout.as_fd());
+    let stderr = io::stderr();
+    #[cfg(unix)]
+    let input_descriptor = stdin.as_fd();
+    #[cfg(windows)]
+    let input_descriptor = stdin.as_handle();
+    #[cfg(unix)]
+    let output_descriptor = stdout.as_fd();
+    #[cfg(windows)]
+    let output_descriptor = stdout.as_handle();
+    #[cfg(unix)]
+    let diagnostics_descriptor = stderr.as_fd();
+    #[cfg(windows)]
+    let diagnostics_descriptor = stderr.as_handle();
+
+    let input_source = SystemInput::new(input_descriptor)?;
+    let terminal = SystemTerminal::new(input_descriptor, output_descriptor);
     let config = EditorConfig::default().with_signal_policy(SignalPolicy::Ignore);
     let mut editor = Editor::new(config, terminal)?;
-    let size = SystemTerminal::screen_size(stdout.as_fd())
+    let size = SystemTerminal::screen_size(output_descriptor)
         .unwrap_or_else(|_| ScreenSize::new(24, 80).expect("the fallback size is valid"));
-    editor.configure_display(terminal_profile(), size);
+    #[cfg(unix)]
+    let profile = terminal_profile();
+    #[cfg(windows)]
+    let profile = TerminalProfile::ansi();
+    editor.configure_display(profile, size);
     install_terminal_bindings(&mut editor)?;
 
     let mut driver = ReadDriver::default();
     let mut input = stdin.lock();
     let mut output = stdout.lock();
+    let mut diagnostics = stderr.lock();
     let mut host = Host {
         history: HistoryStore::new(),
         history_cursor: HistoryCursor::new(),
-        input: &mut input,
-        output: &mut output,
-        input_fd: stdin.as_fd(),
-        output_fd: stdout.as_fd(),
+        input_source,
+        io: SessionIo {
+            input: &mut input,
+            output: &mut output,
+            diagnostics: &mut diagnostics,
+            descriptors: IoDescriptors {
+                input: Some(input_descriptor),
+                output: Some(output_descriptor),
+                diagnostics: Some(diagnostics_descriptor),
+            },
+        },
     };
 
     let session = run_repl(&mut editor, &mut driver, &mut host);
@@ -59,43 +80,38 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[cfg(unix)]
-struct Host<'io, 'fd> {
+struct Host<'io, 'handle> {
     history: HistoryStore,
     history_cursor: HistoryCursor,
-    input: &'io mut dyn Read,
-    output: &'io mut dyn Write,
-    input_fd: BorrowedFd<'fd>,
-    output_fd: BorrowedFd<'fd>,
+    input_source: SystemInput<'handle>,
+    io: SessionIo<'io>,
 }
 
-#[cfg(unix)]
 fn run_repl<T: TerminalControl>(
     editor: &mut Editor<T>,
     driver: &mut ReadDriver,
     host: &mut Host<'_, '_>,
 ) -> Result<(), Box<dyn Error>> {
     while let Some(line) = read_line(editor, driver, host)? {
-        writeln!(host.output)?;
+        writeln!(host.io.output)?;
         let command = scalar_string(&line);
         match command.as_deref() {
             Some("exit") => break,
-            Some("help") => writeln!(host.output, "commands: {}", COMMANDS.join(", "))?,
-            Some("history") => write_history(host.output, &host.history)?,
+            Some("help") => writeln!(host.io.output, "commands: {}", COMMANDS.join(", "))?,
+            Some("history") => write_history(host.io.output, &host.history)?,
             _ => {
-                write!(host.output, "accepted: ")?;
-                write_text(host.output, &line)?;
-                writeln!(host.output)?;
+                write!(host.io.output, "accepted: ")?;
+                write_text(host.io.output, &line)?;
+                writeln!(host.io.output)?;
             }
         }
-        host.output.flush()?;
+        host.io.output.flush()?;
         editor.reset_line();
         host.history_cursor.reset();
     }
     Ok(())
 }
 
-#[cfg(unix)]
 fn read_line<T: TerminalControl>(
     editor: &mut Editor<T>,
     driver: &mut ReadDriver,
@@ -112,12 +128,21 @@ fn read_line<T: TerminalControl>(
                 driver.resume_prompt(editor, &pending, Ok(prompt))?
             }
             ReadStep::Resize(pending) => {
-                let response = SystemTerminal::screen_size(host.output_fd)
-                    .map_err(|_| HostFailure::Unavailable);
+                let response = host
+                    .io
+                    .descriptors
+                    .output
+                    .ok_or(HostFailure::Unavailable)
+                    .and_then(|output| {
+                        SystemTerminal::screen_size(output).map_err(|_| HostFailure::Unavailable)
+                    });
                 driver.resume_resize(editor, &pending, response)?
             }
             ReadStep::Read(pending) => {
-                let response = read_input(host.input, host.input_fd, *pending.request());
+                let response = host
+                    .input_source
+                    .read(host.io.input, *pending.request())
+                    .map_err(host_failure);
                 driver.resume_read(editor, &pending, response)?
             }
             ReadStep::History(pending) => {
@@ -169,7 +194,7 @@ fn read_line<T: TerminalControl>(
                 driver.resume_user_command(editor, &pending, Err(HostFailure::Unavailable))?
             }
             ReadStep::Signal(pending) => driver.resume_signal(editor, &pending, Ok(()))?,
-            ReadStep::Display(display) => driver.display(editor, &display, host.output)?,
+            ReadStep::Display(display) => driver.display(editor, &display, host.io.output)?,
             ReadStep::Complete(result) => {
                 return Ok(match result {
                     ReadResult::Accepted(line) => Some(line),
@@ -183,27 +208,14 @@ fn read_line<T: TerminalControl>(
     }
 }
 
-#[cfg(unix)]
-fn read_input(
-    input: &mut dyn Read,
-    input_fd: BorrowedFd<'_>,
-    purpose: ReadEffect,
-) -> Result<ReadOutcome, HostFailure> {
-    if purpose == ReadEffect::KeySequence && SystemTerminal::bytes_ready(input_fd).unwrap_or(0) == 0
-    {
-        return Ok(ReadOutcome::TimedOut);
-    }
-
-    let mut byte = [0];
-    match input.read(&mut byte) {
-        Ok(0) => Ok(ReadOutcome::EndOfInput),
-        Ok(_) => Ok(ReadOutcome::Bytes(byte.into())),
-        Err(error) if error.kind() == io::ErrorKind::Interrupted => Err(HostFailure::Interrupted),
-        Err(error) => Err(HostFailure::Failed(error.to_string().into_boxed_str())),
+fn host_failure(error: io::Error) -> HostFailure {
+    if error.kind() == io::ErrorKind::Interrupted {
+        HostFailure::Interrupted
+    } else {
+        HostFailure::Failed(error.to_string().into_boxed_str())
     }
 }
 
-#[cfg(unix)]
 fn install_terminal_bindings<T: TerminalControl>(
     editor: &mut Editor<T>,
 ) -> Result<(), nshedit::domain::Error> {
@@ -252,7 +264,6 @@ fn terminal_profile() -> TerminalProfile {
         .unwrap_or_else(TerminalProfile::ansi)
 }
 
-#[cfg(unix)]
 fn write_history(output: &mut dyn Write, history: &HistoryStore) -> io::Result<()> {
     for (index, entry) in history.iter().enumerate() {
         write!(output, "{:>4}  ", index + 1)?;
@@ -262,7 +273,6 @@ fn write_history(output: &mut dyn Write, history: &HistoryStore) -> io::Result<(
     Ok(())
 }
 
-#[cfg(unix)]
 fn write_text(output: &mut dyn Write, text: &Text) -> io::Result<()> {
     for unit in text {
         match unit {
@@ -277,7 +287,6 @@ fn write_text(output: &mut dyn Write, text: &Text) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn scalar_string(text: &Text) -> Option<String> {
     text.as_units()
         .iter()
@@ -289,7 +298,7 @@ fn scalar_string(text: &Text) -> Option<String> {
 }
 
 // [spec:nshedit:req:core.native-consumer/test]
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -315,6 +324,3 @@ mod tests {
         assert_eq!(output, [b'x', 0xff]);
     }
 }
-
-#[cfg(not(unix))]
-fn main() {}

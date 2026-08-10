@@ -4,12 +4,14 @@ use std::io;
 use std::os::windows::io::{AsRawHandle, BorrowedHandle};
 
 use windows_sys::Win32::Foundation::ERROR_INVALID_HANDLE;
+use windows_sys::Win32::Storage::FileSystem::{FILE_TYPE_PIPE, FILE_TYPE_REMOTE, GetFileType};
 use windows_sys::Win32::System::Console::{
     CONSOLE_SCREEN_BUFFER_INFO, ENABLE_ECHO_INPUT, ENABLE_EXTENDED_FLAGS, ENABLE_LINE_INPUT,
     ENABLE_PROCESSED_INPUT, ENABLE_PROCESSED_OUTPUT, ENABLE_QUICK_EDIT_MODE,
     ENABLE_VIRTUAL_TERMINAL_PROCESSING, ENABLE_WINDOW_INPUT, ENABLE_WRAP_AT_EOL_OUTPUT,
     GetConsoleMode, GetConsoleScreenBufferInfo, SetConsoleMode,
 };
+use windows_sys::Win32::System::Pipes::PeekNamedPipe;
 
 #[path = "windows/input.rs"]
 mod input;
@@ -178,6 +180,46 @@ pub fn screen_size(output: BorrowedHandle<'_>) -> io::Result<(usize, usize)> {
         .filter(|columns| *columns > 0)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid console width"))?;
     Ok((rows, columns))
+}
+
+/// Count bytes immediately available from a previously classified stream.
+///
+/// Pipes are inspected with the pipe API. Files and other non-console stream
+/// handles are treated as immediately readable, so their ordinary
+/// [`std::io::Read`] implementation remains authoritative for data and EOF.
+pub fn stream_bytes_ready(input: BorrowedHandle<'_>) -> io::Result<u64> {
+    // SAFETY: `BorrowedHandle` guarantees a live borrowed handle.
+    let file_type = unsafe { GetFileType(input.as_raw_handle()) } & !FILE_TYPE_REMOTE;
+    if file_type != FILE_TYPE_PIPE {
+        return Ok(1);
+    }
+
+    let mut available = 0;
+    // SAFETY: `BorrowedHandle` guarantees a live borrowed handle; all optional
+    // output pointers except `available` are null as permitted by the API.
+    if unsafe {
+        PeekNamedPipe(
+            input.as_raw_handle(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            &mut available,
+            std::ptr::null_mut(),
+        )
+    } == 0
+    {
+        let error = io::Error::last_os_error();
+        if matches!(
+            error.kind(),
+            io::ErrorKind::BrokenPipe | io::ErrorKind::NotConnected
+        ) {
+            Ok(0)
+        } else {
+            Err(error)
+        }
+    } else {
+        Ok(u64::from(available))
+    }
 }
 
 fn editing_input_mode(original: u32) -> u32 {
