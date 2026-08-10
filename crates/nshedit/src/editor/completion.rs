@@ -122,7 +122,6 @@ impl CompletionCandidates {
     }
 
     /// Borrow candidates in provider order.
-    #[must_use]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &CompletionCandidate> {
         self.0.iter()
     }
