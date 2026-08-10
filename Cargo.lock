@@ -279,6 +279,7 @@ dependencies = [
  "nshedit-plat",
  "nshterm",
  "regex",
+ "tempfile",
 ]
 
 [[package]]

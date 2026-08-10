@@ -29,10 +29,10 @@
 > Divergence trap: the duplicate-suppression path also leaves the count
 > unchanged, so it bumps `history_base` as though an eviction had happened.
 
-> [spec:libedit:def:readline.append-history-fn]
+> [spec:libedit:def:readline.append-history-fn+1]
 > int append_history(int n, const char *filename)
 
-> [spec:libedit:sem:readline.append-history-fn]
+> [spec:libedit:sem:readline.append-history-fn+1]
 > Appends the `n` most recent history events to a file, without rewriting
 > what is already there.
 >
@@ -49,9 +49,10 @@
 > oldest-first order, each `strvis`-escaped with VIS_WHITE and followed by a
 > newline. This on-disk encoding is part of the frozen ABI.
 >
-> If the history call returns -1, captures `errno` (or EINVAL if `errno` is
-> 0), closes the file and returns that value. Otherwise closes the file and
-> returns 0.
+> H_NSAVE_FP checks every write and flushes the opened file before success. If
+> it returns -1, capture the originating `errno` (or EINVAL if `errno` is 0),
+> close the file and return that value. Otherwise close the file and return 0.
+> A partial append or a flush failure MUST NOT be reported as success.
 >
 > Return convention: 0 on success, a positive errno value on failure; never
 > -1. The caller passes an already-open-able path; this function owns and
@@ -3015,22 +3016,24 @@
 > entry, in contrast to `history_get`'s indices, which are 1-based against
 > `history_base`.
 
-> [spec:libedit:def:readline.write-history-fn]
+> [spec:libedit:def:readline.write-history-fn+1]
 > int write_history(const char *filename)
 
-> [spec:libedit:sem:readline.write-history-fn]
+> [spec:libedit:sem:readline.write-history-fn+1]
 > Writes the entire history to a file, replacing its contents.
 >
 > Steps: lazily `rl_initialize()` if `h` or `e` is NULL. If `filename` is
 > NULL, substitutes `_default_history_file()`; if that is also NULL, returns
 > the current `errno`. Then `history(h, &ev, H_SAVE, filename)`.
 >
-> H_SAVE truncates or creates the file, writes libedit's history signature
-> line, and then writes every event from oldest to newest, each
-> `strvis`-escaped with VIS_WHITE and terminated by a newline. That escaping
-> is the frozen on-disk format the port must round-trip with `read_history`.
-> Existing file contents are discarded — use `append_history` to add without
-> rewriting.
+> H_SAVE stages a complete replacement in the destination directory, writes
+> libedit's history signature line and every event from oldest to newest,
+> flushes and synchronizes it, then atomically replaces the destination. Each
+> event is `strvis`-escaped with VIS_WHITE and terminated by a newline; that
+> escaping remains the frozen format the port must round-trip with
+> `read_history`. A temporary-file, write, flush, synchronization, or
+> replacement failure leaves the prior destination untouched and fails the
+> call. Use `append_history` to add without rewriting.
 >
 > Return value, computed in a single expression: if H_SAVE returned -1,
 > returns `errno` when it is non-zero and `EINVAL` otherwise; else returns

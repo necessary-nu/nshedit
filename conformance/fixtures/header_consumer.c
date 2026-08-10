@@ -10,9 +10,12 @@
  * in its output. The three editor streams are /dev/null.
  */
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <wchar.h>
 
 #include <editline/readline.h>
@@ -77,9 +80,13 @@ int main(int argc, char **argv) {
     HIST_ENTRY *he;
     HISTORY_STATE *hs;
     KEYMAP_ENTRY *km;
+    FILE *full;
+    char replacement_target[4096];
 
-    (void)argc;
-    (void)argv;
+    if (argc < 2) {
+        fprintf(stderr, "missing work directory\n");
+        return 1;
+    }
 
     printf("LIBEDIT %d.%d\n", LIBEDIT_MAJOR, LIBEDIT_MINOR);
 
@@ -112,6 +119,25 @@ int main(int argc, char **argv) {
     ok("H_FIRST reads ev.str", history_w(h, &ev, H_FIRST) != -1 &&
                                    ev.str != NULL && wcscmp(ev.str, L"two") == 0);
     ok("H_FIRST reads ev.num", ev.num > 0);
+    full = fopen("/dev/full", "w");
+    ok("fopen /dev/full", full != NULL);
+    errno = 0;
+    ok("H_SAVE_FP reports flush failure",
+       full != NULL && history_w(h, &ev, H_SAVE_FP, full) == -1 &&
+       ev.num == 11 && errno == ENOSPC);
+    if (full != NULL) {
+        fclose(full);
+    }
+    if (snprintf(replacement_target, sizeof(replacement_target), "%s/history-target", argv[1]) < 0) {
+        return 1;
+    }
+    (void)rmdir(replacement_target);
+    ok("mkdir replacement target", mkdir(replacement_target, 0700) == 0);
+    errno = 0;
+    ok("H_SAVE reports replacement failure",
+       history_w(h, &ev, H_SAVE, replacement_target) == -1 &&
+       ev.num == 11 && errno != 0);
+    ok("replacement target is intact", rmdir(replacement_target) == 0);
     history_wend(h);
 
     /* ---- histedit.h: tokenizer, and the argv out-parameter ---- */
@@ -150,6 +176,8 @@ int main(int argc, char **argv) {
     using_history();
     ok("add_history", add_history("alpha") == 0);
     ok("add_history", add_history("beta") == 0);
+    ok("append_history reports write failure",
+       append_history(1, "/dev/full") == ENOSPC);
     ok("history_length", history_length == 2);
     he = history_get(history_base);
     ok("history_get reads ->line", he != NULL && he->line != NULL &&

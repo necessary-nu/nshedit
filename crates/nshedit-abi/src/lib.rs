@@ -342,10 +342,9 @@ pub(crate) mod cstdio {
 
     /// The caller's stream as a byte sink, one `fputs` per write.
     ///
-    /// [`Write::flush`] is deliberately a no-op: the rule ends *the stream is
-    /// neither flushed nor closed — the caller owns it*, so everything
-    /// written here stays in the caller's own buffer exactly as the C leaves
-    /// it.
+    /// Flushing is part of the save operation so a buffered write failure is
+    /// visible to the caller. The caller retains ownership; this writer never
+    /// closes the stream.
     pub(crate) struct CFileWriter {
         stream: CFile,
         /// The NUL-terminated copy `fputs` needs. Reused across writes, as
@@ -383,16 +382,13 @@ pub(crate) mod cstdio {
             // stream is the caller's live `FILE *`.
             let rc = unsafe { fputs(self.term.as_ptr().cast::<c_char>(), self.stream) };
             if rc < 0 {
-                // The C's `EOF`. Only the cookie write is checked
-                // (`sem:history.history-save-fp-fn` step 1); the per-entry
-                // writes discard this, which is ERR-history-21.
-                return Err(io::Error::other("fputs"));
+                return Err(io::Error::last_os_error());
             }
             Ok(buf.len())
         }
 
         fn flush(&mut self) -> io::Result<()> {
-            Ok(())
+            flush(self.stream)
         }
     }
 }

@@ -1345,10 +1345,10 @@ file format.
 - status: reproduced — and reachable through the op the entry is about. `crates/nshedit-abi/src/histedit.rs` `history_dispatch` builds `H_SAVE_FP`/`H_NSAVE_FP`'s `at_start` from `crate::cstdio::at_start`, a real `ftell(fp)` on the caller's stream, and `crates/nshedit/src/history.rs` `history_save_out` writes the cookie only when it is true — so a pipe or socket, where `ftell` answers -1, produces the headerless file that `history_load` then rejects, exactly as the C does. (`history_save_fd`'s `stream_position()` is the Rust-caller path to the same code and is not what the ABI uses.) The differential's `H_SAVE_FP` bytes are identical to the oracle's in both locales.
 
 **ERR-history-21** — write errors are invisible: `history_save` ignores `fclose`'s result, so a failure to flush the final buffer is swallowed and success is still reported; `history_save_fp` ignores every `fprintf` result, so `ENOSPC`, `EIO` and a full pipe go unnoticed.
-- rule: `[spec:libedit:sem:history.history-save-fn]` (step 4), `[spec:libedit:sem:history.history-save-fp-fn]` (step 4) · C: `src/history.c`
+- rule: `[spec:libedit:sem:history.history-save-fn+1]`, `[spec:libedit:sem:history.history-save-fp-fn+1]` (steps 4–5) · C: `src/history.c`
 - class: logic · reach: hot on a full filesystem.
-- disposition: reproduce — the return value crosses the ABI.
-- status: reproduced — `crates/nshedit/src/history.rs`: every `write_all` result and the final `flush` are discarded with `let _ =`.
+- disposition: correct — [dec:libedit:history-save-failure-reporting] explicitly authorizes the C-visible divergence and the affected rules are versioned.
+- status: corrected — every encoded write and final flush is checked. `H_SAVE_FP`/`H_NSAVE_FP` return -1 with `_HE_HIST_WRITE` and the originating errno; named `H_SAVE` writes a secure same-directory temporary and replaces the destination only after write, flush, synchronization, and rename all succeed. `write_history` and `append_history` translate those failures into their positive-errno convention.
 
 **ERR-history-22** — `history_load`'s cookie check is `strncmp(line, hist_cookie, sz)` where `sz` is the length of the line actually read, not the length of the cookie, so any first line that is a proper prefix of `_HiStOrY_V2_\n` is accepted: a file whose entire content is `_HiS` passes and loads zero entries.
 - rule: `[spec:libedit:sem:history.history-load-fn]` (step 3) · C: `src/history.c` `history_load`

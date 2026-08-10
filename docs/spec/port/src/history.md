@@ -854,38 +854,44 @@
 > respectively. This inconsistency is real and is observable through
 > `H_PREV_STR`/`H_NEXT_STR`; reproduce it rather than "correcting" it.
 
-> [spec:libedit:def:history.history-save-fn]
+> [spec:libedit:def:history.history-save-fn+1]
 > static int history_save(TYPE(History) *h, const char *fname)
 
-> [spec:libedit:sem:history.history-save-fn]
-> Writes the entire history to a named file, truncating it. Backs
-> `H_SAVE`.
+> [spec:libedit:sem:history.history-save-fn+1]
+> Writes the entire history to a named file and backs `H_SAVE`. The complete
+> replacement MUST be staged before the destination changes; this is the
+> C-visible correction authorized by
+> [dec:libedit:history-save-failure-reporting].
 >
-> 1. `open(fname, O_WRONLY|O_CREAT|O_TRUNC, S_IRUSR|S_IWUSR)` — create
->    mode **0600** (owner read/write only), and `O_TRUNC`, so any existing
->    file is destroyed before anything is written. There is no temp-file
->    and rename, no lock and no backup: an interrupted save leaves a
->    truncated history file. On failure return -1 (the dispatcher reports
->    `_HE_HIST_WRITE`).
-> 2. `fdopen(fd, "w")`. On failure return -1 — **leaking the file
->    descriptor**, which is never closed. A port should close it and note
->    the divergence.
-> 3. `i = history_save_fp(h, (size_t)-1, fp)`
->    ([spec:libedit:sem:history.history-save-fp-fn]). The stream is fresh
->    at offset 0, so the `_HiStOrY_V2_` cookie is always written, and
->    `(size_t)-1` means "all entries", oldest first.
-> 4. `fclose(fp)` — **return value ignored**, so a failure to flush the
->    final buffer (out of space, I/O error) is silently swallowed and the
->    function still reports success.
-> 5. Return `i`: the number of entries written, or -1.
+> 1. Create an exclusive **0600** temporary in the destination's directory.
+>    If the destination is an existing regular file, copy its permissions to
+>    the temporary. A creation, metadata, or permission failure returns -1
+>    and the dispatcher reports `_HE_HIST_WRITE` with the originating errno.
+> 2. Write the `_HiStOrY_V2_` cookie and every history entry, oldest first,
+>    using the byte grammar in [spec:libedit:sem:history.history-load-fn].
+>    Every write MUST be checked.
+> 3. Flush and synchronize the temporary. Any failure returns -1, preserves
+>    its errno, cleans up the temporary when possible, and leaves the prior
+>    destination untouched.
+> 4. Atomically replace the destination with the completed temporary. A
+>    replacement failure likewise returns -1 and leaves the prior destination
+>    untouched.
+> 5. Return the number of entries written only after replacement succeeds.
+>
+> Replacement acts on the named directory entry: it changes inode identity,
+> breaks that name's previous hard-link relationship, replaces a symlink
+> rather than truncating its referent, and requires write permission on the
+> containing directory. These effects are intentional consequences of making
+> partial named saves impossible.
 
-> [spec:libedit:def:history.history-save-fp-fn]
+> [spec:libedit:def:history.history-save-fp-fn+1]
 > static int history_save_fp(TYPE(History) *h, size_t nelem, FILE *fp)
 
-> [spec:libedit:sem:history.history-save-fp-fn]
+> [spec:libedit:sem:history.history-save-fp-fn+1]
 > Writes the history to an already-open stream. Backs `H_SAVE_FP`
-> (`nelem == (size_t)-1`) and `H_NSAVE_FP`, and is the whole of
-> [spec:libedit:sem:history.history-save-fn]. Returns the number of
+> (`nelem == (size_t)-1`) and `H_NSAVE_FP`, and supplies the encoding and
+> write phase of [spec:libedit:sem:history.history-save-fn]. Returns the
+> number of
 > entries written, or -1. The on-disk grammar it produces is specified in
 > [spec:libedit:sem:history.history-load-fn]; `i` is pre-initialised to
 > -1.
@@ -930,13 +936,16 @@
 >      loop.
 >    - `strvis(ptr, str, VIS_WHITE)` — encode; see
 >      [spec:libedit:sem:vis.strvis-fn].
->    - `fprintf(fp, "%s\n", ptr)` — one line per entry. **The return
->      value is ignored**, so write errors (`ENOSPC`, `EIO`, a full pipe)
->      are invisible and the function still reports success.
-> 5. Free `ptr` and return `i`: the number of entries written, 0 for an
->    empty history, or -1 for a header/allocation failure.
+>    - Write the encoded line and newline to `fp`. The result MUST be checked;
+>      `ENOSPC`, `EIO`, a full pipe, or any short write returns -1 with
+>      `_HE_HIST_WRITE` and the originating errno.
+> 5. Flush `fp`. A flush failure returns -1 with `_HE_HIST_WRITE` and its
+>    errno; success is not reported while output remains only in an unchecked
+>    stdio buffer.
+> 6. Free `ptr` and return `i`: the number of entries written, 0 for an
+>    empty history, or -1 for any header, allocation, write, or flush failure.
 >
-> The stream is neither flushed nor closed — the caller owns it. Because
+> The stream is flushed but never closed — the caller owns it. Because
 > the walk runs from oldest toward newest, the resulting file is
 > **oldest first, newest last**, which is what makes `history_load`'s
 > top-to-bottom `H_ENTER` restore the original ordering.
@@ -1067,4 +1076,3 @@
 
 > [spec:libedit:def:history.history-vfun-t-void-type-hist-event]
 > typedef void (*history_vfun_t)(void *, TYPE(HistEvent) *)
-

@@ -31,6 +31,7 @@ nshedit.workspace = true
 nshedit-plat.workspace = true
 nshterm.workspace = true
 regex = { version = "1.13.1", default-features = false, features = ["std", "perf", "unicode"] }
+tempfile.workspace = true
 
 [dev-dependencies]
 # Generates the shipped headers, `include/histedit.h` and

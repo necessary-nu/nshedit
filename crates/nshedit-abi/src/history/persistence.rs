@@ -1,8 +1,7 @@
-use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, BufWriter, Read, Seek, Write};
+use std::fs::{self, File};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, Write};
 use std::mem::ManuallyDrop;
 use std::os::fd::{FromRawFd, RawFd};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 use crate::conversion::ConversionBuffer;
@@ -142,14 +141,28 @@ fn cookie_prefix_matches(line: &[u8]) -> bool {
     true
 }
 
-// [spec:libedit:def:history.history-save-fp-fn]
-// [spec:libedit:sem:history.history-save-fp-fn]
+// [spec:libedit:def:history.history-save-fp-fn+1]
+// [spec:libedit:sem:history.history-save-fp-fn+1]
 pub(super) fn save_stream<C: HistoryChar>(
     history: &mut HistoryHandle<C>,
     count: usize,
     stream: SaveStream<'_>,
 ) -> HistoryResult<C> {
-    save_to(history, count, stream.output, stream.at_start).map(HistoryReply::Count)
+    publish_save(save_to(history, count, stream.output, stream.at_start))
+}
+
+fn publish_save<C>(result: io::Result<usize>) -> HistoryResult<C> {
+    match result {
+        Ok(count) => Ok(HistoryReply::Count(count)),
+        Err(error) => {
+            if let Some(errno) = error.raw_os_error()
+                && errno != 0
+            {
+                crate::errno::set(errno);
+            }
+            Err(HistoryErrorKind::WriteFailed.into())
+        }
+    }
 }
 
 fn save_to<C: HistoryChar>(
@@ -157,13 +170,9 @@ fn save_to<C: HistoryChar>(
     count: usize,
     output: &mut dyn Write,
     at_start: bool,
-) -> Result<usize, HistoryError<C>> {
-    if at_start
-        && output
-            .write_all(nshedit::history_file::LIBEDIT_V2_HEADER)
-            .is_err()
-    {
-        return Err(HistoryErrorKind::WriteFailed.into());
+) -> io::Result<usize> {
+    if at_start {
+        output.write_all(nshedit::history_file::LIBEDIT_V2_HEADER)?;
     }
 
     let mut conversion = ConversionBuffer::default();
@@ -185,17 +194,21 @@ fn save_to<C: HistoryChar>(
     let mut written = 0usize;
     while let Ok(reply) = result {
         let HistoryReply::Event(event) = reply else {
-            return Err(HistoryErrorKind::WriteFailed.into());
+            return Err(io::Error::other("history traversal returned no event"));
         };
         let Some(bytes) = C::encode(event.text.as_deref(), &mut conversion) else {
-            return Err(HistoryErrorKind::WriteFailed.into());
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "history entry is not encodable",
+            ));
         };
         let mut encoded = encode_libedit_entry(bytes);
         encoded.push(b'\n');
-        let _ = output.write_all(&encoded);
+        output.write_all(&encoded)?;
         written = written.saturating_add(1);
         result = history.execute(HistoryRequest::Move(HistoryMove::Newer));
     }
+    output.flush()?;
     Ok(written)
 }
 
@@ -210,14 +223,45 @@ pub(crate) fn save_fd<C: HistoryChar>(
     // SAFETY: the descriptor is borrowed and `ManuallyDrop` prevents close.
     let mut file = ManuallyDrop::new(unsafe { File::from_raw_fd(descriptor) });
     let at_start = matches!(file.stream_position(), Ok(0));
-    let mut output = BufWriter::new(&mut *file);
-    let result = save_to(history, count, &mut output, at_start).map(HistoryReply::Count);
-    let _ = output.flush();
-    result
+    let result = {
+        let mut output = BufWriter::new(&mut *file);
+        save_to(history, count, &mut output, at_start)
+    };
+    publish_save(result)
 }
 
-// [spec:libedit:def:history.history-save-fn]
-// [spec:libedit:sem:history.history-save-fn]
+fn save_path<C: HistoryChar>(history: &mut HistoryHandle<C>, path: &Path) -> io::Result<usize> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut temporary = tempfile::Builder::new()
+        .prefix(".nshedit-history-")
+        .tempfile_in(parent)?;
+
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => {
+            temporary
+                .as_file()
+                .set_permissions(metadata.permissions())?;
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    let written = {
+        let mut output = BufWriter::new(temporary.as_file_mut());
+        save_to(history, usize::MAX, &mut output, true)?
+    };
+    temporary.as_file().sync_all()?;
+    let persisted = temporary.persist(path).map_err(|failure| failure.error)?;
+    drop(persisted);
+    Ok(written)
+}
+
+// [spec:libedit:def:history.history-save-fn+1]
+// [spec:libedit:sem:history.history-save-fn+1]
 pub(super) fn save<C: HistoryChar>(
     history: &mut HistoryHandle<C>,
     path: Option<&Path>,
@@ -225,17 +269,5 @@ pub(super) fn save<C: HistoryChar>(
     let Some(path) = path else {
         return Err(HistoryErrorKind::WriteFailed.into());
     };
-    let Ok(file) = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)
-    else {
-        return Err(HistoryErrorKind::WriteFailed.into());
-    };
-    let mut output = BufWriter::new(file);
-    let result = save_to(history, usize::MAX, &mut output, true).map(HistoryReply::Count);
-    let _ = output.flush();
-    result
+    publish_save(save_path(history, path))
 }

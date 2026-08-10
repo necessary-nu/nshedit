@@ -470,3 +470,120 @@ fn stream_save_returns_count() {
     // SAFETY: consuming the allocation.
     unsafe { end(history) };
 }
+
+struct WriteFailure {
+    remaining: usize,
+    errno: i32,
+}
+
+impl std::io::Write for WriteFailure {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.remaining == 0 {
+            return Err(std::io::Error::from_raw_os_error(self.errno));
+        }
+        let written = bytes.len().min(self.remaining);
+        self.remaining -= written;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+struct FlushFailure {
+    errno: i32,
+}
+
+impl std::io::Write for FlushFailure {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::from_raw_os_error(self.errno))
+    }
+}
+
+// [spec:libedit:sem:history.history-save-fp-fn+1/test]
+#[test]
+fn stream_save_reports_failures() {
+    const EIO: i32 = 5;
+    const ENOSPC: i32 = 28;
+
+    let history = HistoryOwner::new_raw();
+    let line = narrow(b"entry");
+    // SAFETY: the test owns the history.
+    unsafe { run(history, HistoryRequest::SetSize(1)) }.unwrap();
+    // SAFETY: the test owns the history and the borrowed line.
+    unsafe { run(history, HistoryRequest::Enter(&line)) }.unwrap();
+
+    let mut write_failure = WriteFailure {
+        remaining: nshedit::history_file::LIBEDIT_V2_HEADER.len(),
+        errno: ENOSPC,
+    };
+    crate::errno::set(0);
+    // SAFETY: the writer and history remain live for the request.
+    let result = unsafe {
+        run(
+            history,
+            HistoryRequest::SaveStream(SaveStream {
+                at_start: true,
+                output: &mut write_failure,
+            }),
+        )
+    };
+    assert_eq!(
+        result,
+        Err(HistoryError::Known(HistoryErrorKind::WriteFailed))
+    );
+    assert_eq!(crate::errno::get(), ENOSPC);
+
+    let mut flush_failure = FlushFailure { errno: EIO };
+    crate::errno::set(0);
+    // SAFETY: the writer and history remain live for the request.
+    let result = unsafe {
+        run(
+            history,
+            HistoryRequest::SaveStream(SaveStream {
+                at_start: true,
+                output: &mut flush_failure,
+            }),
+        )
+    };
+    assert_eq!(
+        result,
+        Err(HistoryError::Known(HistoryErrorKind::WriteFailed))
+    );
+    assert_eq!(crate::errno::get(), EIO);
+
+    // SAFETY: consuming the test allocation.
+    unsafe { end(history) };
+}
+
+// [spec:libedit:sem:history.history-save-fn+1/test]
+#[test]
+fn named_save_reports_replacement_failure() {
+    let history = HistoryOwner::new_raw();
+    let line = narrow(b"entry");
+    // SAFETY: the test owns the history.
+    unsafe { run(history, HistoryRequest::SetSize(1)) }.unwrap();
+    // SAFETY: the test owns the history and the borrowed line.
+    unsafe { run(history, HistoryRequest::Enter(&line)) }.unwrap();
+
+    let parent = tempfile::tempdir().unwrap();
+    let target = parent.path().join("target");
+    std::fs::create_dir(&target).unwrap();
+    crate::errno::set(0);
+    // SAFETY: the history remains live for the request.
+    let result = unsafe { run(history, HistoryRequest::Save(Some(&target))) };
+    assert_eq!(
+        result,
+        Err(HistoryError::Known(HistoryErrorKind::WriteFailed))
+    );
+    assert_ne!(crate::errno::get(), 0);
+    assert!(target.is_dir());
+
+    // SAFETY: consuming the test allocation.
+    unsafe { end(history) };
+}

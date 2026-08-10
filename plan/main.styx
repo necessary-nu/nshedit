@@ -3524,6 +3524,14 @@ children (
             {
                 id quality-history-save-errors
                 title "Version and correct history-save failure reporting"
+                implements {
+                    target-impl (
+                        [spec:libedit:sem:history.history-save-fn+1]
+                        [spec:libedit:sem:history.history-save-fp-fn+1]
+                        [spec:libedit:sem:readline.append-history-fn+1]
+                        [spec:libedit:sem:readline.write-history-fn+1]
+                    )
+                }
                 log (
                     {
                         at 2026-08-10T12:59:17.541120864Z

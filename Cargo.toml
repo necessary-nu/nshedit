@@ -17,6 +17,7 @@ nshedit = { path = "crates/nshedit", version = "0.0.0" }
 nshedit-plat = { path = "crates/nshedit-plat", version = "0.0.0" }
 # See plan/decisions/terminal-caps-via-term-crate.md.
 nshterm = { path = "crates/nshterm", version = "0.1.0" }
+tempfile = "3.27.0"
 
 [workspace.lints.rust]
 dead_code = "deny"

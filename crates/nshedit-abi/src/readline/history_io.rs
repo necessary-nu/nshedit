@@ -218,8 +218,8 @@ pub unsafe extern "C" fn read_history(filename: *const c_char) -> c_int {
     }
 }
 
-// [spec:libedit:def:readline.write-history-fn]
-// [spec:libedit:sem:readline.write-history-fn]
+// [spec:libedit:def:readline.write-history-fn+1]
+// [spec:libedit:sem:readline.write-history-fn+1]
 #[unsafe(no_mangle)]
 #[doc = include_str!("../ffi_safety.md")]
 pub unsafe extern "C" fn write_history(filename: *const c_char) -> c_int {
@@ -235,8 +235,8 @@ pub unsafe extern "C" fn write_history(filename: *const c_char) -> c_int {
         // so a value left over from before the call is what a failure with no
         // `errno` of its own reports. Reproduced by sampling without clearing.
         let mark = crate::errno::mark();
-        // H_SAVE truncates or creates the file and writes the signature line
-        // and every event `strvis`-escaped — the frozen on-disk format.
+        // H_SAVE replaces the file only after the complete encoded history is
+        // flushed successfully.
         if history::execute(HistoryRequest::Save(Some(path))).is_err() {
             crate::errno::publish(mark);
             let e = crate::errno::get();
@@ -247,8 +247,8 @@ pub unsafe extern "C" fn write_history(filename: *const c_char) -> c_int {
     }
 }
 
-// [spec:libedit:def:readline.append-history-fn]
-// [spec:libedit:sem:readline.append-history-fn]
+// [spec:libedit:def:readline.append-history-fn+1]
+// [spec:libedit:sem:readline.append-history-fn+1]
 #[unsafe(no_mangle)]
 #[doc = include_str!("../ffi_safety.md")]
 pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_int {
@@ -303,7 +303,9 @@ pub unsafe extern "C" fn append_history(n: c_int, filename: *const c_char) -> c_
         // `O_APPEND` already forces every write to the end, so seeking
         // changes only what the position REPORTS, which is precisely the
         // question `at_start` is asking.
-        let _ = fp.seek(SeekFrom::End(0));
+        if let Err(error) = fp.seek(SeekFrom::End(0)) {
+            return errno_of(&error);
+        }
         // As `write_history`: sampled, not cleared.
         let mark = crate::errno::mark();
         let rc = crate::history::save_fd(runtime_history(), n as usize, fp.as_raw_fd());
