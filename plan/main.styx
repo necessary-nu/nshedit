@@ -3593,6 +3593,7 @@ children (
                 id quality-renderer-final-position
                 title "Finish accepted and EOF lines below the rendered region"
                 deps (quality-renderer-region-origin)
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:17.63772971Z
@@ -3606,6 +3607,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "Finalization is one planned renderer transaction: optional EOF echo carries terminal-column width, grows and re-anchors the owned extent before a wrap can scroll, then restores the saved origin, descends to the last owned row, emits the line feed, and releases display state only after write_all plus flush. A failed existing-anchor write retains the committed screen and extent for retry; a failed anchor replacement marks the origin lost."
+                    }
+
+                    {
+                        at 2026-08-10T15:21:08.138260239Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
