@@ -41,7 +41,7 @@ use windows_sys::Win32::System::Threading::{
     TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    VK_BACK, VK_C, VK_DELETE, VK_END, VK_HOME, VK_LEFT, VK_RETURN, VK_TAB, VK_UP, VK_Z,
+    VK_BACK, VK_C, VK_CONTROL, VK_DELETE, VK_END, VK_HOME, VK_LEFT, VK_RETURN, VK_TAB, VK_UP, VK_Z,
 };
 
 const COMMANDS: [&str; 3] = ["exit", "help", "history"];
@@ -517,10 +517,12 @@ impl Write for FailingWriter {
 }
 
 fn conpty_editor_session() -> AcceptanceResult {
-    let input = b"ac\x1b[Db\x1b[HX\x1b[F\x08c\x1b[D\x1b[3~\x1b[F\xf0\x9f\x98\x80\rhe\t\r\x1b[Ax\r";
+    let mut input = b"ac\x1b[Db\x1b[HX\x1b[F\x08c\x1b[D\x1b[3~\x1b[F".to_vec();
+    input.extend(conpty_text("😀"));
+    input.extend(b"\rhe\t\r\x1b[Ax\r");
     let interrupt = conpty_control_key(VK_C, '\u{3}');
     let output = run_in_conpty(
-        input,
+        &input,
         Some(COORD { X: 100, Y: 30 }),
         Some((b"accepted: help x", &interrupt)),
     )?;
@@ -530,7 +532,7 @@ fn conpty_editor_session() -> AcceptanceResult {
         "ConPTY output: {output:?}"
     );
     assert!(
-        output.matches("accepted: help ").count() >= 2,
+        output.matches("accepted: help").count() >= 2 && output.contains("accepted: help x"),
         "ConPTY output: {output:?}"
     );
     Ok(())
@@ -543,9 +545,29 @@ fn conpty_end_of_input() -> AcceptanceResult {
 }
 
 fn conpty_control_key(virtual_key: u16, character: char) -> Vec<u8> {
+    let unicode = u16::try_from(u32::from(character)).expect("control keys are in the BMP");
+    [
+        conpty_key(VK_CONTROL, 0, true, LEFT_CTRL_PRESSED),
+        conpty_key(virtual_key, unicode, true, LEFT_CTRL_PRESSED),
+        conpty_key(virtual_key, unicode, false, LEFT_CTRL_PRESSED),
+        conpty_key(VK_CONTROL, 0, false, 0),
+    ]
+    .concat()
+}
+
+fn conpty_text(text: &str) -> Vec<u8> {
+    let mut input = Vec::new();
+    for unicode in text.encode_utf16() {
+        input.extend(conpty_key(0, unicode, true, 0));
+        input.extend(conpty_key(0, unicode, false, 0));
+    }
+    input
+}
+
+fn conpty_key(virtual_key: u16, unicode: u16, key_down: bool, control_state: u32) -> Vec<u8> {
     format!(
-        "\u{1b}[{virtual_key};0;{};1;{LEFT_CTRL_PRESSED};1_",
-        u32::from(character)
+        "\u{1b}[{virtual_key};0;{unicode};{};{control_state};1_",
+        u8::from(key_down)
     )
     .into_bytes()
 }
@@ -623,9 +645,8 @@ fn run_in_conpty(
         input_file.write_all(bytes)?;
         input_file.flush()?;
     }
-    drop(input_file);
-
     let exit_code = process.wait(CHILD_TIMEOUT_MS)?;
+    drop(input_file);
     drop(process);
     drop(pseudo_console);
     let output = output_reader
