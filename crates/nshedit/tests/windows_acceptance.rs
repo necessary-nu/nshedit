@@ -585,9 +585,9 @@ fn run_in_conpty(input: &[u8], resize: Option<COORD>) -> AcceptanceResult<Vec<u8
     }
     input_file.write_all(input)?;
     input_file.flush()?;
+    drop(input_file);
 
     let exit_code = process.wait(CHILD_TIMEOUT_MS)?;
-    drop(input_file);
     drop(process);
     drop(pseudo_console);
     let output = output_reader
