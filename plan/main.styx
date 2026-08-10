@@ -2363,7 +2363,7 @@ children (
                 priority 0
                 kind @refactor
                 implements {
-                    native-impl ([spec:nshedit:req:abi.opaque-owner] [spec:nshedit:req:abi.surface-stability] [spec:nshedit:req:abi.behavioural-conformance])
+                    native-impl ([spec:nshedit:req:abi.opaque-owner] [spec:nshedit:req:abi.surface-stability])
                 }
                 deps (greenfield-read-driver)
                 log (
@@ -2711,9 +2711,6 @@ children (
                 id greenfield-acceptance
                 title "Prove Rust-core safety and drop-in C ABI compatibility end to end"
                 kind @test
-                implements {
-                    native-impl ([spec:nshedit:req:abi.observational-coverage])
-                }
                 deps (
                     greenfield-lint-zero
                     greenfield-rust-consumer
@@ -3438,6 +3435,9 @@ children (
         id retire-c
         title "Remove the in-tree C oracle and legacy Autotools distribution"
         kind @chore
+        implements {
+            native-impl ([spec:nshedit:req:abi.behavioural-conformance+1] [spec:nshedit:req:abi.observational-coverage+1])
+        }
         deps (greenfield-core conformance)
         sealed true
         log (
@@ -3460,6 +3460,13 @@ children (
                 author "brendan@necessary.nu"
                 kind @status
                 text "Doing → Done (nplan complete)"
+            }
+
+            {
+                at 2026-08-10T15:00:58.425253027Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "Rehome the Rust-owned +1 behavioural-conformance and observational-coverage contracts from their retired v0 greenfield claims. Commit e97745b changed those rules and their implementation evidence when the C oracle was removed, so retire-c is the current delivery owner."
             }
         )
     }

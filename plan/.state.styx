@@ -1,16 +1,14 @@
 schema_version 7
 
-last_sync_at 2026-08-10T14:53:28.865248972Z
+last_sync_at 2026-08-10T15:00:58.513931215Z
 
 rule_versions (
-    {id abi.behavioural-conformance, version 1}
     {id abi.binding-dispatch, version 0}
     {id abi.bindings, version 0}
     {id abi.complete-surface, version 1}
     {id abi.darwin-drop-in, version 0}
     {id abi.darwin-runtime, version 0}
     {id abi.history-effects, version 1}
-    {id abi.observational-coverage, version 1}
     {id abi.opaque-owner, version 0}
     {id abi.rust-internals, version 0}
     {id abi.signal-lifecycle, version 0}
@@ -25,7 +23,6 @@ rule_versions (
     {id core.command-effects, version 0}
     {id core.command-sequences, version 0}
     {id core.effect-hooks, version 0}
-    {id core.incremental-render, version 1}
     {id core.line-commands, version 0}
     {id core.native-consumer, version 0}
     {id core.no-compat-internals, version 0}
@@ -310,13 +307,6 @@ impl_evidence (
     ), rule_versions_seen (
         {id abi.complete-surface, version 1}
     )}
-    {id greenfield-acceptance, covered_rules (
-        abi.observational-coverage
-    ), covered_claims (
-        {impl_name native-impl, rule abi.observational-coverage}
-    ), rule_versions_seen (
-        {id abi.observational-coverage, version 0}
-    )}
     {id greenfield-binding-compat, covered_rules (
         abi.bindings
     ), covered_claims (
@@ -383,13 +373,6 @@ impl_evidence (
     ), rule_versions_seen (
         {id abi.bindings, version 0}
         {id abi.history-effects, version 1}
-    )}
-    {id greenfield-incremental-render, covered_rules (
-        core.incremental-render
-    ), covered_claims (
-        {impl_name native-impl, rule core.incremental-render}
-    ), rule_versions_seen (
-        {id core.incremental-render, version 0}
     )}
     {id greenfield-line-commands, covered_rules (
         core.line-commands
@@ -537,6 +520,11 @@ impl_evidence (
         {impl_name target-impl, rule readline.append-history-fn}
         {impl_name target-impl, rule readline.write-history-fn}
     )}
+    {id quality-renderer-final-position, covered_rules (
+        core.incremental-render
+    ), covered_claims (
+        {impl_name native-impl, rule core.incremental-render}
+    )}
     {id quality-secure-temp-files, covered_rules (
         readline.history-truncate-file-fn
     ), covered_claims (
@@ -656,5 +644,12 @@ impl_evidence (
         {impl_name native-impl, rule platform.windows-console}
     ), rule_versions_seen (
         {id platform.windows-console, version 0}
+    )}
+    {id retire-c, covered_rules (
+        abi.behavioural-conformance
+        abi.observational-coverage
+    ), covered_claims (
+        {impl_name native-impl, rule abi.behavioural-conformance}
+        {impl_name native-impl, rule abi.observational-coverage}
     )}
 )
