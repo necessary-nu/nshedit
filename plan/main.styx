@@ -3399,6 +3399,14 @@ children (
                     native-impl ([spec:nshedit:req:workspace.windows-acceptance])
                 }
                 deps (windows-editor)
+                log (
+                    {
+                        at 2026-08-10T01:01:54.227668955Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

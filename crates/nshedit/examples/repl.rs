@@ -11,7 +11,7 @@ use std::os::windows::io::AsHandle;
 
 use nshedit::domain::{
     Action, Binding, Direction, EditTarget, EditorConfig, EffectCommand, KeySequence, KeymapMode,
-    Motion, Prompt, ScreenSize, SignalPolicy, Text, TextUnit,
+    Motion, Prompt, ScreenSize, Text, TextUnit,
 };
 use nshedit::editor::effect::{HistoryResponse, HostFailure, PromptSide};
 use nshedit::editor::{
@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let input_source = SystemInput::new(input_descriptor)?;
     let terminal = SystemTerminal::new(input_descriptor, output_descriptor);
-    let config = EditorConfig::default().with_signal_policy(SignalPolicy::Ignore);
+    let config = EditorConfig::default();
     let mut editor = Editor::new(config, terminal)?;
     let size = SystemTerminal::screen_size(output_descriptor)
         .unwrap_or_else(|_| ScreenSize::new(24, 80).expect("the fallback size is valid"));
