@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-10T13:28:45.297586201Z
+last_sync_at 2026-08-10T13:37:41.447052605Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 1}
@@ -514,6 +514,17 @@ impl_evidence (
         {impl_name target-impl, rule chared.el-deletestr1-fn}
         {impl_name target-impl, rule histedit.el-deletestr1-fn}
         {impl_name target-impl, rule readline.rl-delete-text-fn}
+    )}
+    {id quality-history-save-errors, covered_rules (
+        history.history-save-fn
+        history.history-save-fp-fn
+        readline.append-history-fn
+        readline.write-history-fn
+    ), covered_claims (
+        {impl_name target-impl, rule history.history-save-fn}
+        {impl_name target-impl, rule history.history-save-fp-fn}
+        {impl_name target-impl, rule readline.append-history-fn}
+        {impl_name target-impl, rule readline.write-history-fn}
     )}
     {id rust-idiom-completion, covered_rules (
         abi.typed-completion
