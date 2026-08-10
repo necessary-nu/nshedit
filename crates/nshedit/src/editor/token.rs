@@ -245,6 +245,28 @@ enum State {
     EscapeDouble,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DoubleQuoteBackslash {
+    EscapesUnit,
+    ContinuesLine,
+    RemainsLiteral,
+}
+
+const fn double_quote_backslash(unit: TextUnit) -> DoubleQuoteBackslash {
+    match unit {
+        TextUnit::Scalar('$' | '`' | '"' | '\\') => DoubleQuoteBackslash::EscapesUnit,
+        TextUnit::Scalar('\n') => DoubleQuoteBackslash::ContinuesLine,
+        _ => DoubleQuoteBackslash::RemainsLiteral,
+    }
+}
+
+pub(super) const fn needs_double_quote_escape(unit: TextUnit) -> bool {
+    matches!(
+        double_quote_backslash(unit),
+        DoubleQuoteBackslash::EscapesUnit
+    )
+}
+
 impl State {
     const fn quote(self) -> QuoteStyle {
         match self {
@@ -332,10 +354,10 @@ impl Parser {
         }
         if self.state == State::EscapeDouble {
             self.state = State::Double;
-            match unit {
-                TextUnit::Scalar('\'' | '"' | '\\') => self.emit(source_index, unit),
-                TextUnit::Scalar('\n') => {}
-                _ => {
+            match double_quote_backslash(unit) {
+                DoubleQuoteBackslash::EscapesUnit => self.emit(source_index, unit),
+                DoubleQuoteBackslash::ContinuesLine => {}
+                DoubleQuoteBackslash::RemainsLiteral => {
                     self.emit(source_index, TextUnit::Scalar('\\'));
                     self.emit(source_index, unit);
                 }
@@ -471,6 +493,33 @@ mod tests {
 
         assert_eq!(result.continuation(), None);
         assert_eq!(result.line().tokens()[0].value(), &Text::from("onetwo"));
+    }
+
+    #[test]
+    fn double_quoted_backslashes_follow_shell_rules() {
+        let cases = [
+            ("\"\\$\"", "$"),
+            ("\"\\`\"", "`"),
+            ("\"\\\"\"", "\""),
+            ("\"\\\\\"", "\\"),
+            ("\"\\'\"", "\\'"),
+            ("\"\\q\"", "\\q"),
+            ("\"\\\n\"", ""),
+        ];
+
+        for (source, expected) in cases {
+            let input = Text::from(source);
+            let result = Tokenizer::default()
+                .tokenize(&input, input.index(input.len()).unwrap())
+                .unwrap();
+
+            assert_eq!(result.continuation(), None, "source: {source:?}");
+            assert_eq!(
+                result.line().tokens()[0].value(),
+                &Text::from(expected),
+                "source: {source:?}"
+            );
+        }
     }
 
     #[test]

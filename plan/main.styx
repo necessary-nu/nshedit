@@ -3577,12 +3577,20 @@ children (
             {
                 id quality-double-quote-completion
                 title "Make double-quoted shell completion syntax-safe"
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:17.739665101Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: double-quoted completion escapes only quote and backslash and tokenization uses an incompatible escape table, leaving dollar and command-substitution syntax active. Define one shell double-quote escaping contract shared by tokenization and completion, covering $, backtick, quote, and context-sensitive backslash rules, and prove inserted candidates round-trip as literal filenames."
+                    }
+
+                    {
+                        at 2026-08-10T13:18:25.536068913Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }

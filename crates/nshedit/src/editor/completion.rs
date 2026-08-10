@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use crate::domain::{Error, Text, TextIndex, TextSpan, TextUnit};
 
-use super::token::{QuoteStyle, Tokenizer};
+use super::token::{QuoteStyle, Tokenizer, needs_double_quote_escape};
 use super::{Editor, TerminalControl, line};
 
 /// An owned completion request bound to one exact editor snapshot.
@@ -328,7 +328,7 @@ fn encode(value: &Text, quote: QuoteStyle, separators: &Text, close: bool) -> Te
         QuoteStyle::Double => {
             encoded.push(TextUnit::Scalar('"'));
             for &unit in value {
-                if matches!(unit, TextUnit::Scalar('"' | '\\')) {
+                if needs_double_quote_escape(unit) {
                     encoded.push(TextUnit::Scalar('\\'));
                 }
                 encoded.push(unit);
@@ -516,6 +516,28 @@ mod tests {
                 .unwrap();
             assert_eq!(parsed.line().tokens()[0].value(), &candidate);
         }
+    }
+
+    #[test]
+    fn double_quote_escapes_expansions() {
+        let mut editor = editor("\"fo");
+        let query = query_for(&editor);
+        let candidate = Text::from("foo$bar`baz\"qux\\zap");
+        editor
+            .apply_completion(
+                &query,
+                vec![CompletionCandidate::new(candidate.clone()).with_suffix(" ")].into(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            editor.line(),
+            &Text::from("\"foo\\$bar\\`baz\\\"qux\\\\zap\" ")
+        );
+        let parsed = Tokenizer::default()
+            .tokenize(editor.line(), editor.cursor())
+            .unwrap();
+        assert_eq!(parsed.line().tokens()[0].value(), &candidate);
     }
 
     #[test]
