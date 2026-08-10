@@ -10,7 +10,7 @@ pub mod common;
 
 use common::{fixture, fixture_names};
 use nshterm::parm::Param;
-use nshterm::{CapabilityName, Error, TermInfo, TermInfoBuilder};
+use nshterm::{CapabilityName, Error, InvalidTerminalName, TermInfo, TermInfoBuilder};
 
 /// Every fixture parses, and parses into something usable.
 ///
@@ -152,6 +152,18 @@ fn malformed_input_is_reported_rather_than_trusted() {
 fn a_missing_file_is_an_error() {
     let err = TermInfo::from_path("/nonexistent/nshterm/terminfo/entry").unwrap_err();
     assert!(matches!(err, Error::Io(_)), "got {err:?}");
+}
+
+/// The convenient string API validates before terminal-database discovery;
+/// callers get a distinct error rather than a misleading missing entry.
+// [spec:nshedit:req:terminal.typed-api/test]
+#[test]
+fn invalid_terminal_name_is_typed() {
+    let error = TermInfo::from_name("../xterm").unwrap_err();
+    assert!(matches!(&error, Error::InvalidTerminalName(_)));
+    assert!(
+        std::error::Error::source(&error).is_some_and(|source| source.is::<InvalidTerminalName>())
+    );
 }
 
 /// `from_name` searches the database; with `TERMINFO` pointed at the fixture

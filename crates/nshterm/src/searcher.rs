@@ -15,10 +15,11 @@
 //! `plan/decisions/terminal-caps-via-term-crate.md`.
 
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::Result;
 
@@ -37,6 +38,79 @@ use crate::Result;
 /// privilege classification here.
 pub use nshedit_plat::EnvironmentTrust;
 
+/// A terminal database name that is safe to use as one path component.
+///
+/// The invariant covers every supported host's path syntax. Both Unix and
+/// Windows separators are forbidden, as are Windows volume or alternate-data
+/// stream markers. This lets discovery construct `<root>/<first>/<name>`
+/// without a caller-controlled component changing the directory being read.
+// [spec:nshedit:req:terminal.typed-api]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct TerminalName<'a> {
+    value: &'a str,
+    first: char,
+}
+
+impl<'a> TerminalName<'a> {
+    /// Validate a terminal database name without allocating or changing it.
+    pub fn new(name: &'a str) -> std::result::Result<Self, InvalidTerminalName> {
+        let first = name.chars().next().ok_or(InvalidTerminalName)?;
+        let portable = !name.contains(['\\', ':', '\0']);
+        let mut components = Path::new(name).components();
+        let single_normal_component = matches!(
+            (components.next(), components.next()),
+            (Some(Component::Normal(component)), None) if component == OsStr::new(name)
+        );
+
+        (portable && single_normal_component)
+            .then_some(Self { value: name, first })
+            .ok_or(InvalidTerminalName)
+    }
+
+    /// The validated name, byte-for-byte as supplied by the caller.
+    #[must_use]
+    pub const fn as_str(self) -> &'a str {
+        self.value
+    }
+
+    fn first_char(self) -> char {
+        self.first
+    }
+}
+
+impl<'a> TryFrom<&'a str> for TerminalName<'a> {
+    type Error = InvalidTerminalName;
+
+    fn try_from(name: &'a str) -> std::result::Result<Self, Self::Error> {
+        Self::new(name)
+    }
+}
+
+impl AsRef<str> for TerminalName<'_> {
+    fn as_ref(&self) -> &str {
+        self.value
+    }
+}
+
+impl fmt::Display for TerminalName<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.value)
+    }
+}
+
+/// The supplied terminal database name was not one ordinary path component.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct InvalidTerminalName;
+
+impl fmt::Display for InvalidTerminalName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("terminal database name must be one ordinary path component")
+    }
+}
+
+impl std::error::Error for InvalidTerminalName {}
+
 // The default terminfo location should be /usr/lib/terminfo but that's not guaranteed, so we check
 // a few more locations. See https://tldp.org/HOWTO/Text-Terminal-HOWTO-16.html#ss16.2
 const DEFAULT_LOCATIONS: &[&str] = &[
@@ -53,22 +127,27 @@ const DEFAULT_LOCATIONS: &[&str] = &[
 /// describe. A directory or entry that exists and cannot be read is an
 /// [`Io`][crate::Error::Io] failure instead: it is a database the caller was
 /// meant to be able to read, and reporting it as an absent terminal would
-/// blame the terminal type for a permission problem.
-pub fn database_path(term: &str, environment: EnvironmentTrust) -> Result<Option<PathBuf>> {
+/// blame the terminal type for a permission problem. Requiring a
+/// [`TerminalName`] here makes it impossible to construct a filesystem path
+/// before validation; [`TermInfo::from_name`][crate::TermInfo::from_name] is
+/// the convenient boundary for callers that hold an unvalidated string.
+pub fn database_path(
+    term: TerminalName<'_>,
+    environment: EnvironmentTrust,
+) -> Result<Option<PathBuf>> {
     search(term, environment, |name| env::var_os(name))
 }
 
 fn search(
-    term: &str,
+    term: TerminalName<'_>,
     trust_env: EnvironmentTrust,
     environment: impl Fn(&str) -> Option<OsString>,
 ) -> Result<Option<PathBuf>> {
+    let first_char = term.first_char();
+    let term = term.as_str();
     let trust_env = trust_env.permits_environment();
     let mut dirs_to_search = Vec::new();
     let mut default_locations = DEFAULT_LOCATIONS.iter().map(PathBuf::from);
-    let Some(first_char) = term.chars().next() else {
-        return Ok(None);
-    };
 
     // From the manual.
     //
@@ -154,7 +233,9 @@ fn exists(path: &Path) -> Result<bool> {
 mod test {
     #[cfg(unix)]
     use super::search;
-    use super::{DEFAULT_LOCATIONS, EnvironmentTrust, database_path};
+    use super::{
+        DEFAULT_LOCATIONS, EnvironmentTrust, InvalidTerminalName, TerminalName, database_path,
+    };
 
     /// Search-path policy is an explicit input here; platform classification
     /// is tested at the platform boundary.
@@ -168,8 +249,9 @@ mod test {
         std::fs::write(sub.join("fakevt100"), b"not a real entry").unwrap();
 
         let environment = |name: &str| (name == "TERMINFO").then(|| dir.clone().into_os_string());
-        let found = search("fakevt100", EnvironmentTrust::Honoured, environment);
-        let untrusted = search("fakevt100", EnvironmentTrust::Ignored, environment);
+        let term = TerminalName::new("fakevt100").unwrap();
+        let found = search(term, EnvironmentTrust::Honoured, environment);
+        let untrusted = search(term, EnvironmentTrust::Ignored, environment);
         std::fs::remove_dir_all(&dir).ok();
 
         assert_eq!(
@@ -184,11 +266,43 @@ mod test {
     #[test]
     fn an_unknown_terminal_finds_nothing() {
         let trust = EnvironmentTrust::for_process();
-        assert_eq!(
-            database_path("nshedit-no-such-terminal", trust).unwrap(),
-            None
-        );
-        assert_eq!(database_path("", trust).unwrap(), None);
+        let term = TerminalName::new("nshedit-no-such-terminal").unwrap();
+        assert_eq!(database_path(term, trust).unwrap(), None);
+    }
+
+    /// Names accepted here are unchanged ordinary components on Unix, macOS,
+    /// and Windows; discovery may safely use them under a database root.
+    // [spec:nshedit:req:terminal.typed-api/test]
+    #[test]
+    fn terminal_names_are_portable_single_components() {
+        for valid in [
+            "xterm",
+            "xterm-256color",
+            "screen.xterm-256color",
+            ".private-terminal",
+            "terminal name",
+            "λ-terminal",
+        ] {
+            assert_eq!(TerminalName::new(valid).unwrap().as_str(), valid);
+        }
+
+        for invalid in [
+            "",
+            ".",
+            "..",
+            "/xterm",
+            "../xterm",
+            "xterm/../vt100",
+            r"\xterm",
+            r"..\xterm",
+            r"xterm\..\vt100",
+            r"C:\xterm",
+            "C:xterm",
+            "xterm:alternate-stream",
+            "xterm\0suffix",
+        ] {
+            assert_eq!(TerminalName::new(invalid), Err(InvalidTerminalName));
+        }
     }
 
     /// The compiled-in list is what an elevated process is left with, so it
@@ -221,7 +335,11 @@ mod test {
 
         let readable_anyway = std::fs::read_dir(&dir).is_ok();
         let environment = |name: &str| (name == "TERMINFO").then(|| dir.clone().into_os_string());
-        let found = search("fakevt100", EnvironmentTrust::Honoured, environment);
+        let found = search(
+            TerminalName::new("fakevt100").unwrap(),
+            EnvironmentTrust::Honoured,
+            environment,
+        );
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::fs::remove_dir_all(&dir).ok();
 

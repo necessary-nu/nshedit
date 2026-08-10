@@ -283,6 +283,7 @@ assertions (
     {id quality-renderer-region-origin, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:26:02.39028752Z}
     {id quality-terminfo-error-equality, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:27:18.672747332Z}
     {id quality-signal-slot-lifetime, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:30:07.677472918Z}
+    {id quality-terminfo-name-component, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:40:05.313199849Z}
 )
 
 impl_evidence (

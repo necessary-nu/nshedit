@@ -121,7 +121,7 @@ use self::parm::{Param, Variables, expand};
 use self::parser::compiled::parse;
 use self::searcher::database_path;
 
-pub use self::searcher::EnvironmentTrust;
+pub use self::searcher::{EnvironmentTrust, InvalidTerminalName, TerminalName};
 
 pub mod parm;
 pub mod searcher;
@@ -277,8 +277,11 @@ impl TermInfo {
     ///
     /// A database directory or entry that exists but cannot be read is
     /// reported as the [`Io`][Error::Io] failure it is, rather than as a
-    /// terminal the database does not describe.
+    /// terminal the database does not describe. A name that is not one safe
+    /// cross-platform filename component is rejected before discovery reads
+    /// any search directory.
     pub fn from_name(name: &str) -> Result<TermInfo> {
+        let name = TerminalName::new(name)?;
         match database_path(name, EnvironmentTrust::for_process())? {
             Some(path) => TermInfo::from_path(path),
             None => Err(TerminfoEntryNotFound),
@@ -442,6 +445,8 @@ pub enum Error {
     TermUnset,
     /// Indicates that we were unable to find a terminfo entry for the requested terminal.
     TerminfoEntryNotFound,
+    /// The terminal database name was not one ordinary filename component.
+    InvalidTerminalName(InvalidTerminalName),
     /// The "magic" number at the start of the file was wrong.
     ///
     /// It should be `0x11A` (16bit numbers) or `0x21e` (32bit numbers)
@@ -489,6 +494,7 @@ impl std::fmt::Display for Error {
             TerminfoEntryNotFound => {
                 f.write_str("could not find a terminfo entry for this terminal")
             }
+            Error::InvalidTerminalName(error) => error.fmt(f),
             BadMagic(v) => write!(f, "bad magic number {v:x} in terminfo header"),
             NotUtf8(e) => e.fmt(f),
             ShortNames => f.write_str("no names exposed, need at least one"),
@@ -511,6 +517,7 @@ impl std::error::Error for Error {
             Io(io) => Some(io),
             ParameterizedExpansion(e) => Some(e),
             NotUtf8(e) => Some(e),
+            Error::InvalidTerminalName(error) => Some(error),
             _ => None,
         }
     }
@@ -535,6 +542,12 @@ impl std::convert::From<io::Error> for Error {
 impl std::convert::From<parm::Error> for Error {
     fn from(val: parm::Error) -> Self {
         ParameterizedExpansion(val)
+    }
+}
+
+impl From<InvalidTerminalName> for Error {
+    fn from(error: InvalidTerminalName) -> Self {
+        Self::InvalidTerminalName(error)
     }
 }
 

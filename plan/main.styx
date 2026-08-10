@@ -3796,12 +3796,27 @@ children (
             {
                 id quality-terminfo-name-component
                 title "Reject path components in terminal database names"
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:24.380625007Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: crates/nshterm/src/searcher.rs accepts terminal names that can escape the intended database directory. Require a single ordinary filename component, rejecting separators, parent/current-directory components, absolute paths, and platform-equivalent traversal forms before constructing any search path."
+                    }
+
+                    {
+                        at 2026-08-10T14:40:05.264283729Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Keep TermInfo::from_name(&str) as the validating convenience boundary, but require the low-level public database_path API to receive a validated TerminalName. Path construction therefore cannot bypass validation. A valid name is one non-empty normal component on the host and also excludes backslash, colon, and NUL so Windows separators, volume prefixes, and alternate-data-stream syntax are rejected on every build rather than only when compiled for Windows. Invalid raw names return Error::InvalidTerminalName with InvalidTerminalName as their source before environment or filesystem discovery."
+                    }
+
+                    {
+                        at 2026-08-10T14:40:05.313199849Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
