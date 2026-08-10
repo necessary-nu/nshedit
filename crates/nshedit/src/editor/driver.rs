@@ -1013,11 +1013,9 @@ impl ReadDriver {
         self.finish_change(editor);
         editor.finish_all_edit_groups();
         let preserve_input = editor.config().buffering() != Buffering::Line;
-        if !preserve_input {
-            if let Err(error) = editor.set_terminal_mode(TerminalMode::Cooked) {
-                self.clear_transient(false);
-                return Err(DriverError::Terminal(error));
-            }
+        if !preserve_input && let Err(error) = editor.set_terminal_mode(TerminalMode::Cooked) {
+            self.clear_transient(false);
+            return Err(DriverError::Terminal(error));
         }
         self.clear_transient(preserve_input);
         Ok(ReadStep::Complete(result))

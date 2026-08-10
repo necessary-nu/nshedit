@@ -6,7 +6,10 @@
 
 use std::fmt;
 use std::io::{self, Read, Write};
-use std::os::fd::BorrowedFd;
+#[cfg(unix)]
+use std::os::fd::BorrowedFd as BorrowedIo;
+#[cfg(windows)]
+use std::os::windows::io::BorrowedHandle as BorrowedIo;
 
 use crate::domain::{
     Action, Binding, EditingMode, EditorConfig, Error, InputMode, KeyLookup, KeySequence,
@@ -30,6 +33,7 @@ mod host;
 // [spec:nshedit:req:core.terminal-render+1]
 mod render;
 
+#[cfg(unix)]
 mod system_terminal;
 mod token;
 
@@ -38,6 +42,7 @@ pub use completion::{
 };
 pub use driver::{Display, DriverError, Pending, ReadDriver, ReadInterrupt, ReadResult, ReadStep};
 pub use render::{BaudRate, CapabilityKind, RenderError, RenderSummary, TerminalProfile};
+#[cfg(unix)]
 pub use system_terminal::SystemTerminal;
 pub use token::{
     Continuation, QuoteStyle, Token, TokenCursor, TokenIndex, TokenOffset, Tokenization,
@@ -72,11 +77,11 @@ pub trait TerminalControl {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IoDescriptors<'a> {
     /// Descriptor borrowed from the input stream, when it has one.
-    pub input: Option<BorrowedFd<'a>>,
+    pub input: Option<BorrowedIo<'a>>,
     /// Descriptor borrowed from the normal output stream, when it has one.
-    pub output: Option<BorrowedFd<'a>>,
+    pub output: Option<BorrowedIo<'a>>,
     /// Descriptor borrowed from the diagnostic stream, when it has one.
-    pub diagnostics: Option<BorrowedFd<'a>>,
+    pub diagnostics: Option<BorrowedIo<'a>>,
 }
 
 // [spec:nshedit:req:core.rust-io+1]
@@ -442,7 +447,10 @@ mod tests {
     use std::cell::RefCell;
     use std::fs::File;
     use std::io::{Cursor, ErrorKind};
+    #[cfg(unix)]
     use std::os::fd::AsFd;
+    #[cfg(windows)]
+    use std::os::windows::io::AsHandle;
     use std::rc::Rc;
 
     use super::*;
@@ -668,8 +676,14 @@ mod tests {
         let mut input = Cursor::new(b"x".to_vec());
         let mut output = Vec::new();
         let mut diagnostics = Vec::new();
+        #[cfg(unix)]
         let descriptor_file = File::open("/dev/null").unwrap();
+        #[cfg(windows)]
+        let descriptor_file = File::open("NUL").unwrap();
+        #[cfg(unix)]
         let descriptor = descriptor_file.as_fd();
+        #[cfg(windows)]
+        let descriptor = descriptor_file.as_handle();
         {
             let io = SessionIo {
                 input: &mut input,

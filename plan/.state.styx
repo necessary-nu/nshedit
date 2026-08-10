@@ -542,8 +542,9 @@ impl_evidence (
     ), rule_versions_seen (
         {id core.text-screen-model, version 1}
     )}
-)
-
-walk_frontier (
-    45d1ff4d553ed39f48d8e5805c02f052e5a2fa6f
+    {id windows-platform, covered_rules (
+        workspace.windows-native-build
+    ), covered_claims (
+        {impl_name native-impl, rule workspace.windows-native-build}
+    )}
 )

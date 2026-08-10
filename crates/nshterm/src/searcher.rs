@@ -50,11 +50,16 @@ impl EnvironmentTrust {
     /// was not, which is the wrong half.
     #[must_use]
     pub fn for_process() -> Self {
+        #[cfg(unix)]
         if nshedit_plat::is_elevated() {
-            Self::Ignored
-        } else {
-            Self::Honoured
+            return Self::Ignored;
         }
+
+        #[cfg(unix)]
+        return Self::Honoured;
+
+        #[cfg(not(unix))]
+        Self::Ignored
     }
 
     fn honoured(self) -> bool {
@@ -243,6 +248,7 @@ mod test {
     /// terminal would blame the terminal type for a permission problem, and
     /// would leave the caller with no way to learn what actually happened.
     // [spec:nshedit:req:terminal.typed-api/test]
+    #[cfg(unix)]
     #[test]
     fn an_unreadable_directory_is_reported() {
         use std::os::unix::fs::PermissionsExt;

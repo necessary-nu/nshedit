@@ -1,6 +1,6 @@
 [package]
 name = "nshedit-plat"
-description = "The only crate in the workspace that issues a syscall: termios, window size, descriptor flags, the uid/gid queries, signals and the passwd database"
+description = "Safe operating-system access for nshedit terminal sessions"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
-[dependencies]
+[target.'cfg(unix)'.dependencies]
 # See plan/decisions/platform-layer.md. Licence: rustix is
 # "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT" and we take the MIT
 # or the plain Apache-2.0 arm, never the LLVM-exception one. Transitively on
@@ -20,7 +20,7 @@ publish = false
 # the locked libc and errno target dependencies are compiled on macOS.
 rustix = { version = "1.1", default-features = false, features = ["std", "termios", "process", "fs"] }
 
-[dev-dependencies]
+[target.'cfg(unix)'.dev-dependencies]
 # The termios tests need a terminal to talk to, and must not need the one the
 # test runner was started from: `cargo test` is routinely run with its standard
 # input on a pipe, and a test that reconfigured the developer's own tty would

@@ -3345,6 +3345,14 @@ children (
                     native-impl ([spec:nshedit:req:workspace.windows-native-build])
                 }
                 deps (windows-contract)
+                log (
+                    {
+                        at 2026-08-09T23:39:22.226543721Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

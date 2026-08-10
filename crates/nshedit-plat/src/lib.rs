@@ -9,8 +9,9 @@
 //!
 //! # How the kernel is reached
 //!
-//! `rustix` wherever `rustix` reaches, and the platform's libc for the two
-//! families it declines.
+//! POSIX targets use `rustix` wherever `rustix` reaches, and the platform's
+//! libc for the two families it declines. Other targets expose only the safe
+//! facilities they implement; they do not receive placeholder POSIX layouts.
 //!
 //! rustix covers terminal attributes, window size, pending input, and process
 //! credentials.
@@ -37,14 +38,18 @@
 //! # Scope of the numbers
 //!
 //! Linux/glibc and macOS/Darwin each select their own transcribed termios,
-//! signal, and passwd representations. There is no catch-all Unix arm: an OS
-//! without an explicit layout fails to compile rather than inheriting another
-//! platform's constants.
+//! signal, and passwd representations. Windows has none of those POSIX
+//! representations. There is no catch-all arm that lets one platform inherit
+//! another platform's constants.
 
 // [spec:nshedit:req:platform.typed-boundary]
+#[cfg(unix)]
 pub mod passwd;
+#[cfg(unix)]
 pub mod signal;
+#[cfg(unix)]
 pub mod terminal;
+#[cfg(unix)]
 mod termios;
 
 // ---------------------------------------------------------------------------
@@ -53,9 +58,11 @@ mod termios;
 
 /// A platform user identifier, kept distinct from group identifiers and raw
 /// ABI integers.
+#[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UserId(u32);
 
+#[cfg(unix)]
 impl UserId {
     /// Project the identifier for the private NSS call.
     #[must_use]
@@ -66,6 +73,7 @@ impl UserId {
 
 /// The real user that invoked this process.
 #[must_use]
+#[cfg(unix)]
 pub fn current_user() -> UserId {
     UserId(rustix::process::getuid().as_raw())
 }
@@ -99,6 +107,7 @@ pub fn current_user() -> UserId {
 /// deployed system does honour `TERMINFO`, and matching what is actually
 /// installed beats matching a build nobody ships.
 #[must_use]
+#[cfg(unix)]
 pub fn is_elevated() -> bool {
     rustix::process::getuid() != rustix::process::geteuid()
         || rustix::process::getgid() != rustix::process::getegid()

@@ -2,24 +2,33 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(unix)]
 use std::error::Error;
+#[cfg(unix)]
 use std::io::{self, Read, Write};
+#[cfg(unix)]
 use std::os::fd::{AsFd, BorrowedFd};
 
+#[cfg(unix)]
 use nshedit::domain::{
     Action, Binding, Direction, EditTarget, EditorConfig, EffectCommand, KeySequence, KeymapMode,
     Motion, Prompt, ScreenSize, SignalPolicy, Text, TextUnit,
 };
+#[cfg(unix)]
 use nshedit::editor::effect::{HistoryResponse, HostFailure, PromptSide, ReadEffect, ReadOutcome};
+#[cfg(unix)]
 use nshedit::editor::{
     CompletionCandidate, Editor, ReadDriver, ReadResult, ReadStep, SystemTerminal, TerminalControl,
     TerminalProfile,
 };
+#[cfg(unix)]
 use nshedit::history::{HistoryCursor, HistoryStore, Navigation};
 
+#[cfg(unix)]
 const COMMANDS: [&str; 3] = ["exit", "help", "history"];
 
 // [spec:nshedit:req:core.native-consumer]
+#[cfg(unix)]
 fn main() -> Result<(), Box<dyn Error>> {
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -50,6 +59,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[cfg(unix)]
 struct Host<'io, 'fd> {
     history: HistoryStore,
     history_cursor: HistoryCursor,
@@ -59,6 +69,7 @@ struct Host<'io, 'fd> {
     output_fd: BorrowedFd<'fd>,
 }
 
+#[cfg(unix)]
 fn run_repl<T: TerminalControl>(
     editor: &mut Editor<T>,
     driver: &mut ReadDriver,
@@ -84,6 +95,7 @@ fn run_repl<T: TerminalControl>(
     Ok(())
 }
 
+#[cfg(unix)]
 fn read_line<T: TerminalControl>(
     editor: &mut Editor<T>,
     driver: &mut ReadDriver,
@@ -171,6 +183,7 @@ fn read_line<T: TerminalControl>(
     }
 }
 
+#[cfg(unix)]
 fn read_input(
     input: &mut dyn Read,
     input_fd: BorrowedFd<'_>,
@@ -190,6 +203,7 @@ fn read_input(
     }
 }
 
+#[cfg(unix)]
 fn install_terminal_bindings<T: TerminalControl>(
     editor: &mut Editor<T>,
 ) -> Result<(), nshedit::domain::Error> {
@@ -229,6 +243,7 @@ fn install_terminal_bindings<T: TerminalControl>(
     Ok(())
 }
 
+#[cfg(unix)]
 fn terminal_profile() -> TerminalProfile {
     std::env::var("TERM")
         .ok()
@@ -237,6 +252,7 @@ fn terminal_profile() -> TerminalProfile {
         .unwrap_or_else(TerminalProfile::ansi)
 }
 
+#[cfg(unix)]
 fn write_history(output: &mut dyn Write, history: &HistoryStore) -> io::Result<()> {
     for (index, entry) in history.iter().enumerate() {
         write!(output, "{:>4}  ", index + 1)?;
@@ -246,6 +262,7 @@ fn write_history(output: &mut dyn Write, history: &HistoryStore) -> io::Result<(
     Ok(())
 }
 
+#[cfg(unix)]
 fn write_text(output: &mut dyn Write, text: &Text) -> io::Result<()> {
     for unit in text {
         match unit {
@@ -260,6 +277,7 @@ fn write_text(output: &mut dyn Write, text: &Text) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn scalar_string(text: &Text) -> Option<String> {
     text.as_units()
         .iter()
@@ -271,7 +289,7 @@ fn scalar_string(text: &Text) -> Option<String> {
 }
 
 // [spec:nshedit:req:core.native-consumer/test]
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -297,3 +315,6 @@ mod tests {
         assert_eq!(output, [b'x', 0xff]);
     }
 }
+
+#[cfg(not(unix))]
+fn main() {}
