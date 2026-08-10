@@ -2820,9 +2820,6 @@ children (
                 id greenfield-incremental-render
                 title "Plan deterministic incremental terminal transitions"
                 kind @fix
-                implements {
-                    native-impl ([spec:nshedit:req:core.incremental-render])
-                }
                 deps (greenfield-terminal-render)
                 log (
                     {
@@ -3498,7 +3495,6 @@ children (
             {
                 id quality-signal-slot-lifetime
                 title "Make the signal pending slot process-lifetime safe"
-                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:17.444733331Z
@@ -3589,6 +3585,9 @@ children (
             {
                 id quality-renderer-final-position
                 title "Finish accepted and EOF lines below the rendered region"
+                implements {
+                    native-impl ([spec:nshedit:req:core.incremental-render+2])
+                }
                 deps (quality-renderer-region-origin)
                 log (
                     {
@@ -3596,6 +3595,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: accepted input and EOF do not reliably move the cursor below the entire multiline/wrapped rendered region. Using the corrected physical-region model, finalize both paths beneath the last occupied display row before emitting the terminating newline or returning control, including multiline prompts and wrapped input."
+                    }
+
+                    {
+                        at 2026-08-10T14:50:08.032059962Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Finalization is one planned renderer transaction: optional EOF echo carries terminal-column width, grows and re-anchors the owned extent before a wrap can scroll, then restores the saved origin, descends to the last owned row, emits the line feed, and releases display state only after write_all plus flush. A failed existing-anchor write retains the committed screen and extent for retry; a failed anchor replacement marks the origin lost."
                     }
                 )
             }
@@ -3799,7 +3805,6 @@ children (
             {
                 id quality-terminfo-name-component
                 title "Reject path components in terminal database names"
-                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:24.380625007Z
@@ -3827,7 +3832,6 @@ children (
             {
                 id quality-terminfo-zero-precision
                 title "Distinguish absent terminfo precision from explicit zero"
-                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:24.425863482Z
@@ -3848,7 +3852,6 @@ children (
             {
                 id quality-terminfo-error-equality
                 title "Give nshterm errors a valid equality contract"
-                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:24.473290864Z
@@ -3877,7 +3880,6 @@ children (
                 id quality-toolchain-usage-docs
                 title "Document stable and nightly Cargo entry points accurately"
                 kind @docs
-                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:24.523456331Z

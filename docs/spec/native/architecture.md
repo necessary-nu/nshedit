@@ -241,7 +241,7 @@ states where those semantics may live and what the native Rust API must be.
 > those existing compatibility modules; `core.no-compat-internals` governs
 > its final removal.
 
-> [spec:nshedit:req:core.incremental-render+1]
+> [spec:nshedit:req:core.incremental-render+2]
 > Native rendering MUST plan deterministic terminal operations from the
 > committed typed screen and cursor to the next complete frame. Unchanged
 > cells MUST NOT force a complete redraw. The committed image MUST belong to
@@ -253,12 +253,18 @@ states where those semantics may live and what the native Rust API must be.
 > whole terminal for local invalidation. Reconfiguring the terminal profile MUST
 > preserve an established region; a profile that cannot address an owned
 > multiline region MUST return a typed error without abandoning or overwriting
-> it. The planner MUST use only capabilities
-> present in the selected profile, MUST support a one-line terminal through
-> carriage return, backspace, forward text, and explicit erasure, and MUST
-> commit the new screen, cursor, capability variables, origin, extent, and
-> damage state only after the corresponding byte plan is written and flushed
-> successfully.
+> it. Accepted-line and end-of-input finalization MUST position at the last row
+> in the region's high-water extent, restoring the saved origin and moving
+> relative to it when the region is addressed, and emit a line feed so the host
+> resumes below every reserved or drawn row. Finalization MUST release the
+> region only after the complete byte plan is written and flushed successfully.
+> Failure MUST NOT reset its committed screen or extent; a partially emitted
+> replacement anchor MUST instead be marked unavailable. The planner MUST use
+> only capabilities present in the selected profile, MUST support a one-line
+> terminal through carriage return, backspace, forward text, and explicit
+> erasure, and MUST commit the new screen, cursor, capability variables,
+> origin, extent, and damage state only after the corresponding byte plan is
+> written and flushed successfully.
 
 > [spec:nshedit:req:core.read-driver+1]
 > Input preparation, decoding, key dispatch, signal transitions, and editing

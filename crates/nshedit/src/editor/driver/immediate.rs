@@ -245,7 +245,7 @@ impl ReadDriver {
         self.take_repeat(explicit_repeat);
         if editor.line().is_empty() {
             self.completion = Some(ReadResult::EndOfInput);
-            self.schedule_display(DisplayKind::Echo(invoking))
+            self.schedule_display(DisplayKind::FinishLine(Some(invoking)))
         } else {
             self.queue_beep();
             self.queue_beep();
@@ -476,7 +476,7 @@ impl ReadDriver {
         let start = editor.cursor().get();
         if editor.line().is_empty() {
             self.completion = Some(ReadResult::EndOfInput);
-            return self.schedule_display(DisplayKind::Echo(invoking));
+            return self.schedule_display(DisplayKind::FinishLine(Some(invoking)));
         }
         if start == editor.line().len() {
             self.queue_beep();

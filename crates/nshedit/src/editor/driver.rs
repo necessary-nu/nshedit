@@ -24,6 +24,7 @@ use super::effect::{
     ReadOutcome, ResizeEffect, SignalEffect, UserCommandEffect,
 };
 use super::{CompletionOutcome, Editor, RenderError, TerminalControl, Tokenizer};
+use crate::editor::render::FinishEcho;
 use decode::Decoder;
 pub use error::DriverError;
 use immediate::action_repeats_with_count;
@@ -63,10 +64,8 @@ enum DisplayKind {
     Beep,
     /// Refresh first, then emit the notification.
     RefreshAndBeep(usize),
-    /// Emit the accepted-line break before completing the read.
-    FinishLine,
-    /// Echo the invoking unit before completing end of input.
-    Echo(TextUnit),
+    /// Optionally echo the invoking unit, then finish below the owned region.
+    FinishLine(Option<TextUnit>),
 }
 
 /// An owned display request that can be performed with any safe writer.
@@ -300,8 +299,13 @@ impl ReadDriver {
                 }
                 Ok(())
             })(),
-            DisplayKind::FinishLine => editor.renderer.finish_line(output).map(|_| ()),
-            DisplayKind::Echo(unit) => write_echo(unit, output),
+            DisplayKind::FinishLine(echo) => {
+                let echo = echo.map(FinishEcho::new);
+                editor
+                    .renderer
+                    .finish_line(echo.as_ref(), output)
+                    .map(|_| ())
+            }
         };
         if let Err(error) = emitted {
             return Err(self.fail(editor, DriverError::Render(error)));
@@ -448,7 +452,7 @@ impl ReadDriver {
         match response {
             Ok(()) | Err(HostFailure::Unavailable) => {
                 self.completion = Some(ReadResult::Accepted(line));
-                self.schedule_display(DisplayKind::FinishLine)
+                self.schedule_display(DisplayKind::FinishLine(None))
             }
             Err(error) => Err(self.fail(editor, DriverError::Host(error))),
         }
@@ -585,7 +589,8 @@ impl ReadDriver {
         self.clear_key_sequence();
         self.repeat_argument = None;
         self.cancel_pending_sequence(editor)?;
-        self.complete(editor, ReadResult::EndOfInput)
+        self.completion = Some(ReadResult::EndOfInput);
+        self.schedule_display(DisplayKind::FinishLine(None))
     }
 
     fn dispatch_binding<T: TerminalControl>(
@@ -746,7 +751,7 @@ impl ReadDriver {
             if echoes_end_of_input && outcome == Outcome::EndOfInput {
                 self.repetition = None;
                 self.completion = Some(ReadResult::EndOfInput);
-                return self.schedule_display(DisplayKind::Echo(invoking));
+                return self.schedule_display(DisplayKind::FinishLine(Some(invoking)));
             }
             if matches!(outcome, Outcome::Accepted(_) | Outcome::EndOfInput) {
                 self.repetition = None;
@@ -895,7 +900,8 @@ impl ReadDriver {
             }
             Outcome::EndOfInput => {
                 self.repetition = None;
-                self.complete(editor, ReadResult::EndOfInput)
+                self.completion = Some(ReadResult::EndOfInput);
+                self.schedule_display(DisplayKind::FinishLine(None))
             }
             other => {
                 self.note_outcome(editor, other);
@@ -958,10 +964,7 @@ impl ReadDriver {
 
     fn schedule_display(&mut self, kind: DisplayKind) -> Result<ReadStep, DriverError> {
         self.display_kind = kind;
-        if matches!(
-            kind,
-            DisplayKind::Beep | DisplayKind::FinishLine | DisplayKind::Echo(_)
-        ) {
+        if matches!(kind, DisplayKind::Beep | DisplayKind::FinishLine(_)) {
             self.left_prompt = Prompt::default();
             self.right_prompt = None;
             self.make_display()
@@ -1079,25 +1082,6 @@ impl ReadDriver {
     }
 }
 
-fn write_echo(unit: TextUnit, output: &mut dyn Write) -> Result<(), RenderError> {
-    match unit {
-        TextUnit::Scalar(character) => {
-            write_visual_scalar(character, output)?;
-        }
-        TextUnit::RawByte(byte) => {
-            if byte.is_ascii_control() {
-                let visual = if byte == 0x7f { b'?' } else { byte | 0x40 };
-                output.write_all(&[b'^', visual])?;
-            } else {
-                output.write_all(&[byte])?;
-            }
-        }
-        TextUnit::OpaqueCodePoint(_) => output.write_all("\u{fffd}".as_bytes())?,
-    }
-    output.flush()?;
-    Ok(())
-}
-
 fn action_refreshes_cursor(action: &Action) -> bool {
     matches!(
         action,
@@ -1112,24 +1096,6 @@ fn action_refreshes_cursor(action: &Action) -> bool {
             | Action::Redo
             | Action::Refresh(_)
     )
-}
-
-fn write_visual_scalar(character: char, output: &mut dyn Write) -> Result<(), RenderError> {
-    let scalar = character as u32;
-    if scalar <= 0xff && character.is_control() {
-        output.write_all(b"^")?;
-        let visual = if scalar == 0x7f {
-            '?'
-        } else {
-            char::from_u32(scalar | 0x40).unwrap_or('\u{fffd}')
-        };
-        let mut encoded = [0; 4];
-        output.write_all(visual.encode_utf8(&mut encoded).as_bytes())?;
-    } else {
-        let mut encoded = [0; 4];
-        output.write_all(character.encode_utf8(&mut encoded).as_bytes())?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

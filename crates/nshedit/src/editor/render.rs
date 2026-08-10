@@ -7,9 +7,9 @@ use std::fmt;
 use std::io::{self, Write};
 
 use nshterm::parm::{Error as ExpansionError, Param, Variables};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::domain::{Error, Prompt, Screen, ScreenPosition, ScreenSize, Text, TextIndex};
+use crate::domain::{Error, Prompt, Screen, ScreenPosition, ScreenSize, Text, TextIndex, TextUnit};
 
 pub use capability::{BaudRate, CapabilityKind, TerminalProfile};
 use layout::{Atom, Frame};
@@ -152,6 +152,62 @@ struct RegionPlan {
     variables: Variables,
     region: PhysicalRegion,
     establishes_origin: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct FinishEcho {
+    bytes: Box<[u8]>,
+    columns: usize,
+}
+
+impl FinishEcho {
+    pub(super) fn new(unit: TextUnit) -> Self {
+        match unit {
+            TextUnit::Scalar(character) if (character as u32) <= 0xff && character.is_control() => {
+                let visual = if character == '\u{7f}' {
+                    '?'
+                } else {
+                    char::from_u32((character as u32) | 0x40).unwrap_or('\u{fffd}')
+                };
+                let mut encoded = [0; 4];
+                let visual = visual.encode_utf8(&mut encoded);
+                let mut bytes = Vec::with_capacity(1 + visual.len());
+                bytes.push(b'^');
+                bytes.extend_from_slice(visual.as_bytes());
+                Self {
+                    bytes: bytes.into_boxed_slice(),
+                    columns: 1 + visual.width(),
+                }
+            }
+            TextUnit::Scalar(character) => {
+                let mut encoded = [0; 4];
+                Self {
+                    bytes: character.encode_utf8(&mut encoded).as_bytes().into(),
+                    columns: character.width().unwrap_or(1),
+                }
+            }
+            TextUnit::RawByte(byte) if byte.is_ascii_control() => Self {
+                bytes: Box::from([b'^', if byte == 0x7f { b'?' } else { byte | 0x40 }]),
+                columns: 2,
+            },
+            TextUnit::RawByte(byte) => Self {
+                bytes: Box::from([byte]),
+                columns: 1,
+            },
+            TextUnit::OpaqueCodePoint(_) => Self {
+                bytes: "\u{fffd}".as_bytes().into(),
+                columns: 1,
+            },
+        }
+    }
+
+    pub(super) fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub(super) const fn columns(&self) -> usize {
+        self.columns
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -424,15 +480,117 @@ impl State {
         Ok(bytes.len())
     }
 
-    pub(super) fn finish_line(&mut self, output: &mut dyn Write) -> Result<usize, RenderError> {
+    // [spec:nshedit:req:core.incremental-render+2]
+    pub(super) fn finish_line(
+        &mut self,
+        echo: Option<&FinishEcho>,
+        output: &mut dyn Write,
+    ) -> Result<usize, RenderError> {
         let configured = self
             .configured
-            .as_mut()
+            .as_ref()
             .ok_or(RenderError::DisplayNotConfigured)?;
-        if let Err(error) = output.write_all(b"\n").and_then(|()| output.flush()) {
+        if configured.region.origin == RegionOrigin::Lost {
+            return Err(RenderError::RegionOriginUnavailable);
+        }
+
+        let occupied_extent = configured.region.extent.max(configured.rows_used);
+        let echo_extent = echo.map_or(occupied_extent, |echo| {
+            if echo.columns() == 0 {
+                return occupied_extent;
+            }
+            let last_column = configured
+                .cursor
+                .column()
+                .saturating_add(echo.columns().saturating_sub(1));
+            configured
+                .cursor
+                .row()
+                .saturating_add(last_column / configured.screen.size().columns())
+                .saturating_add(1)
+                .max(occupied_extent)
+        });
+
+        let mut plan = if configured.profile.has_relative_region_addressing() {
+            Self::plan_region(configured, echo_extent.max(1))?
+        } else {
+            if occupied_extent > 1 {
+                return Err(RenderError::RegionAddressUnavailable {
+                    rows: occupied_extent,
+                });
+            }
+            RegionPlan {
+                bytes: Vec::new(),
+                variables: configured.variables.clone(),
+                region: configured.region,
+                establishes_origin: false,
+            }
+        };
+
+        if let Some(echo) = echo {
+            if configured.profile.has_relative_region_addressing()
+                && (plan.establishes_origin || configured.damaged)
+            {
+                append_required_capability(
+                    &configured.profile,
+                    &mut plan.bytes,
+                    CapabilityKind::RestoreCursor,
+                    1,
+                    &mut plan.variables,
+                )?;
+                let mut cursor = Some((0, 0));
+                move_addressed_cursor(
+                    &configured.profile,
+                    &mut plan.bytes,
+                    &mut cursor,
+                    configured.cursor.row(),
+                    configured.cursor.column(),
+                    configured.rows.get(configured.cursor.row()),
+                    &mut plan.variables,
+                )?;
+            }
+            plan.bytes.extend_from_slice(echo.as_bytes());
+        }
+
+        if plan.region.origin == RegionOrigin::Saved
+            && configured.profile.has_relative_region_addressing()
+        {
+            append_required_capability(
+                &configured.profile,
+                &mut plan.bytes,
+                CapabilityKind::RestoreCursor,
+                1,
+                &mut plan.variables,
+            )?;
+            for _ in 1..plan.region.extent {
+                append_required_capability(
+                    &configured.profile,
+                    &mut plan.bytes,
+                    CapabilityKind::CursorDown,
+                    1,
+                    &mut plan.variables,
+                )?;
+            }
+        }
+        plan.bytes.push(b'\n');
+
+        if let Err(error) = output.write_all(&plan.bytes).and_then(|()| output.flush()) {
+            let configured = self
+                .configured
+                .as_mut()
+                .expect("display configuration cannot disappear during a write");
+            if plan.establishes_origin {
+                configured.region.origin = RegionOrigin::Lost;
+            }
+            configured.redraw = false;
             configured.damaged = true;
             return Err(RenderError::Io(error));
         }
+
+        let configured = self
+            .configured
+            .as_mut()
+            .expect("display configuration cannot disappear during a write");
         let size = configured.screen.size();
         configured.screen = Screen::new(size);
         configured.rows.clear();
@@ -440,14 +598,15 @@ impl State {
             .position(0, 0)
             .expect("a validated screen has an origin");
         configured.rows_used = 0;
+        configured.variables = plan.variables;
         configured.region = PhysicalRegion::default();
         configured.redraw = false;
         configured.damaged = false;
-        Ok(1)
+        Ok(plan.bytes.len())
     }
 }
 
-// [spec:nshedit:req:core.incremental-render+1]
+// [spec:nshedit:req:core.incremental-render+2]
 fn encode(
     profile: &TerminalProfile,
     frame: &Frame,
@@ -997,7 +1156,7 @@ mod tests {
         ));
     }
 
-    // [spec:nshedit:req:core.incremental-render+1/test]
+    // [spec:nshedit:req:core.incremental-render+2/test]
     #[test]
     fn addressed_frames_diff_from_first_change() {
         let mut state = configured(TerminalProfile::ansi(), 2, 20);
@@ -1029,7 +1188,7 @@ mod tests {
         assert_eq!(present(&mut state, "hall", 4), b"\x1b[C\x1b[C\x1b[K");
     }
 
-    // [spec:nshedit:req:core.incremental-render+1/test]
+    // [spec:nshedit:req:core.incremental-render+2/test]
     #[test]
     fn anchors_region_at_current_line() {
         let mut state = configured(TerminalProfile::ansi(), 3, 4);
@@ -1054,7 +1213,126 @@ mod tests {
         assert_eq!(summary.rows_used(), 2);
     }
 
-    // [spec:nshedit:req:core.incremental-render+1/test]
+    // [spec:nshedit:req:core.incremental-render+2/test]
+    #[test]
+    fn finish_descends_past_wrapped_region() {
+        let mut state = configured(TerminalProfile::ansi(), 5, 4);
+        let line = Text::from("abcde");
+        state
+            .present(
+                &Prompt::from("p\n> "),
+                None,
+                &line,
+                line.index(line.len()).unwrap(),
+                &mut Vec::new(),
+            )
+            .unwrap();
+        assert_eq!(state.configured.as_ref().unwrap().region.extent, 3);
+
+        let mut output = Vec::new();
+        assert_eq!(state.finish_line(None, &mut output).unwrap(), 9);
+
+        assert_eq!(output, b"\x1b8\x1b[B\x1b[B\n");
+        let configured = state.configured.as_ref().unwrap();
+        assert_eq!(configured.region, PhysicalRegion::default());
+        assert_eq!(configured.rows_used, 0);
+        assert!(configured.rows.is_empty());
+        assert!(
+            configured
+                .screen
+                .cells()
+                .iter()
+                .all(|cell| cell == &ScreenCell::Blank)
+        );
+    }
+
+    // [spec:nshedit:req:core.incremental-render+2/test]
+    #[test]
+    fn failed_finish_retains_region() {
+        let mut state = configured(TerminalProfile::ansi(), 5, 4);
+        let line = Text::from("abcd");
+        state
+            .present(
+                &Prompt::from("p\n> "),
+                None,
+                &line,
+                line.index(line.len()).unwrap(),
+                &mut Vec::new(),
+            )
+            .unwrap();
+        let before_screen = state.screen().unwrap().clone();
+        let before_cursor = state.cursor();
+        let before_region = state.configured.as_ref().unwrap().region;
+
+        let mut writer = FailingWriter {
+            limit: 3,
+            written: 0,
+            fail_flush: false,
+        };
+        let echo = FinishEcho::new(TextUnit::Scalar('\u{4}'));
+        assert!(matches!(
+            state.finish_line(Some(&echo), &mut writer),
+            Err(RenderError::Io(_))
+        ));
+
+        let configured = state.configured.as_ref().unwrap();
+        assert_eq!(configured.screen, before_screen);
+        assert_eq!(state.cursor(), before_cursor);
+        assert_eq!(configured.region, before_region);
+        assert!(configured.damaged);
+
+        let mut output = Vec::new();
+        state.finish_line(Some(&echo), &mut output).unwrap();
+        assert_eq!(
+            output,
+            b"\x1b8\x1b[B\x1b[B\x1b[C\x1b[C^D\x1b8\x1b[B\x1b[B\n"
+        );
+        assert_eq!(
+            state.configured.as_ref().unwrap().region,
+            PhysicalRegion::default()
+        );
+    }
+
+    // [spec:nshedit:req:core.incremental-render+2/test]
+    #[test]
+    fn failed_reanchor_loses_origin() {
+        let mut state = configured(TerminalProfile::ansi(), 5, 4);
+        let line = Text::default();
+        state
+            .present(
+                &Prompt::from("p\n>>>"),
+                None,
+                &line,
+                line.index(0).unwrap(),
+                &mut Vec::new(),
+            )
+            .unwrap();
+        let before_screen = state.screen().unwrap().clone();
+        let before_extent = state.configured.as_ref().unwrap().region.extent;
+
+        let mut writer = FailingWriter {
+            limit: 3,
+            written: 0,
+            fail_flush: false,
+        };
+        let echo = FinishEcho::new(TextUnit::Scalar('\u{4}'));
+        assert!(matches!(
+            state.finish_line(Some(&echo), &mut writer),
+            Err(RenderError::Io(_))
+        ));
+
+        let configured = state.configured.as_ref().unwrap();
+        assert_eq!(configured.screen, before_screen);
+        assert_eq!(configured.region.extent, before_extent);
+        assert_eq!(configured.region.origin, RegionOrigin::Lost);
+        assert!(configured.damaged);
+        assert!(matches!(
+            state.finish_line(Some(&echo), &mut Vec::new()),
+            Err(RenderError::RegionOriginUnavailable)
+        ));
+    }
+
+    // [spec:nshedit:req:core.incremental-render+2/test]
     #[test]
     fn damage_stays_within_owned_rows() {
         let mut state = configured(TerminalProfile::ansi(), 4, 4);
@@ -1092,7 +1370,7 @@ mod tests {
         assert!(!output.windows(4).any(|window| window == b"\x1b[2J"));
     }
 
-    // [spec:nshedit:req:core.incremental-render+1/test]
+    // [spec:nshedit:req:core.incremental-render+2/test]
     #[test]
     fn resize_repairs_high_water_rows() {
         let mut state = configured(TerminalProfile::ansi(), 3, 4);
@@ -1134,7 +1412,7 @@ mod tests {
         assert!(!output.windows(4).any(|window| window == b"\x1b[2J"));
     }
 
-    // [spec:nshedit:req:core.incremental-render+1/test]
+    // [spec:nshedit:req:core.incremental-render+2/test]
     #[test]
     fn reconfigure_preserves_multiline_region() {
         let size = ScreenSize::new(3, 4).unwrap();
@@ -1183,6 +1461,34 @@ mod tests {
             .unwrap();
         assert_eq!(output, b"\x1b8>abc\x1b8\x1b[Bd\x1b[K");
         assert_eq!(state.configured.as_ref().unwrap().region, region);
+    }
+
+    // [spec:nshedit:req:core.incremental-render+2/test]
+    #[test]
+    fn plain_profile_finishes_saved_row() {
+        let size = ScreenSize::new(2, 8).unwrap();
+        let mut state = configured(TerminalProfile::ansi(), 2, 8);
+        let line = Text::from("line");
+        state
+            .present(
+                &Prompt::from("> "),
+                None,
+                &line,
+                line.index(line.len()).unwrap(),
+                &mut Vec::new(),
+            )
+            .unwrap();
+        assert_eq!(state.configured.as_ref().unwrap().region.extent, 1);
+
+        state.configure(TerminalProfile::plain(), size);
+        let mut output = Vec::new();
+        state.finish_line(None, &mut output).unwrap();
+
+        assert_eq!(output, b"\n");
+        assert_eq!(
+            state.configured.as_ref().unwrap().region,
+            PhysicalRegion::default()
+        );
     }
 
     #[test]
@@ -1278,7 +1584,7 @@ mod tests {
         assert_eq!(state.screen(), Some(&before));
     }
 
-    // [spec:nshedit:req:core.incremental-render+1/test]
+    // [spec:nshedit:req:core.incremental-render+2/test]
     #[test]
     fn plans_plain_incremental_transitions() {
         let mut state = configured(TerminalProfile::plain(), 1, 20);

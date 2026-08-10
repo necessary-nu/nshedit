@@ -94,6 +94,36 @@ fn send(
     input_unit(driver, editor, &pending, character)
 }
 
+fn begin_wrapped_line(
+    driver: &mut ReadDriver,
+    editor: &mut Editor<TestTerminal>,
+    output: &mut Vec<u8>,
+    prompt: &str,
+) -> Pending<ReadEffect> {
+    let ReadStep::Resize(resize) = driver.begin(editor).unwrap() else {
+        panic!("a read did not begin with terminal preparation");
+    };
+    let step = driver
+        .resume_resize(editor, &resize, Ok(ScreenSize::new(5, 4).unwrap()))
+        .unwrap();
+    let ReadStep::Prompt(left) = step else {
+        panic!("display preparation did not request the left prompt");
+    };
+    let step = driver
+        .resume_prompt(editor, &left, Ok(Prompt::from(prompt)))
+        .unwrap();
+    let ReadStep::Prompt(right) = step else {
+        panic!("display preparation did not request the right prompt");
+    };
+    let step = driver
+        .resume_prompt(editor, &right, Ok(Prompt::default()))
+        .unwrap();
+    let ReadStep::Display(display) = step else {
+        panic!("prompt preparation did not request a display");
+    };
+    read(driver.display(editor, &display, output).unwrap())
+}
+
 fn vi_with_line(line: &str) -> Editor<TestTerminal> {
     let config = EditorConfig::default().with_editing_mode(EditingMode::Vi);
     let mut editor = editor(config);
@@ -198,6 +228,103 @@ fn driver_decodes_and_accepts_utf8() {
     assert_eq!(editor.terminal_mode(), TerminalMode::Cooked);
 }
 
+// [spec:nshedit:req:core.incremental-render+2/test]
+#[test]
+fn accept_and_eof_finish_below_region() {
+    const FINISH: &[u8] = b"\x1b8\x1b[B\x1b[B\n";
+
+    let mut accepted_editor = editor(EditorConfig::default());
+    accepted_editor
+        .execute(Action::Insert(Text::from("abcde")))
+        .unwrap();
+    let mut accepted_driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let pending = begin_wrapped_line(
+        &mut accepted_driver,
+        &mut accepted_editor,
+        &mut output,
+        "p\n> ",
+    );
+    output.clear();
+    let step = input_unit(&mut accepted_driver, &mut accepted_editor, &pending, '\n');
+    let ReadStep::RecordHistory(record) = step else {
+        panic!("acceptance did not request history recording");
+    };
+    let step = accepted_driver
+        .resume_history_record(&mut accepted_editor, &record, Ok(()))
+        .unwrap();
+    let ReadStep::Display(display) = step else {
+        panic!("acceptance did not request final display output");
+    };
+    let step = accepted_driver
+        .display(&mut accepted_editor, &display, &mut output)
+        .unwrap();
+    assert!(matches!(step, ReadStep::Complete(ReadResult::Accepted(_))));
+    assert_eq!(output, FINISH);
+    assert_eq!(accepted_editor.terminal_mode(), TerminalMode::Cooked);
+
+    let mut eof_editor = editor(EditorConfig::default());
+    eof_editor
+        .execute(Action::Insert(Text::from("abcde")))
+        .unwrap();
+    let mut eof_driver = ReadDriver::default();
+    let pending = begin_wrapped_line(&mut eof_driver, &mut eof_editor, &mut output, "p\n> ");
+    output.clear();
+    let step = eof_driver
+        .resume_read(&mut eof_editor, &pending, Ok(ReadOutcome::EndOfInput))
+        .unwrap();
+    let ReadStep::Display(display) = step else {
+        panic!("end of input did not request final display output");
+    };
+    let step = eof_driver
+        .display(&mut eof_editor, &display, &mut output)
+        .unwrap();
+    assert!(matches!(step, ReadStep::Complete(ReadResult::EndOfInput)));
+    assert_eq!(output, FINISH);
+    assert_eq!(eof_editor.terminal_mode(), TerminalMode::Cooked);
+}
+
+// [spec:nshedit:req:core.incremental-render+2/test]
+#[test]
+fn eof_echo_wrap_reserves_region() {
+    let mut editor = editor(EditorConfig::default());
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let pending = begin_wrapped_line(&mut driver, &mut editor, &mut output, "p\n>>>");
+    output.clear();
+
+    let step = input_unit(&mut driver, &mut editor, &pending, '\u{4}');
+    let ReadStep::Display(display) = step else {
+        panic!("visible end of input did not request final display output");
+    };
+    let step = driver.display(&mut editor, &display, &mut output).unwrap();
+
+    assert!(matches!(step, ReadStep::Complete(ReadResult::EndOfInput)));
+    assert_eq!(
+        output,
+        b"\x1b8\x1b[B\r\n\x1b[A\x1b[A\x1b7\x1b8\x1b[B\x1b[C\x1b[C\x1b[C^D\x1b8\x1b[B\x1b[B\n"
+    );
+    assert_eq!(editor.terminal_mode(), TerminalMode::Cooked);
+    assert_eq!(
+        editor.screen_cursor(),
+        Some(ScreenSize::new(5, 4).unwrap().position(0, 0).unwrap())
+    );
+    assert!(
+        editor
+            .screen()
+            .unwrap()
+            .cells()
+            .iter()
+            .all(|cell| matches!(cell, crate::domain::ScreenCell::Blank))
+    );
+
+    let mut next_frame = Vec::new();
+    editor
+        .render_to(&Prompt::from("n> "), None, &mut next_frame)
+        .unwrap();
+    assert!(next_frame.starts_with(b"\r\x1b7"));
+}
+
 #[test]
 fn prefix_timeout_uses_exact_binding() {
     let timeout = Duration::from_millis(25);
@@ -299,14 +426,22 @@ fn user_command_receives_invoking_unit() {
 }
 
 #[test]
-fn echo_uses_human_readable_control_notation() {
-    let mut output = Vec::new();
+fn finish_echo_uses_display_columns() {
+    let control = FinishEcho::new(TextUnit::Scalar('\u{4}'));
+    assert_eq!(control.as_bytes(), b"^D");
+    assert_eq!(control.columns(), 2);
 
-    write_echo(TextUnit::Scalar('\u{4}'), &mut output).unwrap();
-    write_echo(TextUnit::RawByte(0x7f), &mut output).unwrap();
-    write_echo(TextUnit::Scalar('x'), &mut output).unwrap();
+    let utf8_control = FinishEcho::new(TextUnit::Scalar('\u{85}'));
+    assert_eq!(utf8_control.as_bytes(), "^\u{c5}".as_bytes());
+    assert_eq!(utf8_control.columns(), 2);
 
-    assert_eq!(output, b"^D^?x");
+    let wide = FinishEcho::new(TextUnit::Scalar('界'));
+    assert_eq!(wide.as_bytes(), "界".as_bytes());
+    assert_eq!(wide.columns(), 2);
+
+    let combining = FinishEcho::new(TextUnit::Scalar('\u{301}'));
+    assert_eq!(combining.as_bytes(), "\u{301}".as_bytes());
+    assert_eq!(combining.columns(), 0);
 }
 
 #[test]
@@ -943,7 +1078,7 @@ fn vi_immediate_terminal_outcomes_are_typed() {
     let step = send(&mut driver, &mut editor, begin, &mut output, '\u{4}');
     let step = settle(&mut driver, &mut editor, step, &mut output);
     assert!(matches!(step, ReadStep::Complete(ReadResult::EndOfInput)));
-    assert!(output.ends_with(b"^D"));
+    assert!(output.ends_with(b"^D\x1b8\n"));
 
     let mut editor = vi_with_line("echo ok");
     let mut driver = ReadDriver::default();

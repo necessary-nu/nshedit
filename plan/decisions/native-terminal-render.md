@@ -7,7 +7,7 @@ scope {
     elements ([arch:libedit:core] [arch:libedit:terminal-caps] [arch:libedit:c-abi])
     rules (
         [spec:nshedit:req:core.terminal-render+1]
-        [spec:nshedit:req:core.incremental-render+1]
+        [spec:nshedit:req:core.incremental-render+2]
         [spec:nshedit:req:core.text-screen-model]
         [spec:nshedit:req:core.rust-io+1]
         [spec:nshedit:req:core.effect-hooks]
@@ -43,6 +43,7 @@ consequences {
         "Editor owns the only native renderer state. TerminalProfile owns the selected terminfo bytes, semantic BaudRate, padding policy, capability variables, committed Screen, cursor, and row count; no global entry or destination exists."
         "A frame and its complete transition from the committed screen are planned before I/O. write_all and flush use a caller-supplied std::io::Write; screen, cursor, damage, and terminfo-variable state commit together only after both succeed. A failed write leaves the previous state committed so the next plan can repair from a conservative damage marker."
         "The renderer anchors the host's current terminal line with owned save/restore capabilities and tracks the high-water extent of rows it reserves or draws. Multiline transitions use relative vertical motion within that region; damage, resize, and profile reconfiguration preserve the saved origin and erase only the tracked rows, never the whole terminal. A downgraded profile that cannot address an owned multiline region fails without emitting output or abandoning that region."
+        "Accepted-line and end-of-input finalization restore the saved origin, descend to the region's last owned row, and emit a line feed before releasing the region. Optional visible EOF echo bytes and any row they newly occupy are part of the same planned write. A failed write retains the committed screen and extent; if row reservation may have partially replaced the saved anchor, that origin becomes unavailable until reconfiguration."
         "TerminalMode names Cooked, Editing, and Quoted states. TerminalControl transitions through that enum, and Editor publishes a new committed mode only after the controller succeeds."
         "The renderer performs deterministic incremental row differencing with owned terminfo or explicit ANSI capabilities. A one-line terminal uses carriage return, backspace, forward text, and explicit erasure; it receives a typed error for an impossible multiline position instead of guessed escape bytes."
         "The native renderer uses Unicode terminal-width data for scalar layout. Locale-specific narrow and wide C behaviour remains an ABI conversion and conformance responsibility rather than global native renderer state."
@@ -60,7 +61,7 @@ edges {
 }
 codifies (
     [spec:nshedit:req:core.terminal-render+1]
-    [spec:nshedit:req:core.incremental-render+1]
+    [spec:nshedit:req:core.incremental-render+2]
     [spec:nshedit:req:core.text-screen-model]
     [spec:nshedit:req:core.rust-io+1]
 )
