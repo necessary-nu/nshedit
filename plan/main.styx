@@ -3489,4 +3489,284 @@ children (
             }
         )
     }
+
+    {
+        id quality-hardening
+        title "Correct defects and quality gaps found by the post-port review"
+        kind @fix
+        children (
+            {
+                id quality-signal-slot-lifetime
+                title "Make the signal pending slot process-lifetime safe"
+                log (
+                    {
+                        at 2026-08-10T12:59:17.444733331Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: crates/nshedit-plat/src/signal.rs publishes an AtomicPtr to an AtomicI32 owned by the scoped SignalHandlers allocation, so teardown can withdraw and free storage while an installed handler still reaches it. Replace the borrowed pointer handshake with process-lifetime signal-visible storage and scoped activation state; installation, restoration, and teardown must leave no signal path capable of dereferencing freed memory."
+                    }
+                )
+            }
+
+            {
+                id quality-renderer-region-origin
+                title "Track the renderer's physical terminal-region origin"
+                log (
+                    {
+                        at 2026-08-10T12:59:17.492566368Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: crates/nshedit/src/editor/render.rs models frame rows as local but emits them through absolute CUP coordinates, including CUP 1 assumptions, and damage/resize recovery can erase terminal content outside the editor. Track the physical origin and extent of the editor-owned region, make all cursor addressing and erasure respect that region, and remove tests that bless local-row-as-screen-row behaviour."
+                    }
+                )
+            }
+
+            {
+                id quality-history-save-errors
+                title "Version and correct history-save failure reporting"
+                log (
+                    {
+                        at 2026-08-10T12:59:17.541120864Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: crates/nshedit-abi/src/history/persistence.rs deliberately suppresses write and flush errors under ERR-history-21. Version the compatibility contract, then make every save surface (including FILE-backed saves) report write, flush, temporary-file, and replacement failures to the C caller without reporting success for partial persistence; update the governing spec, errata, and ABI acceptance evidence."
+                    }
+                )
+            }
+
+            {
+                id quality-secure-execution
+                title "Detect secure execution correctly on Linux and macOS"
+                log (
+                    {
+                        at 2026-08-10T12:59:17.587446192Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: environment trust currently relies on uid/gid comparisons and misses Linux AT_SECURE and Darwin issetugid semantics across nshedit-plat and ABI callers. Expose one typed platform query using the native secure-execution mechanisms, treat an indeterminate result as untrusted, and route terminfo discovery plus editor/external-command environment use through it."
+                    }
+                )
+            }
+
+            {
+                id quality-renderer-final-position
+                title "Finish accepted and EOF lines below the rendered region"
+                deps (quality-renderer-region-origin)
+                log (
+                    {
+                        at 2026-08-10T12:59:17.63772971Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: accepted input and EOF do not reliably move the cursor below the entire multiline/wrapped rendered region. Using the corrected physical-region model, finalize both paths beneath the last occupied display row before emitting the terminating newline or returning control, including multiline prompts and wrapped input."
+                    }
+                )
+            }
+
+            {
+                id quality-key-sequence-timeout
+                title "Honor configured key-sequence timeouts"
+                log (
+                    {
+                        at 2026-08-10T12:59:17.690322085Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: crates/nshedit/src/editor/system_input.rs polls immediately while the ABI driver can block indefinitely, so the configured key-sequence timeout is not implemented. Carry an explicit deadline through the native read protocol and host adapter, wait only for the remaining duration, and resolve ambiguous sequences consistently on timeout across native and C entry points."
+                    }
+                )
+            }
+
+            {
+                id quality-double-quote-completion
+                title "Make double-quoted shell completion syntax-safe"
+                log (
+                    {
+                        at 2026-08-10T12:59:17.739665101Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: double-quoted completion escapes only quote and backslash and tokenization uses an incompatible escape table, leaving dollar and command-substitution syntax active. Define one shell double-quote escaping contract shared by tokenization and completion, covering $, backtick, quote, and context-sensitive backslash rules, and prove inserted candidates round-trip as literal filenames."
+                    }
+                )
+            }
+
+            {
+                id quality-secure-temp-files
+                title "Create history and external-edit temporary files securely"
+                log (
+                    {
+                        at 2026-08-10T12:59:17.786432105Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: history replacement and external-edit paths create predictable, potentially world-readable temporary files. Use race-free exclusive creation with unpredictable names and mode 0600, avoid following attacker-controlled links, clean up on every error path, and preserve atomic replacement where that is part of the operation."
+                    }
+                )
+            }
+
+            {
+                id quality-terminfo-sentinels
+                title "Parse compiled terminfo absent and cancelled sentinels correctly"
+                log (
+                    {
+                        at 2026-08-10T12:59:17.832950637Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: crates/nshterm/src/parser/compiled.rs does not interpret signed absent/cancelled values correctly for all compiled terminfo widths and can project cancellation as an empty capability. Decode 16- and 32-bit numeric sentinels width-correctly, represent absent and cancelled fields explicitly, and prevent cancelled values from reaching downstream capability profiles as usable data."
+                    }
+                )
+            }
+
+            {
+                id quality-delete-range
+                title "Version and correct el_deletestr1 range deletion"
+                log (
+                    {
+                        at 2026-08-10T12:59:19.531173984Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: crates/nshedit-abi/src/adapter/terminal_io.rs intentionally reproduces the reference el_deletestr1 range defect. Version the compatibility contract, define checked behaviour for negative, oversized, and boundary counts, delete the requested logical range without offset/underflow defects, and update C ABI acceptance plus errata to describe the corrected behaviour."
+                    }
+                )
+            }
+
+            {
+                id quality-linux-target-contract
+                title "Make the supported Linux target matrix exact and enforced"
+                log (
+                    {
+                        at 2026-08-10T12:59:23.912017204Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: README claims generic Linux support while passwd/signal layouts and build outputs are target-specific; armv7, s390x, and musl expose contradictory assumptions. Declare the exact supported Linux triples, enforce unsupported combinations at configuration time, and either add correct per-target layouts/build outputs or remove those triples from claims and CI. Do not use an open-ended any-Linux promise."
+                    }
+                )
+            }
+
+            {
+                id quality-errata-source-truth
+                title "Reconcile the errata register with the maintained Rust code"
+                kind @docs
+                deps (quality-history-save-errors quality-delete-range quality-linux-target-contract)
+                log (
+                    {
+                        at 2026-08-10T12:59:24.190036167Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: docs/errata.md still describes retired platform stubs, blanket varargs failures, and the removed C oracle. Reconcile every active entry against the detailed compatibility corpus plus the maintained Rust code, remove retired paths and evidence, record the newly corrected history/delete semantics, and leave each remaining divergence with a current owner and reproducible Rust-owned evidence."
+                    }
+                )
+            }
+
+            {
+                id quality-nonutf8-history-paths
+                title "Preserve non-UTF-8 history path bytes"
+                log (
+                    {
+                        at 2026-08-10T12:59:24.237826073Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: append_history and history_truncate_file in crates/nshedit-abi/src/readline/history_io.rs convert C path bytes through lossy UTF-8 unlike sibling APIs. On Unix, construct paths directly from the original byte slice via OsStrExt; reject only invalid C input, not valid non-UTF-8 filesystem names, and keep path handling consistent across readline history functions."
+                    }
+                )
+            }
+
+            {
+                id quality-history-append-contract
+                title "Make native history append atomicity claims truthful"
+                log (
+                    {
+                        at 2026-08-10T12:59:24.288009549Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: crates/nshedit/src/history_file.rs invokes generic Write::write_all while claiming regular-file record atomicity from PIPE_BUF, which does not apply. Replace the generic claim with a concrete append protocol that serializes competing writers and defines crash boundaries for a framed record, or narrow the public contract to guarantees actually provided; align implementation, API docs, and tests."
+                    }
+                )
+            }
+
+            {
+                id quality-prompt-style-state
+                title "Preserve prompt style across incremental redraws"
+                deps (quality-renderer-region-origin)
+                log (
+                    {
+                        at 2026-08-10T12:59:24.334001634Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: incremental prompt redraw can begin after an earlier SGR literal and therefore loses the terminal style active at the redraw boundary. Carry typed prompt/style state into diff generation or replay from a safe literal boundary, and ensure incremental output is visually equivalent to a full redraw for styled multiline prompts."
+                    }
+                )
+            }
+
+            {
+                id quality-terminfo-name-component
+                title "Reject path components in terminal database names"
+                log (
+                    {
+                        at 2026-08-10T12:59:24.380625007Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: crates/nshterm/src/searcher.rs accepts terminal names that can escape the intended database directory. Require a single ordinary filename component, rejecting separators, parent/current-directory components, absolute paths, and platform-equivalent traversal forms before constructing any search path."
+                    }
+                )
+            }
+
+            {
+                id quality-terminfo-zero-precision
+                title "Distinguish absent terminfo precision from explicit zero"
+                log (
+                    {
+                        at 2026-08-10T12:59:24.425863482Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: crates/nshterm/src/parm.rs cannot distinguish no precision from an explicit .0 precision. Represent precision as Option<usize>, preserve explicit zero through parsing, and apply the correct width/precision semantics for string and numeric expansions."
+                    }
+                )
+            }
+
+            {
+                id quality-terminfo-error-equality
+                title "Give nshterm errors a valid equality contract"
+                log (
+                    {
+                        at 2026-08-10T12:59:24.473290864Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: the hand-written equality for nshterm::Error::Io is non-reflexive and violates PartialEq. Remove the misleading equality implementation from the public error type and convert callers/tests to discriminant or pattern-based assertions, unless the error representation is first changed to stable equality-bearing fields."
+                    }
+                )
+            }
+
+            {
+                id quality-toolchain-usage-docs
+                title "Document stable and nightly Cargo entry points accurately"
+                kind @docs
+                log (
+                    {
+                        at 2026-08-10T12:59:24.523456331Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: unqualified workspace and ABI Cargo commands imply stable support even though the variadic ABI currently needs nightly, while native crates build on stable. Document stable native commands and explicit +nightly ABI/workspace commands without adding a nightly pin, and keep MSRV metadata scoped to the ABI crate only."
+                    }
+                )
+            }
+
+            {
+                id quality-workspace-rustdoc
+                title "Make strict workspace rustdoc generation pass"
+                log (
+                    {
+                        at 2026-08-10T12:59:24.569352394Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Finding: cargo doc --workspace collides because the core and ABI library targets both document as nshedit, and strict per-crate docs contain broken/private links. Give the C-only ABI target a non-conflicting documentation policy without changing its produced library ABI, repair all rustdoc diagnostics, and gate workspace documentation with warnings denied and dependencies excluded."
+                    }
+                )
+            }
+        )
+        log (
+            {
+                at 2026-08-10T12:59:17.394772627Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Scope from the 2026-08-10 post-port review: 12 primary findings, seven additional lower-severity findings, and one separate workspace-rustdoc failure. Child dependencies represent only implementation sequencing; unconnected leaves are intentionally independently startable."
+            }
+        )
+    }
 )
