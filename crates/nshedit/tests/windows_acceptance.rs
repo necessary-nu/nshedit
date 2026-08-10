@@ -571,10 +571,10 @@ fn run_in_conpty(input: &[u8], resize: Option<COORD>) -> AcceptanceResult<Vec<u8
     let (pseudo_input, host_input) = pipe()?;
     let (host_output, pseudo_output) = pipe()?;
     let pseudo_console = PseudoConsole::new(COORD { X: 80, Y: 24 }, &pseudo_input, &pseudo_output)?;
-    drop(pseudo_input);
-    drop(pseudo_output);
 
     let process = pseudo_console.spawn(&repl_executable()?)?;
+    drop(pseudo_input);
+    drop(pseudo_output);
     let (prompt_sender, prompt_receiver) = mpsc::channel();
     let output_reader = thread::spawn(move || {
         let mut output = Vec::new();
