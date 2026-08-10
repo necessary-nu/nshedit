@@ -228,7 +228,7 @@ fn driver_decodes_and_accepts_utf8() {
     assert_eq!(editor.terminal_mode(), TerminalMode::Cooked);
 }
 
-// [spec:nshedit:req:core.incremental-render+2/test]
+// [spec:nshedit:req:core.incremental-render+3/test]
 #[test]
 fn accept_and_eof_finish_below_region() {
     const FINISH: &[u8] = b"\x1b8\x1b[B\x1b[B\n";
@@ -284,7 +284,7 @@ fn accept_and_eof_finish_below_region() {
     assert_eq!(eof_editor.terminal_mode(), TerminalMode::Cooked);
 }
 
-// [spec:nshedit:req:core.incremental-render+2/test]
+// [spec:nshedit:req:core.incremental-render+3/test]
 #[test]
 fn eof_echo_wrap_reserves_region() {
     let mut editor = editor(EditorConfig::default());

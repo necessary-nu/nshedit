@@ -12,11 +12,31 @@ pub(super) enum Atom {
     Spaces(usize),
 }
 
+// [spec:nshedit:req:core.incremental-render+3]
+/// Prompt literals whose effects are active at the start of a physical row.
+///
+/// Literal bytes are deliberately opaque to the renderer. Keeping their
+/// ordered replay here lets any row or suffix be rendered independently
+/// without guessing which terminal attributes those bytes select.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct LiteralState(Vec<u8>);
+
+impl LiteralState {
+    fn extend(&mut self, bytes: &[u8]) {
+        self.0.extend_from_slice(bytes);
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Row {
     pub(super) atoms: Vec<Atom>,
     cells: Vec<ScreenCell>,
     used: usize,
+    literal_state: LiteralState,
 }
 
 impl Row {
@@ -25,11 +45,16 @@ impl Row {
             atoms: Vec::new(),
             cells: vec![ScreenCell::Blank; columns],
             used: 0,
+            literal_state: LiteralState::default(),
         }
     }
 
     pub(super) const fn used(&self) -> usize {
         self.used
+    }
+
+    pub(super) fn literal_state(&self) -> &[u8] {
+        self.literal_state.as_bytes()
     }
 
     fn pad_to(&mut self, column: usize) {
@@ -279,21 +304,20 @@ fn add_right_prompt(builder: &mut Builder, prompt: &Prompt) {
 }
 
 fn viewport(size: ScreenSize, rows: Vec<Row>, cursor: (usize, usize)) -> Result<Frame, Error> {
+    let mut rows = rows;
+    let mut literal_state = LiteralState::default();
+    for row in &mut rows {
+        row.literal_state = literal_state.clone();
+        for atom in &row.atoms {
+            if let Atom::Literal(bytes) = atom {
+                literal_state.extend(bytes);
+            }
+        }
+    }
+
     let start = cursor.0.saturating_add(1).saturating_sub(size.rows());
     let end = (start + size.rows()).min(rows.len());
-    let mut visible = rows[start..end].to_vec();
-
-    if start > 0 {
-        let prefix_literals: Vec<_> = rows[..start]
-            .iter()
-            .flat_map(|row| row.atoms.iter())
-            .filter_map(|atom| match atom {
-                Atom::Literal(bytes) => Some(Atom::Literal(bytes.clone())),
-                Atom::Glyph(_) | Atom::Spaces(_) => None,
-            })
-            .collect();
-        visible[0].atoms.splice(0..0, prefix_literals);
-    }
+    let visible = rows[start..end].to_vec();
 
     let mut screen = Screen::new(size);
     for (row_index, row) in visible.iter().enumerate() {

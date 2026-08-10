@@ -480,7 +480,7 @@ impl State {
         Ok(bytes.len())
     }
 
-    // [spec:nshedit:req:core.incremental-render+2]
+    // [spec:nshedit:req:core.incremental-render+3]
     pub(super) fn finish_line(
         &mut self,
         echo: Option<&FinishEcho>,
@@ -606,7 +606,7 @@ impl State {
     }
 }
 
-// [spec:nshedit:req:core.incremental-render+2]
+// [spec:nshedit:req:core.incremental-render+3]
 fn encode(
     profile: &TerminalProfile,
     frame: &Frame,
@@ -822,7 +822,7 @@ fn encode_plain(
         return append_plain_redraw(profile, frame, 0, true, output, variables);
     }
     let Some(previous) = committed.rows.first() else {
-        append_atoms(output, &row.atoms);
+        append_atoms(output, row);
         return append_plain_reposition(
             profile,
             row,
@@ -902,7 +902,7 @@ fn append_plain_redraw(
 ) -> Result<(), RenderError> {
     append_carriage_return(profile, output, variables)?;
     let row = &frame.rows[0];
-    append_atoms(output, &row.atoms);
+    append_atoms(output, row);
     let cleared_to_end = append_capability(
         profile,
         output,
@@ -1025,10 +1025,15 @@ fn append_atom_range(
     end: usize,
     include_end_literals: bool,
 ) {
+    output.extend_from_slice(row.literal_state());
     let mut column = 0usize;
     for atom in &row.atoms {
         match atom {
             Atom::Literal(bytes) => {
+                if column < start {
+                    output.extend_from_slice(bytes);
+                    continue;
+                }
                 if column >= start && (column < end || (include_end_literals && column == end)) {
                     output.extend_from_slice(bytes);
                 }
@@ -1083,8 +1088,9 @@ fn append_required_capability(
     }
 }
 
-fn append_atoms(output: &mut Vec<u8>, atoms: &[Atom]) {
-    for atom in atoms {
+fn append_atoms(output: &mut Vec<u8>, row: &layout::Row) {
+    output.extend_from_slice(row.literal_state());
+    for atom in &row.atoms {
         match atom {
             Atom::Glyph(text) => output.extend_from_slice(text.as_bytes()),
             Atom::Literal(bytes) => output.extend_from_slice(bytes),
@@ -1096,7 +1102,7 @@ fn append_atoms(output: &mut Vec<u8>, atoms: &[Atom]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Prompt, ScreenCell};
+    use crate::domain::{Prompt, ScreenCell, TerminalLiteral};
 
     struct FailingWriter {
         limit: usize,
@@ -1156,7 +1162,7 @@ mod tests {
         ));
     }
 
-    // [spec:nshedit:req:core.incremental-render+2/test]
+    // [spec:nshedit:req:core.incremental-render+3/test]
     #[test]
     fn addressed_frames_diff_from_first_change() {
         let mut state = configured(TerminalProfile::ansi(), 2, 20);
@@ -1188,7 +1194,45 @@ mod tests {
         assert_eq!(present(&mut state, "hall", 4), b"\x1b[C\x1b[C\x1b[K");
     }
 
-    // [spec:nshedit:req:core.incremental-render+2/test]
+    // [spec:nshedit:req:core.incremental-render+3/test]
+    #[test]
+    fn replays_multiline_prompt_literal_state() {
+        const RED: &[u8] = b"\x1b[31m";
+        const RESET: &[u8] = b"\x1b[0m";
+
+        let prompt = |second_row: &str| {
+            let mut prompt = Prompt::default();
+            prompt.push_literal(TerminalLiteral::from(RED));
+            prompt.push_text(format!("r\n{second_row}"));
+            prompt.push_literal(TerminalLiteral::from(RESET));
+            prompt.push_text(">");
+            prompt
+        };
+        let mut state = configured(TerminalProfile::ansi(), 3, 8);
+        let line = Text::default();
+        state
+            .present(
+                &prompt("ab"),
+                None,
+                &line,
+                TextIndex::START,
+                &mut Vec::new(),
+            )
+            .unwrap();
+        assert_eq!(
+            state.configured.as_ref().unwrap().rows[1].literal_state(),
+            RED
+        );
+
+        let mut output = Vec::new();
+        state
+            .present(&prompt("aB"), None, &line, TextIndex::START, &mut output)
+            .unwrap();
+
+        assert_eq!(output, b"\x08\x08\x1b[31mB\x1b[0m>");
+    }
+
+    // [spec:nshedit:req:core.incremental-render+3/test]
     #[test]
     fn anchors_region_at_current_line() {
         let mut state = configured(TerminalProfile::ansi(), 3, 4);
@@ -1213,7 +1257,7 @@ mod tests {
         assert_eq!(summary.rows_used(), 2);
     }
 
-    // [spec:nshedit:req:core.incremental-render+2/test]
+    // [spec:nshedit:req:core.incremental-render+3/test]
     #[test]
     fn finish_descends_past_wrapped_region() {
         let mut state = configured(TerminalProfile::ansi(), 5, 4);
@@ -1246,7 +1290,7 @@ mod tests {
         );
     }
 
-    // [spec:nshedit:req:core.incremental-render+2/test]
+    // [spec:nshedit:req:core.incremental-render+3/test]
     #[test]
     fn failed_finish_retains_region() {
         let mut state = configured(TerminalProfile::ansi(), 5, 4);
@@ -1293,7 +1337,7 @@ mod tests {
         );
     }
 
-    // [spec:nshedit:req:core.incremental-render+2/test]
+    // [spec:nshedit:req:core.incremental-render+3/test]
     #[test]
     fn failed_reanchor_loses_origin() {
         let mut state = configured(TerminalProfile::ansi(), 5, 4);
@@ -1332,7 +1376,7 @@ mod tests {
         ));
     }
 
-    // [spec:nshedit:req:core.incremental-render+2/test]
+    // [spec:nshedit:req:core.incremental-render+3/test]
     #[test]
     fn damage_stays_within_owned_rows() {
         let mut state = configured(TerminalProfile::ansi(), 4, 4);
@@ -1370,7 +1414,7 @@ mod tests {
         assert!(!output.windows(4).any(|window| window == b"\x1b[2J"));
     }
 
-    // [spec:nshedit:req:core.incremental-render+2/test]
+    // [spec:nshedit:req:core.incremental-render+3/test]
     #[test]
     fn resize_repairs_high_water_rows() {
         let mut state = configured(TerminalProfile::ansi(), 3, 4);
@@ -1412,7 +1456,7 @@ mod tests {
         assert!(!output.windows(4).any(|window| window == b"\x1b[2J"));
     }
 
-    // [spec:nshedit:req:core.incremental-render+2/test]
+    // [spec:nshedit:req:core.incremental-render+3/test]
     #[test]
     fn reconfigure_preserves_multiline_region() {
         let size = ScreenSize::new(3, 4).unwrap();
@@ -1463,7 +1507,7 @@ mod tests {
         assert_eq!(state.configured.as_ref().unwrap().region, region);
     }
 
-    // [spec:nshedit:req:core.incremental-render+2/test]
+    // [spec:nshedit:req:core.incremental-render+3/test]
     #[test]
     fn plain_profile_finishes_saved_row() {
         let size = ScreenSize::new(2, 8).unwrap();
@@ -1584,7 +1628,7 @@ mod tests {
         assert_eq!(state.screen(), Some(&before));
     }
 
-    // [spec:nshedit:req:core.incremental-render+2/test]
+    // [spec:nshedit:req:core.incremental-render+3/test]
     #[test]
     fn plans_plain_incremental_transitions() {
         let mut state = configured(TerminalProfile::plain(), 1, 20);

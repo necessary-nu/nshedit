@@ -7,7 +7,7 @@ scope {
     elements ([arch:libedit:core] [arch:libedit:terminal-caps] [arch:libedit:c-abi])
     rules (
         [spec:nshedit:req:core.terminal-render+1]
-        [spec:nshedit:req:core.incremental-render+2]
+        [spec:nshedit:req:core.incremental-render+3]
         [spec:nshedit:req:core.text-screen-model]
         [spec:nshedit:req:core.rust-io+1]
         [spec:nshedit:req:core.effect-hooks]
@@ -39,6 +39,7 @@ alternatives (
 consequences {
     accepted (
         "Prompt owns ordered PromptPart values. Logical Text participates in layout; TerminalLiteral owns explicit zero-width bytes and is never stored in the rectangular Screen. PromptEffect returns this typed Prompt rather than an ambiguous Text."
+        "Each laid-out row carries the ordered literal state active at its origin. Emitting an independent row or suffix replays that row prefix and any literals before the changed column, so moved cursors do not inherit unrelated attributes and multiline incremental output matches full-frame output without interpreting opaque prompt bytes."
         "ScreenGlyph anchors one printable scalar sequence and any following combining scalars. ScreenCell represents Blank, Glyph, Continuation, or Padding, so each value has physical-column semantics. Raw bytes, non-scalar wide values, and unprintable scalars render as visible owned escapes."
         "Editor owns the only native renderer state. TerminalProfile owns the selected terminfo bytes, semantic BaudRate, padding policy, capability variables, committed Screen, cursor, and row count; no global entry or destination exists."
         "A frame and its complete transition from the committed screen are planned before I/O. write_all and flush use a caller-supplied std::io::Write; screen, cursor, damage, and terminfo-variable state commit together only after both succeed. A failed write leaves the previous state committed so the next plan can repair from a conservative damage marker."
@@ -61,7 +62,7 @@ edges {
 }
 codifies (
     [spec:nshedit:req:core.terminal-render+1]
-    [spec:nshedit:req:core.incremental-render+2]
+    [spec:nshedit:req:core.incremental-render+3]
     [spec:nshedit:req:core.text-screen-model]
     [spec:nshedit:req:core.rust-io+1]
 )
@@ -78,12 +79,14 @@ model.
 
 The native renderer instead constructs an owned frame from the editor's
 checked line and cursor. Prompt literals remain zero-width operations between
-glyphs, while the screen contains only physical cells. Its local row zero is
-anchored at the host's current terminal line, not fabricated as physical
-screen row zero, and the renderer owns only the bounded row extent it has
-reserved. Capability expansion, padding, writing, and flushing happen against
-temporary output and cloned terminfo variables. Only success replaces the
-committed image and variables.
+glyphs, while the screen contains only physical cells. Rows carry the ordered
+literal prefix needed to reconstruct terminal state at their origin; a partial
+row emission also replays literals before its first changed column. Its local
+row zero is anchored at the host's current terminal line, not fabricated as
+physical screen row zero, and the renderer owns only the bounded row extent it
+has reserved. Capability expansion, padding, writing, and flushing happen
+against temporary output and cloned terminfo variables. Only success replaces
+the committed image and variables.
 
 The first implementation deliberately established state, ownership, width,
 and failure semantics with a correctness-first full redraw. PTY conformance

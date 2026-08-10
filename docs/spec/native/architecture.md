@@ -241,12 +241,17 @@ states where those semantics may live and what the native Rust API must be.
 > those existing compatibility modules; `core.no-compat-internals` governs
 > its final removal.
 
-> [spec:nshedit:req:core.incremental-render+2]
+> [spec:nshedit:req:core.incremental-render+3]
 > Native rendering MUST plan deterministic terminal operations from the
 > committed typed screen and cursor to the next complete frame. Unchanged
 > cells MUST NOT force a complete redraw. The committed image MUST belong to
 > an explicit physical editor region anchored at the current terminal line,
 > with an extent covering every row the renderer has reserved or drawn.
+> Ordered zero-width prompt literal state MUST remain separate from physical
+> screen cells. Every independently emitted row or suffix MUST replay the
+> literal state active at its starting boundary, including state established
+> on earlier physical rows, so an incremental update is visually equivalent
+> to emitting the complete frame.
 > Multiline movement MUST be relative to that origin; an editor-local frame row
 > MUST NOT be used as a screen-absolute cursor coordinate. Damage and resize
 > recovery MUST erase only rows inside the tracked extent and MUST NOT clear the

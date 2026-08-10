@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-10T15:00:58.513931215Z
+last_sync_at 2026-08-10T15:17:35.164582797Z
 
 rule_versions (
     {id abi.binding-dispatch, version 0}
@@ -521,11 +521,6 @@ impl_evidence (
         {impl_name target-impl, rule readline.append-history-fn}
         {impl_name target-impl, rule readline.write-history-fn}
     )}
-    {id quality-renderer-final-position, covered_rules (
-        core.incremental-render
-    ), covered_claims (
-        {impl_name native-impl, rule core.incremental-render}
-    )}
     {id quality-secure-temp-files, covered_rules (
         readline.history-truncate-file-fn
     ), covered_claims (
@@ -537,6 +532,13 @@ impl_evidence (
         {impl_name native-impl, rule terminal.compiled-capability-state}
     ), rule_versions_seen (
         {id terminal.compiled-capability-state, version 0}
+    )}
+    {id retire-c, covered_rules (
+        abi.behavioural-conformance
+        abi.observational-coverage
+    ), covered_claims (
+        {impl_name native-impl, rule abi.behavioural-conformance}
+        {impl_name native-impl, rule abi.observational-coverage}
     )}
     {id rust-idiom-completion, covered_rules (
         abi.typed-completion
@@ -646,11 +648,9 @@ impl_evidence (
     ), rule_versions_seen (
         {id platform.windows-console, version 0}
     )}
-    {id retire-c, covered_rules (
-        abi.behavioural-conformance
-        abi.observational-coverage
+    {id quality-prompt-style-state, covered_rules (
+        core.incremental-render
     ), covered_claims (
-        {impl_name native-impl, rule abi.behavioural-conformance}
-        {impl_name native-impl, rule abi.observational-coverage}
+        {impl_name native-impl, rule core.incremental-render}
     )}
 )

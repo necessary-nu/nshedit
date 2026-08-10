@@ -3592,9 +3592,6 @@ children (
             {
                 id quality-renderer-final-position
                 title "Finish accepted and EOF lines below the rendered region"
-                implements {
-                    native-impl ([spec:nshedit:req:core.incremental-render+2])
-                }
                 deps (quality-renderer-region-origin)
                 log (
                     {
@@ -3798,6 +3795,9 @@ children (
             {
                 id quality-prompt-style-state
                 title "Preserve prompt style across incremental redraws"
+                implements {
+                    native-impl ([spec:nshedit:req:core.incremental-render+3])
+                }
                 deps (quality-renderer-region-origin)
                 log (
                     {
@@ -3805,6 +3805,20 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: incremental prompt redraw can begin after an earlier SGR literal and therefore loses the terminal style active at the redraw boundary. Carry typed prompt/style state into diff generation or replay from a safe literal boundary, and ensure incremental output is visually equivalent to a full redraw for styled multiline prompts."
+                    }
+
+                    {
+                        at 2026-08-10T15:11:47.365796799Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-10T15:12:10.281076195Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Version core.incremental-render to +3 and move its native implementation claim here: the renderer now carries ordered prompt-literal replay state per physical row, so any independently emitted suffix restores the state active at its boundary, including state established on earlier rows, without global terminal-style tracking or interpreting opaque prompt bytes."
                     }
                 )
             }
