@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-10T01:22:06.742031951Z
+last_sync_at 2026-08-10T13:28:45.297586201Z
 
 rule_versions (
     {id abi.behavioural-conformance, version 1}
@@ -128,6 +128,26 @@ derived_priorities (
     {id platform-decide, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
     {id platform-plat-tests, priority 2, derived_at 2026-08-08T15:15:12.887095396Z}
     {id platform-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
+    {id quality-delete-range, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-double-quote-completion, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-errata-source-truth, priority 1, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-history-append-contract, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-history-save-errors, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-key-sequence-timeout, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-linux-target-contract, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-nonutf8-history-paths, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-prompt-style-state, priority 1, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-renderer-final-position, priority 1, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-renderer-region-origin, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-secure-execution, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-secure-temp-files, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-signal-slot-lifetime, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-terminfo-error-equality, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-terminfo-name-component, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-terminfo-sentinels, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-terminfo-zero-precision, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-toolchain-usage-docs, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
+    {id quality-workspace-rustdoc, priority 0, derived_at 2026-08-10T13:28:45.297586201Z}
     {id readline-compat-idiomatize, priority 3, derived_at 2026-08-05T08:37:17.415060629Z}
     {id readline-compat-markup, priority 0, derived_at 2026-08-05T08:37:17.415060629Z}
     {id readline-compat-tests, priority 2, derived_at 2026-08-05T08:37:17.415060629Z}
@@ -462,6 +482,13 @@ impl_evidence (
     ), rule_versions_seen (
         {id abi.darwin-runtime, version 0}
     )}
+    {id macos-acceptance, covered_rules (
+        abi.darwin-drop-in
+    ), covered_claims (
+        {impl_name native-impl, rule abi.darwin-drop-in}
+    ), rule_versions_seen (
+        {id abi.darwin-drop-in, version 0}
+    )}
     {id macos-cross-check, covered_rules (
         workspace.darwin-cross-check
     ), covered_claims (
@@ -478,6 +505,15 @@ impl_evidence (
     ), rule_versions_seen (
         {id platform.darwin-termios, version 0}
         {id platform.per-os-layouts, version 0}
+    )}
+    {id quality-delete-range, covered_rules (
+        chared.el-deletestr1-fn
+        histedit.el-deletestr1-fn
+        readline.rl-delete-text-fn
+    ), covered_claims (
+        {impl_name target-impl, rule chared.el-deletestr1-fn}
+        {impl_name target-impl, rule histedit.el-deletestr1-fn}
+        {impl_name target-impl, rule readline.rl-delete-text-fn}
     )}
     {id rust-idiom-completion, covered_rules (
         abi.typed-completion
@@ -556,6 +592,8 @@ impl_evidence (
         workspace.windows-acceptance
     ), covered_claims (
         {impl_name native-impl, rule workspace.windows-acceptance}
+    ), rule_versions_seen (
+        {id workspace.windows-acceptance, version 0}
     )}
     {id windows-editor, covered_rules (
         core.windows-session
@@ -584,10 +622,5 @@ impl_evidence (
         {impl_name native-impl, rule platform.windows-console}
     ), rule_versions_seen (
         {id platform.windows-console, version 0}
-    )}
-    {id macos-acceptance, covered_rules (
-        abi.darwin-drop-in
-    ), covered_claims (
-        {impl_name native-impl, rule abi.darwin-drop-in}
     )}
 )
