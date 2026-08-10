@@ -15,6 +15,7 @@ use nshedit::editor::effect::{
     HistorySearchInput, HistorySearchResponse, HistoryWordEffect, HistoryWordPosition,
     HistoryWordResponse,
 };
+use nshedit_plat::terminal;
 
 mod signal;
 
@@ -133,35 +134,63 @@ unsafe fn host_prompt(el: *mut EditLine, side: PromptSide) -> Prompt {
 unsafe fn host_read(
     el: *mut EditLine,
     signals: &mut ReadSignals,
+    purpose: ReadEffect,
 ) -> Result<ReadOutcome, HostFailure> {
-    if let Some(signal) = unsafe { signals.take_pending(el) } {
-        return Ok(ReadOutcome::Signal(editor_signal(signal)));
-    }
-    if let Some(unit) = unsafe { (&mut *el).pop_input() } {
-        let _ = unsafe { signals.resume_pending_direct(el) }?;
-        return Ok(ReadOutcome::Unit(unit));
-    }
-    if let Some(callback) = unsafe { (&*el).read_callback() } {
-        let mut value = 0;
-        let result = unsafe { callback(el, &raw mut value) };
-        let _ = unsafe { signals.resume_pending_direct(el) }?;
-        return match result {
-            result if result > 0 => Ok(ReadOutcome::Unit(TextUnit::from_code_point(value))),
-            0 => Ok(ReadOutcome::EndOfInput),
-            _ => Err(HostFailure::Failed("input callback failed".into())),
-        };
-    }
-
-    if unsafe { (&*el).descriptor(StreamKind::Input) } < 0 {
-        let _ = unsafe { signals.resume_pending_direct(el) }?;
-        return Ok(ReadOutcome::EndOfInput);
-    }
-
     let mut bytes = [0; 64];
     loop {
         if let Some(signal) = unsafe { signals.take_pending(el) } {
             return Ok(ReadOutcome::Signal(editor_signal(signal)));
         }
+        if let Some(unit) = unsafe { (&mut *el).pop_input() } {
+            let _ = unsafe { signals.resume_pending_direct(el) }?;
+            return Ok(ReadOutcome::Unit(unit));
+        }
+
+        let descriptor = unsafe { (&*el).descriptor(StreamKind::Input) };
+        if let ReadEffect::KeySequence { deadline } = purpose {
+            // An arbitrary EL_GETCFN callback cannot be preempted safely.
+            // Gate it on the handle the caller associated with this editor;
+            // callbacks backed by another source must queue their continuation
+            // before returning control to the driver.
+            let readiness = crate::adapter::with_borrowed_descriptor(descriptor, |input| {
+                terminal::wait_for_input(input, deadline.remaining())
+            });
+            match readiness {
+                Some(Ok(true)) => {}
+                Some(Ok(false)) | None => {
+                    if let Some(signal) = unsafe { signals.take_pending(el) } {
+                        return Ok(ReadOutcome::Signal(editor_signal(signal)));
+                    }
+                    return Ok(ReadOutcome::TimedOut);
+                }
+                Some(Err(error)) => {
+                    if let Some(signal) = unsafe { signals.take_pending(el) } {
+                        return Ok(ReadOutcome::Signal(editor_signal(signal)));
+                    }
+                    if error.kind() == io::ErrorKind::Interrupted && unsafe { (&*el).safe_read() } {
+                        continue;
+                    }
+                    return Err(HostFailure::Failed(error.to_string().into_boxed_str()));
+                }
+            }
+        }
+
+        if let Some(callback) = unsafe { (&*el).read_callback() } {
+            let mut value = 0;
+            let result = unsafe { callback(el, &raw mut value) };
+            let _ = unsafe { signals.resume_pending_direct(el) }?;
+            return match result {
+                result if result > 0 => Ok(ReadOutcome::Unit(TextUnit::from_code_point(value))),
+                0 => Ok(ReadOutcome::EndOfInput),
+                _ => Err(HostFailure::Failed("input callback failed".into())),
+            };
+        }
+
+        if descriptor < 0 {
+            let _ = unsafe { signals.resume_pending_direct(el) }?;
+            return Ok(ReadOutcome::EndOfInput);
+        }
+
         match unsafe { (&*el).read_input(&mut bytes) } {
             Ok(0) => {
                 let _ = unsafe { signals.resume_pending_direct(el) }?;
@@ -768,7 +797,7 @@ pub(super) unsafe fn drive_read(el: *mut EditLine) -> Result<ReadResult, ()> {
                     .map_err(|_| ())?
             }
             ReadStep::Read(pending) => {
-                let response = unsafe { host_read(el, &mut signals) };
+                let response = unsafe { host_read(el, &mut signals, *pending.request()) };
                 let (editor, driver) = unsafe { (&mut *el).split_editor_driver() };
                 driver
                     .resume_read(editor, &pending, response)
@@ -949,3 +978,43 @@ pub(super) unsafe fn read_unedited(el: *mut EditLine) -> Result<bool, ()> {
 
 #[cfg(test)]
 mod command_effect_tests;
+
+#[cfg(test)]
+mod read_tests {
+    use super::*;
+    use nshedit::editor::effect::ReadDeadline;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    static CALLBACK_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn input_callback(_: *mut EditLine, value: *mut u32) -> c_int {
+        CALLBACK_CALLS.fetch_add(1, Ordering::Relaxed);
+        unsafe { *value = u32::from(b'x') };
+        1
+    }
+
+    #[test]
+    fn prefix_deadline_gates_custom_callback() {
+        CALLBACK_CALLS.store(0, Ordering::Relaxed);
+        let mut editor = EditLine::new(SessionInit::inert("deadline-test")).unwrap();
+        editor.set_read_callback(Some(input_callback));
+        let pointer = core::ptr::from_mut(editor.as_mut());
+        let mut signals = ReadSignals::empty();
+        let prefix = ReadEffect::KeySequence {
+            deadline: ReadDeadline::after(Duration::ZERO),
+        };
+
+        assert_eq!(
+            unsafe { host_read(pointer, &mut signals, prefix) },
+            Ok(ReadOutcome::TimedOut)
+        );
+        assert_eq!(CALLBACK_CALLS.load(Ordering::Relaxed), 0);
+
+        assert_eq!(
+            unsafe { host_read(pointer, &mut signals, ReadEffect::Input) },
+            Ok(ReadOutcome::Unit(TextUnit::Scalar('x')))
+        );
+        assert_eq!(CALLBACK_CALLS.load(Ordering::Relaxed), 1);
+    }
+}

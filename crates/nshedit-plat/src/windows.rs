@@ -2,8 +2,11 @@
 
 use std::io;
 use std::os::windows::io::{AsRawHandle, BorrowedHandle};
+use std::time::{Duration, Instant};
 
-use windows_sys::Win32::Foundation::ERROR_INVALID_HANDLE;
+use windows_sys::Win32::Foundation::{
+    ERROR_INVALID_HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+};
 use windows_sys::Win32::Storage::FileSystem::{FILE_TYPE_PIPE, FILE_TYPE_REMOTE, GetFileType};
 use windows_sys::Win32::System::Console::{
     CONSOLE_SCREEN_BUFFER_INFO, ENABLE_ECHO_INPUT, ENABLE_EXTENDED_FLAGS, ENABLE_LINE_INPUT,
@@ -12,6 +15,7 @@ use windows_sys::Win32::System::Console::{
     GetConsoleMode, GetConsoleScreenBufferInfo, SetConsoleMode,
 };
 use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
 #[path = "windows/input.rs"]
 mod input;
@@ -182,16 +186,17 @@ pub fn screen_size(output: BorrowedHandle<'_>) -> io::Result<(usize, usize)> {
     Ok((rows, columns))
 }
 
-/// Count bytes immediately available from a previously classified stream.
+/// Report whether a previously classified stream can be read without waiting.
 ///
-/// Pipes are inspected with the pipe API. Files and other non-console stream
-/// handles are treated as immediately readable, so their ordinary
-/// [`std::io::Read`] implementation remains authoritative for data and EOF.
-pub fn stream_bytes_ready(input: BorrowedHandle<'_>) -> io::Result<u64> {
+/// Pipes are inspected with the pipe API. A disconnected pipe is readable as
+/// end-of-input; files and other non-console streams are treated as immediately
+/// readable so their ordinary [`std::io::Read`] implementation remains the
+/// authority for data and EOF.
+fn stream_is_ready(input: BorrowedHandle<'_>) -> io::Result<bool> {
     // SAFETY: `BorrowedHandle` guarantees a live borrowed handle.
     let file_type = unsafe { GetFileType(input.as_raw_handle()) } & !FILE_TYPE_REMOTE;
     if file_type != FILE_TYPE_PIPE {
-        return Ok(1);
+        return Ok(true);
     }
 
     let mut available = 0;
@@ -213,13 +218,52 @@ pub fn stream_bytes_ready(input: BorrowedHandle<'_>) -> io::Result<u64> {
             error.kind(),
             io::ErrorKind::BrokenPipe | io::ErrorKind::NotConnected
         ) {
-            Ok(0)
+            Ok(true)
         } else {
             Err(error)
         }
     } else {
-        Ok(u64::from(available))
+        Ok(available != 0)
     }
+}
+
+const STREAM_READ_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Wait for a byte-stream handle to become readable for at most `timeout`.
+///
+/// Console handles have a kernel-signalled readiness state and are handled by
+/// [`ConsoleReader`]. Synchronous pipe handles do not expose a separate
+/// waitable read event, so this path uses bounded, sleeping peeks without
+/// changing the caller's pipe mode or starting an uninterruptible reader.
+pub fn wait_for_stream_input(input: BorrowedHandle<'_>, timeout: Duration) -> io::Result<bool> {
+    let started_at = Instant::now();
+    loop {
+        if stream_is_ready(input)? {
+            return Ok(true);
+        }
+        let remaining = timeout.saturating_sub(started_at.elapsed());
+        if remaining.is_zero() {
+            return Ok(false);
+        }
+        std::thread::sleep(remaining.min(STREAM_READ_POLL_INTERVAL));
+    }
+}
+
+pub(super) fn wait_for_handle(input: BorrowedHandle<'_>, timeout: Duration) -> io::Result<bool> {
+    let milliseconds = wait_milliseconds(timeout);
+    // SAFETY: `BorrowedHandle` proves the handle remains live for the wait.
+    match unsafe { WaitForSingleObject(input.as_raw_handle(), milliseconds) } {
+        WAIT_OBJECT_0 => Ok(true),
+        WAIT_TIMEOUT => Ok(false),
+        WAIT_FAILED => Err(io::Error::last_os_error()),
+        result => Err(io::Error::other(format!(
+            "unexpected input wait result {result:#x}"
+        ))),
+    }
+}
+
+fn wait_milliseconds(timeout: Duration) -> u32 {
+    u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX - 1)
 }
 
 fn editing_input_mode(original: u32) -> u32 {

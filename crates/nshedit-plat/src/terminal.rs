@@ -1,7 +1,10 @@
 //! Safe interactive-terminal control without exposing termios representation.
 
 use std::io;
+#[cfg(target_vendor = "apple")]
+use std::os::fd::AsRawFd;
 use std::os::fd::BorrowedFd;
+use std::time::Duration;
 
 use crate::termios::{self, Termios};
 
@@ -560,6 +563,59 @@ pub fn bytes_ready(input: BorrowedFd<'_>) -> io::Result<u64> {
     rustix::io::ioctl_fionread(input).map_err(Into::into)
 }
 
+/// Wait for a descriptor to become readable for at most `timeout`.
+///
+/// Readability includes end-of-input and an outstanding descriptor error, so
+/// the following read remains the authority for the resulting byte count or
+/// diagnostic. Apple terminals use `select`: the platform documents that its
+/// `poll` implementation does not support `/dev/tty` descriptors.
+pub fn wait_for_input(input: BorrowedFd<'_>, timeout: Duration) -> io::Result<bool> {
+    let timeout = rustix::event::Timespec::try_from(timeout).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "input timeout exceeds the platform event range",
+        )
+    })?;
+
+    #[cfg(target_vendor = "apple")]
+    {
+        let descriptor = input.as_raw_fd();
+        let bound = descriptor.checked_add(1).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "input descriptor is too large")
+        })?;
+        let mut readable = vec![
+            rustix::event::FdSetElement::default();
+            rustix::event::fd_set_num_elements(1, bound)
+        ];
+        rustix::event::fd_set_insert(&mut readable, descriptor);
+        // SAFETY: `input` proves the sole descriptor is live, `readable` was
+        // sized by rustix for `bound`, and neither out-of-scope set is passed.
+        unsafe { rustix::event::select(bound, Some(&mut readable), None, None, Some(&timeout)) }
+            .map(|ready| ready != 0)
+            .map_err(Into::into)
+    }
+
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        use rustix::event::{PollFd, PollFlags};
+
+        let mut descriptors = [PollFd::from_borrowed_fd(input, PollFlags::IN)];
+        let ready =
+            rustix::event::poll(&mut descriptors, Some(&timeout)).map_err(io::Error::from)?;
+        if ready == 0 {
+            return Ok(false);
+        }
+        let events = descriptors[0].revents();
+        if events.contains(PollFlags::NVAL) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "input descriptor became invalid while waiting",
+            ));
+        }
+        Ok(events.intersects(PollFlags::IN | PollFlags::HUP | PollFlags::ERR))
+    }
+}
+
 fn apply_optional(
     descriptor: BorrowedFd<'_>,
     when: ApplyWhen,
@@ -572,7 +628,9 @@ fn apply_optional(
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
     use std::os::fd::{AsFd, OwnedFd};
+    use std::os::unix::net::UnixStream;
 
     use super::*;
 
@@ -651,6 +709,15 @@ mod tests {
             io::ErrorKind::NotConnected
         );
         controller.restore().expect("nothing to restore");
+    }
+
+    #[test]
+    fn zero_timeout_reports_readiness() {
+        let (reader, mut writer) = UnixStream::pair().expect("socket pair");
+
+        assert!(!wait_for_input(reader.as_fd(), Duration::ZERO).expect("empty readiness"));
+        writer.write_all(b"x").expect("buffer one byte");
+        assert!(wait_for_input(reader.as_fd(), Duration::ZERO).expect("buffered readiness"));
     }
 
     fn assert_same_attributes(actual: TerminalAttributes, expected: TerminalAttributes) {

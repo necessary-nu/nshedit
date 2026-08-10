@@ -1,4 +1,5 @@
 use std::io;
+use std::time::Duration;
 
 use crate::domain::{
     Action, ArgumentCommand, Binding, CommandName, CommandSequence, EditingMode, EditorConfig,
@@ -199,7 +200,8 @@ fn driver_decodes_and_accepts_utf8() {
 
 #[test]
 fn prefix_timeout_uses_exact_binding() {
-    let mut first_editor = editor(EditorConfig::default());
+    let timeout = Duration::from_millis(25);
+    let mut first_editor = editor(EditorConfig::default().with_key_sequence_timeout(timeout));
     first_editor.bind(
         KeymapMode::Emacs,
         KeySequence::try_from("x").unwrap(),
@@ -216,7 +218,24 @@ fn prefix_timeout_uses_exact_binding() {
     let pending = read(settle(&mut driver, &mut first_editor, begin, &mut output));
     let step = input_unit(&mut driver, &mut first_editor, &pending, 'x');
     let pending = read(step);
-    assert_eq!(pending.request(), &ReadEffect::KeySequence);
+    let ReadEffect::KeySequence { deadline } = *pending.request() else {
+        panic!("an ambiguous binding must carry a key-sequence deadline");
+    };
+    assert_eq!(deadline.timeout(), timeout);
+
+    let step = driver
+        .resume_read(
+            &mut first_editor,
+            &pending,
+            Ok(ReadOutcome::Bytes(vec![0xc3].into_boxed_slice())),
+        )
+        .unwrap();
+    let pending = read(step);
+    assert_eq!(
+        pending.request(),
+        &ReadEffect::KeySequence { deadline },
+        "an incomplete byte sequence must not restart the prefix deadline"
+    );
     let step = driver
         .resume_read(&mut first_editor, &pending, Ok(ReadOutcome::TimedOut))
         .unwrap();

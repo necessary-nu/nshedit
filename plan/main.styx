@@ -3572,12 +3572,20 @@ children (
             {
                 id quality-key-sequence-timeout
                 title "Honor configured key-sequence timeouts"
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:17.690322085Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: crates/nshedit/src/editor/system_input.rs polls immediately while the ABI driver can block indefinitely, so the configured key-sequence timeout is not implemented. Carry an explicit deadline through the native read protocol and host adapter, wait only for the remaining duration, and resolve ambiguous sequences consistently on timeout across native and C entry points."
+                    }
+
+                    {
+                        at 2026-08-10T13:47:58.819986107Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }

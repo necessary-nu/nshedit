@@ -31,6 +31,7 @@ pub use terminal::TerminalMode;
 pub use text::{OpaqueCodePoint, Text, TextIndex, TextSpan, TextUnit};
 
 use std::fmt;
+use std::time::Duration;
 
 /// The editing command family selected for a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -78,11 +79,26 @@ pub enum Buffering {
 
 // [spec:nshedit:req:core.typed-domain+1]
 /// Typed construction policy for a native editor session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EditorConfig {
     editing_mode: EditingMode,
     signal_policy: SignalPolicy,
     buffering: Buffering,
+    key_sequence_timeout: Duration,
+}
+
+/// Time allowed between logical units of an ambiguous key sequence.
+pub const DEFAULT_KEY_SEQUENCE_TIMEOUT: Duration = Duration::from_millis(500);
+
+impl Default for EditorConfig {
+    fn default() -> Self {
+        Self {
+            editing_mode: EditingMode::default(),
+            signal_policy: SignalPolicy::default(),
+            buffering: Buffering::default(),
+            key_sequence_timeout: DEFAULT_KEY_SEQUENCE_TIMEOUT,
+        }
+    }
 }
 
 impl EditorConfig {
@@ -107,6 +123,13 @@ impl EditorConfig {
         self
     }
 
+    /// Select how long an ambiguous key sequence may wait for another unit.
+    #[must_use]
+    pub const fn with_key_sequence_timeout(mut self, timeout: Duration) -> Self {
+        self.key_sequence_timeout = timeout;
+        self
+    }
+
     /// The configured command family.
     #[must_use]
     pub const fn editing_mode(self) -> EditingMode {
@@ -123,6 +146,12 @@ impl EditorConfig {
     #[must_use]
     pub const fn buffering(self) -> Buffering {
         self.buffering
+    }
+
+    /// The maximum delay between logical units of an ambiguous key sequence.
+    #[must_use]
+    pub const fn key_sequence_timeout(self) -> Duration {
+        self.key_sequence_timeout
     }
 }
 
@@ -221,11 +250,17 @@ mod tests {
         let config = EditorConfig::default()
             .with_editing_mode(EditingMode::Vi)
             .with_signal_policy(SignalPolicy::Ignore)
-            .with_buffering(Buffering::Character);
+            .with_buffering(Buffering::Character)
+            .with_key_sequence_timeout(Duration::from_millis(25));
 
         assert_eq!(config.editing_mode(), EditingMode::Vi);
         assert_eq!(config.signal_policy(), SignalPolicy::Ignore);
         assert_eq!(config.buffering(), Buffering::Character);
+        assert_eq!(config.key_sequence_timeout(), Duration::from_millis(25));
+        assert_eq!(
+            EditorConfig::default().key_sequence_timeout(),
+            DEFAULT_KEY_SEQUENCE_TIMEOUT
+        );
     }
 
     #[test]

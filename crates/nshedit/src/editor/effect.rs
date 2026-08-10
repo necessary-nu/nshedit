@@ -6,6 +6,7 @@
 
 use std::ffi::OsString;
 use std::fmt;
+use std::time::{Duration, Instant};
 
 use crate::domain::{
     CommandName, Direction, KeymapMode, Outcome, Prompt, RepeatCount, ScreenSize, Signal, Text,
@@ -47,14 +48,52 @@ impl Effect for PromptEffect {
     type Response = EffectResult<Prompt>;
 }
 
+/// A monotonic deadline that retains its original budget across host retries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ReadDeadline {
+    started_at: Instant,
+    timeout: Duration,
+}
+
+impl ReadDeadline {
+    /// Start a deadline with this much time remaining.
+    #[must_use]
+    pub fn after(timeout: Duration) -> Self {
+        Self {
+            started_at: Instant::now(),
+            timeout,
+        }
+    }
+
+    /// Time left before the deadline, saturating at zero.
+    #[must_use]
+    pub fn remaining(self) -> Duration {
+        self.remaining_at(Instant::now())
+    }
+
+    /// The original budget carried by this deadline.
+    #[must_use]
+    pub const fn timeout(self) -> Duration {
+        self.timeout
+    }
+
+    fn remaining_at(self, now: Instant) -> Duration {
+        self.timeout
+            .saturating_sub(now.saturating_duration_since(self.started_at))
+    }
+}
+
 /// Ask the host for input, end of input, a signal, or a prefix timeout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ReadEffect {
     /// Wait normally for fresh input.
     #[default]
     Input,
-    /// Wait long enough to disambiguate a key-sequence prefix.
-    KeySequence,
+    /// Wait until this deadline to disambiguate a key-sequence prefix.
+    KeySequence {
+        /// The monotonic deadline shared by every retry of this request.
+        deadline: ReadDeadline,
+    },
     /// Read the one logical unit that selects an alias name.
     AliasSelector,
 }
@@ -583,6 +622,24 @@ mod tests {
                 arguments: vec![Text::from("word")],
             },
             Ok(Outcome::Continue),
+        );
+    }
+
+    #[test]
+    fn read_deadline_never_regains_elapsed_time() {
+        let started_at = Instant::now();
+        let deadline = ReadDeadline {
+            started_at,
+            timeout: Duration::from_millis(50),
+        };
+
+        assert_eq!(
+            deadline.remaining_at(started_at + Duration::from_millis(20)),
+            Duration::from_millis(30)
+        );
+        assert_eq!(
+            deadline.remaining_at(started_at + Duration::from_millis(80)),
+            Duration::ZERO
         );
     }
 

@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 use std::io;
 use std::os::windows::io::{AsRawHandle, BorrowedHandle};
+use std::time::{Duration, Instant};
 
 use windows_sys::Win32::System::Console::{
     GetNumberOfConsoleInputEvents, INPUT_RECORD, KEY_EVENT, KEY_EVENT_RECORD, LEFT_ALT_PRESSED,
@@ -14,7 +15,7 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     VK_PRIOR, VK_RIGHT, VK_SPACE, VK_TAB, VK_UP, VK_Z,
 };
 
-use super::{HandleKind, handle_kind};
+use super::{HandleKind, handle_kind, wait_for_handle};
 
 const HIGH_SURROGATE_START: u16 = 0xd800;
 const HIGH_SURROGATE_END: u16 = 0xdbff;
@@ -129,6 +130,32 @@ impl<'handle> ConsoleReader<'handle> {
             match self.read_record()? {
                 Some(record) => self.decode(record),
                 None => self.finish(),
+            }
+        }
+    }
+
+    /// Wait up to `timeout` for the next meaningful console result.
+    ///
+    /// Key-up and other ignored records do not restart the timeout. Buffered
+    /// decoded results are returned before the operating-system handle is
+    /// consulted.
+    pub fn read_for(&mut self, timeout: Duration) -> io::Result<Option<ConsoleRead>> {
+        let started_at = Instant::now();
+        loop {
+            if let Some(read) = self.ready.pop_front() {
+                return Ok(Some(read));
+            }
+            if self.has_records()? {
+                match self.read_record()? {
+                    Some(record) => self.decode(record),
+                    None => self.finish(),
+                }
+                continue;
+            }
+
+            let remaining = timeout.saturating_sub(started_at.elapsed());
+            if !wait_for_handle(self.input, remaining)? {
+                return Ok(None);
             }
         }
     }

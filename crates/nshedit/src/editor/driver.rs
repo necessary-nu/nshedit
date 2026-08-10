@@ -20,8 +20,8 @@ use crate::domain::{
 use super::effect::{
     AliasEffect, CompletionEffect, EditorCommandEffect, Effect, EffectResult, ExternalEditEffect,
     HistoryLineEffect, HistoryNavigateEffect, HistoryRecordEffect, HistorySearchEffect,
-    HistoryWordEffect, HostFailure, PromptEffect, PromptSide, ReadEffect, ReadOutcome,
-    ResizeEffect, SignalEffect, UserCommandEffect,
+    HistoryWordEffect, HostFailure, PromptEffect, PromptSide, ReadDeadline, ReadEffect,
+    ReadOutcome, ResizeEffect, SignalEffect, UserCommandEffect,
 };
 use super::{CompletionOutcome, Editor, RenderError, TerminalControl, Tokenizer};
 use decode::Decoder;
@@ -158,6 +158,7 @@ pub struct ReadDriver {
     decoder: Decoder,
     replay: VecDeque<TextUnit>,
     key_sequence: Text,
+    key_sequence_deadline: Option<ReadDeadline>,
     ambiguous: Option<(Binding, usize, TextUnit)>,
     repeat_argument: Option<sequence::RepeatArgument>,
     repetition: Option<Repetition>,
@@ -199,6 +200,7 @@ impl ReadDriver {
             decoder: Decoder::default(),
             replay: VecDeque::new(),
             key_sequence: Text::default(),
+            key_sequence_deadline: None,
             ambiguous: None,
             repeat_argument: None,
             repetition: None,
@@ -346,7 +348,7 @@ impl ReadDriver {
                 }
             }
             ReadOutcome::Signal(signal) => self.handle_signal(editor, signal),
-            ReadOutcome::TimedOut if purpose == ReadEffect::KeySequence => {
+            ReadOutcome::TimedOut if matches!(purpose, ReadEffect::KeySequence { .. }) => {
                 self.handle_timeout(editor)
             }
             ReadOutcome::TimedOut => Err(self.fail(editor, DriverError::UnexpectedTimeout)),
@@ -471,7 +473,11 @@ impl ReadDriver {
         let effect = if self.key_sequence.is_empty() {
             ReadEffect::Input
         } else {
-            ReadEffect::KeySequence
+            ReadEffect::KeySequence {
+                deadline: self
+                    .key_sequence_deadline
+                    .expect("a pending key-sequence prefix has an armed deadline"),
+            }
         };
         Ok(ReadStep::Read(self.pending(effect)))
     }
@@ -510,9 +516,13 @@ impl ReadDriver {
             }
             OwnedLookup::Ambiguous(binding) => {
                 self.ambiguous = Some((binding, self.key_sequence.len(), unit));
+                self.arm_key_sequence_deadline(editor);
                 self.advance(editor)
             }
-            OwnedLookup::Prefix => self.advance(editor),
+            OwnedLookup::Prefix => {
+                self.arm_key_sequence_deadline(editor);
+                self.advance(editor)
+            }
             OwnedLookup::Unbound => self.handle_unbound(editor, unit),
         }
     }
@@ -524,7 +534,7 @@ impl ReadDriver {
     ) -> Result<ReadStep, DriverError> {
         if let Some((binding, prefix_len, invoking)) = self.ambiguous.take() {
             let suffix: Vec<_> = self.key_sequence.as_units()[prefix_len..].to_vec();
-            self.key_sequence.clear();
+            self.clear_key_sequence();
             for unit in suffix.into_iter().rev() {
                 self.replay.push_front(unit);
             }
@@ -537,7 +547,7 @@ impl ReadDriver {
                 TextUnit::Scalar(character) => !character.is_control(),
                 TextUnit::RawByte(_) | TextUnit::OpaqueCodePoint(_) => true,
             };
-        self.key_sequence.clear();
+        self.clear_key_sequence();
         if insert {
             let repeat = self.take_repeat(None);
             let action = Action::Insert(std::iter::once(unit).collect());
@@ -554,7 +564,7 @@ impl ReadDriver {
         &mut self,
         editor: &mut Editor<T>,
     ) -> Result<ReadStep, DriverError> {
-        self.key_sequence.clear();
+        self.clear_key_sequence();
         if let Some((binding, _, invoking)) = self.ambiguous.take() {
             self.dispatch_binding(editor, binding, invoking)
         } else {
@@ -569,10 +579,10 @@ impl ReadDriver {
         editor: &mut Editor<T>,
     ) -> Result<ReadStep, DriverError> {
         if let Some((binding, _, invoking)) = self.ambiguous.take() {
-            self.key_sequence.clear();
+            self.clear_key_sequence();
             return self.dispatch_binding(editor, binding, invoking);
         }
-        self.key_sequence.clear();
+        self.clear_key_sequence();
         self.repeat_argument = None;
         self.cancel_pending_sequence(editor)?;
         self.complete(editor, ReadResult::EndOfInput)
@@ -584,7 +594,7 @@ impl ReadDriver {
         binding: Binding,
         invoking: TextUnit,
     ) -> Result<ReadStep, DriverError> {
-        self.key_sequence.clear();
+        self.clear_key_sequence();
         self.ambiguous = None;
         self.dispatch_resolved_binding(editor, binding, invoking, None)
     }
@@ -624,6 +634,16 @@ impl ReadDriver {
                 self.advance(editor)
             }
         }
+    }
+
+    fn arm_key_sequence_deadline<T: TerminalControl>(&mut self, editor: &Editor<T>) {
+        self.key_sequence_deadline =
+            Some(ReadDeadline::after(editor.config().key_sequence_timeout()));
+    }
+
+    fn clear_key_sequence(&mut self) {
+        self.key_sequence.clear();
+        self.key_sequence_deadline = None;
     }
 
     fn dispatch_user_command<T: TerminalControl>(
@@ -1040,7 +1060,7 @@ impl ReadDriver {
             self.eof_pending = false;
             self.replay.clear();
         }
-        self.key_sequence.clear();
+        self.clear_key_sequence();
         self.ambiguous = None;
         self.repeat_argument = None;
         self.repetition = None;

@@ -57,8 +57,8 @@ impl<'io> SystemInput<'io> {
     pub fn read(&mut self, input: &mut dyn Read, purpose: ReadEffect) -> io::Result<ReadOutcome> {
         #[cfg(unix)]
         {
-            if purpose == ReadEffect::KeySequence
-                && nshedit_plat::terminal::bytes_ready(self.input)? == 0
+            if let ReadEffect::KeySequence { deadline } = purpose
+                && !nshedit_plat::terminal::wait_for_input(self.input, deadline.remaining())?
             {
                 return Ok(ReadOutcome::TimedOut);
             }
@@ -68,8 +68,8 @@ impl<'io> SystemInput<'io> {
         {
             match &mut self.source {
                 Source::Console(console) => {
-                    let read = if purpose == ReadEffect::KeySequence {
-                        let Some(read) = console.try_read()? else {
+                    let read = if let ReadEffect::KeySequence { deadline } = purpose {
+                        let Some(read) = console.read_for(deadline.remaining())? else {
                             return Ok(ReadOutcome::TimedOut);
                         };
                         read
@@ -79,8 +79,11 @@ impl<'io> SystemInput<'io> {
                     Ok(console_outcome(read))
                 }
                 Source::Stream(handle) => {
-                    if purpose == ReadEffect::KeySequence
-                        && nshedit_plat::terminal::stream_bytes_ready(*handle)? == 0
+                    if let ReadEffect::KeySequence { deadline } = purpose
+                        && !nshedit_plat::terminal::wait_for_stream_input(
+                            *handle,
+                            deadline.remaining(),
+                        )?
                     {
                         return Ok(ReadOutcome::TimedOut);
                     }
@@ -106,5 +109,36 @@ fn console_outcome(read: nshedit_plat::terminal::ConsoleRead) -> ReadOutcome {
         nshedit_plat::terminal::ConsoleRead::Interrupt => ReadOutcome::Signal(Signal::Interrupt),
         nshedit_plat::terminal::ConsoleRead::Resize => ReadOutcome::Signal(Signal::Resize),
         nshedit_plat::terminal::ConsoleRead::EndOfInput => ReadOutcome::EndOfInput,
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::super::effect::ReadDeadline;
+    use super::*;
+    use std::io::Write;
+    use std::os::fd::AsFd;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+
+    #[test]
+    fn deadline_reads_ready_or_times_out() {
+        let (mut input, mut writer) = UnixStream::pair().expect("socket pair");
+        let descriptor = input.try_clone().expect("descriptor clone");
+        let mut system = SystemInput::new(descriptor.as_fd()).expect("system input");
+        let expired = ReadEffect::KeySequence {
+            deadline: ReadDeadline::after(Duration::ZERO),
+        };
+
+        assert_eq!(
+            system.read(&mut input, expired).expect("empty read"),
+            ReadOutcome::TimedOut
+        );
+
+        writer.write_all(b"x").expect("buffer input");
+        assert_eq!(
+            system.read(&mut input, expired).expect("ready read"),
+            ReadOutcome::Bytes(Box::new(*b"x"))
+        );
     }
 }
