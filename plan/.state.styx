@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-10T15:17:35.164582797Z
+last_sync_at 2026-08-10T15:19:19.851802417Z
 
 rule_versions (
     {id abi.binding-dispatch, version 0}
@@ -521,6 +521,11 @@ impl_evidence (
         {impl_name target-impl, rule readline.append-history-fn}
         {impl_name target-impl, rule readline.write-history-fn}
     )}
+    {id quality-prompt-style-state, covered_rules (
+        core.incremental-render
+    ), covered_claims (
+        {impl_name native-impl, rule core.incremental-render}
+    )}
     {id quality-secure-temp-files, covered_rules (
         readline.history-truncate-file-fn
     ), covered_claims (
@@ -647,10 +652,5 @@ impl_evidence (
         {impl_name native-impl, rule platform.windows-console}
     ), rule_versions_seen (
         {id platform.windows-console, version 0}
-    )}
-    {id quality-prompt-style-state, covered_rules (
-        core.incremental-render
-    ), covered_claims (
-        {impl_name native-impl, rule core.incremental-render}
     )}
 )
