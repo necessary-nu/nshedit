@@ -11,6 +11,11 @@ use windows_sys::Win32::System::Console::{
     GetConsoleMode, GetConsoleScreenBufferInfo, SetConsoleMode,
 };
 
+#[path = "windows/input.rs"]
+mod input;
+
+pub use input::{ConsoleRead, ConsoleReader};
+
 /// The terminal behavior available through a borrowed Windows handle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandleKind {

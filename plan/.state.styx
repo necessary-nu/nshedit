@@ -552,4 +552,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name native-impl, rule platform.windows-console}
     )}
+    {id windows-input, covered_rules (
+        platform.windows-input
+    ), covered_claims (
+        {impl_name native-impl, rule platform.windows-input}
+    )}
 )

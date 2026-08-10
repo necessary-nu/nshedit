@@ -3401,6 +3401,14 @@ children (
                     native-impl ([spec:nshedit:req:platform.windows-input])
                 }
                 deps (windows-platform)
+                log (
+                    {
+                        at 2026-08-10T00:36:15.056225034Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
         )
     }
