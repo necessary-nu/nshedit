@@ -3741,12 +3741,27 @@ children (
                 title "Reconcile the errata register with the maintained Rust code"
                 kind @docs
                 deps (quality-history-save-errors quality-delete-range quality-linux-target-contract)
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:24.190036167Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: docs/errata.md still describes retired platform stubs, blanket varargs failures, and the removed C oracle. Reconcile every active entry against the detailed compatibility corpus plus the maintained Rust code, remove retired paths and evidence, record the newly corrected history/delete semantics, and leave each remaining divergence with a current owner and reproducible Rust-owned evidence."
+                    }
+
+                    {
+                        at 2026-08-10T15:28:42.427909496Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-10T15:29:56.420033737Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
