@@ -583,4 +583,9 @@ impl_evidence (
     ), rule_versions_seen (
         {id platform.windows-console, version 0}
     )}
+    {id macos-acceptance, covered_rules (
+        abi.darwin-drop-in
+    ), covered_claims (
+        {impl_name native-impl, rule abi.darwin-drop-in}
+    )}
 )

@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 #
-# Install nshedit, with the symlinks that let a binary linked against libedit
-# find it.
+# Install nshedit, with the platform's libedit-compatible link names.
 #
 #   packaging/install.sh [--prefix DIR] [--libdir DIR] [--includedir DIR]
 #                        [--profile debug|release] [--no-compat] [--dry-run]
 #
-# The layout, all of it one object and five names:
+# Linux installs one object under these names:
 #
 #   libnshedit.so.0.0.0                    the object
 #   libnshedit.so.0    -> libnshedit.so.0.0.0   the SONAME
@@ -14,6 +13,14 @@
 #   libedit.so         -> libnshedit.so.0   ] compat, --no-compat skips these
 #   libedit.so.0       -> libnshedit.so.0   ]
 #   libedit.so.2       -> libnshedit.so.0   ]
+#
+# macOS installs the same arrangement using Mach-O names:
+#
+#   libnshedit.0.0.0.dylib
+#   libnshedit.0.dylib -> libnshedit.0.0.0.dylib
+#   libnshedit.dylib   -> libnshedit.0.dylib
+#   libedit.dylib      -> libnshedit.0.dylib   ] compat
+#   libedit.3.dylib    -> libnshedit.0.dylib   ]
 #
 # WHY BOTH libedit.so.0 AND libedit.so.2. A shared object's SONAME is copied
 # into every program that links it, as DT_NEEDED, and the loader then looks for
@@ -28,11 +35,9 @@
 # readline and now does not start. The readline surface here is a compatibility
 # layer over libedit's, not a reimplementation of GNU readline.
 #
-# The compat names are also filenames a distribution's own package manager
-# claims. That is the point — see the memory this port is built on, that
-# nshedit subsumes libedit rather than sitting beside it — but it is not
-# something to do by accident, so every link is printed as it is made and
-# --no-compat turns all of them off.
+# The compat names are also filenames another libedit installation may claim.
+# That is not something to create by accident, so every link is printed as it
+# is made and --no-compat turns all of them off.
 
 set -euo pipefail
 
@@ -76,20 +81,42 @@ esac
 # What we are installing, and whether it is what we think it is.
 # ---------------------------------------------------------------------------
 
-SONAME=libnshedit.so.0
-REAL=libnshedit.so.0.0.0
+host=$(uname -s)
+case $host in
+    Linux)
+        RUNTIME_NAME=libnshedit.so.0
+        REAL=libnshedit.so.0.0.0
+        LINK_NAME=libnshedit.so
+        built=$ROOT/target/$profile/libnshedit.so
+        compat_names=(libedit.so libedit.so.0 libedit.so.2)
+        ;;
+    Darwin)
+        RUNTIME_NAME=libnshedit.0.dylib
+        REAL=libnshedit.0.0.0.dylib
+        LINK_NAME=libnshedit.dylib
+        built=$ROOT/target/$profile/libnshedit.dylib
+        compat_names=(libedit.dylib libedit.3.dylib)
+        ;;
+    *)
+        die "unsupported installation host: $host"
+        ;;
+esac
 
-built=$ROOT/target/$profile/libnshedit.so
 [ -f "$built" ] || die "no $built — run 'cargo build --$profile' first
 (for the debug profile, 'cargo build' and pass --profile debug)"
 
-# The whole layout below is derived from the SONAME, so a mismatch here means
-# every symlink would point somewhere nothing will look. Checked rather than
-# assumed, because build.rs emitting nothing is a silent failure otherwise.
-if command -v readelf > /dev/null 2>&1; then
+# The whole layout below is derived from the runtime name, so a mismatch means
+# every symlink would point somewhere nothing will look. Check it when the
+# platform's object inspection tool is available.
+if [ "$host" = Linux ] && command -v readelf > /dev/null 2>&1; then
     have=$(readelf -d "$built" 2>/dev/null | sed -n 's/.*Library soname: \[\(.*\)\].*/\1/p')
     [ -n "$have" ] || die "$built carries no SONAME — crates/nshedit-abi/build.rs did not run"
-    [ "$have" = "$SONAME" ] || die "$built carries SONAME $have, not $SONAME"
+    [ "$have" = "$RUNTIME_NAME" ] || die "$built carries SONAME $have, not $RUNTIME_NAME"
+elif [ "$host" = Darwin ] && command -v otool > /dev/null 2>&1; then
+    have=$(otool -D "$built" 2>/dev/null | awk 'NR == 2 { print $1 }')
+    [ -n "$have" ] || die "$built carries no install name — crates/nshedit-abi/build.rs did not run"
+    expected=@rpath/$RUNTIME_NAME
+    [ "$have" = "$expected" ] || die "$built carries install name $have, not $expected"
 fi
 
 headers=$ROOT/crates/nshedit-abi/include
@@ -113,16 +140,16 @@ run install -m 755 -- "$built" "$libdir/$REAL"
 # -f so a reinstall replaces the previous link rather than failing, -n so a
 # link that already points at a directory is replaced rather than followed
 # into it.
-run ln -sfn -- "$REAL" "$libdir/$SONAME"
-run ln -sfn -- "$SONAME" "$libdir/libnshedit.so"
+run ln -sfn -- "$REAL" "$libdir/$RUNTIME_NAME"
+run ln -sfn -- "$RUNTIME_NAME" "$libdir/$LINK_NAME"
 
 run install -m 644 -- "$headers/histedit.h" "$includedir/histedit.h"
 run install -m 644 -- "$headers/editline/readline.h" "$includedir/editline/readline.h"
 
 if [ "$compat" -eq 1 ]; then
     printf '\ncompat names, each claiming a filename libedit would also install:\n'
-    for name in libedit.so libedit.so.0 libedit.so.2; do
-        run ln -sfn -- "$SONAME" "$libdir/$name"
+    for name in "${compat_names[@]}"; do
+        run ln -sfn -- "$RUNTIME_NAME" "$libdir/$name"
     done
     # So that `pkg-config --cflags --libs libedit` resolves, which is how most
     # build systems find libedit rather than by guessing at -ledit.
@@ -144,13 +171,17 @@ EOF
         printf '  write %s\n' "$libdir/pkgconfig/libedit.pc"
     fi
 else
-    printf '\nno compat names (--no-compat): a binary with DT_NEEDED libedit.so.0\n'
-    printf 'or libedit.so.2 will not find this install.\n'
+    printf '\nno compat names (--no-compat): -ledit will not select this install.\n'
 fi
 
-printf '\ndone. A newly linked program will record DT_NEEDED %s, which is what\n' "$SONAME"
-printf 'it actually loaded; the libedit names carry binaries linked before us.\n'
-if [ "$compat" -eq 1 ] && [ "$dry" -eq 0 ]; then
+if [ "$host" = Linux ]; then
+    printf '\ndone. A newly linked program will record DT_NEEDED %s, which is what\n' "$RUNTIME_NAME"
+    printf 'it actually loaded; the libedit names carry binaries linked before us.\n'
+else
+    printf '\ndone. A newly linked program will record @rpath/%s.\n' "$RUNTIME_NAME"
+    printf 'The libedit names let -ledit select that object at link time.\n'
+fi
+if [ "$host" = Linux ] && [ "$compat" -eq 1 ] && [ "$dry" -eq 0 ]; then
     printf '\nIf %s is on the default search path, this now shadows the\n' "$libdir"
     printf "system libedit for every process that starts. That is the intent, but run\n"
     printf 'ldconfig and check `ldd` on something that matters before assuming it worked.\n'
