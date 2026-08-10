@@ -5,7 +5,7 @@
 set -euo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
-SRC=$CONF_DIR/aux/ub_corpus.c
+SRC=$CONF_DIR/fixtures/ub_corpus.c
 OUT_DIR=$OUT/ub
 REPORT=$REPORTS/ub
 BIN=$OUT_DIR/ub

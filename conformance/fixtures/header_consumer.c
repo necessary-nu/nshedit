@@ -1,5 +1,5 @@
 /*
- * Consumer proof for the committed generated headers.
+ * C consumer proof for the committed generated headers.
  *
  * This is a real program rather than a link stub: it reads every completed
  * record shape exposed by the headers, calls both compatibility surfaces,

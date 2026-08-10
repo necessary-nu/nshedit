@@ -75,7 +75,7 @@ pkg_status=$?
 if [ "$pkg_status" -eq 0 ]; then
     read -r -a args <<< "$pkg_flags"
     if "$CC" -std=c11 -O0 -g -Wall -Wextra -Werror \
-            "$CONF_DIR/aux/soname_consumer.c" "${args[@]}" \
+            "$CONF_DIR/fixtures/soname_consumer.c" "${args[@]}" \
             -Wl,-rpath,"$PREFIX/lib" \
             -o "$BIN/consumer" > "$REPORT/build.log" 2>&1; then
         needed=$(

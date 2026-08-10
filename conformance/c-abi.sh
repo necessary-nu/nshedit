@@ -17,7 +17,7 @@ mkdir -p -- "$(dirname -- "$BIN")" "$WORK"
 
 "$CC" -std=c11 -O0 -g -Wall -Wextra -Werror \
     -I"$HEADERS" \
-    "$CONF_DIR/aux/header_consumer.c" \
+    "$CONF_DIR/fixtures/header_consumer.c" \
     -L"$PORT_LIB_DIR" -Wl,-rpath,"$PORT_LIB_DIR" -lnshedit \
     -o "$BIN"
 
