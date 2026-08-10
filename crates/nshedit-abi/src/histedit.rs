@@ -779,15 +779,13 @@ pub unsafe extern "C" fn el_deletestr(el: *mut EditLine, count: c_int) {
 // [spec:libedit:sem:histedit.el-replacestr-fn]
 pub use crate::eln::el_replacestr;
 
-// [spec:libedit:def:histedit.el-deletestr1-fn]
-// [spec:libedit:sem:histedit.el-deletestr1-fn]
+// [spec:libedit:def:histedit.el-deletestr1-fn+1]
+// [spec:libedit:sem:histedit.el-deletestr1-fn+1]
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_deletestr1(el: *mut EditLine, start: c_int, end: c_int) -> c_int {
-    // The return is `end - start` whatever was actually removed, and the
-    // cursor is only clamped at the low end — ERR-buffer-15, ERR-buffer-16,
-    // ERR-buffer-17 and ERR-buffer-18, all reproduced in the core because
-    // `rl_delete_text` is layered on this call.
+    // The adapter normalizes the C offsets into one checked half-open span and
+    // rebases the cursor after the edit. See `[dec:libedit:checked-delete-range]`.
     // SAFETY: `el` must be non-NULL.
     unsafe { &mut *el }.delete_range(start, end)
 }

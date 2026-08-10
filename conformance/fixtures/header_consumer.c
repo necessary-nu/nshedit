@@ -37,6 +37,29 @@ static int my_hook(void) { return 0; }
 static int my_getc(EditLine *el, wchar_t *wc) { (void)el; (void)wc; return 0; }
 static char *my_compentry(const char *t, int s) { (void)t; (void)s; return NULL; }
 
+static int wide_line_is(EditLine *el, const wchar_t *expected, size_t cursor) {
+    const LineInfoW *line = el_wline(el);
+    size_t length = wcslen(expected);
+    return line != NULL && line->buffer != NULL &&
+           (size_t)(line->lastchar - line->buffer) == length &&
+           (size_t)(line->cursor - line->buffer) == cursor &&
+           wmemcmp(line->buffer, expected, length) == 0;
+}
+
+// [spec:libedit:sem:chared.el-deletestr1-fn+1/test/integration]
+// [spec:libedit:sem:histedit.el-deletestr1-fn+1/test/integration]
+static void check_delete_range(EditLine *el) {
+    ok("el_winsertstr for range delete", el_winsertstr(el, L"abcdefgh") == 0);
+    ok("el_deletestr1 removes range", el_deletestr1(el, 1, 3) == 2 &&
+                                           wide_line_is(el, L"adefgh", 6));
+    ok("el_deletestr1 accepts line end", el_deletestr1(el, 4, 6) == 2 &&
+                                             wide_line_is(el, L"adef", 4));
+    ok("el_deletestr1 clamps oversized end", el_deletestr1(el, 2, 99) == 2 &&
+                                                  wide_line_is(el, L"ad", 2));
+    ok("el_deletestr1 rejects negative", el_deletestr1(el, -1, 1) == 0 &&
+                                             wide_line_is(el, L"ad", 2));
+}
+
 static rl_hook_func_t *hook = my_hook;
 static el_rfunc_t getcfn = my_getc;
 static rl_compentry_func_t *compentry = my_compentry;
@@ -117,6 +140,7 @@ int main(int argc, char **argv) {
     ok("LineInfoW fields are ordered", li != NULL && li->buffer != NULL &&
                                            li->cursor >= li->buffer &&
                                            li->lastchar >= li->buffer);
+    check_delete_range(el);
     el_end(el);
     if (devnull != NULL) {
         fclose(devnull);

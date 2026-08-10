@@ -271,16 +271,47 @@ fn accepted_line_has_one_newline() {
     assert_eq!(editor.editor().line(), &text("second\n"));
 }
 
+// [spec:libedit:sem:chared.el-deletestr1-fn+1/test]
+// [spec:libedit:sem:histedit.el-deletestr1-fn+1/test]
 #[test]
-fn range_delete_reproduces_a_c_defect() {
+fn range_delete_removes_span() {
+    let mut editor = editor();
+    assert!(editor.replace_line(text("abcdefgh")));
+    assert_eq!(editor.delete_range(1, 3), 2);
+    assert_eq!(editor.editor().line(), &text("adefgh"));
+    assert_eq!(editor.editor().cursor().get(), 6);
+
+    assert_eq!(editor.move_cursor(-3), 3);
+    assert_eq!(editor.delete_range(2, 5), 3);
+    assert_eq!(editor.editor().line(), &text("adh"));
+    assert_eq!(editor.editor().cursor().get(), 2);
+
+    assert_eq!(editor.move_cursor(-2), 0);
+    assert_eq!(editor.delete_range(1, 2), 1);
+    assert_eq!(editor.editor().line(), &text("ah"));
+    assert_eq!(editor.editor().cursor().get(), 0);
+}
+
+// [spec:libedit:sem:chared.el-deletestr1-fn+1/test]
+// [spec:libedit:sem:histedit.el-deletestr1-fn+1/test]
+#[test]
+fn range_delete_normalizes_bounds() {
     let mut editor = editor();
     assert!(editor.replace_line(text("abcdef")));
-    assert_eq!(editor.delete_range(1, 3), 2);
-    assert_eq!(editor.editor().line(), &text("aded"));
 
-    assert_eq!(editor.delete_range(2, 99), 0);
-    assert_eq!(editor.delete_range(-1, 2), 0);
-    assert_eq!(editor.editor().line(), &text("aded"));
+    for (start, end) in [(-1, 2), (1, -1), (3, 3), (4, 2), (6, 7)] {
+        assert_eq!(editor.delete_range(start, end), 0, "{start}..{end}");
+        assert_eq!(editor.editor().line(), &text("abcdef"), "{start}..{end}");
+        assert_eq!(editor.editor().cursor().get(), 6, "{start}..{end}");
+    }
+
+    assert_eq!(editor.delete_range(4, 6), 2);
+    assert_eq!(editor.editor().line(), &text("abcd"));
+    assert_eq!(editor.editor().cursor().get(), 4);
+
+    assert_eq!(editor.delete_range(2, 99), 2);
+    assert_eq!(editor.editor().line(), &text("ab"));
+    assert_eq!(editor.editor().cursor().get(), 2);
 }
 
 #[test]

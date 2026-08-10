@@ -199,6 +199,41 @@ fn erasing_the_entire_line_erases_nothing() {
     }
 }
 
+/// `rl_delete_text` delegates range normalization to `el_deletestr1` and
+/// returns the number of wide characters removed. The native cursor follows
+/// the edit, while the byte-oriented readline position globals remain stale
+/// until `_rl_update_pos` republishes them.
+// [spec:libedit:sem:readline.rl-delete-text-fn+1/test]
+#[test]
+fn delete_text_returns_removed_count() {
+    let _g = globals();
+    let _ed = Piped::install();
+    // SAFETY: single-threaded under the lock; the runtime owns the fixture's
+    // editor and the position globals are restored before returning.
+    unsafe {
+        assert_eq!(
+            crate::eln::el_insertstr(runtime_editor(), c"abcdefgh".as_ptr()),
+            0
+        );
+        rl_point = 8;
+        rl_end = 8;
+
+        assert_eq!(rl_delete_text(1, 3), 2);
+        assert_eq!((&*runtime_editor()).editor().line(), &Text::from("adefgh"));
+        assert_eq!((&*runtime_editor()).editor().cursor().get(), 6);
+        assert_eq!((rl_point, rl_end), (8, 8));
+
+        assert_eq!(rl_delete_text(4, 99), 2);
+        assert_eq!((&*runtime_editor()).editor().line(), &Text::from("adef"));
+        assert_eq!((&*runtime_editor()).editor().cursor().get(), 4);
+        assert_eq!(rl_delete_text(-1, 2), 0);
+        assert_eq!((&*runtime_editor()).editor().line(), &Text::from("adef"));
+
+        rl_point = 0;
+        rl_end = 0;
+    }
+}
+
 /// The kill reaches EditLine's own kill buffer — recoverable with
 /// `em-yank`, not with readline's kill ring, which this layer has no
 /// trace of — and none of the position globals is republished

@@ -863,60 +863,35 @@
 > behaviour at the ABI, including the refuse-rather-than-truncate rule
 > of step 2 and the kill-buffer side effect of step 3.
 
-> [spec:libedit:def:chared.el-deletestr1-fn]
+> [spec:libedit:def:chared.el-deletestr1-fn+1]
 > int el_deletestr1(EditLine *el, int start, int end)
 
-> [spec:libedit:sem:chared.el-deletestr1-fn]
+> [spec:libedit:sem:chared.el-deletestr1-fn+1]
 > Public API declared in `histedit.h`, reached from readline's
-> `rl_delete_text`. Its intent is to delete the characters in the
-> half-open index range `[start, end)` of the line. What it actually
-> does is narrower, and the difference is observable — see below.
+> `rl_delete_text`. Delete the characters in the half-open logical range
+> `[start, end)` and return the number of characters removed. The checked
+> semantics below are an intentional correction to the historical C
+> implementation, authorized by `[dec:libedit:checked-delete-range]`.
 >
-> 1. If `end <= start`, return 0 having touched nothing.
-> 2. `line_length = lastchar - buffer`.
-> 3. If `start >= line_length` OR `end >= line_length`, return 0 having
->    touched nothing. Note the second test is `>=`, not `>`, so a range
->    ending exactly at the end of the line is rejected: the final
->    character of the line can never be deleted through this entry
->    point.
-> 4. `len = end - start`, then clamp `len` down to `line_length - end`
->    if that is smaller.
-> 5. With `p1 = buffer + start` and `p2 = buffer + end`, copy `len`
->    characters one at a time from `p2` upward to `p1` upward,
->    decrementing `el->el_line.lastchar` once per character copied.
->    `lastchar` therefore falls by `len`, not by `end - start`.
-> 6. If `cursor < buffer`, set `cursor = buffer` — dead code. The cursor
->    is NOT adjusted for the deletion, so it can be left pointing above
->    the new `lastchar`.
-> 7. Return `end - start`, the size of the range that was requested,
->    regardless of how many characters were actually removed. The two
->    early returns give 0.
+> 1. Convert both endpoints to non-negative logical indices. If either is
+>    negative, return 0 having touched nothing.
+> 2. Let `line_length = lastchar - buffer`, and clamp `end` down to
+>    `line_length`. An `end` exactly equal to the line length is valid; an
+>    oversized `end` therefore deletes through the end rather than refusing
+>    the operation.
+> 3. If the normalized `end <= start`, return 0 having touched nothing. This
+>    covers empty and reversed ranges and a `start` at or beyond the line end.
+> 4. Let `removed = end - start`. Delete the complete checked span
+>    `[start, end)`, move the whole tail `[end, line_length)` down to `start`,
+>    and shorten the line by `removed`.
+> 5. Rebase the cursor against the same edit: a cursor at or before `start`
+>    stays put; one inside the removed span moves to `start`; one at or after
+>    `end` moves left by `removed`. The cursor is therefore always a valid
+>    boundary of the shortened line.
+> 6. Return `removed`. The rejected cases return 0.
 >
-> Step 5 is wrong, and recording that is the point of this rule.
-> Deleting `[start, end)` correctly requires moving the entire tail
-> `[end, line_length)` down to `start` — `line_length - end` characters
-> — and shortening the line by `end - start`. The C instead moves
-> `min(end - start, line_length - end)` characters and shortens the line
-> by that same clamped count. Both failure modes are reachable:
-> - Long tail (`line_length - end >= end - start`): the line length ends
->   up right but the content does not, because only the first
->   `end - start` characters of the tail are moved down and everything
->   beyond `end + len` stays where it was. With `abcdefgh`,
->   `start = 1`, `end = 3`: `len` is 2, the buffer becomes `adedefgh`
->   and `lastchar` lands at offset 6, so the line reads `adedef` where
->   `adefgh` is correct.
-> - Short tail (`line_length - end < end - start`): the whole tail is
->   moved down correctly but the line is left too long by
->   `(end - start) - (line_length - end)`, exposing stale characters at
->   the end. With `abcdefgh`, `start = 1`, `end = 6`: `len` is 2, the
->   buffer becomes `aghdefgh` and `lastchar` lands at offset 6, so the
->   line reads `aghdef` where `agh` is correct.
->
-> `[dec:libedit:no-c-ffi]` freezes what a C caller can observe, so the
-> port must make this a deliberate decision: reproduce the C's
-> arithmetic bug for bug, or fix it and accept a visible divergence in
-> `rl_delete_text`. It must not be resolved silently by writing the
-> obvious correct loop.
+> No redisplay is triggered. `el` must be non-NULL, and a successful edit
+> invalidates any `LineInfo` or `LineInfoW` previously returned for the line.
 
 > [spec:libedit:def:chared.el-winsertstr-fn]
 > int el_winsertstr(EditLine *el, const wchar_t *s)
@@ -976,4 +951,3 @@
 
 > [spec:libedit:def:chared.el-zfunc-t-edit-line-void]
 > typedef void (*el_zfunc_t)(EditLine *, void *)
-

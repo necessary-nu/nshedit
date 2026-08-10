@@ -171,21 +171,38 @@ impl EditLine {
         let (Ok(start), Ok(end)) = (usize::try_from(start), usize::try_from(end)) else {
             return 0;
         };
-        if end <= start || end >= self.editor.line().len() {
+        let line_length = self.editor.line().len();
+        let end = end.min(line_length);
+        if end <= start {
             return 0;
         }
-        let requested = end - start;
-        let copied = requested.min(self.editor.line().len() - end);
-        let mut result = self.editor.line().as_units().to_vec();
-        result.copy_within(end..end + copied, start);
-        result.truncate(result.len() - copied);
+
+        let removed = end - start;
+        let cursor = self.editor.cursor().get();
+        let next_cursor = if cursor <= start {
+            cursor
+        } else if cursor < end {
+            start
+        } else {
+            cursor - removed
+        };
         let span = self
             .editor
             .line()
-            .span(0..self.editor.line().len())
-            .expect("the complete line is a valid span");
-        let _ = self.editor.replace(span, result.into_iter().collect());
-        c_int::try_from(requested).unwrap_or(c_int::MAX)
+            .span(start..end)
+            .expect("the normalized deletion range is within the line");
+        self.editor
+            .replace(span, Text::default())
+            .expect("a checked deletion range is replaceable");
+        let next_cursor = self
+            .editor
+            .line()
+            .index(next_cursor)
+            .expect("the rebased cursor is within the shortened line");
+        self.editor
+            .execute(Action::Move(Motion::Absolute(next_cursor)))
+            .expect("an absolute move to a checked line index succeeds");
+        c_int::try_from(removed).expect("the removed span came from c_int endpoints")
     }
 
     pub(crate) fn narrow_conversion_mut(&mut self) -> &mut ConversionBuffer {

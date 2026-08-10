@@ -1752,10 +1752,10 @@
 > depends entirely on the refresh state and is a no-op in many situations.
 > Always returns 0.
 
-> [spec:libedit:def:readline.rl-delete-text-fn]
+> [spec:libedit:def:readline.rl-delete-text-fn+1]
 > int rl_delete_text(int start, int end)
 
-> [spec:libedit:sem:readline.rl-delete-text-fn]
+> [spec:libedit:sem:readline.rl-delete-text-fn+1]
 > Deletes the characters between offsets `start` and `end` in the current
 > line.
 >
@@ -1765,17 +1765,14 @@
 > `el_deletestr1` works in *wide characters* against `el->el_line`, not in
 > the bytes that `rl_point`/`rl_end` are expressed in, so under a multibyte
 > locale the offsets a readline application computes from `rl_line_buffer`
-> do not correspond to what is deleted. It returns 0 without doing anything
-> when `end <= start`, or when either offset is at or beyond the current
-> line length; otherwise it shifts the tail down, moves `lastchar` back by
-> the number of characters removed, and clamps the cursor to the buffer
-> start if it fell below it. Note the cursor is otherwise *not* adjusted, so
-> it can be left pointing past `lastchar`.
+> do not correspond to what is deleted. Endpoint validation, oversized-end
+> clamping, deletion, and internal cursor rebasing are exactly those defined
+> by `[spec:libedit:sem:histedit.el-deletestr1-fn]`.
 >
-> Return value: whatever `el_deletestr1` returned — 0 for the rejected
-> cases, and 0 on success as well, so success and refusal are
-> indistinguishable. Neither `rl_point` nor `rl_end` is refreshed by this
-> call; the caller must invoke something that runs `_rl_update_pos`.
+> Return the number of wide characters actually removed, or 0 when the
+> normalized range is empty or rejected. Neither `rl_point` nor `rl_end` is
+> refreshed by this call; the caller must invoke something that runs
+> `_rl_update_pos`.
 
 > [spec:libedit:def:readline.rl-deprep-terminal-fn]
 > void rl_deprep_terminal(void)

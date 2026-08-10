@@ -3624,6 +3624,9 @@ children (
             {
                 id quality-delete-range
                 title "Version and correct el_deletestr1 range deletion"
+                implements {
+                    target-impl ([spec:libedit:sem:chared.el-deletestr1-fn+1] [spec:libedit:sem:histedit.el-deletestr1-fn+1] [spec:libedit:sem:readline.rl-delete-text-fn+1])
+                }
                 log (
                     {
                         at 2026-08-10T12:59:19.531173984Z

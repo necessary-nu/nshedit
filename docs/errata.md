@@ -62,9 +62,11 @@ The six behavioural forks the conformance policy names explicitly — the
 physical-tabs capability, `H_FUNC`'s dropped ref pointer, `free_history_entry`'s
 empty body, the pointer-sorting completion comparator, tilde expansion of a bare
 tilde, and `el_deletestr1`'s arithmetic — are marked as such in their entries.
-All six are now reproduced in the Rust, ERR-readline-01 included: the conflict
+Five remain reproduced in the Rust, ERR-readline-01 included: the conflict
 between the policy and `[spec:libedit:sem:readline.rl-completion-matches-fn]`
-was resolved in the policy's favour.
+was resolved in the policy's favour. `[dec:libedit:checked-delete-range]`
+explicitly supersedes the default for `el_deletestr1`, whose corrected contract
+is versioned in the three affected semantic rules.
 
 **Status** records whether the disposition has actually been carried out,
 verified against `crates/` rather than taken from the disposition:
@@ -867,26 +869,26 @@ public entry points that manipulate them.
 **ERR-buffer-15** — `el_deletestr1`'s copy loop moves `min(end - start, line_length - end)` characters and shortens the line by that same clamped count, instead of moving the whole tail `[end, line_length)` and shortening by `end - start`. Both failure modes are reachable: with a long tail the length is right but the content is not (`abcdefgh`, `start=1`, `end=3` yields `adedef`); with a short tail the tail moves correctly but the line is left too long, exposing stale characters (`abcdefgh`, `start=1`, `end=6` yields `aghdef` where `agh` is correct).
 - rule: `[spec:libedit:sem:chared.el-deletestr1-fn]`, `[spec:libedit:sem:histedit.el-deletestr1-fn]` · C: `src/chared.c` `el_deletestr1`
 - class: logic · reach: hot — every `rl_delete_text` call from a readline consumer.
-- disposition: reproduce — named explicitly in `[dec:libedit:conformance-policy]` as one of the six forks defaulting to reproduce; the rule forbids resolving it silently by writing the obvious correct loop.
-- status: reproduced — `crates/nshedit/src/chared.rs` `el_deletestr1`: `if len > tail { len = tail }`, then `copy_within` and `lastchar -= len`, i.e. the clamped count and not the correct loop.
+- disposition: fix — `[dec:libedit:checked-delete-range]` explicitly authorizes this C-visible correction and the affected semantic rules carry the new contract version.
+- status: fixed — `crates/nshedit-abi/src/adapter/terminal_io.rs` `delete_range` removes one checked span through the native editor, which shifts the complete following tail and shortens the line by the full normalized range.
 
 **ERR-buffer-16** — `el_deletestr1` rejects `end >= line_length` rather than clamping, so a range ending exactly at the end of the line is refused and the final character of the line can never be deleted through this entry point.
 - rule: `[spec:libedit:sem:chared.el-deletestr1-fn]` (step 3) · C: `src/chared.c` `el_deletestr1`
 - class: logic · reach: hot — `rl_delete_text(n, rl_end)`.
-- disposition: reproduce.
-- status: reproduced — `crates/nshedit/src/chared.rs` `el_deletestr1`: `start >= line_length || end >= line_length` rejects, `>=` on both.
+- disposition: fix — `[dec:libedit:checked-delete-range]` defines the one-past-end boundary and oversized endpoints.
+- status: fixed — `crates/nshedit-abi/src/adapter/terminal_io.rs` `delete_range` accepts `end == line_length` and clamps a larger end to that boundary.
 
 **ERR-buffer-17** — `el_deletestr1` returns `end - start`, the size of the range requested, regardless of how many characters were actually removed, so for a range near the end of the line the return over-reports.
 - rule: `[spec:libedit:sem:chared.el-deletestr1-fn]` (step 7), `[spec:libedit:sem:histedit.el-deletestr1-fn]` · C: `src/chared.c` `el_deletestr1`
 - class: logic · reach: hot.
-- disposition: reproduce.
-- status: reproduced — `crates/nshedit/src/chared.rs` `el_deletestr1` returns `end - start` after removing only `len` characters.
+- disposition: fix — `[dec:libedit:checked-delete-range]` defines the return as the actual normalized span length.
+- status: fixed — `crates/nshedit-abi/src/adapter/terminal_io.rs` `delete_range` returns `clamped_end - start`, exactly the number of logical characters removed.
 
 **ERR-buffer-18** — `el_deletestr1` never adjusts the cursor for the deletion; it only clamps at the low end, so the cursor can be left pointing above the new `lastchar` or at a different character than before.
 - rule: `[spec:libedit:sem:chared.el-deletestr1-fn]` (step 6), `[spec:libedit:sem:histedit.el-deletestr1-fn]` · C: `src/chared.c` `el_deletestr1`
 - class: logic · reach: hot.
-- disposition: reproduce.
-- status: reproduced — `crates/nshedit/src/chared.rs` `el_deletestr1` writes `el_line.cursor` nowhere at all.
+- disposition: fix — `[dec:libedit:checked-delete-range]` requires cursor rebasing as part of the same checked edit.
+- status: fixed — `crates/nshedit-abi/src/adapter/terminal_io.rs` `delete_range` preserves a cursor before the span, moves one inside it to `start`, and shifts one after it left by the removed length.
 
 **ERR-buffer-19** — `c_insert` never blanks the gap it opens, so the `num` slots at `[cursor, cursor + num)` retain shifted-away text or `calloc` zeros. When `cursor == lastchar` the shift is skipped entirely and appending simply exposes `num` stale slots.
 - rule: `[spec:libedit:sem:chared.c-insert-fn]` · C: `src/chared.c` `c_insert`
@@ -921,8 +923,8 @@ public entry points that manipulate them.
 **ERR-buffer-24** — `el_deletestr1` never rejects a negative `start`. Both range tests compare only against `line_length` (`start >= line_length || end >= line_length`), so a negative `start` passes, `p1 = el->el_line.buffer + start` is formed below the allocation, and the copy loop writes `len` characters there while decrementing `lastchar` once per write.
 - rule: `[spec:libedit:sem:chared.el-deletestr1-fn]` (step 3) · C: `src/chared.c` `el_deletestr1`
 - class: UB · reach: caller error, but reachable across the ABI through `rl_delete_text(-3, 0)` and through the exported `el_deletestr1` itself.
-- disposition: define — treat a negative `start` as a rejected range and return 0, alongside the other two tests. There is no defined C behaviour to preserve.
-- status: defined — `crates/nshedit/src/chared.rs` `el_deletestr1`: `if start < 0 { return 0; }`.
+- disposition: define — treat either negative endpoint as a rejected range and return 0. There is no defined C behaviour to preserve.
+- status: defined — `crates/nshedit-abi/src/adapter/terminal_io.rs` `delete_range` converts both endpoints to `usize` before constructing a span and returns 0 if either conversion fails.
 
 **ERR-buffer-25** — `ce__isword` and `cv__isword` pass `el_map.wordchars` to `wcschr` with no NULL check. The field is NULL between `map_init` and the mode initialisation that follows it, and `map_set_wordchars` leaves it NULL when its `wcsdup` fails while still returning 0 (ERR-core-api-30 records the NULL itself, not this consequence), so the next word motion dereferences NULL inside `wcschr`.
 - rule: `[spec:libedit:sem:chared.ce-isword-fn]`, `[spec:libedit:sem:chared.cv-isword-fn]`, `[spec:libedit:sem:map.map-set-wordchars-fn]` · C: `src/chared.c`, `src/map.c`

@@ -3569,8 +3569,8 @@ pub unsafe extern "C" fn rl_replace_line(text: *const c_char, clear_undo: c_int)
     }
 }
 
-// [spec:libedit:def:readline.rl-delete-text-fn]
-// [spec:libedit:sem:readline.rl-delete-text-fn]
+// [spec:libedit:def:readline.rl-delete-text-fn+1]
+// [spec:libedit:sem:readline.rl-delete-text-fn+1]
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn rl_delete_text(start: c_int, end: c_int) -> c_int {
@@ -3581,8 +3581,7 @@ pub unsafe extern "C" fn rl_delete_text(start: c_int, end: c_int) -> c_int {
         // `el_deletestr1` works in *wide characters*, while `rl_point` and
         // `rl_end` are byte offsets, so in a multibyte locale the offsets an
         // application computes do not correspond to what is deleted
-        // (ERR-readline-35). 0 for the rejected cases and 0 on success, so the
-        // two are indistinguishable.
+        // (ERR-readline-35). The globals remain stale until `_rl_update_pos`.
         crate::histedit::el_deletestr1(runtime_editor(), start, end)
     }
 }

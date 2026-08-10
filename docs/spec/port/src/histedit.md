@@ -59,33 +59,23 @@
 > `el` must be non-NULL (no check). Invalidates any `LineInfo`/`LineInfoW`
 > previously obtained from `el_line`/`el_wline`.
 
-> [spec:libedit:def:histedit.el-deletestr1-fn]
+> [spec:libedit:def:histedit.el-deletestr1-fn+1]
 > int el_deletestr1(EditLine *, int, int)
 
-> [spec:libedit:sem:histedit.el-deletestr1-fn]
+> [spec:libedit:sem:histedit.el-deletestr1-fn+1]
 > Delete the half-open character range `[start, end)` of the current line,
 > where both are 0-based character offsets from the buffer start, and
-> return the number of positions the caller asked to remove.
-> Steps: if `end <= start` return 0. Let `line_length = lastchar - buffer`.
-> If `start >= line_length` or `end >= line_length` return 0 — note this
-> makes it impossible to delete the final character of the line, since
-> `end == line_length` is rejected rather than clamped. Set
-> `len = end - start`, then clamp `len` to `line_length - end`. Copy `len`
-> characters from `buffer + end` to `buffer + start`, decrementing
-> `lastchar` once per character copied. Then if the cursor lies before the
-> buffer start, reset it to the buffer start. Return `end - start`.
-> Two implementation traps that the port must reproduce exactly, because
-> readline's `rl_delete_text` is layered on this call:
-> (a) the return value is `end - start`, which is NOT necessarily the number
-> of characters actually removed — `lastchar` is decremented `len` times,
-> and `len` is the clamped value, so for a range near the end of the line
-> the return over-reports;
-> (b) the cursor is only clamped at the low end, never against the new
-> `lastchar`, so after deleting a range before the cursor the cursor is
-> left pointing at a different character than before, and after deleting a
-> range at the end it can be left past `lastchar`.
-> The moved region is not NUL-terminated by this function. `el` must be
-> non-NULL (no check). Invalidates any previously returned `LineInfo`.
+> return the number of characters removed. A negative endpoint, an empty or
+> reversed range, or a `start` at or beyond the line end returns 0 without
+> changing the editor. Clamp an oversized `end` to the line length; an `end`
+> exactly equal to that length is valid. Delete the complete normalized span
+> and close it with the whole following tail. Rebase the cursor so a position
+> before the span stays fixed, a position in the span moves to `start`, and a
+> position after it moves left by the removed length. These checked semantics
+> deliberately replace the historical arithmetic, boundary, return-value,
+> and cursor defects under `[dec:libedit:checked-delete-range]`.
+> `el` must be non-NULL. A successful edit invalidates any previously returned
+> `LineInfo` or `LineInfoW`.
 
 > [spec:libedit:def:histedit.el-end-fn]
 > void el_end(EditLine *)
