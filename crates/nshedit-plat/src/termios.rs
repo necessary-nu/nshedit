@@ -183,12 +183,14 @@ pub(crate) const fn baud_rate(attributes: &Termios) -> Option<u32> {
 }
 
 /// Whether a borrowed descriptor names a terminal, preserving failures other
-/// than the ordinary `NOTTY` answer.
+/// than the platform's ordinary non-terminal answer.
 pub(crate) fn is_terminal(fd: BorrowedFd<'_>) -> io::Result<bool> {
     loop {
         match rustix::termios::tcgetattr(fd) {
             Ok(_) => return Ok(true),
             Err(rustix::io::Errno::NOTTY) => return Ok(false),
+            #[cfg(target_os = "macos")]
+            Err(rustix::io::Errno::NODEV) => return Ok(false),
             Err(rustix::io::Errno::INTR) => continue,
             Err(error) => return Err(error.into()),
         }

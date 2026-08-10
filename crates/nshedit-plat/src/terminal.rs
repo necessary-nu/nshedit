@@ -654,6 +654,20 @@ mod tests {
     }
 
     fn assert_same_attributes(actual: TerminalAttributes, expected: TerminalAttributes) {
+        // XNU owns PENDIN as kernel state, so a tcsetattr/tcgetattr round trip
+        // can change it independently of the attributes the caller restored.
+        #[cfg(target_os = "macos")]
+        let actual = {
+            let mut actual = actual;
+            actual.set_flag(TerminalFlag::PendingInput, false);
+            actual
+        };
+        #[cfg(target_os = "macos")]
+        let expected = {
+            let mut expected = expected;
+            expected.set_flag(TerminalFlag::PendingInput, false);
+            expected
+        };
         assert_eq!(actual, expected);
     }
 }
