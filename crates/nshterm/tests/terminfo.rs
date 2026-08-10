@@ -155,6 +155,7 @@ fn a_missing_file_is_an_error() {
 
 /// `from_name` searches the database; with `TERMINFO` pointed at the fixture
 /// corpus it must find an entry there and nowhere else.
+#[cfg(unix)]
 #[test]
 fn from_name_finds_an_entry_under_terminfo() {
     const CHILD: &str = "NSHTERM_TERMINFO_TEST_CHILD";
