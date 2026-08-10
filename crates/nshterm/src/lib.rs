@@ -422,6 +422,12 @@ impl TermInfo {
 /// [`parm::Error`] stays separate: it is the error of a pure function over
 /// bytes, it is `Eq`, and nothing about expanding a `%` sequence needs to
 /// know about files. It reaches this enum through `ParameterizedExpansion`.
+///
+/// This type deliberately does not implement [`PartialEq`]. An [`Io`][Error::Io]
+/// variant retains an arbitrary [`io::Error`], including a custom source that
+/// has no equality operation. Callers should match the variant they handle and
+/// inspect its typed payload instead of comparing complete errors.
+// [spec:nshedit:req:terminal.typed-api]
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
@@ -466,29 +472,6 @@ pub enum Error {
     /// header, so an entry can name a start that the table it belongs to does
     /// not reach.
     StringOffsetOutOfRange,
-}
-
-// manually implemented because std::io::Error does not implement Eq/PartialEq
-impl std::cmp::PartialEq for Error {
-    fn eq(&self, other: &Error) -> bool {
-        match self {
-            Io(_) => false,
-            ParameterizedExpansion(a) => matches!(other, ParameterizedExpansion(b) if a == b),
-            NotSupported => matches!(other, NotSupported),
-            TermUnset => matches!(other, TermUnset),
-            TerminfoEntryNotFound => matches!(other, TerminfoEntryNotFound),
-            BadMagic(a) => matches!(other, BadMagic(b) if a == b),
-            NotUtf8(a) => matches!(other, NotUtf8(b) if a == b),
-            ShortNames => matches!(other, ShortNames),
-            TooManyBools => matches!(other, TooManyBools),
-            TooManyNumbers => matches!(other, TooManyNumbers),
-            TooManyStrings => matches!(other, TooManyStrings),
-            InvalidLength => matches!(other, InvalidLength),
-            NamesMissingNull => matches!(other, NamesMissingNull),
-            StringsMissingNull => matches!(other, StringsMissingNull),
-            StringOffsetOutOfRange => matches!(other, StringOffsetOutOfRange),
-        }
-    }
 }
 
 /// The canonical `Result` type using this crate's Error type.

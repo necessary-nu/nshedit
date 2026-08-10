@@ -43,7 +43,7 @@ consequences {
         "Padding markers survive parameter expansion and are emitted by the Rust tputs implementation according to output speed and affected lines; no global putc destination is required."
         "TERMINFO, TERMINFO_DIRS, and HOME-derived search paths are ignored for a privileged process according to the secure environment guard."
         "Filesystem terminfo trees are the supported database layout. The current Linux package matrix does not require ncurses' opt-in hashed layout, so nshterm does not probe or parse it."
-        "Public format, name, and environment choices are enums or policy values; capability maps remain private and parser or discovery errors retain their source."
+        "Public format, name, and environment choices are enums or policy values; capability maps remain private; parser and discovery errors retain their opaque source and expose no whole-error equality that the source cannot uphold. Callers match typed variants and inspect their payloads."
     )
     deferred (
         "A future platform that ships only a hashed terminfo database must specify and verify its database format before entering the support matrix."
@@ -76,6 +76,13 @@ few provider semantics that are not plain aliases. The ABI stores the result
 per handle. Padding is similarly preserved as structured information until
 `tputs` knows the writer speed, avoiding the C provider's global callback
 destination.
+
+`nshterm::Error` retains `std::io::Error` rather than flattening it into a
+string, errno, or selected fields. Because an I/O error may contain an
+arbitrary custom source with no equality operation, the outer error does not
+implement `PartialEq` or `Eq`. Callers match the typed variant they handle and
+inspect its payload; errors whose complete representation is comparable, such
+as `parm::Error`, keep their derived equality.
 
 Secure environment discovery and the compatibility name table are settled.
 The database-format survey was resolved on 2026-08-09 against the only

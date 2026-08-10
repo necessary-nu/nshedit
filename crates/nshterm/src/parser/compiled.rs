@@ -373,13 +373,17 @@ mod test {
     #[test]
     fn a_wrong_magic_number_is_rejected() {
         let bytes = with_header(&Entry::minimal().bytes(), 0, 0x1234);
-        assert_eq!(parse_err(&bytes), Error::BadMagic(0x1234));
+        match parse_err(&bytes) {
+            Error::BadMagic(magic) => assert_eq!(magic, 0x1234),
+            other => panic!("expected BadMagic, got {other:?}"),
+        }
     }
 
     #[test]
     fn an_entry_with_no_names_is_rejected() {
         let bytes = with_header(&Entry::minimal().bytes(), 1, 0);
-        assert_eq!(parse_err(&bytes), Error::ShortNames);
+        let error = parse_err(&bytes);
+        assert!(matches!(error, Error::ShortNames), "got {error:?}");
     }
 
     #[test]
@@ -389,10 +393,10 @@ mod test {
         // 0xFFFE is -2.
         for field in 1..=5 {
             let bytes = with_header(&Entry::minimal().bytes(), field, 0xFFFE);
-            assert_eq!(
-                parse_err(&bytes),
-                Error::InvalidLength,
-                "header field {field}"
+            let error = parse_err(&bytes);
+            assert!(
+                matches!(error, Error::InvalidLength),
+                "header field {field}: got {error:?}"
             );
         }
     }
@@ -407,7 +411,12 @@ mod test {
         ];
         for (field, known, expected) in too_many {
             let bytes = with_header(&base, field, known as u16 + 1);
-            assert_eq!(parse_err(&bytes), expected, "header field {field}");
+            let error = parse_err(&bytes);
+            assert_eq!(
+                std::mem::discriminant(&error),
+                std::mem::discriminant(&expected),
+                "header field {field}: got {error:?}"
+            );
             // Exactly as many as we know about is still fine to attempt; it
             // fails later on a short read, not on the bound.
             let bytes = with_header(&base, field, known as u16);
@@ -421,7 +430,8 @@ mod test {
         // NUL should be.
         let e = Entry::minimal();
         let bytes = with_header(&e.bytes(), 1, e.names.len() as u16);
-        assert_eq!(parse_err(&bytes), Error::NamesMissingNull);
+        let error = parse_err(&bytes);
+        assert!(matches!(error, Error::NamesMissingNull), "got {error:?}");
     }
 
     #[test]
@@ -429,7 +439,8 @@ mod test {
         let mut e = Entry::minimal();
         e.offsets = vec![0];
         e.table = b"bel".to_vec();
-        assert_eq!(parse_err(&e.bytes()), Error::StringsMissingNull);
+        let error = parse_err(&e.bytes());
+        assert!(matches!(error, Error::StringsMissingNull), "got {error:?}");
     }
 
     #[test]

@@ -3807,12 +3807,27 @@ children (
             {
                 id quality-terminfo-error-equality
                 title "Give nshterm errors a valid equality contract"
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:24.473290864Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Finding: the hand-written equality for nshterm::Error::Io is non-reflexive and violates PartialEq. Remove the misleading equality implementation from the public error type and convert callers/tests to discriminant or pattern-based assertions, unless the error representation is first changed to stable equality-bearing fields."
+                    }
+
+                    {
+                        at 2026-08-10T14:27:18.620003349Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Preserve arbitrary std::io::Error sources and remove PartialEq from nshterm::Error. Whole-error equality cannot be lawful for opaque custom I/O sources; callers match typed variants and inspect payloads, while the independently comparable parm::Error remains Eq."
+                    }
+
+                    {
+                        at 2026-08-10T14:27:18.672747332Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }

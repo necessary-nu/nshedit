@@ -30,6 +30,7 @@ elements (
             {at "2026-08-09T09:19:15Z", kind @modified, by "[dec:libedit:terminal-caps-via-term-crate]"}
             {at "2026-08-09T12:49:10Z", kind @modified, by "[dec:libedit:rust-internal-boundary]"}
             {at "2026-08-09T22:42:58Z", kind @modified, by "[dec:libedit:platform-targets]"}
+            {at "2026-08-10T14:20:56Z", kind @modified, by "[dec:libedit:terminal-caps-via-term-crate]"}
         )
     }
     {

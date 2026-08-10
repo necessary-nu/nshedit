@@ -79,7 +79,7 @@ fn apply_cap_expands_or_says_it_cannot() {
     let err = term
         .apply_cap("no_such_capability", &[], &mut out)
         .expect_err("an unknown capability must not silently succeed");
-    assert_eq!(err, Error::NotSupported);
+    assert!(matches!(err, Error::NotSupported), "got {err:?}");
     assert!(out.is_empty(), "nothing should have been written");
 }
 
@@ -112,7 +112,8 @@ fn reset_uses_whichever_reset_capability_the_entry_has() {
     // rather than writing nothing and returning success.
     let bare = TermInfoBuilder::default().named("bare").build();
     let mut out = Vec::new();
-    assert_eq!(bare.reset(&mut out).unwrap_err(), Error::NotSupported);
+    let error = bare.reset(&mut out).unwrap_err();
+    assert!(matches!(error, Error::NotSupported), "got {error:?}");
     assert!(out.is_empty());
 }
 
@@ -163,15 +164,15 @@ fn from_name_finds_an_entry_under_terminfo() {
         let found = TermInfo::from_name("xterm-nshterm-test")
             .expect("the entry under TERMINFO should be found");
         assert!(found.names().iter().any(|name| name == "xterm"));
-        assert_eq!(
-            TermInfo::from_name("nshterm-no-such-terminal").unwrap_err(),
-            Error::TerminfoEntryNotFound,
-            "a terminal that exists nowhere must not resolve to something else"
+        let error = TermInfo::from_name("nshterm-no-such-terminal").unwrap_err();
+        assert!(
+            matches!(error, Error::TerminfoEntryNotFound),
+            "a terminal that exists nowhere must not resolve to something else: {error:?}"
         );
-        assert_eq!(
-            TermInfo::from_name("xterm-nshterm-no-such-terminal").unwrap_err(),
-            Error::TerminfoEntryNotFound,
-            "an ANSI-looking name must still identify a real database entry"
+        let error = TermInfo::from_name("xterm-nshterm-no-such-terminal").unwrap_err();
+        assert!(
+            matches!(error, Error::TerminfoEntryNotFound),
+            "an ANSI-looking name must still identify a real database entry: {error:?}"
         );
         return;
     }
@@ -193,16 +194,10 @@ fn from_name_finds_an_entry_under_terminfo() {
     assert!(status.success(), "isolated TERMINFO consumer failed");
 }
 
-/// Every error variant renders a message, and `PartialEq` is the hand-written
-/// one — `Error` holds an `io::Error`, which is not `Eq`, so equality here is
-/// a decision rather than a derive and worth pinning.
+/// Public errors render useful messages and preserve their context when a
+/// caller converts them into an I/O result.
 #[test]
-fn the_errors_compare_and_print() {
-    assert_eq!(Error::NotSupported, Error::NotSupported);
-    assert_eq!(Error::BadMagic(3), Error::BadMagic(3));
-    assert_ne!(Error::BadMagic(3), Error::BadMagic(4));
-    assert_ne!(Error::NotSupported, Error::TermUnset);
-
+fn errors_print_and_convert_to_io() {
     for e in [
         Error::NotSupported,
         Error::TermUnset,
