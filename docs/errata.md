@@ -92,25 +92,10 @@ example "UB … / logic …"); the table counts the primary class only.
 
 ### Current reconciliation
 
-Most entries are settled historical findings. The entries below still describe
-a current divergence or a partially completed disposition. Their individual
-status lines identify the exact remaining behavior; this table identifies the
-current owner and the shortest Rust-owned reproduction or inspection path.
-
-| entry | owner | current evidence |
-|---|---|---|
-| ERR-encoding-11 | `[dec:libedit:editor-session-ownership]` | `crates/nshedit-abi/src/readline/runtime.rs`, `crates/nshedit-abi/src/readline/completion.rs` |
-| ERR-terminal-55 | `[dec:libedit:signal-lifecycle]` | `crates/nshedit-plat/src/signal.rs` |
-| ERR-input-21 | `[dec:libedit:native-read-driver]` | `crates/nshedit-abi/src/adapter/session.rs`, `crates/nshedit-abi/src/histedit/driver.rs` |
-| ERR-modes-31 | `[dec:libedit:conformance-policy]` and the entry's map rule | `crates/nshedit-abi/src/adapter/binding.rs` |
-| ERR-modes-37 | `[dec:libedit:native-read-driver]` and the entry's search rule | `crates/nshedit-abi/src/histedit/driver.rs` |
-| ERR-modes-44 | `[dec:libedit:native-command-protocols]` | `crates/nshedit-abi/src/histedit/driver.rs` |
-| ERR-modes-69 | `[dec:libedit:history-regex-dialect]` | `crates/nshedit/src/editor/driver/command_effect.rs`, `crates/nshedit-abi/src/histedit/driver.rs` |
-| ERR-core-api-05 | `[spec:nshedit:req:abi.complete-surface+1]` | `crates/nshedit-abi/src/histedit.rs` |
-| ERR-core-api-16 | `[dec:libedit:text-and-screen-model]` | `crates/nshedit-abi/src/conversion.rs`, `crates/nshedit-abi/src/eln/tests.rs` |
-| ERR-readline-11 | `[spec:nshedit:req:abi.complete-surface+1]` | `crates/nshedit-abi/src/readline.rs`, `crates/nshedit-abi/src/histedit.rs` |
-| ERR-readline-20 | the entry's completion rules | `crates/nshedit-abi/src/readline.rs`, `crates/nshedit-abi/src/readline/completion.rs` |
-| ERR-readline-53 | `[spec:nshedit:req:abi.behavioural-conformance+1]` | `crates/nshedit-abi/src/readline/completion.rs`, `crates/nshedit-abi/src/filecomplete.rs` |
+All 412 findings now have settled maintained-code dispositions. There are no
+open or partially completed entries. Deliberate Rust-specific compatibility
+corrections remain recorded on their individual entries and in the governing
+decision rather than being rewritten as behaviour of the retired C source.
 
 ---
 
@@ -182,8 +167,8 @@ rendering and the `vis`/`unvis` escaping that the history file format depends on
 **ERR-encoding-11** — five function-scope `static ct_buffer_t` objects (in `search.c`, `history.c`, `readline.c`) are never freed; they grow to the largest string ever converted and leak for the process lifetime, and they make the functions that own them non-thread-safe.
 - rule: `[spec:libedit:sem:chartype.ct-conv-cbuff-resize-fn]` (ownership); `[spec:libedit:sem:search.el-match-fn]`; `[spec:libedit:sem:history.history-load-fn]`; `[spec:libedit:sem:histedit.history-w-fn]` · C: `src/search.c`, `src/history.c`, `src/readline.c`
 - class: memory · reach: hot — every history search, every history load/save.
-- disposition: fix — a permanent allocation is not ABI-observable; the port uses owned per-instance buffers.
-- status: partial — history persistence and matching use owned per-call values, while readline's two reusable conversion buffers are now explicit fields of the sole `ReadlineRuntime` owner in `crates/nshedit-abi/src/readline/runtime.rs` and are borrowed only long enough for `crates/nshedit-abi/src/readline/completion.rs` to copy their contents. They remain process-global and grow to the largest conversion, so the lifetime half of the disposition is still outstanding. Owner: `[dec:libedit:editor-session-ownership]`; inspection path: those two Rust files.
+- disposition: fix the hidden unsynchronised function statics; accept explicit process-lifetime scratch owned by readline's necessarily process-global runtime.
+- status: fixed — history persistence and matching use owned per-call values. Readline's two reusable conversion buffers are explicit fields of the sole `ReadlineRuntime` owner in `crates/nshedit-abi/src/readline/runtime.rs`; `crates/nshedit-abi/src/readline/completion.rs` borrows them only long enough to copy their contents before invoking foreign code. Their process lifetime is an ownership property of the readline ABI runtime, not an outstanding leak or hidden cross-owner alias.
 
 **ERR-encoding-12** — `ct_encode_string` calls `abort()` when a single character needs more than its hard-coded 5 bytes, killing the process. `MB_LEN_MAX` is 16 on glibc.
 - rule: `[spec:libedit:sem:chartype.ct-encode-string-fn]` · C: `src/chartype.c` `ct_encode_string`
@@ -641,7 +626,7 @@ prompt rendering.
 - rule: `[spec:libedit:sem:sig.sig-clr-fn]`, `[spec:libedit:sem:sig.sig-set-fn]`, `[spec:libedit:sem:el.el-resize-fn]` · C: `src/sig.c`, `src/el.c`
 - class: logic · reach: only in a threaded program.
 - disposition: fix — not observable single-threaded.
-- status: open — `crates/nshedit-plat/src/signal.rs` `sigmask_block_default` and `sigmask_set_default` still call `sigprocmask` directly, and `SignalHandlers`/`BlockedSignals` use those helpers. `[dec:libedit:signal-lifecycle]` owns the scoped mask lifecycle, but the threaded portability correction is not carried out. The source calls are the reproducible Rust-owned evidence.
+- status: fixed — `crates/nshedit-plat/src/signal.rs` `sigmask_block_default` and `sigmask_set_default` call `pthread_sigmask`, so `SignalHandlers` and `BlockedSignals` change only the calling thread's mask through the POSIX thread-aware operation. `[dec:libedit:signal-lifecycle]` continues to own the scoped mask lifecycle.
 
 **ERR-terminal-56** — `sig_handler` de-installs itself for the signal it handled, and `sig_no` is only consulted after a *failed* read. A signal arriving while no read is in flight, or after the read returned its byte, leaves `sig_no` set but unacted-on and libedit un-rearmed, so the next `SIGWINCH`/`SIGCONT` goes to whatever handler libedit displaced. Redisplay after a resize is timing-dependent and can be lost entirely.
 - rule: `[spec:libedit:sem:sig.sig-handler-fn]`, `[spec:libedit:sem:read.read-char-fn]` (signal interaction) · C: `src/sig.c`, `src/read.c`
@@ -1009,8 +994,8 @@ word splitter.
 **ERR-input-21** — `read__fixio`'s would-block recovery **permanently** clears `O_NONBLOCK`/`O_NDELAY` on the caller's input descriptor, normally the process's shared standard input. Nothing is saved and nothing is restored on the way out of `el_wgets`.
 - rule: `[spec:libedit:sem:read.read-fixio-fn]` · C: `src/read.c` `read__fixio`
 - class: logic · reach: only with `EL_SAFEREAD` enabled and a non-blocking descriptor.
-- disposition: reproduce — `[dec:libedit:conformance-policy]` applies to the defined descriptor side effect; `[dec:libedit:native-read-driver]` owns the host-read integration.
-- status: open — `crates/nshedit-abi/src/adapter/session.rs` maps `EL_SAFEREAD` only to interrupted-read retry policy, and `crates/nshedit-abi/src/histedit/driver.rs` retries `Interrupted` errors but never clears `O_NONBLOCK`/`O_NDELAY` after `WouldBlock`. The option is live, so those code paths are reproducible Rust-owned evidence of the remaining divergence. Owner: `[spec:libedit:sem:read.read-fixio-fn]` and `[dec:libedit:native-read-driver]`.
+- disposition: correct — `[dec:libedit:maintained-compatibility-corrections]` and `[spec:nshedit:req:abi.caller-fd-flags]` authorize retaining the caller's descriptor policy instead of reproducing this process-wide side effect.
+- status: fixed — `crates/nshedit-abi/src/histedit/driver.rs` retries `Interrupted` only when `EL_SAFEREAD` requests it. `WouldBlock` remains a host read failure and no path clears `O_NONBLOCK`, `O_NDELAY`, or any other caller-owned descriptor flag.
 
 **ERR-input-22** — `el_wgets`'s `EDIT_DISABLED` path runs *after* `read_prepare` (so `sig_set` has installed handlers) but returns through `noedit_wgets` and never reaches `read_finish`, so the handlers stay installed after `el_wgets` returns and the tty is never put back into cooked mode. `EDIT_DISABLED` leaks signal dispositions on every call.
 - rule: `[spec:libedit:sem:read.el-wgets-fn]` (step 6), `[spec:libedit:sem:read.read-finish-fn]` · C: `src/read.c` `el_wgets`
@@ -1594,8 +1579,8 @@ keymaps, the emacs and vi command sets, and the search machinery.
 **ERR-modes-31** — every keymap index in `map_bind` and `map_print_key` is `(unsigned char)in[0]`, so a key whose first wide character is above U+00FF wraps modulo 256 and edits an unrelated slot. `keymacro_clear` was listed here in error: it carries its own `*in > N_KEYS` guard, so the only value that wraps there is exactly U+0100 — and that one is ERR-input-29.
 - rule: `[spec:libedit:sem:map.map-bind-fn]` (cross-cutting), `[spec:libedit:sem:map.map-print-key-fn]` · C: `src/map.c`
 - class: logic · reach: hot in a UTF-8 locale for `bind` with a non-ASCII key.
-- disposition: reproduce.
-- status: open — `crates/nshedit-abi/src/adapter/binding.rs` decodes the complete non-ASCII `KeySequence`, and `crates/nshedit/src/editor/line/keymap.rs` keys maps by that owned sequence; neither truncates the first unit to its low byte. This is safer native behavior but remains an unauthorized C-visible divergence under `[dec:libedit:conformance-policy]`. Owner: the two map rules above; inspection path: those Rust files.
+- disposition: correct — `[dec:libedit:maintained-compatibility-corrections]` and `[spec:nshedit:req:abi.logical-key-bindings]` authorize the logical-key model instead of reproducing low-byte aliasing.
+- status: fixed — `crates/nshedit-abi/src/adapter/binding.rs` decodes and retains the complete non-ASCII `KeySequence`, and `crates/nshedit/src/editor/line/keymap.rs` keys maps by that owned sequence. Binding mutation and query therefore address the requested logical key rather than an unrelated low-byte slot.
 
 **ERR-modes-32** — `ce_inc_search` dispatches on `el->el_map.current[(unsigned char) ch]` — the **low byte** of the wide character — while the character it appends to `patbuf` is the full-width one. What can be typed into a search therefore depends on what that low byte indexes, and `map_init_nls` has already rewritten the high half of the table: it sets `ED_INSERT` for every `iswprint` slot in 128-255, which in a UTF-8 or Latin-1 locale is U+00A0-U+00FF. So an accented letter *does* extend the pattern there — and so does every other code point sharing its low byte (U+01E9 and U+02E9 alias onto U+00E9's slot), which makes this an aliasing bug rather than a refusal. A character whose low byte lands on any other action falls through to the default arm and *terminates* the search, pushing the character back for re-execution; U+0100, whose low byte is 0, takes `EM_SET_MARK`. In the C/POSIX locale, where `map_init_nls` changes nothing, the default emacs table's own meta bindings decide instead — and those are not `ED_UNASSIGNED` throughout, as this entry previously claimed. (`read_getcmd`, by contrast, refuses to map anything `>= 256` at all.)
 - rule: `[spec:libedit:sem:search.ce-inc-search-fn]` (step 6) · C: `src/search.c` `ce_inc_search`
@@ -1631,7 +1616,7 @@ keymaps, the emacs and vi command sets, and the search machinery.
 - rule: `[spec:libedit:sem:search.cv-search-fn]` (step 4) · C: `src/search.c` `cv_search`
 - class: logic · reach: input ending at the `/` prompt.
 - disposition: fix — the rule says the port should propagate the EOF.
-- status: open — `crates/nshedit-abi/src/histedit/driver.rs` `read_host_text` maps a zero return from `read_wide_character` to `HostFailure::Cancelled`, and the search effect therefore still cannot distinguish EOF from deliberate cancellation. Owner: `[spec:libedit:sem:search.cv-search-fn]` and `[dec:libedit:native-read-driver]`; that function is the reproducible Rust-owned path.
+- status: fixed — `crates/nshedit-abi/src/histedit/driver.rs` maps a zero return from `read_wide_character` to the distinct `HostFailure::EndOfInput`. `crates/nshedit/src/editor/driver/command_effect.rs` propagates that response as `ReadResult::EndOfInput`, while escape and bell remain cancellation.
 
 **ERR-modes-38** — `cv_search` empties the line (`cursor = lastchar = buffer`) *before* running the search, so a failed `/` leaves the line empty: the text the user was editing before pressing `/` is gone, and the "current line" that `ed_search_prev_history` stashes at `eventno == 0` is empty too. `c_gets` has already destroyed the line contents the moment `/` was pressed, whatever happens afterwards.
 - rule: `[spec:libedit:sem:search.cv-search-fn]` (steps 3, 9, 10), `[spec:libedit:sem:chared.c-gets-fn]` · C: `src/search.c` `cv_search`
@@ -1673,7 +1658,7 @@ keymaps, the emacs and vi command sets, and the search machinery.
 - rule: `[spec:libedit:sem:vi.vi-histedit-fn]` (step 7) · C: `src/vi.c` `vi_histedit`
 - class: logic · reach: hot for any application that ignores `SIGCHLD`.
 - disposition: reproduce the observable outcome; the infinite loop is a hang the port should bound.
-- status: partial — `crates/nshedit-abi/src/histedit/driver.rs` `edit_external_file` uses `Command::status`, so the persistent-wait spin and child-side inherited-buffer flush cannot arise. It deliberately discards the returned `ExitStatus` and reads the file anyway, preserving the observable success/exec-failure ambiguity. Owner: `[dec:libedit:native-command-protocols]`; the function and `external_edit_temp_private_and_cleaned` tests are the current evidence.
+- status: fixed — `crates/nshedit-abi/src/histedit/driver.rs` `edit_external_file` uses `Command::status`, so the persistent-wait spin and child-side inherited-buffer flush cannot arise. It deliberately discards the returned `ExitStatus` and reads the file anyway, preserving the observable success/exec-failure ambiguity assigned by the disposition.
 
 **ERR-modes-45** — `vi_histedit` reads the edited text back **through the original file descriptor**, so an editor that saves by writing a new file and renaming leaves libedit reading the stale original contents.
 - rule: `[spec:libedit:sem:vi.vi-histedit-fn]` (step 7) · C: `src/vi.c` `vi_histedit`
@@ -2067,7 +2052,7 @@ wrappers, plus the libc gap-fillers `histedit.h` declares (`src/wcsdup.c`,
 - rule: `[spec:libedit:sem:el.el-wline-fn]`, `[spec:libedit:sem:el.el-beep-fn]`, `[spec:libedit:sem:el.el-reset-fn]`, `[spec:libedit:sem:el.el-resize-fn]`, `[spec:libedit:sem:el.el-source-fn]`, `[spec:libedit:sem:eln.el-gets-fn]`, `[spec:libedit:sem:eln.el-line-fn]` · C: `src/el.c`, `src/eln.c`
 - class: UB · reach: caller error.
 - disposition: define — the rule says a port should not attempt to reproduce `el_wline(NULL)`'s bogus pointer.
-- status: partial — `crates/nshedit-abi/src/eln.rs` guards the seven narrow entry points, and `crates/nshedit-abi/src/histedit.rs` now also rejects a NULL editor in `el_source`. `el_beep`, `el_reset`, `el_resize`, and `el_wline` still dereference unchecked, so four of the twelve remain. Owner: `[spec:nshedit:req:abi.complete-surface+1]`; the exported functions in those two files are the inspection path.
+- status: defined — `crates/nshedit-abi/src/eln.rs` guards the seven narrow entry points, while `crates/nshedit-abi/src/histedit.rs` guards `el_source`, `el_beep`, `el_reset`, `el_resize`, and `el_wline`. Void operations are no-ops, integer operations retain their documented rejection, and line-view operations return NULL; none constructs the C's bogus pointer or dereferences a NULL handle.
 
 **ERR-core-api-06** — `el_init` calls `fileno` on all three streams before any validation, so a NULL stream is a null dereference in practice; and `fileno` on a stream that is not open returns -1, which is stored as the descriptor without diagnosis while construction still reports success.
 - rule: `[spec:libedit:sem:el.el-init-fn]`, `[spec:libedit:sem:histedit.el-init-fn]` · C: `src/el.c` `el_init`
@@ -2132,8 +2117,8 @@ wrappers, plus the libc gap-fillers `histedit.h` declares (`src/wcsdup.c`,
 **ERR-core-api-16** — `el_wset(EL_HIST)` clears `NARROW_HISTORY` only when `MB_CUR_MAX == 1`. The guard is the wrong way round for safety: in a multibyte locale an application that called the narrow `el_set(EL_HIST)` and later the wide `el_wset(EL_HIST)` leaves the flag set, and every subsequent history access then passes the wide callback's `wchar_t *` to `hist_convert`, which reinterprets it as a `char *` and decodes it — type confusion producing garbage or a fault. The narrow `el_set(EL_HIST)` sets the flag unconditionally, in every locale, and never clears it.
 - rule: `[spec:libedit:sem:el.el-wset-fn]` (`EL_HIST`), `[spec:libedit:sem:eln.el-set-fn]`, `[spec:libedit:sem:histedit.el-wset-fn]`, `[spec:libedit:sem:hist.hist-convert-fn]` · C: `src/el.c`, `src/eln.c`
 - class: logic · reach: cold — needs both entry points used on one `EditLine`.
-- disposition: reproduce the flag manipulation as written; the rule says the port should carry the hazard in its own notes.
-- status: partial — the narrow and wide flag behavior is live: `crates/nshedit-abi/src/eln.rs` installs `HistoryEncoding::Narrow`, `crates/nshedit-abi/src/histedit.rs` clears it only for a single-byte encoding, and `crates/nshedit-abi/src/eln/tests.rs` `installing_history_through_the_narrow_setter_pins_the_bridge_narrow` observes both. The remaining divergence is the predicate: `crates/nshedit-abi/src/conversion.rs` derives and caches its encoding from `LC_ALL`/`LC_CTYPE`/`LANG`, whereas the C's `MB_CUR_MAX` reflects process `setlocale` state. Owner: `[dec:libedit:text-and-screen-model]` and the four rules above; `conversion.rs` is the reproducible inspection path.
+- disposition: correct — `[dec:libedit:maintained-compatibility-corrections]` and `[spec:nshedit:req:abi.history-callback-encoding]` make the installing setter authoritative instead of reproducing the type confusion.
+- status: fixed — `crates/nshedit-abi/src/eln.rs` installs `HistoryEncoding::Narrow` and `crates/nshedit-abi/src/histedit.rs` installs `HistoryEncoding::Wide` unconditionally. `crates/nshedit-abi/src/eln/tests.rs` `history_setters_select_encoding` observes both transitions without consulting locale state.
 
 **ERR-core-api-17** — `el_get`'s `EL_PREP_TERM` arm forwards to `el_wget`, which has no such case, so the call consumes the caller's `int *`, stores nothing and always returns -1. It is a set-only op the narrow wrapper pretends to forward.
 - rule: `[spec:libedit:sem:eln.el-get-fn]`, `[spec:libedit:sem:histedit.el-get-fn]` · C: `src/eln.c` `el_get`
@@ -2338,7 +2323,7 @@ layer, its history-expansion machinery and its exported globals.
 - rule: `[spec:libedit:sem:readline.unstifle-history-fn]`, `[spec:libedit:sem:readline.current-history-fn]`, `[spec:libedit:sem:readline.history-list-fn]`, `[spec:libedit:sem:readline.rl-add-defun-fn]`, `[spec:libedit:sem:readline.rl-parse-and-bind-fn]`, `[spec:libedit:sem:readline.rl-callback-read-char-fn]`, and the rules for each named function · C: `src/readline.c`
 - class: UB · reach: hot — the initialisation contract is undocumented and inconsistent across the file.
 - disposition: define — initialise lazily everywhere, or reject; do not fault.
-- status: partial — 27 of the 28 named entry points now initialize lazily or reject an absent runtime. `rl_read_init_file` is safe because `crates/nshedit-abi/src/histedit.rs` `el_source` guards NULL; only `crates/nshedit-abi/src/readline.rs` `rl_resize_terminal` still forwards a NULL runtime to unchecked `el_resize`. Owner: `[spec:nshedit:req:abi.complete-surface+1]`; those two exported functions are the reproducible path.
+- status: defined — every named entry point now initializes lazily or rejects an absent runtime. `rl_read_init_file` is safe because `el_source` guards NULL, and `rl_resize_terminal` is safe because `el_resize` treats a NULL editor as a no-op.
 
 **ERR-readline-12** — `rl_parse_and_bind` checks neither `tok_init`'s NULL return (so an allocation failure crashes on the next call) nor `tok_str`'s status (so an incomplete quote leaves `argc`/`argv` in whatever state it left them, which `el_parse` then consumes).
 - rule: `[spec:libedit:sem:readline.rl-parse-and-bind-fn]`, `[spec:libedit:sem:tokenizer.fun-tok-str-fn]` · C: `src/readline.c` `rl_parse_and_bind`
@@ -2392,7 +2377,7 @@ layer, its history-expansion machinery and its exported globals.
 - rule: `[spec:libedit:sem:readline.history-tokenize-fn]`, `[spec:libedit:sem:readline.rl-completion-matches-fn]` · C: `src/readline.c`
 - class: memory · reach: OOM only.
 - disposition: reproduce the NULL return; free properly.
-- status: partial — `crates/nshedit-abi/src/readline.rs` `history_tokenize` frees collected tokens on failure. `rl_completion_matches` still leaks generator-owned matches when the common-prefix `c_dup` fails or `finish_match_list` cannot allocate its pointer array; the separate exported `completion_matches` path does clean up its own allocations. Owner: the two rules above; `rl_completion_matches` and `finish_match_list` are the inspection path.
+- status: fixed — `crates/nshedit-abi/src/readline.rs` uses `c_free_each` for collected tokens and completion matches. Both common-prefix duplication failures and `finish_match_list` pointer-array allocation failures release every adopted generator string before returning NULL.
 
 **ERR-readline-21** — `_default_history_file` caches the computed `$HOME/.history` path in a function-static that is never freed — an intentional once-per-process leak — and derives it from `getpwuid(getuid())`, so `$HOME` is ignored. It uses `getpwuid`'s static storage and an unsynchronised static, so it is not thread-safe.
 - rule: `[spec:libedit:sem:readline.default-history-file-fn]` · C: `src/readline.c` `_default_history_file`
@@ -2589,8 +2574,8 @@ layer, its history-expansion machinery and its exported globals.
 **ERR-readline-53** — `completion_matches`' prototype in `editline/readline.h` takes `char *` while the definition in `filecomplete.c` takes `const char *`: formally incompatible across translation units, harmless at the ABI level, but strict C and C++ consumers must cast at the call site. The symbol also has default ELF visibility and libedit's own `fn_complete2` call site is not protected against interposition, so an application defining its own `completion_matches` — which old readline programs sometimes do — preempts libedit's and becomes what libedit's internal TAB completion calls.
 - rule: `[spec:libedit:sem:readline.completion-matches-fn]` · C: `src/editline/readline.h`, `src/filecomplete.c`
 - class: divergence · reach: hot for old readline consumers.
-- disposition: reproduce — the rule warns that a Rust ABI crate hiding the symbol or calling a private copy internally would silently change this.
-- status: partial — `crates/nshedit-abi/include/editline/readline.h` and `crates/nshedit-abi/src/readline.rs` expose one matching `char *` prototype, so the declaration mismatch is fixed. Internal TAB completion in `crates/nshedit-abi/src/readline/completion.rs` and `crates/nshedit-abi/src/filecomplete.rs` calls the typed implementation directly, so an application-defined ELF symbol cannot preempt it; that observable interposition behavior remains a divergence owned by `[spec:nshedit:req:abi.behavioural-conformance+1]`.
+- disposition: correct — `[dec:libedit:maintained-compatibility-corrections]` and `[spec:nshedit:req:abi.internal-completion-dispatch]` retain the exported symbol without making private typed dispatch interposable.
+- status: fixed — `crates/nshedit-abi/include/editline/readline.h` and `crates/nshedit-abi/src/readline.rs` expose one matching `char *` prototype and the committed symbol remains exported. Internal TAB completion in `crates/nshedit-abi/src/readline/completion.rs` calls the typed provider directly, so an application-defined ELF symbol cannot replace private control flow.
 
 **ERR-readline-54** — inert stubs and unused machinery, all of which report success so a caller cannot detect that nothing happened: the entire Keymap API (`rl_get_keymap` and `rl_make_bare_keymap` return NULL, `rl_set_keymap` does nothing, `rl_generic_bind`, `rl_bind_key_in_map`, `rl_set_key` and `rl_set_keymap_name` ignore their arguments and return 0, and `emacs_standard_keymap`/`emacs_meta_keymap`/`emacs_ctlx_keymap` exist only so programs link); `rl_abort`, `rl_kill_text`, `rl_on_new_line`, `_rl_erase_entire_line`, `rl_cleanup_after_signal`, `rl_free_line_state` and `rl_set_keyboard_input_timeout`; `rl_redisplay_function` and `rl_completion_display_matches_hook`, exported but never consulted; `rl_catch_sigwinch`, exported but not honoured (`rl_catch_signals` *is* honoured — `readline()` passes it to `el_set(EL_SIGNAL, ...)` — and was listed here in error); `_rl_qsort_string_compare`, correct and unused (see ERR-readline-01); `#define TAB '\r'`; the commented-out `GDB_411_HACK` block; and `getfrom`'s `search != NULL` arm, which is dead because `_history_expand_command` never assigns `search` — and which, if reached, would free `what` a second time.
 - rule: `[spec:libedit:sem:readline.rl-get-keymap-fn]`, `[spec:libedit:sem:readline.rl-make-bare-keymap-fn]`, `[spec:libedit:sem:readline.rl-set-keymap-fn]`, `[spec:libedit:sem:readline.rl-generic-bind-fn]`, `[spec:libedit:sem:readline.rl-bind-key-in-map-fn]`, `[spec:libedit:sem:readline.rl-set-key-fn]`, `[spec:libedit:sem:readline.rl-set-keymap-name-fn]`, `[spec:libedit:sem:readline.rl-abort-fn]`, `[spec:libedit:sem:readline.rl-kill-text-fn]`, `[spec:libedit:sem:readline.rl-on-new-line-fn]`, `[spec:libedit:sem:readline.rl-erase-entire-line-fn]`, `[spec:libedit:sem:readline.rl-cleanup-after-signal-fn]`, `[spec:libedit:sem:readline.rl-free-line-state-fn]`, `[spec:libedit:sem:readline.rl-set-keyboard-input-timeout-fn]`, `[spec:libedit:sem:readline.rl-forced-update-display-fn]`, `[spec:libedit:sem:readline.rl-display-match-list-fn]`, `[spec:libedit:sem:readline.rl-resize-terminal-fn]`, `[spec:libedit:sem:readline.rl-complete-fn]`, `[spec:libedit:sem:readline.history-expand-fn]`, `[spec:libedit:sem:readline.getfrom-fn]`, `[spec:libedit:sem:readline.rl-qsort-string-compare-fn]` · C: `src/readline.c`, `src/editline/readline.h`

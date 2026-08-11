@@ -4259,6 +4259,22 @@ children (
                     quality-completion-match-ownership
                     quality-history-regex-fallback
                 )
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T11:33:37.36955438Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T11:33:42.701773787Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
             }
         )
         log (
