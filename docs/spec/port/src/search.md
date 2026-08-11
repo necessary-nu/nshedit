@@ -730,6 +730,12 @@
 > is safe only because `regcomp` has already consumed the pattern by
 > then. A port should use a local buffer.
 
+Maintained-port note: [dec:libedit:history-regex-dialect] deliberately keeps
+the literal-first contract while selecting `regex::Regex` over Unicode scalar
+text for the fallback. The rule above remains the source of truth for the
+original C implementation and its POSIX BRE behaviour; the decision and
+`[spec:nshedit:req:abi.history-effects+2]` define the approved Rust divergence.
+
 > [spec:libedit:def:search.el-search-t]
 > typedef struct el_search_t
 

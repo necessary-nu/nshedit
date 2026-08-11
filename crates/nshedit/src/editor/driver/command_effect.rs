@@ -337,6 +337,7 @@ impl ReadDriver {
         Ok(())
     }
 
+    // [spec:nshedit:req:abi.history-effects+2]
     fn dispatch_history_search<T: TerminalControl>(
         &mut self,
         editor: &mut Editor<T>,
@@ -353,18 +354,18 @@ impl ReadDriver {
                 (
                     HistorySearchInput::Pattern(pattern),
                     direction,
-                    HistoryMatch::Prefix,
+                    HistoryMatch::LiteralOrRegex,
                 )
             }
             HistorySearchCommand::Prompt(direction) => (
                 HistorySearchInput::Prompted,
                 direction,
-                HistoryMatch::Contains,
+                HistoryMatch::LiteralOrRegex,
             ),
             HistorySearchCommand::Incremental(direction) => (
                 HistorySearchInput::Incremental(editor.keymap_mode()),
                 direction,
-                HistoryMatch::Contains,
+                HistoryMatch::LiteralOrRegex,
             ),
             HistorySearchCommand::Repeat(repetition) => {
                 let Some(stored) = &self.last_history_search else {
@@ -378,7 +379,7 @@ impl ReadDriver {
                 (
                     HistorySearchInput::Pattern(stored.pattern.clone()),
                     direction,
-                    HistoryMatch::Contains,
+                    HistoryMatch::LiteralOrRegex,
                 )
             }
         };

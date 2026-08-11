@@ -141,6 +141,10 @@ pub enum HistoryMatch {
     Prefix,
     /// Match the pattern at any logical-text boundary in the line.
     Contains,
+    // [spec:nshedit:req:abi.history-effects+2]
+    /// Match a literal logical-text substring first, then use the `regex`
+    /// crate's syntax when both operands contain only Unicode scalar values.
+    LiteralOrRegex,
 }
 
 /// Where a history-search effect obtains its logical pattern.

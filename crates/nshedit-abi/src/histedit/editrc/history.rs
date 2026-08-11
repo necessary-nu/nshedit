@@ -101,7 +101,7 @@ unsafe fn set_policy(el: *mut EditLine, policy: HistoryPolicy) -> c_int {
     c_int::from(!unsafe { source.set_policy(policy) }).wrapping_neg()
 }
 
-// [spec:nshedit:req:abi.history-effects+1]
+// [spec:nshedit:req:abi.history-effects+2]
 pub(super) unsafe fn history_command(el: *mut EditLine, words: &[&[u32]]) -> c_int {
     if unsafe { (&*el).history_source() }.is_none_or(|source| !source.is_available()) {
         return -1;

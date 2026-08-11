@@ -85,7 +85,7 @@ states where those semantics may live and what the native Rust API must be.
 > registered user command, sent through foreign callback lookup, or collapsed to
 > an unconditional beep unless the detailed rule assigns that result.
 
-> [spec:nshedit:req:abi.history-effects+1]
+> [spec:nshedit:req:abi.history-effects+2]
 > An installed narrow or wide history callback MUST service editrc history
 > commands and traversal with the arguments, ordering, return translation, and
 > output assigned by the detailed history and read rules. The compatibility
@@ -93,6 +93,17 @@ states where those semantics may live and what the native Rust API must be.
 > implicit `H_ENTER`, because the C API assigns recording to the caller after
 > `el_gets` returns. Foreign callback storage and invocation remain ABI-owned;
 > the native editor MUST cross this boundary only through typed history effects.
+>
+> Prefix-derived, prompted, incremental, and repeated compatibility history
+> searches MUST carry a literal-or-Rust-regex matching policy through that typed
+> boundary. For each candidate, the adapter MUST first test an unanchored
+> literal substring over the owned logical text units. Only when that fails and
+> both operands contain exclusively Unicode scalar values MAY it compile the
+> pattern with `regex::Regex` and use `Regex::is_match`. An invalid pattern or a
+> non-scalar regex operand MUST make the regex leg a silent no-match; raw bytes
+> and opaque code points remain eligible for the literal leg. This maintained
+> policy is locale-independent and deliberately chooses Rust regex syntax over
+> the POSIX BRE dialect described by the detailed historical rules.
 
 > [spec:nshedit:req:abi.signal-lifecycle]
 > Signal-enabled reads MUST install, observe, propagate, and restore the signal

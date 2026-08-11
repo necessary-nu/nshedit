@@ -1,7 +1,7 @@
 use core::ffi::{c_char, c_int, c_void};
 use std::ffi::{CStr, CString};
 
-use nshedit::domain::{Direction, RepeatCount, Text};
+use nshedit::domain::{Direction, OpaqueCodePoint, RepeatCount, Text, TextUnit};
 use nshedit::editor::effect::{
     AliasEffect, AliasResponse, HistoryLineEffect, HistoryMatch, HistoryPosition,
     HistorySearchEffect, HistorySearchInput, HistorySelection, HistoryWordEffect,
@@ -75,9 +75,9 @@ fn history_effect_adapter() {
         .expect("register a complete history source");
 
     let search = HistorySearchEffect {
-        input: HistorySearchInput::Pattern(Text::from("car")),
+        input: HistorySearchInput::Pattern(Text::from("car.+test")),
         direction: Direction::Previous,
-        matching: HistoryMatch::Prefix,
+        matching: HistoryMatch::LiteralOrRegex,
     };
     let response = unsafe { host_history_search(&raw mut *editor, &search) }.unwrap();
     assert_eq!(
@@ -104,6 +104,33 @@ fn history_effect_adapter() {
     );
 
     drop(unsafe { Box::from_raw(cookie) });
+}
+
+// [spec:nshedit:req:abi.history-effects+2/test]
+#[test]
+fn literal_then_rust_regex() {
+    let matching = HistoryMatch::LiteralOrRegex;
+
+    assert!(history_matches(
+        &Text::from("cargo test"),
+        &Text::from("car.+test"),
+        matching,
+    ));
+    assert!(history_matches(
+        &Text::from("cargo [test"),
+        &Text::from("[test"),
+        matching,
+    ));
+    assert!(!history_matches(
+        &Text::from("cargo test"),
+        &Text::from("[test"),
+        matching,
+    ));
+
+    let opaque = TextUnit::OpaqueCodePoint(OpaqueCodePoint::new(0xd800).unwrap());
+    let non_scalar: Text = [TextUnit::RawByte(0xff), opaque].into_iter().collect();
+    assert!(history_matches(&non_scalar, &non_scalar, matching));
+    assert!(!history_matches(&non_scalar, &Text::from(".+"), matching,));
 }
 
 // [spec:nshedit:req:core.command-effects/test]

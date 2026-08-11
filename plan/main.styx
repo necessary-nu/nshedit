@@ -2656,9 +2656,6 @@ children (
                 id greenfield-history-compat
                 title "Connect history callbacks to commands, traversal, and accepted lines"
                 kind @fix
-                implements {
-                    native-impl ([spec:nshedit:req:abi.history-effects])
-                }
                 deps (
                     greenfield-history
                     greenfield-effect-runtime
@@ -2719,6 +2716,7 @@ children (
                     greenfield-binding-dispatch
                     greenfield-history-compat
                     greenfield-signal-compat
+                    quality-history-regex-fallback
                 )
                 log (
                     {
@@ -3972,6 +3970,31 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id quality-history-regex-fallback
+                title "Restore literal-first Rust-regex history matching"
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:abi.history-effects+2])
+                }
+                deps (history-regex quality-errata-source-truth)
+                log (
+                    {
+                        at 2026-08-11T10:38:34.54648433Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T10:43:12.57967531Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Advance [spec:nshedit:req:abi.history-effects] to +2 and rehome it from greenfield-history-compat. The detailed search rules remain an exact description of the retired C's POSIX BRE behaviour; [dec:libedit:history-regex-dialect] records the deliberate maintained implementation: literal Text-unit substring first, then regex::Regex over scalar text, with invalid or non-scalar regex operands treated as misses. Every compatibility history-search command carries this policy explicitly."
                     }
                 )
             }

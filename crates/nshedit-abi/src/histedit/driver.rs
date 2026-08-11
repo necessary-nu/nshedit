@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 
-use nshedit::domain::{KeymapMode, RepeatCount};
+use nshedit::domain::{KeymapMode, RepeatCount, TextUnit};
 use nshedit::editor::effect::{
     AliasEffect, AliasResponse, EditorCommandEffect, EditorCommandResponse, ExternalEditEffect,
     HistoryLineEffect, HistoryMatch, HistoryNavigateEffect, HistoryPosition, HistorySearchEffect,
@@ -16,6 +16,7 @@ use nshedit::editor::effect::{
     HistoryWordResponse,
 };
 use nshedit_plat::terminal;
+use regex::Regex;
 
 mod signal;
 
@@ -593,6 +594,7 @@ unsafe fn host_history_search(
     Ok(HistorySearchResponse { history, pattern })
 }
 
+// [spec:nshedit:req:abi.history-effects+2]
 fn history_matches(line: &Text, pattern: &Text, matching: HistoryMatch) -> bool {
     let line = line.as_units();
     let pattern = pattern.as_units();
@@ -602,7 +604,26 @@ fn history_matches(line: &Text, pattern: &Text, matching: HistoryMatch) -> bool 
     match matching {
         HistoryMatch::Prefix => line.starts_with(pattern) && line != pattern,
         HistoryMatch::Contains => line.windows(pattern.len()).any(|window| window == pattern),
+        HistoryMatch::LiteralOrRegex => {
+            if line.windows(pattern.len()).any(|window| window == pattern) {
+                return true;
+            }
+            let (Some(line), Some(pattern)) = (scalar_text(line), scalar_text(pattern)) else {
+                return false;
+            };
+            Regex::new(&pattern).is_ok_and(|regex| regex.is_match(&line))
+        }
     }
+}
+
+fn scalar_text(units: &[TextUnit]) -> Option<String> {
+    units
+        .iter()
+        .map(|unit| match unit {
+            TextUnit::Scalar(character) => Some(*character),
+            TextUnit::RawByte(_) | TextUnit::OpaqueCodePoint(_) => None,
+        })
+        .collect()
 }
 
 unsafe fn host_history_line(

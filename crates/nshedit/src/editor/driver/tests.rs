@@ -834,7 +834,7 @@ fn history_search_effect() {
         search.request().input,
         HistorySearchInput::Pattern(Text::from("car"))
     );
-    assert_eq!(search.request().matching, HistoryMatch::Prefix);
+    assert_eq!(search.request().matching, HistoryMatch::LiteralOrRegex);
     let step = driver
         .resume_history_search(
             &mut editor,
@@ -857,6 +857,7 @@ fn history_search_effect() {
         repeated.request().input,
         HistorySearchInput::Pattern(Text::from("car"))
     );
+    assert_eq!(repeated.request().matching, HistoryMatch::LiteralOrRegex);
 }
 
 // [spec:nshedit:req:core.command-effects/test]
