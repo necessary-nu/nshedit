@@ -310,6 +310,7 @@ assertions (
     {id quality-remaining-errata-closeout, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:33:42.701773787Z}
     {id greenfield-incremental-render, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:34:54.815515633Z}
     {id greenfield-acceptance, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:34:54.916299367Z}
+    {id quality-nonutf8-history-path-test-portability, kind @complete, author "brendan@necessary.nu", at 2026-08-11T19:43:46.750568717Z}
 )
 
 impl_evidence (

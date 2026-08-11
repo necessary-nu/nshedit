@@ -3820,6 +3820,14 @@ children (
                         kind @status
                         text "Todo → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-11T19:42:01.501994686Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "The end-to-end verification fixture assumed every supported host filesystem could create an invalid UTF-8 pathname component. APFS requires valid UTF-8 and rejects the fixture with EILSEQ before nshedit runs; the maintained byte-preserving implementation remains correct. Follow-up: quality-nonutf8-history-path-test-portability."
+                        after_done true
+                    }
                 )
             }
 
@@ -4300,6 +4308,37 @@ children (
 
                     {
                         at 2026-08-11T11:33:42.701773787Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id quality-nonutf8-history-path-test-portability
+                title "Limit the non-UTF-8 history-path test to supporting filesystems"
+                priority 3
+                kind @test
+                deps (quality-nonutf8-history-paths macos-acceptance)
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T19:42:25.462251246Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "priority pinned to 3 — operator override: Approved as a P3 follow-up depending on the completed non-UTF-8 path and macOS acceptance work."
+                    }
+
+                    {
+                        at 2026-08-11T19:42:34.317856809Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T19:43:46.750568717Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"

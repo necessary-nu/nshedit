@@ -795,8 +795,12 @@ impl Drop for Piped {
 /// Readline's history file entry points take filesystem bytes, not UTF-8.
 /// A non-UTF-8 name must identify the same directory entry when it is opened
 /// for truncation and later for append.
+///
+/// APFS rejects invalid UTF-8 path components before these entry points run,
+/// so this end-to-end fixture is limited to the supported Linux ABI.
 // [spec:libedit:sem:readline.history-truncate-file-fn+1/test]
 // [spec:libedit:sem:readline.append-history-fn+1/test]
+#[cfg(target_os = "linux")]
 #[test]
 fn history_paths_preserve_non_utf8_bytes() {
     use std::os::unix::ffi::OsStrExt;
