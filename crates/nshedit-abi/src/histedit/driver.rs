@@ -132,6 +132,7 @@ unsafe fn host_prompt(el: *mut EditLine, side: PromptSide) -> Prompt {
 
 /// Obtain one owned input response without retaining an editor borrow while
 /// an application callback runs.
+// [spec:nshedit:req:abi.caller-fd-flags]
 unsafe fn host_read(
     el: *mut EditLine,
     signals: &mut ReadSignals,
@@ -205,6 +206,9 @@ unsafe fn host_read(
                 if let Some(signal) = unsafe { signals.take_pending(el) } {
                     return Ok(ReadOutcome::Signal(editor_signal(signal)));
                 }
+                // `EL_SAFEREAD` owns only this retry decision. In particular,
+                // a would-block result is returned without mutating the
+                // caller's open-file description.
                 if error.kind() == std::io::ErrorKind::Interrupted && unsafe { (&*el).safe_read() }
                 {
                     continue;
@@ -220,6 +224,7 @@ unsafe fn host_read(
 /// This path deliberately does not share the line driver's chunk decoder:
 /// `el_wgetc` must never consume bytes belonging to the next character, and
 /// pushed input must bypass terminal activation entirely.
+// [spec:nshedit:req:abi.caller-fd-flags]
 pub(super) unsafe fn read_wide_character(el: *mut EditLine, wc: *mut WcharT) -> c_int {
     let _ = unsafe { (&*el).flush_output() };
     let mut signals = ReadSignals::empty();
@@ -302,6 +307,8 @@ pub(super) unsafe fn read_wide_character(el: *mut EditLine, wc: *mut WcharT) -> 
                         }
                     }
                 }
+                // As in the line driver, safe-read retries interruption only;
+                // it never clears status flags on the caller's descriptor.
                 if error.kind() == std::io::ErrorKind::Interrupted && unsafe { (&*el).safe_read() }
                 {
                     continue;
@@ -460,7 +467,7 @@ unsafe fn read_host_text(
         let mut value = 0;
         match unsafe { read_wide_character(el, &raw mut value) } {
             1 => {}
-            0 => return Err(HostFailure::Cancelled),
+            0 => return Err(HostFailure::EndOfInput),
             _ => return Err(HostFailure::Failed("command input failed".into())),
         }
         let unit = TextUnit::from_code_point(value);
@@ -540,7 +547,7 @@ unsafe fn host_history_search(
                     });
                 }
                 1 => return Err(HostFailure::Failed("input pushback is full".into())),
-                0 => return Err(HostFailure::Cancelled),
+                0 => return Err(HostFailure::EndOfInput),
                 _ => {
                     return Err(HostFailure::Failed(
                         "incremental search input failed".into(),

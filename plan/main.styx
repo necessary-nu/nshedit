@@ -2662,6 +2662,7 @@ children (
                     greenfield-read-driver
                     greenfield-abi-adapter
                 )
+                sealed true
                 log (
                     {
                         at 2026-08-09T03:26:20.45038957Z
@@ -2682,6 +2683,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "Corrected [spec:nshedit:req:abi.history-effects] to match the C ownership boundary: el_gets yields the accepted line but does not call H_ENTER. The compatibility driver now acknowledges the typed native record effect while the application remains solely responsible for persistence. Exact evidence covers narrow and wide editrc callbacks, interactive traversal, list output, policy mutation, and non-duplication."
+                    }
+
+                    {
+                        at 2026-08-11T11:16:52.859522925Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
@@ -2716,7 +2724,7 @@ children (
                     greenfield-binding-dispatch
                     greenfield-history-compat
                     greenfield-signal-compat
-                    quality-history-regex-fallback
+                    quality-remaining-errata-closeout
                 )
                 log (
                     {
@@ -3996,6 +4004,260 @@ children (
                         kind @decision
                         text "Advance [spec:nshedit:req:abi.history-effects] to +2 and rehome it from greenfield-history-compat. The detailed search rules remain an exact description of the retired C's POSIX BRE behaviour; [dec:libedit:history-regex-dialect] records the deliberate maintained implementation: literal Text-unit substring first, then regex::Regex over scalar text, with invalid or non-scalar regex operands treated as misses. Every compatibility history-search command carries this policy explicitly."
                     }
+                )
+            }
+
+            {
+                id quality-safe-divergence-policy
+                title "Authorize maintained compatibility safety corrections"
+                kind @docs
+                deps (quality-errata-source-truth)
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T11:17:01.488616413Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T11:17:59.519411876Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id quality-caller-fd-flags
+                title "Preserve caller descriptor flags during safe reads"
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:abi.caller-fd-flags])
+                }
+                deps (quality-safe-divergence-policy)
+                log (
+                    {
+                        at 2026-08-11T11:18:48.278052264Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
+            }
+
+            {
+                id quality-logical-key-bindings
+                title "Retain complete logical keys in compatibility bindings"
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:abi.logical-key-bindings])
+                }
+                deps (quality-safe-divergence-policy)
+                log (
+                    {
+                        at 2026-08-11T11:19:25.319151389Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T11:19:25.319151389Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "single-flight overridden: started while quality-caller-fd-flags had uncommitted WIP"
+                    }
+                )
+            }
+
+            {
+                id quality-history-callback-encoding
+                title "Select history encoding from the installing setter"
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:abi.history-callback-encoding])
+                }
+                deps (quality-safe-divergence-policy)
+                log (
+                    {
+                        at 2026-08-11T11:19:25.475761807Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T11:19:25.475761807Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "single-flight overridden: started while quality-caller-fd-flags had uncommitted WIP"
+                    }
+                )
+            }
+
+            {
+                id quality-internal-completion-dispatch
+                title "Keep private completion dispatch typed and non-interposable"
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:abi.internal-completion-dispatch])
+                }
+                deps (quality-safe-divergence-policy)
+                log (
+                    {
+                        at 2026-08-11T11:19:25.612485906Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T11:19:25.612485906Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "single-flight overridden: started while quality-caller-fd-flags had uncommitted WIP"
+                    }
+                )
+            }
+
+            {
+                id quality-history-search-eof
+                title "Propagate EOF from prompted history search"
+                kind @fix
+                deps (quality-errata-source-truth)
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T11:19:25.735298201Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T11:19:25.735298201Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "single-flight overridden: started while quality-caller-fd-flags had uncommitted WIP"
+                    }
+
+                    {
+                        at 2026-08-11T11:29:04.697655811Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id quality-thread-signal-mask
+                title "Use thread-aware POSIX signal masks"
+                kind @fix
+                deps (quality-signal-slot-lifetime)
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T11:19:25.838774131Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T11:19:25.838774131Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "single-flight overridden: started while quality-caller-fd-flags had uncommitted WIP"
+                    }
+
+                    {
+                        at 2026-08-11T11:29:04.750603346Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id quality-null-editor-handles
+                title "Define remaining NULL editor-handle calls"
+                kind @fix
+                deps (quality-errata-source-truth)
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T11:19:25.948937476Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T11:19:25.948937476Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "single-flight overridden: started while quality-caller-fd-flags had uncommitted WIP"
+                    }
+
+                    {
+                        at 2026-08-11T11:29:04.800959206Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id quality-completion-match-ownership
+                title "Release generated completion matches on failure"
+                kind @fix
+                deps (quality-errata-source-truth)
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T11:19:26.052261705Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T11:19:26.052261705Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "single-flight overridden: started while quality-caller-fd-flags had uncommitted WIP"
+                    }
+
+                    {
+                        at 2026-08-11T11:29:04.848100979Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id quality-remaining-errata-closeout
+                title "Reconcile and close the remaining maintained-code errata"
+                kind @docs
+                deps (
+                    quality-safe-divergence-policy
+                    quality-caller-fd-flags
+                    quality-logical-key-bindings
+                    quality-history-callback-encoding
+                    quality-internal-completion-dispatch
+                    quality-history-search-eof
+                    quality-thread-signal-mask
+                    quality-null-editor-handles
+                    quality-completion-match-ownership
+                    quality-history-regex-fallback
                 )
             }
         )

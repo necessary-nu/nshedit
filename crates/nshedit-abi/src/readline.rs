@@ -3696,6 +3696,7 @@ pub unsafe extern "C" fn rl_completion_matches(
             /* exactly one match */
             list[0] = c_dup(c_bytes(list[1]));
             if list[0].is_null() {
+                c_free_each(&list);
                 return ptr::null_mut();
             }
             return finish_match_list(list);
@@ -3732,6 +3733,7 @@ pub unsafe extern "C" fn rl_completion_matches(
             list[0] = c_dup(&first[..min.min(first.len())]);
         }
         if list[0].is_null() {
+            c_free_each(&list);
             return ptr::null_mut();
         }
 
@@ -3750,6 +3752,7 @@ unsafe fn finish_match_list(list: Vec<*mut c_char>) -> *mut *mut c_char {
     unsafe {
         let out: *mut *mut c_char = c_alloc_array(list.len() + 1);
         if out.is_null() {
+            c_free_each(&list);
             return ptr::null_mut();
         }
         for (i, p) in list.iter().enumerate() {
@@ -4141,15 +4144,17 @@ pub unsafe extern "C" fn _rl_erase_entire_line() {
 /// declares it, but `readline.c` `#define`s the name away around its own
 /// `#include` and never defines it: the symbol a consumer links is
 /// `filecomplete.c`'s, whose behaviour is `sem:filecomplete.completion-matches-fn`
-/// and which libedit itself reaches from `fn_complete2`. A port must export
-/// exactly one symbol of this name, so the export lives here — in the crate
-/// that owns the ABI — and defers to the core's `filecomplete`.
+/// A port must export exactly one symbol of this name, so the export lives
+/// here, in the crate that owns the ABI. Internal completion deliberately
+/// uses its typed private provider rather than resolving this exported symbol,
+/// as required by the maintained compatibility-corrections policy.
 ///
 /// Note the prototypes differ in `const`ness between the two headers. That is
 /// formally incompatible and harmless at the ABI level; `text` is borrowed,
 /// read-only and never retained.
 // [spec:libedit:def:readline.completion-matches-fn]
 // [spec:libedit:sem:readline.completion-matches-fn]
+// [spec:nshedit:req:abi.internal-completion-dispatch]
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn completion_matches(

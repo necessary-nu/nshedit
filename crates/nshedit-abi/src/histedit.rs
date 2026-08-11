@@ -575,7 +575,11 @@ pub unsafe extern "C" fn el_end(el: *mut EditLine) {
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_reset(el: *mut EditLine) {
-    // SAFETY: `el` must be non-NULL; the C has no check and neither has this.
+    // ERR-core-api-05 defines the C's unchecked NULL dereference as a no-op.
+    if el.is_null() {
+        return;
+    }
+    // SAFETY: checked above; a non-NULL handle came from `el_init`.
     unsafe { &mut *el }.reset_line();
 }
 
@@ -608,7 +612,11 @@ pub use crate::eln::el_push;
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_beep(el: *mut EditLine) {
-    // SAFETY: `el` must be non-NULL; there is no check in the C.
+    // ERR-core-api-05 defines the C's unchecked NULL dereference as a no-op.
+    if el.is_null() {
+        return;
+    }
+    // SAFETY: checked above; a non-NULL handle came from `el_init`.
     unsafe { &mut *el }.beep();
 }
 
@@ -737,7 +745,11 @@ pub unsafe extern "C" fn el_source(el: *mut EditLine, fname: *const c_char) -> c
 #[unsafe(no_mangle)]
 #[doc = include_str!("ffi_safety.md")]
 pub unsafe extern "C" fn el_resize(el: *mut EditLine) {
-    // SAFETY: `el` must be non-NULL. Not async-signal-safe, as in the C.
+    // ERR-core-api-05 defines the C's unchecked NULL dereference as a no-op.
+    if el.is_null() {
+        return;
+    }
+    // SAFETY: checked above. Not async-signal-safe, as in the C.
     let blocked = BlockedSignals::block(&[PlatformSignal::Resize]).ok();
     unsafe { &mut *el }.resize_display();
     drop(blocked);
@@ -1268,10 +1280,10 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             c_int::from(!el.add_command(name, help, func)).wrapping_neg()
         }
 
-        // A `hist_fun_t` then its `void *` handle. Then, and only when
-        // `MB_CUR_MAX == 1`, clear NARROW_HISTORY — so a narrow
-        // `el_set(EL_HIST, ...)` is not undone in a multibyte locale
-        // (ERR-core-api-16). Always 0; libedit does not own the handle.
+        // A `hist_fun_t` then its `void *` handle. The wide setter selects the
+        // wide event representation regardless of locale state or which
+        // setter installed the previous callback. libedit does not own the
+        // handle.
         EL_HIST => {
             // SAFETY: the op's first argument is a `hist_fun_t`, per the
             // header; the second is the opaque handle it is called with.
@@ -1280,19 +1292,9 @@ pub(crate) unsafe fn el_wset_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>
             // ERR-history-04, defined by the core: a NULL function with a
             // non-NULL handle is -1 here rather than the C's armed NULL
             // indirect call. Every other combination is the C's 0.
-            let encoding = if el.history_encoding() == HistoryEncoding::Narrow
-                && crate::conversion::max_multibyte_length() != 1
-            {
-                HistoryEncoding::Narrow
-            } else {
-                HistoryEncoding::Wide
-            };
-            let rv = el.set_history_callback(f, ptr, encoding).map_or(-1, |()| 0);
-            // The flag clear is not conditional on `rv` in the C either.
-            if crate::conversion::max_multibyte_length() == 1 {
-                el.set_history_encoding(HistoryEncoding::Wide);
-            }
-            rv
+            // [spec:nshedit:req:abi.history-callback-encoding]
+            el.set_history_callback(f, ptr, HistoryEncoding::Wide)
+                .map_or(-1, |()| 0)
         }
 
         // One `int`, the EINTR-recovery flag. Inline in the C.
@@ -1710,8 +1712,8 @@ pub unsafe extern "C" fn el_wline(el: *mut EditLine) -> *const LineInfoW {
     // The C's whole body is `(const LineInfoW *)(void *)&el->el_line`: a
     // relabelling of the live editing state, which is why `el_wline(NULL)`
     // yields a small bogus pointer instead of faulting. That is undefined
-    // behaviour and `sem:histedit.el-wline-fn` says not to reproduce it, so
-    // `el` is dereferenced here and a NULL handle faults.
+    // behaviour and `sem:histedit.el-wline-fn` says not to reproduce it. The
+    // maintained definition is a NULL result.
     //
     // `nshedit`'s `ElLineT` holds `cursor` and `lastchar` as offsets into an
     // owned `Vec<u32>`, so there is no `LineInfoW` in the core to point at.
@@ -1723,7 +1725,10 @@ pub unsafe extern "C" fn el_wline(el: *mut EditLine) -> *const LineInfoW {
     // on each call. It cannot be live — the offsets have to be resolved
     // against a buffer that moves — and a stashed C pointer is invalidated by
     // the same buffer growth anyway.
-    // SAFETY: `el` must be non-NULL.
+    if el.is_null() {
+        return core::ptr::null();
+    }
+    // SAFETY: checked above; a non-NULL handle came from `el_init`.
     let el = unsafe { &mut *el };
     el.publish_wide_line()
 }

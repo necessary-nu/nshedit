@@ -78,6 +78,7 @@ pub(super) unsafe fn display_match_list(matches: *mut *mut c_char, len: c_int, m
     }
 }
 
+// [spec:nshedit:req:abi.internal-completion-dispatch]
 pub(super) unsafe fn complete(ignore: c_int, invoking_key: c_int) -> c_int {
     let _ = ignore;
     // SAFETY: single-threaded module state.

@@ -261,6 +261,9 @@ impl ReadDriver {
         let prompt = match response {
             Ok(prompt) => prompt,
             Err(HostFailure::Unavailable | HostFailure::Cancelled) => Prompt::default(),
+            Err(HostFailure::EndOfInput) => {
+                return self.complete(editor, ReadResult::EndOfInput);
+            }
             Err(HostFailure::Interrupted) => {
                 return self.complete(editor, ReadResult::Interrupted(ReadInterrupt::Host));
             }
@@ -324,6 +327,7 @@ impl ReadDriver {
         let response = self.accept(pending, response)?;
         let outcome = match response {
             Ok(outcome) => outcome,
+            Err(HostFailure::EndOfInput) => ReadOutcome::EndOfInput,
             Err(HostFailure::Cancelled) => {
                 return self.complete(editor, ReadResult::Interrupted(ReadInterrupt::Cancelled));
             }
@@ -384,6 +388,9 @@ impl ReadDriver {
             Err(HostFailure::Unavailable | HostFailure::Cancelled) => {
                 self.queue_beep();
             }
+            Err(HostFailure::EndOfInput) => {
+                return self.complete(editor, ReadResult::EndOfInput);
+            }
             Err(HostFailure::Interrupted) => {
                 return self.complete(editor, ReadResult::Interrupted(ReadInterrupt::Host));
             }
@@ -411,6 +418,9 @@ impl ReadDriver {
             Err(HostFailure::Unavailable | HostFailure::Cancelled) => {
                 self.queue_beep();
             }
+            Err(HostFailure::EndOfInput) => {
+                return self.complete(editor, ReadResult::EndOfInput);
+            }
             Err(HostFailure::Interrupted) => {
                 return self.complete(editor, ReadResult::Interrupted(ReadInterrupt::Host));
             }
@@ -433,6 +443,7 @@ impl ReadDriver {
                 self.queue_beep();
                 self.after_host_action(editor)
             }
+            Err(HostFailure::EndOfInput) => self.complete(editor, ReadResult::EndOfInput),
             Err(HostFailure::Interrupted) => {
                 self.complete(editor, ReadResult::Interrupted(ReadInterrupt::Host))
             }
@@ -454,6 +465,7 @@ impl ReadDriver {
                 self.completion = Some(ReadResult::Accepted(line));
                 self.schedule_display(DisplayKind::FinishLine(None))
             }
+            Err(HostFailure::EndOfInput) => self.complete(editor, ReadResult::EndOfInput),
             Err(error) => Err(self.fail(editor, DriverError::Host(error))),
         }
     }

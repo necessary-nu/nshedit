@@ -11,7 +11,7 @@
 //! trampoline in assembly per architecture and is unsound for the same
 //! documented reason.
 //!
-//! So `sigaction`, `sigprocmask` and `raise` are named out to the platform's
+//! So `sigaction`, `pthread_sigmask` and `raise` are named out to the platform's
 //! libc, under the second site on `plan/decisions/no-c-ffi.md`'s enumeration
 //! and the widening `plan/decisions/platform-layer.md` argues for. Everything
 //! *around* them is ordinary Rust: `sigemptyset` and `sigaddset` are bit
@@ -360,7 +360,7 @@ mod sys {
             act: *const SigAction,
             oldact: *mut SigAction,
         ) -> c_int;
-        pub(super) fn sigprocmask(how: c_int, set: *const SigSet, oldset: *mut SigSet) -> c_int;
+        pub(super) fn pthread_sigmask(how: c_int, set: *const SigSet, old: *mut SigSet) -> c_int;
         pub(super) fn raise(sig: c_int) -> c_int;
     }
 }
@@ -526,13 +526,13 @@ fn restore_handler(signo: i32, osa: SigAction) -> bool {
     restore_handler_default(signo, osa)
 }
 
-/// `sigprocmask(SIG_BLOCK, set, &oset)`. `None` is the C's -1.
+/// `pthread_sigmask(SIG_BLOCK, set, &oset)`. `None` is failure.
 #[must_use]
 fn sigmask_block(set: &SigSet) -> Option<SigSet> {
     sigmask_block_default(set)
 }
 
-/// `sigprocmask(SIG_SETMASK, oset, NULL)`. `false` is the C's -1.
+/// `pthread_sigmask(SIG_SETMASK, oset, NULL)`. `false` is failure.
 #[must_use]
 fn sigmask_set(oset: &SigSet) -> bool {
     sigmask_set_default(oset)
@@ -575,13 +575,13 @@ fn sigmask_block_default(set: &SigSet) -> Option<SigSet> {
     let mut oset = SigSet::empty();
     // SAFETY: both are the platform's `sigset_t` layout and live for the
     // call.
-    let rv = unsafe { sys::sigprocmask(SIG_BLOCK, &raw const *set, &raw mut oset) };
+    let rv = unsafe { sys::pthread_sigmask(SIG_BLOCK, &raw const *set, &raw mut oset) };
     (rv == 0).then_some(oset)
 }
 
 fn sigmask_set_default(oset: &SigSet) -> bool {
     // SAFETY: as above; the out-parameter is NULL, which POSIX allows.
-    unsafe { sys::sigprocmask(SIG_SETMASK, &raw const *oset, core::ptr::null_mut()) == 0 }
+    unsafe { sys::pthread_sigmask(SIG_SETMASK, &raw const *oset, core::ptr::null_mut()) == 0 }
 }
 
 fn raise_default(signo: i32) -> bool {
@@ -659,7 +659,7 @@ mod tests {
         }
     }
 
-    /// The three `sigaction`/`sigprocmask` words this module transcribes,
+    /// The three signal-action and mask words this module transcribes,
     /// against `bits/sigaction.h`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]

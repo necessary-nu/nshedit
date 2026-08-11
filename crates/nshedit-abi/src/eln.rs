@@ -513,13 +513,9 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
     // a convenience: `sem:eln.el-set-fn` requires every conversion to use the
     // WIDE half, so no `el_set` invalidates a `const char *` a caller is still
     // holding from `el_gets`, `el_line` or `el_get`.
-    // `EL_HIST` calls `hist_set` directly rather than going through
-    // `el_wset`, and then sets `NARROW_HISTORY` UNCONDITIONALLY. That is the
-    // flag's only set site: `el_wset` never sets it and clears it when
-    // `MB_CUR_MAX == 1`. ERR-core-api-16, disposition reproduce — a program
-    // that installs its history through the narrow entry point gets narrow
-    // history whatever the locale says, and one that uses the wide entry
-    // point gets it cleared.
+    // The narrow and wide setters select the callback record representation
+    // directly. Ambient locale state still governs conversion *within* a
+    // narrow callback, but never decides whether its event is narrow or wide.
     if op == EL_HIST {
         // SAFETY: the op's arguments are a `hist_fun_t` and an opaque cookie.
         let f = unsafe { crate::histedit::fn_arg::<HistFunT>(&mut ap) };
@@ -528,6 +524,7 @@ unsafe fn el_set_va(el: &mut EditLine, op: c_int, mut ap: VaList<'_>) -> c_int {
         // it whichever entry point set the history, and the narrow store's -1
         // comes from the NARROW_HISTORY check ahead of it rather than from an
         // absent hook.
+        // [spec:nshedit:req:abi.history-callback-encoding]
         return el
             .set_history_callback(f, ptr, HistoryEncoding::Narrow)
             .map_or(-1, |()| 0);

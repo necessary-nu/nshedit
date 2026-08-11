@@ -860,6 +860,32 @@ fn history_search_effect() {
     assert_eq!(repeated.request().matching, HistoryMatch::LiteralOrRegex);
 }
 
+// [spec:libedit:sem:search.cv-search-fn/test]
+#[test]
+fn prompted_search_propagates_eof() {
+    let mut editor = editor(EditorConfig::default());
+    editor.bind(
+        KeymapMode::Emacs,
+        KeySequence::try_from("q").unwrap(),
+        Binding::Effect(EffectCommand::SearchHistory(HistorySearchCommand::Prompt(
+            crate::domain::Direction::Previous,
+        ))),
+    );
+    let mut driver = ReadDriver::default();
+    let mut output = Vec::new();
+    let begin = driver.begin(&mut editor).unwrap();
+    let step = send(&mut driver, &mut editor, begin, &mut output, 'q');
+    let ReadStep::HistorySearch(search) = step else {
+        panic!("prompted search command did not suspend");
+    };
+    assert_eq!(search.request().input, HistorySearchInput::Prompted);
+
+    let step = driver
+        .resume_history_search(&mut editor, &search, Err(HostFailure::EndOfInput))
+        .unwrap();
+    assert!(matches!(step, ReadStep::Complete(ReadResult::EndOfInput)));
+}
+
 // [spec:nshedit:req:core.command-effects/test]
 #[test]
 fn alias_expansion_effect() {

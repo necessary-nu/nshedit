@@ -23,6 +23,9 @@ impl ReadDriver {
                 .resize_display(size)
                 .map_err(|error| self.fail(editor, DriverError::Render(error)))?,
             Err(HostFailure::Unavailable) => {}
+            Err(HostFailure::EndOfInput) => {
+                return self.complete(editor, ReadResult::EndOfInput);
+            }
             Err(HostFailure::Interrupted) => {
                 return self.complete(editor, ReadResult::Interrupted(ReadInterrupt::Host));
             }
@@ -48,6 +51,9 @@ impl ReadDriver {
         let response = self.accept(pending, response)?;
         match response {
             Ok(()) => {}
+            Err(HostFailure::EndOfInput) => {
+                return self.complete(editor, ReadResult::EndOfInput);
+            }
             Err(HostFailure::Interrupted) => {
                 return self.complete(editor, ReadResult::Interrupted(ReadInterrupt::Host));
             }

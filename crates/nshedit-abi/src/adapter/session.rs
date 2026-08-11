@@ -167,10 +167,6 @@ impl EditLine {
         self.boundary.history.encoding
     }
 
-    pub(crate) fn set_history_encoding(&mut self, encoding: HistoryEncoding) {
-        self.boundary.history.encoding = encoding;
-    }
-
     pub(crate) fn published_line_encoding(&self) -> BoundaryEncoding {
         self.boundary.lines.published
     }

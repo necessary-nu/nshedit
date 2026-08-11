@@ -52,13 +52,11 @@ fn policy_reconfigures_the_editor() {
     editor.set_unbuffered(true);
     editor.set_safe_read(true);
     editor.set_editing_enabled(false);
-    editor.set_history_encoding(HistoryEncoding::Narrow);
 
     assert!(editor.handle_signals());
     assert!(editor.unbuffered());
     assert!(editor.safe_read());
     assert!(!editor.editing_enabled());
-    assert_eq!(editor.history_encoding(), HistoryEncoding::Narrow);
     assert_eq!(
         editor.editor().config().signal_policy(),
         SignalPolicy::Handle

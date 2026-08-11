@@ -35,6 +35,31 @@ states where those semantics may live and what the native Rust API must be.
 > inputs MUST receive a documented safe result rather than an attempt to
 > reproduce memory unsafety.
 
+> [spec:nshedit:req:abi.caller-fd-flags]
+> `EL_SAFEREAD` MUST retry an input operation interrupted by a signal without
+> changing the caller's descriptor status flags. A would-block result MUST be
+> reported through the existing read failure path; the adapter MUST NOT clear
+> `O_NONBLOCK`, `O_NDELAY`, or any other flag on the caller's open-file
+> description.
+
+> [spec:nshedit:req:abi.logical-key-bindings]
+> Direct compatibility `bind` mutations and queries MUST use the complete
+> decoded logical key sequence. A non-ASCII first unit MUST NOT be truncated
+> to its low byte or alias an unrelated single-byte keymap entry.
+
+> [spec:nshedit:req:abi.history-callback-encoding]
+> Installing `EL_HIST` through the narrow setter MUST select the narrow event
+> representation, and installing it through the wide setter MUST select the
+> wide event representation. Ambient locale state and any previously
+> installed callback MUST NOT override the representation selected by the
+> current setter.
+
+> [spec:nshedit:req:abi.internal-completion-dispatch]
+> The compatibility `completion_matches` symbol MUST remain exported with its
+> committed signature. Private TAB-completion dispatch MUST call the typed
+> Rust provider directly and MUST NOT resolve that internal call through an
+> interposable exported ELF symbol.
+
 > [spec:nshedit:req:abi.termcap-view]
 > The in-workspace terminal database layer MUST expose legacy termcap names as
 > an explicit projection of typed terminfo data. The projection MUST preserve

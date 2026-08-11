@@ -382,18 +382,12 @@ fn the_narrow_setter_decodes_and_records_that_it_was_narrow() {
     done(el);
 }
 
-// [spec:libedit:sem:histedit.el-set-fn+1/test]
-/// `el_set(EL_HIST)` raises `NARROW_HISTORY` unconditionally and
-/// `el_wset(EL_HIST)` only ever lowers it, and then only in a single-byte
-/// locale.
-///
-/// ERR-core-api-16, disposition reproduce: this is the flag's only set
-/// site in the whole library, so which entry point installed the history
-/// decides how the bridge converts for the rest of the editor's life —
-/// and in a multibyte locale a wide `EL_HIST` after a narrow one does not
-/// undo it.
+/// Each setter selects the callback record representation promised by its
+/// own API, independently of locale state and the previously installed
+/// callback.
+// [spec:nshedit:req:abi.history-callback-encoding/test]
 #[test]
-fn installing_history_through_the_narrow_setter_pins_the_bridge_narrow() {
+fn history_setters_select_encoding() {
     unsafe extern "C" fn hist(
         _: *mut c_void,
         _: *mut crate::cdecl::histedit::HistEventWide,
@@ -415,12 +409,7 @@ fn installing_history_through_the_narrow_setter_pins_the_bridge_narrow() {
             crate::histedit::el_wset(el, EL_HIST, f, ptr::dangling_mut::<c_void>()),
             0
         );
-        let cleared = (&*el).history_encoding() == HistoryEncoding::Wide;
-        assert_eq!(
-            cleared,
-            crate::conversion::max_multibyte_length() == 1,
-            "the wide setter clears the flag only in a single-byte locale"
-        );
+        assert_eq!((&*el).history_encoding(), HistoryEncoding::Wide);
     }
     done(el);
 }

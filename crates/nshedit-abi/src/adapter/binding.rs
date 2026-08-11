@@ -110,6 +110,7 @@ impl EditLine {
     }
 
     // [spec:nshedit:req:abi.bindings]
+    // [spec:nshedit:req:abi.logical-key-bindings]
     pub(crate) fn bind_command(&mut self, arguments: &[&[u32]]) -> c_int {
         let Some(command_name) = arguments.first().copied() else {
             return -1;

@@ -503,6 +503,9 @@ pub type EffectResult<T> = Result<T, HostFailure>;
 pub enum HostFailure {
     /// The host intentionally cancelled the operation.
     Cancelled,
+    /// The host reached the end of its interactive input while servicing the
+    /// operation.
+    EndOfInput,
     /// A signal or equivalent interruption stopped the operation.
     Interrupted,
     /// The host does not provide this operation.
@@ -515,6 +518,7 @@ impl fmt::Display for HostFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Cancelled => formatter.write_str("host operation was cancelled"),
+            Self::EndOfInput => formatter.write_str("host input ended"),
             Self::Interrupted => formatter.write_str("host operation was interrupted"),
             Self::Unavailable => formatter.write_str("host operation is unavailable"),
             Self::Failed(message) => write!(formatter, "host operation failed: {message}"),
