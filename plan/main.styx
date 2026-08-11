@@ -2726,6 +2726,7 @@ children (
                     greenfield-signal-compat
                     quality-remaining-errata-closeout
                 )
+                sealed true
                 log (
                     {
                         at 2026-08-09T01:10:37.887308076Z
@@ -2740,6 +2741,20 @@ children (
                         kind @errata
                         text "The ABI acceptance evidence remains valid, but the architecture acceptance was incomplete: private ABI code still re-entered exported variadic symbols, carried C status/out-parameter protocols, and used contrastive migration naming. rust-idiom-hardening owns the follow-up without weakening the conformance baseline."
                         after_done true
+                    }
+
+                    {
+                        at 2026-08-11T11:34:54.869063718Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Final acceptance reran strict workspace documentation, formatting, clippy, all Rust and C ABI tests, both Darwin cross-check targets, cargo-xwin MSVC, and the GNU Windows target after every maintained-code erratum and dependency closed."
+                    }
+
+                    {
+                        at 2026-08-11T11:34:54.916299367Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
@@ -2824,6 +2839,7 @@ children (
                 title "Plan deterministic incremental terminal transitions"
                 kind @fix
                 deps (greenfield-terminal-render)
+                sealed true
                 log (
                     {
                         at 2026-08-09T02:15:26.706068023Z
@@ -2845,6 +2861,20 @@ children (
                         kind @errata
                         text "The addressed terminal path skips unchanged rows but rewrites every changed row from column zero. A single appended character therefore emits two absolute cursor addresses, the complete prompt and line, and clear-to-end instead of preserving the unchanged prefix or taking the fast append path required by the incremental-render contract."
                         after_done true
+                    }
+
+                    {
+                        at 2026-08-11T11:34:54.766582263Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The incremental-render contract and its final prompt-style repair are shipped under quality-prompt-style-state at [spec:nshedit:req:core.incremental-render+3]. Rehoming that rule left this historical rule-less leaf Todo; no implementation work remains."
+                    }
+
+                    {
+                        at 2026-08-11T11:34:54.815515633Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }

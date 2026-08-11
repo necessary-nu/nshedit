@@ -308,6 +308,8 @@ assertions (
     {id quality-null-editor-handles, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:29:04.800959206Z}
     {id quality-completion-match-ownership, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:29:04.848100979Z}
     {id quality-remaining-errata-closeout, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:33:42.701773787Z}
+    {id greenfield-incremental-render, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:34:54.815515633Z}
+    {id greenfield-acceptance, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:34:54.916299367Z}
 )
 
 impl_evidence (
