@@ -3601,6 +3601,14 @@ children (
                         kind @note
                         text "Finding: crates/nshedit-abi/src/history/persistence.rs deliberately suppresses write and flush errors under ERR-history-21. Version the compatibility contract, then make every save surface (including FILE-backed saves) report write, flush, temporary-file, and replacement failures to the C caller without reporting success for partial persistence; update the governing spec, errata, and ABI acceptance evidence."
                     }
+
+                    {
+                        at 2026-08-11T20:16:54.05351809Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "The C integration fixture used Linux-only /dev/full to force save and append failures. macOS has no such device, so both native architectures failed fixture setup before exercising the ABI. The failure-reporting implementation and Rust verification remain valid. Follow-up: quality-save-failure-fixture-portability."
+                        after_done true
+                    }
                 )
             }
 
@@ -4339,6 +4347,37 @@ children (
 
                     {
                         at 2026-08-11T19:43:46.750568717Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id quality-save-failure-fixture-portability
+                title "Make the C ABI save-failure fixture portable across POSIX hosts"
+                priority 3
+                kind @test
+                deps (quality-history-save-errors macos-acceptance)
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T20:16:59.323321121Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "priority pinned to 3 — operator override: Approved as the proposed P3 follow-up depending on history-save failure reporting and macOS acceptance."
+                    }
+
+                    {
+                        at 2026-08-11T20:17:07.499242674Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T20:19:57.197582269Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"

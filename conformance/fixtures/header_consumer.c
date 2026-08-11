@@ -11,9 +11,11 @@
  */
 
 #include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <wchar.h>
@@ -28,6 +30,72 @@ static void ok(const char *what, int cond) {
     if (!cond) {
         failures++;
     }
+}
+
+/*
+ * A zero file-size limit makes the next regular-file write fail with EFBIG.
+ * SIGXFSZ must be ignored so the failure reaches stdio and the ABI.
+ */
+struct write_failure_fixture {
+    char path[4096];
+    struct rlimit saved_limit;
+    void (*saved_sigxfsz)(int);
+    int limit_changed;
+    int signal_changed;
+};
+
+static int write_failure_start(const char *directory,
+                               struct write_failure_fixture *fixture) {
+    struct rlimit limit;
+    FILE *seed;
+    int written;
+
+    memset(fixture, 0, sizeof(*fixture));
+    written = snprintf(fixture->path, sizeof(fixture->path),
+                       "%s/write-failure", directory);
+    if (written < 0 || (size_t)written >= sizeof(fixture->path)) {
+        return 0;
+    }
+
+    seed = fopen(fixture->path, "w");
+    if (seed == NULL || fclose(seed) != 0) {
+        return 0;
+    }
+    if (getrlimit(RLIMIT_FSIZE, &fixture->saved_limit) != 0) {
+        return 0;
+    }
+
+    fixture->saved_sigxfsz = signal(SIGXFSZ, SIG_IGN);
+    if (fixture->saved_sigxfsz == SIG_ERR) {
+        return 0;
+    }
+    fixture->signal_changed = 1;
+
+    limit = fixture->saved_limit;
+    limit.rlim_cur = 0;
+    if (setrlimit(RLIMIT_FSIZE, &limit) != 0) {
+        return 0;
+    }
+    fixture->limit_changed = 1;
+    return 1;
+}
+
+static int write_failure_stop(struct write_failure_fixture *fixture) {
+    int restored = 1;
+
+    if (fixture->limit_changed &&
+        setrlimit(RLIMIT_FSIZE, &fixture->saved_limit) != 0) {
+        restored = 0;
+    }
+    if (fixture->signal_changed &&
+        signal(SIGXFSZ, fixture->saved_sigxfsz) == SIG_ERR) {
+        restored = 0;
+    }
+    if (fixture->path[0] != '\0' && unlink(fixture->path) != 0 &&
+        errno != ENOENT) {
+        restored = 0;
+    }
+    return restored;
 }
 
 /*
@@ -81,6 +149,8 @@ int main(int argc, char **argv) {
     HISTORY_STATE *hs;
     KEYMAP_ENTRY *km;
     FILE *full;
+    struct write_failure_fixture write_failure;
+    int write_failure_ready;
     char replacement_target[4096];
 
     if (argc < 2) {
@@ -119,15 +189,18 @@ int main(int argc, char **argv) {
     ok("H_FIRST reads ev.str", history_w(h, &ev, H_FIRST) != -1 &&
                                    ev.str != NULL && wcscmp(ev.str, L"two") == 0);
     ok("H_FIRST reads ev.num", ev.num > 0);
-    full = fopen("/dev/full", "w");
-    ok("fopen /dev/full", full != NULL);
+    write_failure_ready = write_failure_start(argv[1], &write_failure);
+    ok("prepare write failure", write_failure_ready);
+    full = write_failure_ready ? fopen(write_failure.path, "w") : NULL;
+    ok("open limited file", full != NULL);
     errno = 0;
     ok("H_SAVE_FP reports flush failure",
        full != NULL && history_w(h, &ev, H_SAVE_FP, full) == -1 &&
-       ev.num == 11 && errno == ENOSPC);
+       ev.num == 11 && errno == EFBIG);
     if (full != NULL) {
         fclose(full);
     }
+    ok("restore write failure", write_failure_stop(&write_failure));
     if (snprintf(replacement_target, sizeof(replacement_target), "%s/history-target", argv[1]) < 0) {
         return 1;
     }
@@ -176,8 +249,12 @@ int main(int argc, char **argv) {
     using_history();
     ok("add_history", add_history("alpha") == 0);
     ok("add_history", add_history("beta") == 0);
+    write_failure_ready = write_failure_start(argv[1], &write_failure);
+    ok("prepare append failure", write_failure_ready);
     ok("append_history reports write failure",
-       append_history(1, "/dev/full") == ENOSPC);
+       write_failure_ready &&
+       append_history(1, write_failure.path) == EFBIG);
+    ok("restore append failure", write_failure_stop(&write_failure));
     ok("history_length", history_length == 2);
     he = history_get(history_base);
     ok("history_get reads ->line", he != NULL && he->line != NULL &&
