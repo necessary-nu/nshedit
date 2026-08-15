@@ -12,7 +12,7 @@ pub(super) enum Atom {
     Spaces(usize),
 }
 
-// [spec:nshedit:req:core.incremental-render+3]
+// [spec:nshedit:req:core.incremental-render+4]
 /// Prompt literals whose effects are active at the start of a physical row.
 ///
 /// Literal bytes are deliberately opaque to the renderer. Keeping their

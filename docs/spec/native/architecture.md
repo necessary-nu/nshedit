@@ -277,12 +277,19 @@ states where those semantics may live and what the native Rust API must be.
 > those existing compatibility modules; `core.no-compat-internals` governs
 > its final removal.
 
-> [spec:nshedit:req:core.incremental-render+3]
+> [spec:nshedit:req:core.incremental-render+4]
 > Native rendering MUST plan deterministic terminal operations from the
 > committed typed screen and cursor to the next complete frame. Unchanged
 > cells MUST NOT force a complete redraw. The committed image MUST belong to
 > an explicit physical editor region anchored at the current terminal line,
 > with an extent covering every row the renderer has reserved or drawn.
+> Claiming that region MUST NOT emit a byte the frame does not itself need. A
+> region confined to the caller's current line MUST be claimed without output
+> and MUST reach its origin through carriage return; a saved-cursor anchor MUST
+> be reserved only for a region spanning more than one physical row, and
+> reserving one MUST NOT by itself invalidate the committed image. A first
+> frame drawn at the origin and every later append-only frame MUST therefore
+> emit only their own prompt and text bytes.
 > Ordered zero-width prompt literal state MUST remain separate from physical
 > screen cells. Every independently emitted row or suffix MUST replay the
 > literal state active at its starting boundary, including state established
@@ -296,8 +303,11 @@ states where those semantics may live and what the native Rust API must be.
 > multiline region MUST return a typed error without abandoning or overwriting
 > it. Accepted-line and end-of-input finalization MUST position at the last row
 > in the region's high-water extent, restoring the saved origin and moving
-> relative to it when the region is addressed, and emit a line feed so the host
-> resumes below every reserved or drawn row. Finalization MUST release the
+> relative to it when the region is anchored, and emit a line feed so the host
+> resumes below every reserved or drawn row. Finalization of a region confined
+> to the current line MUST reserve no anchor and emit no positioning of its
+> own, letting a visible echo wrap on its own before that line feed.
+> Finalization MUST release the
 > region only after the complete byte plan is written and flushed successfully.
 > Failure MUST NOT reset its committed screen or extent; a partially emitted
 > replacement anchor MUST instead be marked unavailable. The planner MUST use

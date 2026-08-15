@@ -721,4 +721,9 @@ impl_evidence (
     ), rule_versions_seen (
         {id platform.windows-console, version 0}
     )}
+    {id quality-renderer-inline-region, covered_rules (
+        core.incremental-render
+    ), covered_claims (
+        {impl_name native-impl, rule core.incremental-render}
+    )}
 )

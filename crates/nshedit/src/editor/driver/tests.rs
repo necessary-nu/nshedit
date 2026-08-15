@@ -228,7 +228,7 @@ fn driver_decodes_and_accepts_utf8() {
     assert_eq!(editor.terminal_mode(), TerminalMode::Cooked);
 }
 
-// [spec:nshedit:req:core.incremental-render+3/test]
+// [spec:nshedit:req:core.incremental-render+4/test]
 #[test]
 fn accept_and_eof_finish_below_region() {
     const FINISH: &[u8] = b"\x1b8\x1b[B\x1b[B\n";
@@ -284,7 +284,7 @@ fn accept_and_eof_finish_below_region() {
     assert_eq!(eof_editor.terminal_mode(), TerminalMode::Cooked);
 }
 
-// [spec:nshedit:req:core.incremental-render+3/test]
+// [spec:nshedit:req:core.incremental-render+4/test]
 #[test]
 fn eof_echo_wrap_reserves_region() {
     let mut editor = editor(EditorConfig::default());
@@ -318,11 +318,13 @@ fn eof_echo_wrap_reserves_region() {
             .all(|cell| matches!(cell, crate::domain::ScreenCell::Blank))
     );
 
+    // The released region leaves the next prompt inline again, so it reserves
+    // nothing and draws only itself.
     let mut next_frame = Vec::new();
     editor
         .render_to(&Prompt::from("n> "), None, &mut next_frame)
         .unwrap();
-    assert!(next_frame.starts_with(b"\r\x1b7"));
+    assert_eq!(next_frame, b"n> ");
 }
 
 #[test]
@@ -1105,7 +1107,7 @@ fn vi_immediate_terminal_outcomes_are_typed() {
     let step = send(&mut driver, &mut editor, begin, &mut output, '\u{4}');
     let step = settle(&mut driver, &mut editor, step, &mut output);
     assert!(matches!(step, ReadStep::Complete(ReadResult::EndOfInput)));
-    assert!(output.ends_with(b"^D\x1b8\n"));
+    assert!(output.ends_with(b"^D\n"));
 
     let mut editor = vi_with_line("echo ok");
     let mut driver = ReadDriver::default();

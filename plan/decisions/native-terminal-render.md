@@ -7,7 +7,7 @@ scope {
     elements ([arch:libedit:core] [arch:libedit:terminal-caps] [arch:libedit:c-abi])
     rules (
         [spec:nshedit:req:core.terminal-render+1]
-        [spec:nshedit:req:core.incremental-render+3]
+        [spec:nshedit:req:core.incremental-render+4]
         [spec:nshedit:req:core.text-screen-model]
         [spec:nshedit:req:core.rust-io+1]
         [spec:nshedit:req:core.effect-hooks]
@@ -32,6 +32,10 @@ alternatives (
         rejected_because "The editor starts wherever the host's cursor currently sits, not at physical row zero. Treating its local origin as screen row zero overwrites unrelated terminal content and makes local damage recovery clear the host's screen."
     }
     {
+        option "Reserve the saved-origin anchor eagerly on the first frame of every line."
+        rejected_because "Most lines never leave the row the host's cursor already sits on, so the reservation buys nothing and costs a save/restore pair plus the full repaint that treating a fresh anchor as damage implies. That cost is observable, not cosmetic: PTY differential comparison against the reference implementation diverged on the first prompt render of every editor-mode case. Carriage return already reaches the origin of a one-row region, so the anchor is worth its bytes only once a frame outgrows that row."
+    }
+    {
         option "Install a process-global terminfo entry and output destination."
         rejected_because "Two editors would share mutable capability variables and output routing, recreating the C mutex/callback design and preventing safe independent sessions."
     }
@@ -43,8 +47,8 @@ consequences {
         "ScreenGlyph anchors one printable scalar sequence and any following combining scalars. ScreenCell represents Blank, Glyph, Continuation, or Padding, so each value has physical-column semantics. Raw bytes, non-scalar wide values, and unprintable scalars render as visible owned escapes."
         "Editor owns the only native renderer state. TerminalProfile owns the selected terminfo bytes, semantic BaudRate, padding policy, capability variables, committed Screen, cursor, and row count; no global entry or destination exists."
         "A frame and its complete transition from the committed screen are planned before I/O. write_all and flush use a caller-supplied std::io::Write; screen, cursor, damage, and terminfo-variable state commit together only after both succeed. A failed write leaves the previous state committed so the next plan can repair from a conservative damage marker."
-        "The renderer anchors the host's current terminal line with owned save/restore capabilities and tracks the high-water extent of rows it reserves or draws. Multiline transitions use relative vertical motion within that region; damage, resize, and profile reconfiguration preserve the saved origin and erase only the tracked rows, never the whole terminal. A downgraded profile that cannot address an owned multiline region fails without emitting output or abandoning that region."
-        "Accepted-line and end-of-input finalization restore the saved origin, descend to the region's last owned row, and emit a line feed before releasing the region. Optional visible EOF echo bytes and any row they newly occupy are part of the same planned write. A failed write retains the committed screen and extent; if row reservation may have partially replaced the saved anchor, that origin becomes unavailable until reconfiguration."
+        "The renderer owns the host's current terminal line and tracks the high-water extent of rows it reserves or draws. A region confined to that one line is owned at no cost and reaches its origin through carriage return, so a first frame drawn at the origin and every later append-only frame emit exactly their own prompt and text bytes. A saved cursor is reserved only once a frame outgrows a single row, that reservation starts from the same inline origin, and reserving it does not by itself invalidate the committed image. Multiline transitions use relative vertical motion within that region; damage, resize, and profile reconfiguration preserve the origin and erase only the tracked rows, never the whole terminal. A downgraded profile that cannot address an owned multiline region fails without emitting output or abandoning that region."
+        "Accepted-line and end-of-input finalization restore the saved origin, descend to the region's last owned row, and emit a line feed before releasing the region. Finalizing a region confined to the current line reserves nothing and emits that line feed alone, letting a visible echo overrun and wrap by itself. Optional visible EOF echo bytes and any row they newly occupy are part of the same planned write. A failed write retains the committed screen and extent; if row reservation may have partially replaced the saved anchor, that origin becomes unavailable until reconfiguration."
         "TerminalMode names Cooked, Editing, and Quoted states. TerminalControl transitions through that enum, and Editor publishes a new committed mode only after the controller succeeds."
         "The renderer performs deterministic incremental row differencing with owned terminfo or explicit ANSI capabilities. A one-line terminal uses carriage return, backspace, forward text, and explicit erasure; it receives a typed error for an impossible multiline position instead of guessed escape bytes."
         "The native renderer uses Unicode terminal-width data for scalar layout. Locale-specific narrow and wide C behaviour remains an ABI conversion and conformance responsibility rather than global native renderer state."
@@ -62,7 +66,7 @@ edges {
 }
 codifies (
     [spec:nshedit:req:core.terminal-render+1]
-    [spec:nshedit:req:core.incremental-render+3]
+    [spec:nshedit:req:core.incremental-render+4]
     [spec:nshedit:req:core.text-screen-model]
     [spec:nshedit:req:core.rust-io+1]
 )
@@ -95,3 +99,13 @@ an optimization: it changed every emitted byte and made reaction boundaries
 timing-sensitive. The same typed frame now feeds an incremental transition
 planner, so compatibility improves without introducing another screen model
 or weakening transactional commit.
+
+Owning a region is subject to the same observability. Reserving the physical
+origin eagerly reintroduced the very bytes the incremental planner removed,
+because a freshly saved anchor has to be treated as damage and damage means a
+full repaint. The region is therefore claimed at the weakest strength each
+frame needs: a single line is owned implicitly, since carriage return already
+reaches its origin and no capability has to be spent to say so, and only a
+frame that outgrows that line pays for a saved cursor. Ownership, extent
+tracking, relative multiline movement, and the failure semantics above are
+unchanged by that distinction; only the price of the common case is.

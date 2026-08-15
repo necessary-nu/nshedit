@@ -3870,9 +3870,6 @@ children (
             {
                 id quality-prompt-style-state
                 title "Preserve prompt style across incremental redraws"
-                implements {
-                    native-impl ([spec:nshedit:req:core.incremental-render+3])
-                }
                 deps (quality-renderer-region-origin)
                 log (
                     {
@@ -3894,6 +3891,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "Version core.incremental-render to +3 and move its native implementation claim here: the renderer now carries ordered prompt-literal replay state per physical row, so any independently emitted suffix restores the state active at its boundary, including state established on earlier rows, without global terminal-style tracking or interpreting opaque prompt bytes."
+                    }
+
+                    {
+                        at 2026-08-15T10:46:35.789919125Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Rehomed the native implementation claim for core.incremental-render to quality-renderer-inline-region at +4: reserving the owned region lazily is a change to the same contract, and the rule follows its newest normative sentence. The prompt-literal replay this node shipped is unchanged and still covered by that rule."
                     }
                 )
             }
@@ -4381,6 +4385,38 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id quality-renderer-inline-region
+                title "Claim a single-line render region without emitting anchor bytes"
+                kind @fix
+                implements {
+                    native-impl ([spec:nshedit:req:core.incremental-render+4])
+                }
+                deps (quality-renderer-region-origin quality-renderer-final-position quality-prompt-style-state)
+                log (
+                    {
+                        at 2026-08-15T10:38:05.632943725Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-15T10:38:11.885419709Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Regression against consumer nsh (dash port) pinned at cfb16cee: with the editor engaged, every prompt render is wrapped in save/restore-cursor anchoring. Raw pty bytes for a fresh inline prompt are \"\\r\\x1b7\\x1b8$ \\x1b[K\" where reference dash+libedit emits \"$ \". Root cause: plan_region unconditionally reserves a DECSC anchor on the first frame, and present() then forces damaged=true whenever the plan establishes an origin, turning an append-only first frame into a full repaint. The owned-region feature is only needed once the region spans more than one physical row; a region confined to the callers current line reaches its origin with carriage return and must cost no bytes."
+                    }
+
+                    {
+                        at 2026-08-15T10:46:43.628199322Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Decision: reserve the saved-cursor anchor lazily. RegionOrigin gains an Inline state meaning the owned region is exactly the callers current line; carriage return reaches its origin, so claiming it emits nothing and does not mark the committed image damaged. A saved cursor is reserved only when a frame outgrows one row, and the reservation still starts from the inline origin via carriage return, so every multi-row case keeps the byte stream it had. Finalizing an inline region reserves nothing and emits the line feed alone: a visible echo that overruns the line wraps on its own and the feed still lands below every drawn row. Version core.incremental-render to +4 for the new normative sentences and rehome its native claim here."
                     }
                 )
             }

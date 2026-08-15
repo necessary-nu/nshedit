@@ -131,10 +131,23 @@ struct Configured {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum RegionOrigin {
+    /// Nothing is drawn yet, so the caller's cursor still sits at the origin.
     #[default]
     Unanchored,
+    /// The region is exactly the caller's current line. Carriage return reaches
+    /// its origin, so owning it costs no bytes and needs no saved cursor.
+    Inline,
+    /// A saved cursor marks the origin of a region wider than one row.
     Saved,
+    /// A partially emitted anchor left no trustworthy physical origin.
     Lost,
+}
+
+impl RegionOrigin {
+    /// Whether the renderer already owns the rows it plans to address.
+    const fn is_established(self) -> bool {
+        matches!(self, Self::Inline | Self::Saved)
+    }
 }
 
 /// Physical rows owned by the editor from its saved current-line anchor.
@@ -152,6 +165,18 @@ struct RegionPlan {
     variables: Variables,
     region: PhysicalRegion,
     establishes_origin: bool,
+}
+
+impl RegionPlan {
+    /// A plan that reserves nothing and leaves the owned region as it stands.
+    fn unchanged(configured: &Configured) -> Self {
+        Self {
+            bytes: Vec::new(),
+            variables: configured.variables.clone(),
+            region: configured.region,
+            establishes_origin: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -382,24 +407,25 @@ impl State {
         required_rows: usize,
     ) -> Result<RegionPlan, RenderError> {
         if !configured.profile.has_relative_region_addressing() {
-            return Ok(RegionPlan {
-                bytes: Vec::new(),
-                variables: configured.variables.clone(),
-                region: configured.region,
-                establishes_origin: false,
-            });
+            return Ok(RegionPlan::unchanged(configured));
         }
         if configured.region.origin == RegionOrigin::Lost {
             return Err(RenderError::RegionOriginUnavailable);
         }
-        if configured.region.origin == RegionOrigin::Saved
-            && configured.region.extent >= required_rows
-        {
+        if configured.region.origin.is_established() && configured.region.extent >= required_rows {
+            return Ok(RegionPlan::unchanged(configured));
+        }
+        // A frame that fits on one row owns only the line the caller left the
+        // cursor on. Carriage return reaches that origin, so claiming it needs
+        // no saved cursor and emits nothing: a first frame is pure prompt text
+        // and every append-only frame after it is pure echo.
+        if required_rows <= 1 {
             return Ok(RegionPlan {
-                bytes: Vec::new(),
-                variables: configured.variables.clone(),
-                region: configured.region,
-                establishes_origin: false,
+                region: PhysicalRegion {
+                    origin: RegionOrigin::Inline,
+                    extent: 1,
+                },
+                ..RegionPlan::unchanged(configured)
             });
         }
 
@@ -459,6 +485,49 @@ impl State {
         })
     }
 
+    /// Reserve whatever the closing line feed needs beyond the drawn frame.
+    ///
+    /// An anchored region has to grow when a visible echo wraps past its
+    /// extent, because finalization descends from the saved origin. A region
+    /// confined to the current line reserves nothing: such an echo wraps by
+    /// itself and the line feed still lands below every drawn row.
+    fn plan_finish_region(
+        configured: &Configured,
+        echo: Option<&FinishEcho>,
+    ) -> Result<RegionPlan, RenderError> {
+        let occupied = configured.region.extent.max(configured.rows_used);
+        if !configured.profile.has_relative_region_addressing() {
+            if occupied > 1 {
+                return Err(RenderError::RegionAddressUnavailable { rows: occupied });
+            }
+            return Ok(RegionPlan::unchanged(configured));
+        }
+        if configured.region.origin != RegionOrigin::Saved {
+            return Ok(RegionPlan::unchanged(configured));
+        }
+        let required = echo.map_or(occupied, |echo| {
+            Self::echo_extent(configured, echo, occupied)
+        });
+        Self::plan_region(configured, required.max(1))
+    }
+
+    /// How many rows the region spans once a visible finish echo has wrapped.
+    fn echo_extent(configured: &Configured, echo: &FinishEcho, occupied: usize) -> usize {
+        if echo.columns() == 0 {
+            return occupied;
+        }
+        let last_column = configured
+            .cursor
+            .column()
+            .saturating_add(echo.columns().saturating_sub(1));
+        configured
+            .cursor
+            .row()
+            .saturating_add(last_column / configured.screen.size().columns())
+            .saturating_add(1)
+            .max(occupied)
+    }
+
     pub(super) fn beep(&mut self, output: &mut dyn Write) -> Result<usize, RenderError> {
         let configured = self
             .configured
@@ -480,7 +549,7 @@ impl State {
         Ok(bytes.len())
     }
 
-    // [spec:nshedit:req:core.incremental-render+3]
+    // [spec:nshedit:req:core.incremental-render+4]
     pub(super) fn finish_line(
         &mut self,
         echo: Option<&FinishEcho>,
@@ -494,48 +563,14 @@ impl State {
             return Err(RenderError::RegionOriginUnavailable);
         }
 
-        let occupied_extent = configured.region.extent.max(configured.rows_used);
-        let echo_extent = echo.map_or(occupied_extent, |echo| {
-            if echo.columns() == 0 {
-                return occupied_extent;
-            }
-            let last_column = configured
-                .cursor
-                .column()
-                .saturating_add(echo.columns().saturating_sub(1));
-            configured
-                .cursor
-                .row()
-                .saturating_add(last_column / configured.screen.size().columns())
-                .saturating_add(1)
-                .max(occupied_extent)
-        });
-
-        let mut plan = if configured.profile.has_relative_region_addressing() {
-            Self::plan_region(configured, echo_extent.max(1))?
-        } else {
-            if occupied_extent > 1 {
-                return Err(RenderError::RegionAddressUnavailable {
-                    rows: occupied_extent,
-                });
-            }
-            RegionPlan {
-                bytes: Vec::new(),
-                variables: configured.variables.clone(),
-                region: configured.region,
-                establishes_origin: false,
-            }
-        };
+        let mut plan = Self::plan_finish_region(configured, echo)?;
 
         if let Some(echo) = echo {
-            if configured.profile.has_relative_region_addressing()
-                && (plan.establishes_origin || configured.damaged)
-            {
-                append_required_capability(
+            if plan.establishes_origin || configured.damaged {
+                append_region_origin(
                     &configured.profile,
                     &mut plan.bytes,
-                    CapabilityKind::RestoreCursor,
-                    1,
+                    plan.region,
                     &mut plan.variables,
                 )?;
                 let mut cursor = Some((0, 0));
@@ -543,18 +578,16 @@ impl State {
                     &configured.profile,
                     &mut plan.bytes,
                     &mut cursor,
-                    configured.cursor.row(),
-                    configured.cursor.column(),
+                    (configured.cursor.row(), configured.cursor.column()),
                     configured.rows.get(configured.cursor.row()),
+                    plan.region,
                     &mut plan.variables,
                 )?;
             }
             plan.bytes.extend_from_slice(echo.as_bytes());
         }
 
-        if plan.region.origin == RegionOrigin::Saved
-            && configured.profile.has_relative_region_addressing()
-        {
+        if plan.region.origin == RegionOrigin::Saved {
             append_required_capability(
                 &configured.profile,
                 &mut plan.bytes,
@@ -606,7 +639,7 @@ impl State {
     }
 }
 
-// [spec:nshedit:req:core.incremental-render+3]
+// [spec:nshedit:req:core.incremental-render+4]
 fn encode(
     profile: &TerminalProfile,
     frame: &Frame,
@@ -631,7 +664,7 @@ fn encode_addressed(
 ) -> Result<(), RenderError> {
     let columns = frame.screen.size().columns();
     let mut terminal_cursor = if committed.damaged {
-        append_required_capability(profile, output, CapabilityKind::RestoreCursor, 1, variables)?;
+        append_region_origin(profile, output, committed.region, variables)?;
         Some((0, 0))
     } else {
         Some((committed.cursor.row(), committed.cursor.column()))
@@ -657,9 +690,9 @@ fn encode_addressed(
             profile,
             output,
             &mut terminal_cursor,
-            row,
-            start,
+            (row, start),
             current.or(previous),
+            committed.region,
             variables,
         )?;
         let used = match current {
@@ -702,28 +735,49 @@ fn encode_addressed(
             profile,
             output,
             &mut terminal_cursor,
-            frame.cursor.row(),
-            frame.cursor.column(),
+            (frame.cursor.row(), frame.cursor.column()),
             frame.rows.get(frame.cursor.row()),
+            committed.region,
             variables,
         )?;
     }
     Ok(())
 }
 
+/// Return the cursor to the region origin.
+///
+/// A region that owns a single line reaches its origin with carriage return, so
+/// only a region wider than one row spends a saved cursor on the trip. Nothing
+/// is owned before the first frame, so the caller's cursor is already there.
+fn append_region_origin(
+    profile: &TerminalProfile,
+    output: &mut Vec<u8>,
+    region: PhysicalRegion,
+    variables: &mut Variables,
+) -> Result<(), RenderError> {
+    match region.origin {
+        RegionOrigin::Saved => {
+            append_required_capability(profile, output, CapabilityKind::RestoreCursor, 1, variables)
+        }
+        RegionOrigin::Inline => append_carriage_return(profile, output, variables),
+        RegionOrigin::Unanchored | RegionOrigin::Lost => Ok(()),
+    }
+}
+
 fn move_addressed_cursor(
     profile: &TerminalProfile,
     output: &mut Vec<u8>,
     cursor: &mut Option<(usize, usize)>,
-    target_row: usize,
-    target_column: usize,
+    target: (usize, usize),
     displayed_row: Option<&layout::Row>,
+    region: PhysicalRegion,
     variables: &mut Variables,
 ) -> Result<(), RenderError> {
+    let (target_row, target_column) = target;
     let (mut row, mut column) = if let Some(position) = *cursor {
         position
     } else {
-        append_required_capability(profile, output, CapabilityKind::RestoreCursor, 1, variables)?;
+        append_region_origin(profile, output, region, variables)?;
         (0, 0)
     };
 
@@ -1162,7 +1216,7 @@ mod tests {
         ));
     }
 
-    // [spec:nshedit:req:core.incremental-render+3/test]
+    // [spec:nshedit:req:core.incremental-render+4/test]
     #[test]
     fn addressed_frames_diff_from_first_change() {
         let mut state = configured(TerminalProfile::ansi(), 2, 20);
@@ -1184,7 +1238,7 @@ mod tests {
             output.clone()
         };
 
-        assert_eq!(present(&mut state, "", 0), b"\r\x1b7\x1b8> \x1b[K");
+        assert_eq!(present(&mut state, "", 0), b"> ");
         assert_eq!(present(&mut state, "h", 1), b"h");
         assert_eq!(present(&mut state, "hello", 5), b"ello");
         assert_eq!(
@@ -1194,7 +1248,7 @@ mod tests {
         assert_eq!(present(&mut state, "hall", 4), b"\x1b[C\x1b[C\x1b[K");
     }
 
-    // [spec:nshedit:req:core.incremental-render+3/test]
+    // [spec:nshedit:req:core.incremental-render+4/test]
     #[test]
     fn replays_multiline_prompt_literal_state() {
         const RED: &[u8] = b"\x1b[31m";
@@ -1232,7 +1286,79 @@ mod tests {
         assert_eq!(output, b"\x08\x08\x1b[31mB\x1b[0m>");
     }
 
-    // [spec:nshedit:req:core.incremental-render+3/test]
+    // [spec:nshedit:req:core.incremental-render+4/test]
+    #[test]
+    fn inline_typing_emits_only_its_bytes() {
+        let mut state = configured(TerminalProfile::ansi(), 24, 80);
+        let prompt = Prompt::from("$ ");
+        let mut session = Vec::new();
+
+        let empty = Text::default();
+        state
+            .present(&prompt, None, &empty, TextIndex::START, &mut session)
+            .unwrap();
+        let mut typed = String::new();
+        for character in "echo X".chars() {
+            typed.push(character);
+            let line = Text::from(typed.as_str());
+            state
+                .present(
+                    &prompt,
+                    None,
+                    &line,
+                    line.index(line.len()).unwrap(),
+                    &mut session,
+                )
+                .unwrap();
+        }
+        state.finish_line(None, &mut session).unwrap();
+
+        // A prompt drawn at the origin plus sequential typing is exactly the
+        // prompt bytes, the echoed characters, and the closing line feed. No
+        // anchoring, no repositioning, no erasure.
+        assert_eq!(session, b"$ echo X\n");
+        assert!(!session.contains(&0x1b));
+    }
+
+    // [spec:nshedit:req:core.incremental-render+4/test]
+    #[test]
+    fn growth_anchors_from_inline_origin() {
+        let mut state = configured(TerminalProfile::ansi(), 3, 4);
+        let prompt = Prompt::from(">");
+        let short = Text::from("ab");
+        let mut output = Vec::new();
+        state
+            .present(&prompt, None, &short, short.index(2).unwrap(), &mut output)
+            .unwrap();
+
+        assert_eq!(output, b">ab");
+        assert_eq!(
+            state.configured.as_ref().unwrap().region,
+            PhysicalRegion {
+                origin: RegionOrigin::Inline,
+                extent: 1,
+            }
+        );
+
+        output.clear();
+        let long = Text::from("abcd");
+        state
+            .present(&prompt, None, &long, long.index(4).unwrap(), &mut output)
+            .unwrap();
+
+        // Carriage return reaches the inline origin, so the reserved anchor
+        // starts from the same place a saved cursor would have.
+        assert_eq!(output, b"\r\r\n\x1b[A\x1b7\x1b8>abc\x1b8\x1b[Bd\x1b[K");
+        assert_eq!(
+            state.configured.as_ref().unwrap().region,
+            PhysicalRegion {
+                origin: RegionOrigin::Saved,
+                extent: 2,
+            }
+        );
+    }
+
+    // [spec:nshedit:req:core.incremental-render+4/test]
     #[test]
     fn anchors_region_at_current_line() {
         let mut state = configured(TerminalProfile::ansi(), 3, 4);
@@ -1257,7 +1383,7 @@ mod tests {
         assert_eq!(summary.rows_used(), 2);
     }
 
-    // [spec:nshedit:req:core.incremental-render+3/test]
+    // [spec:nshedit:req:core.incremental-render+4/test]
     #[test]
     fn finish_descends_past_wrapped_region() {
         let mut state = configured(TerminalProfile::ansi(), 5, 4);
@@ -1290,7 +1416,7 @@ mod tests {
         );
     }
 
-    // [spec:nshedit:req:core.incremental-render+3/test]
+    // [spec:nshedit:req:core.incremental-render+4/test]
     #[test]
     fn failed_finish_retains_region() {
         let mut state = configured(TerminalProfile::ansi(), 5, 4);
@@ -1337,7 +1463,7 @@ mod tests {
         );
     }
 
-    // [spec:nshedit:req:core.incremental-render+3/test]
+    // [spec:nshedit:req:core.incremental-render+4/test]
     #[test]
     fn failed_reanchor_loses_origin() {
         let mut state = configured(TerminalProfile::ansi(), 5, 4);
@@ -1376,7 +1502,7 @@ mod tests {
         ));
     }
 
-    // [spec:nshedit:req:core.incremental-render+3/test]
+    // [spec:nshedit:req:core.incremental-render+4/test]
     #[test]
     fn damage_stays_within_owned_rows() {
         let mut state = configured(TerminalProfile::ansi(), 4, 4);
@@ -1414,7 +1540,7 @@ mod tests {
         assert!(!output.windows(4).any(|window| window == b"\x1b[2J"));
     }
 
-    // [spec:nshedit:req:core.incremental-render+3/test]
+    // [spec:nshedit:req:core.incremental-render+4/test]
     #[test]
     fn resize_repairs_high_water_rows() {
         let mut state = configured(TerminalProfile::ansi(), 3, 4);
@@ -1456,7 +1582,7 @@ mod tests {
         assert!(!output.windows(4).any(|window| window == b"\x1b[2J"));
     }
 
-    // [spec:nshedit:req:core.incremental-render+3/test]
+    // [spec:nshedit:req:core.incremental-render+4/test]
     #[test]
     fn reconfigure_preserves_multiline_region() {
         let size = ScreenSize::new(3, 4).unwrap();
@@ -1507,7 +1633,7 @@ mod tests {
         assert_eq!(state.configured.as_ref().unwrap().region, region);
     }
 
-    // [spec:nshedit:req:core.incremental-render+3/test]
+    // [spec:nshedit:req:core.incremental-render+4/test]
     #[test]
     fn plain_profile_finishes_saved_row() {
         let size = ScreenSize::new(2, 8).unwrap();
@@ -1537,7 +1663,9 @@ mod tests {
 
     #[test]
     fn failed_anchor_setup_marks_origin_lost() {
-        let mut state = configured(TerminalProfile::ansi(), 2, 10);
+        // Only a frame that outgrows the current line reserves an anchor, so
+        // only such a frame can leave a half-written one behind.
+        let mut state = configured(TerminalProfile::ansi(), 2, 4);
         let before = state.screen().unwrap().clone();
         let mut writer = FailingWriter {
             limit: 1,
@@ -1628,7 +1756,7 @@ mod tests {
         assert_eq!(state.screen(), Some(&before));
     }
 
-    // [spec:nshedit:req:core.incremental-render+3/test]
+    // [spec:nshedit:req:core.incremental-render+4/test]
     #[test]
     fn plans_plain_incremental_transitions() {
         let mut state = configured(TerminalProfile::plain(), 1, 20);
