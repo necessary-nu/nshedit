@@ -3871,6 +3871,7 @@ children (
                 id quality-prompt-style-state
                 title "Preserve prompt style across incremental redraws"
                 deps (quality-renderer-region-origin)
+                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:24.334001634Z
@@ -3898,6 +3899,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Rehomed the native implementation claim for core.incremental-render to quality-renderer-inline-region at +4: reserving the owned region lazily is a change to the same contract, and the rule follows its newest normative sentence. The prompt-literal replay this node shipped is unchanged and still covered by that rule."
+                    }
+
+                    {
+                        at 2026-08-18T02:47:32.537938483Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
