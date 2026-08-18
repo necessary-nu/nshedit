@@ -4438,4 +4438,33 @@ children (
             }
         )
     }
+
+    {
+        id publish-editor-crates
+        title "Publish nshedit, nshedit-plat, and nshterm for registry consumers"
+        kind @build
+        deps (quality-hardening release-metadata-cleanup)
+        log (
+            {
+                at 2026-08-18T02:48:31.401148174Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "Release the three Rust-native consumer crates from one provenance commit at 0.1.0. Make nshedit-plat publishable, set nshedit and nshedit-plat to 0.1.0, preserve nshterm at 0.1.0, require clean package contents plus cargo publish --dry-run and workspace tests, then publish in dependency order: nshedit-plat, nshterm, nshedit. This closes the downstream nsh publication blocker without vendoring or retaining git-only dependencies."
+            }
+
+            {
+                at 2026-08-18T02:48:57.818603701Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-18T02:51:08.305435044Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Release candidate verification at 0.1.0: nplan check is green on nightly-2026-07-30 (format, clippy -D warnings, rustdoc -D warnings, cargo build plus the complete workspace test suite). cargo publish --dry-run succeeds for nshedit-plat. The nshterm dry run correctly cannot resolve nshedit-plat until that first package is live; its dry run and nshedit's will run after each dependency appears in the crates.io index."
+            }
+        )
+    }
 )
