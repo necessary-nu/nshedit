@@ -315,7 +315,7 @@ assertions (
     {id quality-nonutf8-history-path-test-portability, kind @complete, author "brendan@necessary.nu", at 2026-08-11T19:43:46.750568717Z}
     {id quality-save-failure-fixture-portability, kind @complete, author "brendan@necessary.nu", at 2026-08-11T20:19:57.197582269Z}
     {id quality-prompt-style-state, kind @complete, author "brendan@necessary.nu", at 2026-08-18T02:47:32.537938483Z}
-    {id publish-editor-crates, kind @doing, author "brendan@necessary.nu", at 2026-08-18T02:48:57.818603701Z}
+    {id publish-editor-crates, kind @complete, author "brendan@necessary.nu", at 2026-08-18T02:52:43.358344078Z}
 )
 
 impl_evidence (

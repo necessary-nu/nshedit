@@ -4444,6 +4444,7 @@ children (
         title "Publish nshedit, nshedit-plat, and nshterm for registry consumers"
         kind @build
         deps (quality-hardening release-metadata-cleanup)
+        sealed true
         log (
             {
                 at 2026-08-18T02:48:31.401148174Z
@@ -4464,6 +4465,20 @@ children (
                 author "brendan@necessary.nu"
                 kind @note
                 text "Release candidate verification at 0.1.0: nplan check is green on nightly-2026-07-30 (format, clippy -D warnings, rustdoc -D warnings, cargo build plus the complete workspace test suite). cargo publish --dry-run succeeds for nshedit-plat. The nshterm dry run correctly cannot resolve nshedit-plat until that first package is live; its dry run and nshedit's will run after each dependency appears in the crates.io index."
+            }
+
+            {
+                at 2026-08-18T02:52:40.334180013Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Published from clean provenance commit 4bce184 after successful per-package dry runs: nshedit-plat 0.1.0 first, then nshterm 0.1.0 resolving nshedit-plat from crates.io, then nshedit 0.1.0 resolving both published dependencies. Cargo waited for and confirmed each version's registry availability."
+            }
+
+            {
+                at 2026-08-18T02:52:43.358344078Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }
