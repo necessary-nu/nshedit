@@ -4546,12 +4546,27 @@ children (
         title "Publish nshedit, nshedit-plat, and nshterm at 0.1.1"
         kind @build
         deps (publish-editor-crates musl-support)
+        sealed true
         log (
             {
                 at 2026-08-23T21:13:40.512653477Z
                 author "brendan@necessary.nu"
                 kind @status
                 text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-23T21:16:10.938440433Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Published from clean provenance commit 7c400cb after a successful per-package dry run, in dependency order: nshedit-plat 0.1.1 first, then nshterm 0.1.1 resolving nshedit-plat from crates.io, then nshedit 0.1.1 resolving both published dependencies. Cargo waited for and confirmed each version's registry availability, and the crates.io API now lists 0.1.1 alongside 0.1.0 for all three. nshedit-abi was deliberately not published: it keeps publish = false because it emits no rlib for a registry consumer to depend on, its lib is named nshedit and would collide with the real crate, and it requires Rust 1.99. Release contents over 0.1.0: x86_64-unknown-linux-musl as the second supported Linux target. No published API changed."
+            }
+
+            {
+                at 2026-08-23T21:16:15.246811457Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }

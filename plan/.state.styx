@@ -316,7 +316,7 @@ assertions (
     {id terminal-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:29:54.224249112Z}
     {id terminal-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.034714683Z}
     {id windows-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-09T23:38:06.505008059Z}
-    {id publish-editor-crates-0-1-1, kind @doing, author "brendan@necessary.nu", at 2026-08-23T21:13:40.512653477Z}
+    {id publish-editor-crates-0-1-1, kind @complete, author "brendan@necessary.nu", at 2026-08-23T21:16:15.246811457Z}
 )
 
 impl_evidence (
