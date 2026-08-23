@@ -4511,6 +4511,14 @@ children (
                     native-impl ([spec:nshedit:req:workspace.musl-cross-check])
                 }
                 deps (musl-platform)
+                log (
+                    {
+                        at 2026-08-23T20:52:44.464120724Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

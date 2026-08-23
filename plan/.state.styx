@@ -528,6 +528,11 @@ impl_evidence (
         {id platform.darwin-termios, version 0}
         {id platform.per-os-layouts, version 0}
     )}
+    {id musl-cross-check, covered_rules (
+        workspace.musl-cross-check
+    ), covered_claims (
+        {impl_name native-impl, rule workspace.musl-cross-check}
+    )}
     {id musl-platform, covered_rules (
         platform.linux-libc-matrix
     ), covered_claims (

@@ -21,3 +21,22 @@ jobs:
       - run: cargo build --workspace
       - run: cargo test --workspace
       - run: ./conformance/run.sh
+      # The second supported Linux ABI. Its layout assertions and header
+      # checks only happen when musl is the target, and crt-static makes the
+      # test binaries this builds static ones this runner executes directly.
+      - run: rustup target add x86_64-unknown-linux-musl
+      - run: ./ci/musl-cross-check.sh
+
+  musl-native:
+    runs-on: ubuntu-latest
+    container:
+      image: rustlang/rust:nightly-alpine
+    steps:
+      # First, because actions/checkout is a JavaScript action and this image
+      # carries neither node nor git. A `run` step needs only the shell.
+      - run: apk add --no-cache bash build-base pkgconf binutils git nodejs
+      - uses: actions/checkout@v4
+      # The C compatibility product on its own C library: built with
+      # crt-static off, required to depend on musl and on no glibc name, and
+      # put through the same conformance stages as the glibc target.
+      - run: ./ci/musl-acceptance.sh
