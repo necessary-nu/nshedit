@@ -8,6 +8,13 @@
 //! two backends, miss `nss_ldap`, NIS and the rest, and amount to writing a
 //! name-service client to avoid a function call.
 //!
+//! musl has no NSS and reads `/etc/passwd` itself, falling back to the nscd
+//! protocol over `/var/run/nscd/socket` when one is listening — which is how
+//! an Alpine host joined to a directory answers for accounts that are not in
+//! the file. That is a second reason to call the library rather than parse
+//! the file, not an exemption: the same call reaches whichever of those two
+//! arrangements the system actually has.
+//!
 //! **Not `/etc/passwd`.** On a workstation joined to a directory — LDAP with
 //! `nss_ldap`, SSSD, AD, `nss_systemd` for `systemd-homed`, or NIS — accounts
 //! are not in that file, and the *invoking* user usually is not either, so a
@@ -90,6 +97,39 @@ impl Passwd {
     target_arch = "x86_64",
     target_vendor = "unknown",
     target_env = "gnu",
+    target_pointer_width = "64",
+))]
+const _: () = {
+    use core::mem::{align_of, offset_of, size_of};
+
+    assert!(size_of::<Passwd>() == 48);
+    assert!(align_of::<Passwd>() == 8);
+    assert!(offset_of!(Passwd, pw_name) == 0);
+    assert!(offset_of!(Passwd, _password) == 8);
+    assert!(offset_of!(Passwd, _uid) == 16);
+    assert!(offset_of!(Passwd, _gid) == 20);
+    assert!(offset_of!(Passwd, _gecos) == 24);
+    assert!(offset_of!(Passwd, pw_dir) == 32);
+    assert!(offset_of!(Passwd, _shell) == 40);
+};
+
+/// The same check for musl's `<pwd.h>`, written separately because a second
+/// supported C library is a second ABI claim and not an inherited one.
+///
+/// musl declares the POSIX members in the POSIX order and adds none of its
+/// own, so the record it lays out on x86-64 is the one glibc lays out. That
+/// is measured rather than assumed — `sizeof` and every `offsetof` compiled
+/// under `musl-gcc 1.2.5` reproduce the numbers above exactly — and the
+/// assertion below is what keeps it measured: it is evaluated by the compiler
+/// whenever musl is the target, so a future divergence fails this build
+/// instead of misreading a home directory.
+// [spec:nshedit:req:platform.per-os-layouts]
+// [spec:nshedit:req:platform.linux-libc-matrix]
+#[cfg(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    target_vendor = "unknown",
+    target_env = "musl",
     target_pointer_width = "64",
 ))]
 const _: () = {
@@ -343,14 +383,23 @@ mod tests {
     /// The platform layer preserves that distinction even though the C
     /// completion adapter later flattens both outcomes for compatibility.
     ///
-    /// `ERANGE` is read from the kernel's `asm-generic/errno-base.h` rather
-    /// than written here, since the whole point is that the number is the
-    /// libc's and not ours.
+    /// `ERANGE` is read from a header rather than written here, since the
+    /// whole point is that the number is the libc's and not ours: the
+    /// kernel's `asm-generic/errno-base.h` under glibc, and musl's own
+    /// `bits/errno.h`, which is where musl states its `errno` values and does
+    /// not require the kernel headers to be installed.
+    // [spec:nshedit:req:platform.linux-libc-matrix/test]
     #[test]
     fn nonzero_results_remain_platform_errors() {
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        let erange = c_int::try_from(cheader::defines(&["asm-generic/errno-base.h"])["ERANGE"])
-            .expect("ERANGE");
+        let erange = c_int::try_from(
+            if cfg!(target_env = "musl") {
+                cheader::defines(&["bits/errno.h"])
+            } else {
+                cheader::defines(&["asm-generic/errno-base.h"])
+            }["ERANGE"],
+        )
+        .expect("ERANGE");
 
         let home = CString::new("/home/example").expect("a path");
         let mut found = Passwd::ZEROED;

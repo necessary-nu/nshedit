@@ -1,9 +1,11 @@
 # Supported platforms and their ABIs
 
-`plan/decisions/platform-targets.md` makes macOS a supported target and keeps
-`x86_64-unknown-linux-gnu` as the only supported Linux target. Linux support
-is not inferred from `target_os = "linux"`: another architecture, libc, data
-model, or Android requires its own transcriptions and acceptance evidence.
+`plan/decisions/platform-targets.md` makes macOS a supported target and names
+the supported Linux targets: `x86_64-unknown-linux-gnu` and
+`x86_64-unknown-linux-musl`. Linux support is not inferred from
+`target_os = "linux"`: another architecture, C library, data model, or Android
+requires its own transcriptions and acceptance evidence, and the two supported
+ones state their layouts separately rather than one inheriting the other's.
 These rules state what "supported" obliges the workspace to spell, assert,
 and gate. Behavioural semantics stay in the `libedit` corpus; this corpus
 states which platform's numbers those semantics are read against.
@@ -32,6 +34,34 @@ states which platform's numbers those semantics are read against.
 > absent from the platform layer's representation table and MUST NOT resolve
 > to another system's bit; the compatibility `setty` vocabulary MUST follow
 > that table rather than a fixed list.
+
+## The supported Linux C libraries
+
+> [spec:nshedit:req:platform.linux-libc-matrix]
+> The supported Linux targets are exactly `x86_64-unknown-linux-gnu` and
+> `x86_64-unknown-linux-musl`; every other Linux architecture, data model, C
+> library, and Android MUST fail to compile rather than inherit either one's
+> numbers. Each record layout and constant `nshedit-plat` transcribes for
+> Linux MUST carry a compile-time assertion that the compiler evaluates under
+> each of the two, spelled separately for each: where the two libraries agree,
+> that agreement is a measurement the build re-checks and MUST NOT become one
+> assertion widened to cover both. A check that reads an expected value out of
+> the C library's headers MUST read the headers of the library the *target*
+> links, not the one the running host happens to use, so that a musl build
+> tested on a glibc machine cannot be answered by glibc's numbers.
+
+> [spec:nshedit:req:abi.musl-drop-in]
+> On musl the C compatibility product is the same ELF arrangement as on
+> glibc: one shared object carrying SONAME `libnshedit.so.0`, the committed
+> export set, the generated headers, and the libedit compatibility names
+> installed beside it. It MUST be built with the `crt-static` target feature
+> off, because rustc emits no `cdylib` at all while that feature is on and
+> that is the default for musl targets; a build configuration that produces no
+> shared object MUST NOT be reported as a passing C ABI gate. The object MUST
+> record a musl C library among its ELF dependencies and no glibc one. The
+> export set, SONAME, installer, compatibility names, pkg-config metadata, and
+> a compiled and linked C consumer MUST be gated on a musl host by the same
+> conformance stages the glibc target is gated on.
 
 ## Darwin ABI surface
 
@@ -62,6 +92,17 @@ states which platform's numbers those semantics are read against.
 > soname stages.
 
 ## Cross-target non-regression
+
+> [spec:nshedit:req:workspace.musl-cross-check]
+> The workspace MUST compile for `x86_64-unknown-linux-musl` from a glibc
+> development machine, and that compilation MUST be reachable as one recorded
+> command rather than reconstructed by hand. The check MUST build every crate
+> and every test target, so that the musl-gated layout assertions are
+> evaluated by the compiler rather than merely written down, and it MUST run
+> the test suite: a musl target links statically by default, so the binaries
+> it produces execute on the development host and the musl-gated header
+> checks are performed rather than only compiled. Work performed on glibc
+> MUST NOT be able to break the musl build without that check failing.
 
 > [spec:nshedit:req:workspace.darwin-cross-check]
 > The workspace MUST compile for the supported Darwin targets from a Linux

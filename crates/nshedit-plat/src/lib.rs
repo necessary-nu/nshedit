@@ -15,8 +15,10 @@
 //!
 //! rustix covers terminal attributes, window size, pending input, and process
 //! credentials.
-//! On the supported `x86_64-unknown-linux-gnu` target it selects its
-//! `linux_raw` backend and issues those syscalls directly. On macOS it uses
+//! On both supported x86-64 Linux targets — `x86_64-unknown-linux-gnu` and
+//! `x86_64-unknown-linux-musl` — it selects its `linux_raw` backend and
+//! issues those syscalls directly, so which C library the target links does
+//! not change the instruction that reaches the kernel. On macOS it uses
 //! rustix's libc backend, which is the supported Darwin route for the same
 //! typed operations.
 //!
@@ -40,23 +42,30 @@
 //!
 //! # Scope of the numbers
 //!
-//! GNU x86-64 Linux and macOS/Darwin each select their own transcribed
-//! termios, signal, and passwd representations. Windows has none of those
-//! POSIX representations. There is no catch-all arm that lets one platform
-//! inherit another platform's constants.
+//! x86-64 Linux and macOS/Darwin each select their own transcribed termios,
+//! signal, and passwd representations. Windows has none of those POSIX
+//! representations. There is no catch-all arm that lets one platform inherit
+//! another platform's constants.
+//!
+//! The two supported Linux targets differ in C library, not in record
+//! layout: glibc and musl are both spelling the same x86-64 Linux kernel and
+//! psABI records, and every layout this crate transcribes is asserted
+//! separately under each `target_env`, against that library's own headers.
+//! `plan/decisions/linux-musl-target.md` records the measurement.
 
+// [spec:nshedit:req:platform.linux-libc-matrix]
 #[cfg(all(
     any(target_os = "linux", target_os = "android"),
     not(all(
         target_os = "linux",
         target_arch = "x86_64",
         target_vendor = "unknown",
-        target_env = "gnu",
+        any(target_env = "gnu", target_env = "musl"),
         target_pointer_width = "64",
     )),
 ))]
 compile_error!(
-    "nshedit supports Linux only on x86_64-unknown-linux-gnu; other Linux ABIs and Android are unsupported"
+    "nshedit supports Linux only on x86_64-unknown-linux-gnu and x86_64-unknown-linux-musl; other Linux ABIs and Android are unsupported"
 );
 
 // [spec:nshedit:req:platform.typed-boundary]
@@ -170,14 +179,26 @@ pub(crate) mod cheader {
         }
     }
 
-    /// Where a header lives. The multiarch directory first, because on Debian
-    /// that is the only place glibc's `bits/` exists; plain `/usr/include`
-    /// next, which is where the distributions that do not split it keep both
-    /// `bits/` and the kernel's `asm-generic/`.
+    /// Where a header lives. The multiarch directory for the C library this
+    /// target links first, because on Debian that is the only place glibc's
+    /// `bits/` exists and the only place a musl development package puts
+    /// musl's; plain `/usr/include` next, which is where the distributions
+    /// that do not split it — Alpine among them — keep both `bits/` and the
+    /// kernel's `asm-generic/`.
+    ///
+    /// The root is chosen by `target_env` rather than by the running host, so
+    /// a musl test binary executed on a glibc development machine still reads
+    /// musl's headers and cannot be answered by the other library's numbers.
+    // [spec:nshedit:req:platform.linux-libc-matrix/test]
     fn find(relative: &str) -> PathBuf {
         let arch = std::env::consts::ARCH;
+        let env = if cfg!(target_env = "musl") {
+            "musl"
+        } else {
+            "gnu"
+        };
         [
-            format!("/usr/include/{arch}-linux-gnu"),
+            format!("/usr/include/{arch}-linux-{env}"),
             "/usr/include".to_owned(),
         ]
         .into_iter()

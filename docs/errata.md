@@ -18,10 +18,12 @@ present disposition. A `fix` disposition alone is not evidence that anything
 was fixed.
 
 The supported C ABI targets are exactly `x86_64-unknown-linux-gnu`,
-`x86_64-apple-darwin`, and `aarch64-apple-darwin`. Windows is supported by the
-native Rust crate only; it is not a C ABI target. Platform claims in current
-statuses are scoped to those targets rather than to generic operating-system
-families.
+`x86_64-unknown-linux-musl`, `x86_64-apple-darwin`, and `aarch64-apple-darwin`.
+The two Linux targets are one ELF product differing only in C library, and
+statuses that name a Linux platform value name both. Windows is supported by
+the native Rust crate only; it is not a C ABI target. Platform claims in
+current statuses are scoped to those targets rather than to generic
+operating-system families.
 
 **Ids are stable.** `ERR-<concern>-<nn>` ids are referenced from tests and from
 code comments in `crates/`. Numbering runs within a concern; new findings are
@@ -510,7 +512,7 @@ prompt rendering.
 
 **ERR-terminal-36** — `tty_get_signal_character` tests `ECHOCTL` against `c_iflag` (`MD_INP`) when `ECHOCTL` is a `c_lflag` bit. On glibc `ECHOCTL` has the same value as the input flag `IUCLC`, which libedit never sets, so the guard is always false and the function always returns -1 — making `rl_echo_signal_char` a silent no-op.
 - rule: `[spec:libedit:sem:tty.tty-get-signal-character-fn]` (step 1) · C: `src/tty.c` `tty_get_signal_character`
-- class: logic · reach: hot — every `rl_echo_signal_char` call on the supported `x86_64-unknown-linux-gnu` C ABI target.
+- class: logic · reach: hot — every `rl_echo_signal_char` call on the supported Linux C ABI targets, where `ECHOCTL` and `IUCLC` are the same bit under both C libraries.
 - disposition: reproduce — **decided in translation**. `[dec:libedit:conformance-policy]` makes reproduction the default for this defined wrong result.
 - status: reproduced — `crates/nshedit-abi/src/readline/bridge.rs` `tty_get_signal_character` returns -1 unconditionally, so `readline.rs` `rl_echo_signal_char` remains an observable no-op without retaining the C's invalid flag-word access.
 
@@ -548,11 +550,11 @@ prompt rendering.
 - rule: `[spec:libedit:sem:tty.tty-bind-char-fn]` · C: `src/tty.c` `tty_bind_char`
 - class: logic · reach: hot — the default configuration on every platform.
 - disposition: reproduce, including the platform split — it is observable through the key map.
-- status: reproduced — `crates/nshedit-abi/src/adapter/terminal_io.rs` installs the disabled character without a special-case. `crates/nshedit-plat/src/termios/linux.rs` supplies 0 for exactly `x86_64-unknown-linux-gnu`; `termios/darwin.rs` supplies 0xff for both supported Darwin C ABI targets. Adapter binding tests pin the projected bytes.
+- status: reproduced — `crates/nshedit-abi/src/adapter/terminal_io.rs` installs the disabled character without a special-case. `crates/nshedit-plat/src/termios/linux.rs` supplies 0 for both supported Linux C ABI targets; `termios/darwin.rs` supplies 0xff for both supported Darwin C ABI targets. Adapter binding tests pin the projected bytes.
 
 **ERR-terminal-43** — libedit's fallback `CMIN`/`CTIME` defaults are `CEOF` (`^D`) and the disable byte, which are meaningless as `VMIN`/`VTIME`; harmless only because `EX_IO` is canonical, where both are ignored.
 - rule: `[spec:libedit:sem:tty.tty-init-fn]` · C: `src/tty.h`, `src/tty.c`
-- class: logic · reach: outside the supported C ABI targets. Linux `x86_64-unknown-linux-gnu` and Darwin `x86_64-apple-darwin`/`aarch64-apple-darwin` all supply meaningful `VMIN = 1`, `VTIME = 0` values; the fallback chain is not their behavior.
+- class: logic · reach: outside the supported C ABI targets. Linux `x86_64-unknown-linux-gnu`/`x86_64-unknown-linux-musl` and Darwin `x86_64-apple-darwin`/`aarch64-apple-darwin` all supply meaningful `VMIN = 1`, `VTIME = 0` values; the fallback chain is not their behavior.
 - disposition: fix — `[dec:libedit:platform-targets]` rejects unsupported ABI layouts instead of inventing a fallback for them.
 - status: fixed — `crates/nshedit-plat/src/termios/linux.rs` and `termios/darwin.rs` encode the exact supported-target control-character defaults. No supported build carries the `CEOF`/disable-byte fallback.
 
@@ -2605,7 +2607,7 @@ layer, its history-expansion machinery and its exported globals.
 - rule: `[spec:libedit:sem:readline.rl-terminal-name]`, `[spec:libedit:sem:readline.rl-initialize-fn]` (step 13) · C: `src/readline.c` `rl_initialize`
 - class: UB (divergence) · reach: hot — the write-back happens on every `readline()` consumer that does not set the terminal type itself, which is nearly all of them. GNU readline additionally re-consults the global from `rl_reset_terminal(NULL)` and never substitutes `"dumb"`, so a consumer that keeps the pointer is holding something else there.
 - disposition: reproduce — the borrowed pointer *is* the ABI; copying it here would leak, and freeing it would change what a consumer may do with it.
-- status: reproduced — `crates/nshedit-abi/src/readline/runtime.rs` writes `rl_terminal_name` with borrowed process-environment storage or the read-only `"dumb"` literal, performs no copy, and never frees it. `lib.rs` `cenv` uses `secure_getenv` on exactly `x86_64-unknown-linux-gnu` and `getenv` guarded by `EnvironmentTrust` on both supported Darwin C ABI targets; the owned native terminal name remains separate in `adapter/session.rs`.
+- status: reproduced — `crates/nshedit-abi/src/readline/runtime.rs` writes `rl_terminal_name` with borrowed process-environment storage or the read-only `"dumb"` literal, performs no copy, and never frees it. `lib.rs` `cenv` uses `secure_getenv` on both supported Linux C ABI targets — musl publishes that symbol too — and `getenv` guarded by `EnvironmentTrust` on both supported Darwin C ABI targets; the owned native terminal name remains separate in `adapter/session.rs`.
 
 **ERR-readline-59** — seventeen more exported globals that no code path reads, beyond the ones ERR-readline-54 lists: `history_max_entries`, `readline_echoing_p`, `_rl_echoing_p`, `rl_basic_quote_characters`, `rl_completer_quote_characters`, `_rl_complete_mark_directories`, `_rl_completion_prefix_display_length`, `rl_completion_suppress_append`, `rl_directory_completion_hook`, `rl_display_prompt`, `rl_erase_empty_line`, `rl_filename_completion_desired`, `rl_ignore_completion_duplicates`, `_rl_print_completions_horizontally`, `rl_sort_completion_matches`, `rl_startup1_hook` and `rl_deprep_term_function`. Each is writable, none is consulted, and nothing reports that the assignment did nothing. Four of them additionally *default* differently from GNU readline's — `_rl_complete_mark_directories`, `_rl_echoing_p`, `rl_ignore_completion_duplicates` and `rl_sort_completion_matches` are 0 here and 1 there — so a consumer that never touches them still starts from a different state. Two are worse than plainly inert: `rl_startup1_hook` is declared *above* the header's "not implemented" banner, among the entries a reader is entitled to assume work, and `rl_deprep_term_function` holds a real function address that no libedit path ever calls through, so it reads as a live hook.
 - rule: `[spec:libedit:sem:readline.history-max-entries]`, `[spec:libedit:sem:readline.readline-echoing-p]`, `[spec:libedit:sem:readline.rl-echoing-p]`, `[spec:libedit:sem:readline.rl-basic-quote-characters]`, `[spec:libedit:sem:readline.rl-completer-quote-characters]`, `[spec:libedit:sem:readline.rl-complete-mark-directories]`, `[spec:libedit:sem:readline.rl-completion-prefix-display-length]`, `[spec:libedit:sem:readline.rl-completion-suppress-append]`, `[spec:libedit:sem:readline.rl-directory-completion-hook]`, `[spec:libedit:sem:readline.rl-display-prompt]`, `[spec:libedit:sem:readline.rl-erase-empty-line]`, `[spec:libedit:sem:readline.rl-filename-completion-desired]`, `[spec:libedit:sem:readline.rl-ignore-completion-duplicates]`, `[spec:libedit:sem:readline.rl-print-completions-horizontally]`, `[spec:libedit:sem:readline.rl-sort-completion-matches]`, `[spec:libedit:sem:readline.rl-startup1-hook]`, `[spec:libedit:sem:readline.rl-deprep-term-function]` · C: `src/readline.c`, `src/editline/readline.h`

@@ -358,10 +358,11 @@ mod tests {
         }
     }
 
-    /// Every represented Linux `V*` name against glibc's header.
+    /// Every represented Linux `V*` name against the target library's header.
     ///
     /// An off-by-one in this table announces nothing; it silently rebinds the
     /// user's erase or interrupt character to whatever sits next to it.
+    // [spec:nshedit:req:platform.linux-libc-matrix/test]
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn the_v_subscripts_are_the_ones_the_header_defines() {
@@ -436,6 +437,7 @@ mod tests {
     /// These are addressed by name from the `sem` rules and are not POSIX's to
     /// fix, so every one of them is a number somebody typed in. A wrong bit
     /// here is a mode that quietly never takes effect.
+    // [spec:nshedit:req:platform.linux-libc-matrix/test]
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn the_flag_words_are_the_ones_the_headers_define() {
@@ -511,8 +513,9 @@ mod tests {
     fn the_flag_collisions_the_port_relies_on_are_real() {
         let h = flag_defines();
         // ERR-terminal-36: `IUCLC` is a `c_iflag` bit and `ECHOCTL` a
-        // `c_lflag` one, and on glibc they are the same bit, which is what
-        // makes that defect a permanent -1 rather than an occasional one.
+        // `c_lflag` one, and on Linux they are the same bit under either C
+        // library — the values are the kernel's — which is what makes that
+        // defect a permanent -1 rather than an occasional one.
         assert_eq!(h["IUCLC"], h["ECHOCTL"]);
         // `ttymodes[]` carries both names, so `+xtabs` and `+tabdly` interact.
         assert_eq!(h["TAB3"], h["XTABS"]);
@@ -668,28 +671,50 @@ mod tests {
         b'A' + u8::try_from(i).expect("a table position")
     }
 
+    /// Which headers hold these names is the C library's business, and the
+    /// two supported Linux libraries file them differently: glibc splits
+    /// `<termios.h>` across a `bits/termios-*.h` family, while musl keeps the
+    /// whole terminal vocabulary in one `bits/termios.h` and publishes `NCCS`
+    /// from `<termios.h>` itself. The names asked for below, and the values
+    /// they are required to have, are the same either way — only the file to
+    /// open changes.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn v_defines() -> HashMap<String, i64> {
-        cheader::defines(&["bits/termios-c_cc.h"])
+        if cfg!(target_env = "musl") {
+            cheader::defines(&["bits/termios.h"])
+        } else {
+            cheader::defines(&["bits/termios-c_cc.h"])
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn flag_defines() -> HashMap<String, i64> {
-        cheader::defines(&[
-            "bits/termios-c_iflag.h",
-            "bits/termios-c_oflag.h",
-            "bits/termios-c_cflag.h",
-            "bits/termios-c_lflag.h",
-            "bits/termios-baud.h",
-            "bits/termios-struct.h",
-            "bits/termios-tcflow.h",
-            "bits/posix_opt.h",
-        ])
+        if cfg!(target_env = "musl") {
+            cheader::defines(&["bits/termios.h", "termios.h", "unistd.h"])
+        } else {
+            cheader::defines(&[
+                "bits/termios-c_iflag.h",
+                "bits/termios-c_oflag.h",
+                "bits/termios-c_cflag.h",
+                "bits/termios-c_lflag.h",
+                "bits/termios-baud.h",
+                "bits/termios-struct.h",
+                "bits/termios-tcflow.h",
+                "bits/posix_opt.h",
+            ])
+        }
     }
 
     /// The platform headers are the authority for the defaults they publish.
+    /// `<sys/ttydefaults.h>` is the same file on both libraries;
+    /// `_POSIX_VDISABLE` is glibc's `bits/posix_opt.h` and musl's
+    /// `<unistd.h>`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn cchar_defines() -> HashMap<String, i64> {
-        cheader::defines(&["bits/posix_opt.h", "sys/ttydefaults.h"])
+        if cfg!(target_env = "musl") {
+            cheader::defines(&["unistd.h", "sys/ttydefaults.h"])
+        } else {
+            cheader::defines(&["bits/posix_opt.h", "sys/ttydefaults.h"])
+        }
     }
 }

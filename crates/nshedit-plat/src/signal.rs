@@ -313,6 +313,36 @@ const _: () = {
     assert!(offset_of!(SigAction, restorer) == 144);
 };
 
+/// The x86-64 musl transcription, checked against its `<signal.h>`.
+///
+/// The second supported Linux C library states this record for itself rather
+/// than inheriting the block above. musl's `struct sigaction` carries the
+/// handler union, a 128-byte `sigset_t`, `sa_flags` and `sa_restorer` in that
+/// order — the kernel's own order on this architecture — so the offsets
+/// coincide with glibc's. Measured under `musl-gcc 1.2.5`: `sizeof` 152, and
+/// `offsetof` 0, 8, 136, 144. The assertion is evaluated whenever musl is the
+/// target, so the coincidence has to keep holding for this build to succeed.
+// [spec:nshedit:req:platform.per-os-layouts]
+// [spec:nshedit:req:platform.linux-libc-matrix]
+#[cfg(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    target_vendor = "unknown",
+    target_env = "musl",
+    target_pointer_width = "64",
+))]
+const _: () = {
+    use core::mem::{align_of, offset_of, size_of};
+
+    assert!(size_of::<SigSet>() == 128);
+    assert!(size_of::<SigAction>() == 8 + 128 + 8 + 8);
+    assert!(align_of::<SigAction>() == align_of::<usize>());
+    assert!(offset_of!(SigAction, handler) == 0);
+    assert!(offset_of!(SigAction, mask) == 8);
+    assert!(offset_of!(SigAction, flags) == 136);
+    assert!(offset_of!(SigAction, restorer) == 144);
+};
+
 /// Darwin's published `<sys/signal.h>` layout: one 32-bit mask and no
 /// `sa_restorer` member.
 // [spec:nshedit:req:platform.per-os-layouts]
@@ -638,14 +668,15 @@ mod tests {
         }
     }
 
-    /// Ours are the numbers glibc's own headers give, not the ones POSIX
-    /// declines to fix. `SIGCONT` and `SIGTSTP` are the pair that actually
-    /// differ across the platforms in scope, and getting either wrong would
-    /// trap a signal the editor was never asked to handle.
+    /// Ours are the numbers the target library's own headers give, not the
+    /// ones POSIX declines to fix. `SIGCONT` and `SIGTSTP` are the pair that
+    /// actually differ across the platforms in scope, and getting either
+    /// wrong would trap a signal the editor was never asked to handle.
+    // [spec:nshedit:req:platform.linux-libc-matrix/test]
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn the_signal_numbers_are_the_ones_the_headers_define() {
-        let h = cheader::defines(&["bits/signum-generic.h", "bits/signum-arch.h"]);
+        let h = signal_defines();
         for (name, ours) in [
             ("SIGHUP", signo::SIGHUP),
             ("SIGINT", signo::SIGINT),
@@ -660,7 +691,8 @@ mod tests {
     }
 
     /// The three signal-action and mask words this module transcribes,
-    /// against `bits/sigaction.h`.
+    /// against the header that defines them: glibc's `bits/sigaction.h`, or
+    /// musl's `bits/signal.h` and `<signal.h>`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn the_sigaction_words_are_the_ones_the_header_defines() {
@@ -673,7 +705,8 @@ mod tests {
     /// The field offsets of `struct sigaction`, which no header states and
     /// only a compiler can answer.
     ///
-    /// Produced by gcc 15 on x86_64 glibc and carried here rather than probed,
+    /// Produced by gcc 15 on x86_64 glibc — and reproduced number for number
+    /// by `musl-gcc` on x86_64 musl — then carried here rather than probed,
     /// because a `build.rs` that compiles a program to find out what the
     /// platform looks like is exactly what `plan/decisions/no-c-ffi.md`
     /// forbids:
@@ -691,6 +724,7 @@ mod tests {
     /// and `sa_restorer` are both 8-aligned words and swapping them keeps the
     /// size — and a reorder is the mistake that makes the libc install a
     /// handler address it read out of `sa_mask`.
+    // [spec:nshedit:req:platform.linux-libc-matrix/test]
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn the_struct_sigaction_layout_is_the_one_gcc_lays_out() {
@@ -1070,8 +1104,25 @@ mod tests {
         0x0002
     }
 
+    /// glibc files the signal numbers under `bits/signum-*.h` and the
+    /// `SA_*`/`SIG_*` words under `bits/sigaction.h`; musl keeps the numbers
+    /// and `SA_*` in `bits/signal.h` and the three `SIG_*` how-arguments in
+    /// `<signal.h>`. Same names, same required values, different files.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn signal_defines() -> std::collections::HashMap<String, i64> {
+        if cfg!(target_env = "musl") {
+            cheader::defines(&["bits/signal.h"])
+        } else {
+            cheader::defines(&["bits/signum-generic.h", "bits/signum-arch.h"])
+        }
+    }
+
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn sigaction_defines() -> std::collections::HashMap<String, i64> {
-        cheader::defines(&["bits/sigaction.h"])
+        if cfg!(target_env = "musl") {
+            cheader::defines(&["bits/signal.h", "signal.h"])
+        } else {
+            cheader::defines(&["bits/sigaction.h"])
+        }
     }
 }

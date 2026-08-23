@@ -3871,7 +3871,6 @@ children (
                 id quality-prompt-style-state
                 title "Preserve prompt style across incremental redraws"
                 deps (quality-renderer-region-origin)
-                sealed true
                 log (
                     {
                         at 2026-08-10T12:59:24.334001634Z
@@ -4479,6 +4478,49 @@ children (
                 author "brendan@necessary.nu"
                 kind @status
                 text "Doing → Done (nplan complete)"
+            }
+        )
+    }
+
+    {
+        id musl-support
+        title "Prove the workspace on musl"
+        kind @feat
+        children (
+            {
+                id musl-platform
+                title "Spell nshedit-plat's Linux layouts once per C library"
+                implements {
+                    native-impl ([spec:nshedit:req:platform.linux-libc-matrix])
+                }
+                log (
+                    {
+                        at 2026-08-23T20:51:13.56467039Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
+            }
+
+            {
+                id musl-cross-check
+                title "Gate the workspace on a musl cross-check from the glibc host"
+                kind @ci
+                implements {
+                    native-impl ([spec:nshedit:req:workspace.musl-cross-check])
+                }
+                deps (musl-platform)
+            }
+
+            {
+                id musl-acceptance
+                title "Prove the C compatibility product on a musl host"
+                kind @test
+                implements {
+                    native-impl ([spec:nshedit:req:abi.musl-drop-in])
+                }
+                deps (musl-cross-check)
             }
         )
     }

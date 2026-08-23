@@ -197,125 +197,125 @@ derived_priorities (
 )
 
 assertions (
-    {id encoding-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:33.842493851Z}
-    {id terminal-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:36.115234384Z}
-    {id buffer-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:38.409244357Z}
-    {id input-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:40.85408045Z}
-    {id history-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:53.793829965Z}
-    {id modes-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:56.328736304Z}
-    {id completion-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:58.919622846Z}
-    {id core-api-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:37:01.58878447Z}
-    {id readline-compat-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:37:04.692153774Z}
-    {id spec-rule-corrections, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:45:11.667104589Z}
-    {id platform-decide, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:45:21.020322825Z}
-    {id abi-errno, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:45:28.947621308Z}
     {id abi-callback-types, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:45:33.039930866Z}
-    {id errata-reconcile, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:51:00.451626035Z}
+    {id abi-elset-dispatch, kind @complete, author "brendan@necessary.nu", at 2026-08-06T20:06:32.92018607Z}
+    {id abi-errno, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:45:28.947621308Z}
+    {id abi-file-surface, kind @complete, author "brendan@necessary.nu", at 2026-08-05T11:30:04.410544231Z}
+    {id abi-headers, kind @complete, author "brendan@necessary.nu", at 2026-08-05T18:55:37.953341935Z}
+    {id abi-missing-exports, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:46:02.259730161Z}
+    {id abi-narrow, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:15:35.415139873Z}
+    {id abi-soname, kind @complete, author "brendan@necessary.nu", at 2026-08-06T14:15:41.566972783Z}
+    {id abi-varargs, kind @complete, author "brendan@necessary.nu", at 2026-08-06T18:52:38.6521658Z}
     {id abi-visibility, kind @complete, author "brendan@necessary.nu", at 2026-08-05T09:46:48.367481715Z}
-    {id readline-globals-rules, kind @complete, author "brendan@necessary.nu", at 2026-08-05T10:09:42.20856709Z}
-    {id conformance-oracle, kind @complete, author "brendan@necessary.nu", at 2026-08-05T10:59:31.364311107Z}
+    {id bsd-feature, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:03:51.085345115Z}
+    {id buffer-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T10:27:35.59105328Z}
+    {id buffer-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:38.409244357Z}
+    {id buffer-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T22:52:15.681276245Z}
+    {id buffer-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-05T14:28:39.309482835Z}
+    {id c-defect-fixes, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:33:07.841894287Z}
+    {id completion-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:29:36.110990454Z}
+    {id completion-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:58.919622846Z}
+    {id completion-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:40:49.484541728Z}
+    {id completion-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.176874275Z}
     {id conformance-abi-shape, kind @complete, author "brendan@necessary.nu", at 2026-08-05T10:59:33.018312897Z}
     {id conformance-differential, kind @complete, author "brendan@necessary.nu", at 2026-08-05T10:59:37.412561917Z}
-    {id spec-corrections-2, kind @complete, author "brendan@necessary.nu", at 2026-08-05T11:16:30.244303886Z}
-    {id abi-file-surface, kind @complete, author "brendan@necessary.nu", at 2026-08-05T11:30:04.410544231Z}
-    {id nshterm-extract, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:13:29.434673323Z}
-    {id abi-narrow, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:15:35.415139873Z}
-    {id c-defect-fixes, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:33:07.841894287Z}
-    {id nshterm-padding, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:33:59.883734777Z}
-    {id abi-missing-exports, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:46:02.259730161Z}
-    {id errata-reconcile-2, kind @complete, author "brendan@necessary.nu", at 2026-08-05T14:00:43.963091123Z}
-    {id encoding-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-05T14:28:36.378870204Z}
-    {id buffer-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-05T14:28:39.309482835Z}
-    {id core-api-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.21434514Z}
-    {id abi-varargs, kind @complete, author "brendan@necessary.nu", at 2026-08-06T18:52:38.6521658Z}
-    {id platform-build, kind @complete, author "brendan@necessary.nu", at 2026-08-06T22:23:56.53704517Z}
-    {id abi-headers, kind @complete, author "brendan@necessary.nu", at 2026-08-05T18:55:37.953341935Z}
+    {id conformance-driver-el, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:46:42.984500652Z}
+    {id conformance-driver-readline, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:46:43.026910006Z}
+    {id conformance-driver-ub, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:09:53.61550356Z}
     {id conformance-header-diff, kind @complete, author "brendan@necessary.nu", at 2026-08-05T18:55:40.16488204Z}
-    {id abi-soname, kind @complete, author "brendan@necessary.nu", at 2026-08-06T14:15:41.566972783Z}
-    {id history-record-blob, kind @complete, author "brendan@necessary.nu", at 2026-08-07T01:11:35.697332771Z}
+    {id conformance-oracle, kind @complete, author "brendan@necessary.nu", at 2026-08-05T10:59:31.364311107Z}
+    {id conformance-pty, kind @complete, author "brendan@necessary.nu", at 2026-08-06T22:33:00.320456038Z}
+    {id core-api-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T10:24:21.004245204Z}
+    {id core-api-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:37:01.58878447Z}
+    {id core-api-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:35:40.475369128Z}
+    {id core-api-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.21434514Z}
+    {id cross-concern-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-08T13:15:16.991315761Z}
+    {id encoding-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T10:23:15.032694678Z}
+    {id encoding-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:33.842493851Z}
+    {id encoding-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T22:17:06.032786455Z}
+    {id encoding-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-05T14:28:36.378870204Z}
+    {id errata-reconcile, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:51:00.451626035Z}
+    {id errata-reconcile-2, kind @complete, author "brendan@necessary.nu", at 2026-08-05T14:00:43.963091123Z}
+    {id greenfield-abi-oracle, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:46:10.110061941Z}
+    {id greenfield-acceptance, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:34:54.916299367Z}
+    {id greenfield-addressed-render-diff, kind @complete, author "brendan@necessary.nu", at 2026-08-09T23:15:33.938291651Z}
+    {id greenfield-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:17:31.852523476Z}
+    {id greenfield-history-compat, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:16:52.859522925Z}
+    {id greenfield-incremental-render, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:34:54.815515633Z}
+    {id greenfield-read-driver, kind @complete, author "brendan@necessary.nu", at 2026-08-09T12:52:51.208714861Z}
     {id history-format-native, kind @complete, author "brendan@necessary.nu", at 2026-08-06T15:40:02.793761788Z}
     {id history-format-sniff, kind @complete, author "brendan@necessary.nu", at 2026-08-06T16:29:19.250531244Z}
-    {id bsd-feature, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:03:51.085345115Z}
-    {id terminal-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.034714683Z}
-    {id input-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.070577067Z}
+    {id history-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T12:25:49.225562769Z}
+    {id history-listing-escape, kind @complete, author "brendan@necessary.nu", at 2026-08-08T01:38:10.626578749Z}
+    {id history-load-native, kind @complete, author "brendan@necessary.nu", at 2026-08-08T13:06:26.865993535Z}
+    {id history-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:53.793829965Z}
+    {id history-record-blob, kind @complete, author "brendan@necessary.nu", at 2026-08-07T01:11:35.697332771Z}
+    {id history-regex, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:03:50.160526017Z}
+    {id history-rust-seam, kind @complete, author "brendan@necessary.nu", at 2026-08-07T00:21:06.800956637Z}
+    {id history-save-truncates, kind @complete, author "brendan@necessary.nu", at 2026-08-08T01:58:02.920782469Z}
+    {id history-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-08T01:41:36.218868298Z}
     {id history-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.105422139Z}
+    {id input-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:03:58.507609972Z}
+    {id input-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:40.85408045Z}
+    {id input-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:38:12.812999138Z}
+    {id input-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.070577067Z}
+    {id macos-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-09T20:26:25.744405883Z}
+    {id modes-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:07:33.617601976Z}
+    {id modes-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:56.328736304Z}
+    {id modes-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:43:13.434642289Z}
     {id modes-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.140404752Z}
-    {id completion-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.176874275Z}
-    {id readline-compat-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.248802077Z}
     {id nshterm-env-guard, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:33:06.246888397Z}
+    {id nshterm-extract, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:13:29.434673323Z}
+    {id nshterm-hashed-db, kind @complete, author "brendan@necessary.nu", at 2026-08-09T01:02:09.380870907Z}
+    {id nshterm-padding, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:33:59.883734777Z}
     {id nshterm-termcap-names, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:56:16.549001086Z}
     {id nshterm-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T18:15:40.285537671Z}
-    {id conformance-driver-el, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:46:42.984500652Z}
-    {id abi-elset-dispatch, kind @complete, author "brendan@necessary.nu", at 2026-08-06T20:06:32.92018607Z}
-    {id terminal-change-size, kind @complete, author "brendan@necessary.nu", at 2026-08-06T20:06:33.062661507Z}
-    {id conformance-driver-readline, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:46:43.026910006Z}
-    {id history-regex, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:03:50.160526017Z}
-    {id conformance-driver-ub, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:09:53.61550356Z}
-    {id encoding-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T22:17:06.032786455Z}
-    {id conformance-pty, kind @complete, author "brendan@necessary.nu", at 2026-08-06T22:33:00.320456038Z}
-    {id buffer-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T22:52:15.681276245Z}
-    {id terminal-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:29:54.224249112Z}
-    {id core-api-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:35:40.475369128Z}
-    {id input-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:38:12.812999138Z}
-    {id completion-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:40:49.484541728Z}
-    {id modes-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:43:13.434642289Z}
-    {id readline-compat-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:46:10.547653579Z}
+    {id platform-build, kind @complete, author "brendan@necessary.nu", at 2026-08-06T22:23:56.53704517Z}
+    {id platform-decide, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:45:21.020322825Z}
     {id platform-plat-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:53:49.980781496Z}
     {id platform-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:53:50.518121992Z}
-    {id history-rust-seam, kind @complete, author "brendan@necessary.nu", at 2026-08-07T00:21:06.800956637Z}
-    {id history-listing-escape, kind @complete, author "brendan@necessary.nu", at 2026-08-08T01:38:10.626578749Z}
-    {id history-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-08T01:41:36.218868298Z}
-    {id history-save-truncates, kind @complete, author "brendan@necessary.nu", at 2026-08-08T01:58:02.920782469Z}
-    {id core-api-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T10:24:21.004245204Z}
-    {id terminal-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T10:20:00.918132437Z}
-    {id encoding-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T10:23:15.032694678Z}
-    {id buffer-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T10:27:35.59105328Z}
-    {id input-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:03:58.507609972Z}
-    {id modes-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:07:33.617601976Z}
-    {id completion-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:29:36.110990454Z}
-    {id readline-compat-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:59:31.412543707Z}
-    {id history-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T12:25:49.225562769Z}
-    {id history-load-native, kind @complete, author "brendan@necessary.nu", at 2026-08-08T13:06:26.865993535Z}
-    {id cross-concern-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-08T13:15:16.991315761Z}
-    {id greenfield-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:17:31.852523476Z}
-    {id greenfield-abi-oracle, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:46:10.110061941Z}
-    {id nshterm-hashed-db, kind @complete, author "brendan@necessary.nu", at 2026-08-09T01:02:09.380870907Z}
-    {id rust-idiom-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-09T12:52:55.079575034Z}
-    {id greenfield-read-driver, kind @complete, author "brendan@necessary.nu", at 2026-08-09T12:52:51.208714861Z}
-    {id rust-idiom-acceptance, kind @complete, author "brendan@necessary.nu", at 2026-08-09T18:56:33.30057473Z}
-    {id macos-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-09T20:26:25.744405883Z}
-    {id retire-c, kind @complete, author "brendan@necessary.nu", at 2026-08-09T22:48:20.117912108Z}
-    {id release-metadata-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-09T22:59:49.047931183Z}
-    {id greenfield-addressed-render-diff, kind @complete, author "brendan@necessary.nu", at 2026-08-09T23:15:33.938291651Z}
-    {id windows-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-09T23:38:06.505008059Z}
-    {id quality-history-append-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-10T13:12:09.573967612Z}
+    {id publish-editor-crates, kind @complete, author "brendan@necessary.nu", at 2026-08-18T02:52:43.358344078Z}
+    {id quality-completion-match-ownership, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:29:04.848100979Z}
     {id quality-double-quote-completion, kind @complete, author "brendan@necessary.nu", at 2026-08-10T13:18:25.536068913Z}
-    {id quality-linux-target-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-10T13:46:13.177979833Z}
+    {id quality-errata-source-truth, kind @complete, author "brendan@necessary.nu", at 2026-08-10T15:29:56.420033737Z}
+    {id quality-history-append-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-10T13:12:09.573967612Z}
+    {id quality-history-search-eof, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:29:04.697655811Z}
     {id quality-key-sequence-timeout, kind @complete, author "brendan@necessary.nu", at 2026-08-10T13:47:58.819986107Z}
+    {id quality-linux-target-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-10T13:46:13.177979833Z}
+    {id quality-nonutf8-history-path-test-portability, kind @complete, author "brendan@necessary.nu", at 2026-08-11T19:43:46.750568717Z}
     {id quality-nonutf8-history-paths, kind @complete, author "brendan@necessary.nu", at 2026-08-10T13:51:55.474426347Z}
-    {id quality-secure-execution, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:15:00.842250137Z}
+    {id quality-null-editor-handles, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:29:04.800959206Z}
+    {id quality-prompt-style-state, kind @complete, author "brendan@necessary.nu", at 2026-08-18T02:47:32.537938483Z}
+    {id quality-remaining-errata-closeout, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:33:42.701773787Z}
+    {id quality-renderer-final-position, kind @complete, author "brendan@necessary.nu", at 2026-08-10T15:21:08.138260239Z}
     {id quality-renderer-region-origin, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:26:02.39028752Z}
-    {id quality-terminfo-error-equality, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:27:18.672747332Z}
+    {id quality-safe-divergence-policy, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:17:59.519411876Z}
+    {id quality-save-failure-fixture-portability, kind @complete, author "brendan@necessary.nu", at 2026-08-11T20:19:57.197582269Z}
+    {id quality-secure-execution, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:15:00.842250137Z}
     {id quality-signal-slot-lifetime, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:30:07.677472918Z}
+    {id quality-terminfo-error-equality, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:27:18.672747332Z}
     {id quality-terminfo-name-component, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:40:05.313199849Z}
     {id quality-terminfo-zero-precision, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:54:59.892381722Z}
+    {id quality-thread-signal-mask, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:29:04.750603346Z}
     {id quality-toolchain-usage-docs, kind @complete, author "brendan@necessary.nu", at 2026-08-10T14:59:50.694772037Z}
     {id quality-workspace-rustdoc, kind @complete, author "brendan@necessary.nu", at 2026-08-10T15:09:03.41739595Z}
-    {id quality-renderer-final-position, kind @complete, author "brendan@necessary.nu", at 2026-08-10T15:21:08.138260239Z}
-    {id quality-errata-source-truth, kind @complete, author "brendan@necessary.nu", at 2026-08-10T15:29:56.420033737Z}
-    {id greenfield-history-compat, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:16:52.859522925Z}
-    {id quality-safe-divergence-policy, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:17:59.519411876Z}
-    {id quality-history-search-eof, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:29:04.697655811Z}
-    {id quality-thread-signal-mask, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:29:04.750603346Z}
-    {id quality-null-editor-handles, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:29:04.800959206Z}
-    {id quality-completion-match-ownership, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:29:04.848100979Z}
-    {id quality-remaining-errata-closeout, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:33:42.701773787Z}
-    {id greenfield-incremental-render, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:34:54.815515633Z}
-    {id greenfield-acceptance, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:34:54.916299367Z}
-    {id quality-nonutf8-history-path-test-portability, kind @complete, author "brendan@necessary.nu", at 2026-08-11T19:43:46.750568717Z}
-    {id quality-save-failure-fixture-portability, kind @complete, author "brendan@necessary.nu", at 2026-08-11T20:19:57.197582269Z}
-    {id quality-prompt-style-state, kind @complete, author "brendan@necessary.nu", at 2026-08-18T02:47:32.537938483Z}
-    {id publish-editor-crates, kind @complete, author "brendan@necessary.nu", at 2026-08-18T02:52:43.358344078Z}
+    {id readline-compat-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:59:31.412543707Z}
+    {id readline-compat-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:37:04.692153774Z}
+    {id readline-compat-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:46:10.547653579Z}
+    {id readline-compat-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.248802077Z}
+    {id readline-globals-rules, kind @complete, author "brendan@necessary.nu", at 2026-08-05T10:09:42.20856709Z}
+    {id release-metadata-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-09T22:59:49.047931183Z}
+    {id retire-c, kind @complete, author "brendan@necessary.nu", at 2026-08-09T22:48:20.117912108Z}
+    {id rust-idiom-acceptance, kind @complete, author "brendan@necessary.nu", at 2026-08-09T18:56:33.30057473Z}
+    {id rust-idiom-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-09T12:52:55.079575034Z}
+    {id spec-corrections-2, kind @complete, author "brendan@necessary.nu", at 2026-08-05T11:16:30.244303886Z}
+    {id spec-rule-corrections, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:45:11.667104589Z}
+    {id terminal-change-size, kind @complete, author "brendan@necessary.nu", at 2026-08-06T20:06:33.062661507Z}
+    {id terminal-idiomatize, kind @complete, author "brendan@necessary.nu", at 2026-08-08T10:20:00.918132437Z}
+    {id terminal-markup, kind @complete, author "brendan@necessary.nu", at 2026-08-04T17:36:36.115234384Z}
+    {id terminal-tests, kind @complete, author "brendan@necessary.nu", at 2026-08-06T23:29:54.224249112Z}
+    {id terminal-translate, kind @complete, author "brendan@necessary.nu", at 2026-08-06T17:28:14.034714683Z}
+    {id windows-contract, kind @complete, author "brendan@necessary.nu", at 2026-08-09T23:38:06.505008059Z}
 )
 
 impl_evidence (
@@ -527,6 +527,11 @@ impl_evidence (
     ), rule_versions_seen (
         {id platform.darwin-termios, version 0}
         {id platform.per-os-layouts, version 0}
+    )}
+    {id musl-platform, covered_rules (
+        platform.linux-libc-matrix
+    ), covered_claims (
+        {impl_name native-impl, rule platform.linux-libc-matrix}
     )}
     {id quality-caller-fd-flags, covered_rules (
         abi.caller-fd-flags

@@ -1,6 +1,6 @@
 ---
 id [dec:libedit:platform-targets]
-epitome "Linux support is exactly x86_64-unknown-linux-gnu; macOS supports Intel and Apple silicon, and Windows supports the native Rust surface only."
+epitome "Linux support is an enumerated x86-64 matrix — glibc, and musl since [dec:libedit:linux-musl-target]; macOS supports Intel and Apple silicon, and Windows supports the native Rust surface only."
 state @decided
 category @executive
 scope {
@@ -27,7 +27,7 @@ alternatives (
 )
 consequences {
     accepted (
-        "The supported Linux matrix contains exactly x86_64-unknown-linux-gnu. Its x86-64 glibc passwd and sigaction layouts, signed C char, ELF cdylib, exports, installer, loader, and unchanged C consumer are all exercised on the target that ships them."
+        "The supported Linux matrix is enumerated rather than inferred, and every entry carries its own acceptance evidence. It contained exactly x86_64-unknown-linux-gnu when this was decided — its x86-64 glibc passwd and sigaction layouts, signed C char, ELF cdylib, exports, installer, loader, and unchanged C consumer are all exercised on the target that ships them — and [dec:libedit:linux-musl-target] later added x86_64-unknown-linux-musl on the same terms."
         "nshedit-plat rejects every other Linux ABI and Android at compile time. A new Linux triple is a platform port with its own transcriptions and acceptance evidence, not another value added to a broad cfg arm."
         "nshedit-plat grows true Darwin arms: passwd and sigaction/sigset layouts, spelled from the stable Darwin ABI and self-checked with target-gated layout assertions."
         "nshedit-abi grows the Darwin stdio data symbols (__stdinp/__stdoutp/__stderrp) and a Mach-O export/install-name story; the ELF shape gates gain Mach-O counterparts."
@@ -39,7 +39,7 @@ consequences {
     )
     deferred (
         "Legacy Windows consoles without VT processing and a Windows C ABI remain outside the supported target."
-        "Other Linux architectures, x32, musl, and Android remain unsupported until separately specified and proven."
+        "Other Linux architectures, x32, and Android remain unsupported until separately specified and proven. musl was deferred here on the same terms and has since been specified and proven, by [dec:libedit:linux-musl-target]."
     )
 }
 edges {
@@ -59,21 +59,30 @@ assumption that remains is individually marked in the tree — the
 is what makes target expansion a bounded piece of work rather than a
 rewrite.
 
-## Why Linux names one triple
+## Why Linux names its triples
 
 The maintained Linux evidence is specifically x86-64 glibc. `Passwd` and
 `SigAction` carry sizes and offsets produced by that C compiler and checked
 against that system's headers; the conformance harness then verifies the ELF
 shared object, generated headers, compatibility names, loader path, and a
 direct C consumer on the same target. That evidence cannot be generalized by
-changing `target_arch` or `target_env` in a cfg.
+changing `target_arch` or `target_env` in a cfg. Adding a triple means
+producing that evidence again for it, which is what
+[dec:libedit:linux-musl-target] did for musl: its own layout assertions
+against musl's own headers, and its own acceptance run on a musl host.
 
 The rejected cases fail for different reasons: armv7 has different pointer-
-sized record layouts, s390x exposes assumptions that C `char` is signed, and
-`x86_64-unknown-linux-musl` drops the `cdylib` needed by the C compatibility
-product. Those are separate ports if they ever become valuable. Until then
-the build rejects them before a glibc x86-64 transcription can masquerade as
-their ABI.
+sized record layouts, and s390x exposes assumptions that C `char` is signed.
+Those are separate ports if they ever become valuable. Until then the build
+rejects them before an x86-64 transcription can masquerade as their ABI.
+
+**Correction.** This section originally also listed
+`x86_64-unknown-linux-musl`, on the grounds that it "drops the `cdylib`
+needed by the C compatibility product". That describes the target's default
+configuration and not the target: musl targets link `crt-static` by default,
+rustc emits no `cdylib` while that feature is on, and turning it off produces
+the ordinary ELF shared object. [dec:libedit:linux-musl-target] records the
+measurement and the resulting build arrangement.
 
 macOS is POSIX and ships libedit; supporting it is the same product on
 a second POSIX. Windows is a different terminal lineage, but modern console
