@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/nshedit", "crates/nshedit-abi", "crates/nshedit-plat", "crates/nshterm"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "BSD-3-Clause"
 repository = "https://github.com/necessary-nu/nshedit"
@@ -12,11 +12,11 @@ authors = ["Brendan Molloy <brendan@necessary.nu>"]
 [workspace.dependencies]
 # [spec:nshedit:req:workspace.self-contained]
 bsd = { version = "0.1.1", default-features = false, features = ["vis"] }
-nshedit = { path = "crates/nshedit", version = "0.1.0" }
+nshedit = { path = "crates/nshedit", version = "0.1.1" }
 # The only crate that issues a syscall. See plan/decisions/platform-layer.md.
-nshedit-plat = { path = "crates/nshedit-plat", version = "0.1.0" }
+nshedit-plat = { path = "crates/nshedit-plat", version = "0.1.1" }
 # See plan/decisions/terminal-caps-via-term-crate.md.
-nshterm = { path = "crates/nshterm", version = "0.1.0" }
+nshterm = { path = "crates/nshterm", version = "0.1.1" }
 tempfile = "3.27.0"
 
 [workspace.lints.rust]

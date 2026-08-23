@@ -1,6 +1,6 @@
 [package]
 name = "nshterm"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 # NOT the workspace's BSD-3-Clause. This crate derives from `term` 1.2.1,
 # which is MIT OR Apache-2.0, copyright The Rust Project Developers.
