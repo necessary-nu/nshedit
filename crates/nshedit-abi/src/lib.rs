@@ -402,6 +402,9 @@ pub(crate) mod cstdio {
 mod cenv {
     use core::ffi::{CStr, c_char};
 
+    // Both supported Linux C libraries publish `secure_getenv`; it is a GNU
+    // extension that musl has carried since 1.1.20, and this crate's Linux
+    // arm therefore needs no split.
     #[cfg(target_os = "linux")]
     unsafe extern "C" {
         fn secure_getenv(name: *const c_char) -> *mut c_char;

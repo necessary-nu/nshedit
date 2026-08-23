@@ -4529,6 +4529,14 @@ children (
                     native-impl ([spec:nshedit:req:abi.musl-drop-in])
                 }
                 deps (musl-cross-check)
+                log (
+                    {
+                        at 2026-08-23T20:53:05.374492267Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
         )
     }

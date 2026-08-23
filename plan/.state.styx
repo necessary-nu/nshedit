@@ -528,6 +528,11 @@ impl_evidence (
         {id platform.darwin-termios, version 0}
         {id platform.per-os-layouts, version 0}
     )}
+    {id musl-acceptance, covered_rules (
+        abi.musl-drop-in
+    ), covered_claims (
+        {impl_name native-impl, rule abi.musl-drop-in}
+    )}
     {id musl-cross-check, covered_rules (
         workspace.musl-cross-check
     ), covered_claims (

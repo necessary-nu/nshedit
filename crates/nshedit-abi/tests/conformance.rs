@@ -5,7 +5,17 @@
 //! scripts under conformance/ exercise those artifacts without building a
 //! second implementation.
 
-#![cfg(target_os = "linux")]
+//! # Why `crt-static` compiles this away
+//!
+//! Every stage below inspects the shipped `cdylib`, and rustc emits no
+//! `cdylib` at all for a target whose `crt-static` feature is on — it drops
+//! the crate type with a warning, which is the default arrangement for
+//! `x86_64-unknown-linux-musl`. There is then no artifact to gate, so these
+//! tests state their precondition in a `cfg` rather than failing on an
+//! absence that is a build configuration and not a defect. The musl C ABI is
+//! built with `crt-static` off and gated by `ci/musl-acceptance.sh`, which
+//! runs these same `conformance/` stages against that build.
+#![cfg(all(target_os = "linux", not(target_feature = "crt-static")))]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -25,8 +35,21 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+/// Where `cargo build` put the artifact: `target/debug`, or
+/// `target/<triple>/debug` when `NSHEDIT_TARGET` names a cross build.
+/// `conformance/lib.sh` reads the same variable and derives the same
+/// directory, so the scripts these tests invoke inspect the object this
+/// function checked for.
+fn library_dir() -> PathBuf {
+    let mut dir = repo_root().join("target");
+    if let Some(triple) = std::env::var_os("NSHEDIT_TARGET").filter(|t| !t.is_empty()) {
+        dir.push(triple);
+    }
+    dir.join("debug")
+}
+
 fn require_cdylib() {
-    let library = repo_root().join("target/debug/libnshedit.so");
+    let library = library_dir().join("libnshedit.so");
     assert!(
         library.is_file(),
         "no {} — run cargo build first",

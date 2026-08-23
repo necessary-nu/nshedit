@@ -6,8 +6,14 @@ set -uo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
 host=$(rustc -vV | sed -n 's/^host: //p')
-[[ $host == x86_64-unknown-linux-gnu ]] ||
-    die "the supported Linux target is x86_64-unknown-linux-gnu, not ${host:-unknown}"
+target=${NSHEDIT_TARGET:-$host}
+case $target in
+    x86_64-unknown-linux-gnu | x86_64-unknown-linux-musl) ;;
+    *)
+        die "the supported Linux targets are x86_64-unknown-linux-gnu and \
+x86_64-unknown-linux-musl, not ${target:-unknown}"
+        ;;
+esac
 
 declare -a names=()
 declare -a results=()
@@ -27,8 +33,18 @@ stage() {
 }
 
 printf '########## build ##########\n'
-(cd -- "$ROOT" && cargo build --workspace) ||
-    die "cargo build failed"
+if [ -n "$NSHEDIT_TARGET" ]; then
+    # Someone else built these. A musl cdylib exists only with crt-static
+    # turned off and a musl-capable linker selected, which is
+    # ci/musl-acceptance.sh's business rather than a flag this script can
+    # guess on the caller's behalf.
+    [ -f "$PORT_LIB" ] ||
+        die "no $PORT_LIB — build for $NSHEDIT_TARGET before running this"
+    note "inspecting the $NSHEDIT_TARGET build in $PORT_LIB_DIR"
+else
+    (cd -- "$ROOT" && cargo build --workspace) ||
+        die "cargo build failed"
+fi
 
 stage "export contract" "$CONF_DIR/abi-shape.sh"
 stage "generated C headers" "$CONF_DIR/c-abi.sh"

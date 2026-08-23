@@ -3,7 +3,14 @@
 # Install nshedit, with the platform's libedit-compatible link names.
 #
 #   packaging/install.sh [--prefix DIR] [--libdir DIR] [--includedir DIR]
-#                        [--profile debug|release] [--no-compat] [--dry-run]
+#                        [--profile debug|release] [--target TRIPLE]
+#                        [--no-compat] [--dry-run]
+#
+# --target names the triple a cross build was made for, so the object is taken
+# from target/TRIPLE/PROFILE instead of target/PROFILE. It defaults to
+# $NSHEDIT_TARGET, which is how the conformance stages point the installer at
+# the build they are inspecting. It says where the object came from and not
+# what this host can run.
 #
 # Linux installs one object under these names:
 #
@@ -47,6 +54,7 @@ prefix=/usr/local
 libdir=
 includedir=
 profile=release
+target=${NSHEDIT_TARGET:-}
 compat=1
 dry=0
 
@@ -62,9 +70,11 @@ while [ $# -gt 0 ]; do
         --includedir=*) includedir=${1#*=}; shift ;;
         --profile)    profile=${2:?--profile needs debug or release}; shift 2 ;;
         --profile=*)  profile=${1#*=}; shift ;;
+        --target)     target=${2:?--target needs a triple}; shift 2 ;;
+        --target=*)   target=${1#*=}; shift ;;
         --no-compat)  compat=0; shift ;;
         --dry-run)    dry=1; shift ;;
-        -h|--help)    sed -n '2,45p' "${BASH_SOURCE[0]}" | sed 's/^#\{1,2\} \{0,1\}//'; exit 0 ;;
+        -h|--help)    sed -n '2,53p' "${BASH_SOURCE[0]}" | sed 's/^#\{1,2\} \{0,1\}//'; exit 0 ;;
         *)            die "unknown argument: $1" ;;
     esac
 done
@@ -87,14 +97,14 @@ case $host in
         RUNTIME_NAME=libnshedit.so.0
         REAL=libnshedit.so.0.0.0
         LINK_NAME=libnshedit.so
-        built=$ROOT/target/$profile/libnshedit.so
+        built=$ROOT/target${target:+/$target}/$profile/libnshedit.so
         compat_names=(libedit.so libedit.so.0 libedit.so.2)
         ;;
     Darwin)
         RUNTIME_NAME=libnshedit.0.dylib
         REAL=libnshedit.0.0.0.dylib
         LINK_NAME=libnshedit.dylib
-        built=$ROOT/target/$profile/libnshedit.dylib
+        built=$ROOT/target${target:+/$target}/$profile/libnshedit.dylib
         compat_names=(libedit.dylib libedit.3.dylib)
         ;;
     *)
@@ -102,7 +112,7 @@ case $host in
         ;;
 esac
 
-[ -f "$built" ] || die "no $built — run 'cargo build --$profile' first
+[ -f "$built" ] || die "no $built — run 'cargo build --$profile${target:+ --target $target}' first
 (for the debug profile, 'cargo build' and pass --profile debug)"
 
 # The whole layout below is derived from the runtime name, so a mismatch means

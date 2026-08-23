@@ -15,14 +15,22 @@ implementation in the repository.
 | Target | Rust API | C compatibility |
 | --- | --- | --- |
 | Linux (`x86_64-unknown-linux-gnu`) | Supported and conformance-gated | ELF shared/static library, generated headers, `libedit` compatibility names, and end-to-end loader tests |
+| Linux (`x86_64-unknown-linux-musl`) | Supported and cross-check-gated | The same ELF product, built with `crt-static` off and gated on a musl host |
 | macOS (`x86_64` and Apple silicon) | Supported and native-acceptance-gated | Mach-O shared/static library, generated headers, `libedit` compatibility names, and native install, link, and runtime tests |
 | Windows | Supported and native-acceptance-gated | Not provided; the libedit C ABI remains POSIX-only |
 
-The Linux row is an exact target contract, not an `any Linux` promise.
-Other architectures, x32, musl, and Android are unsupported and rejected at
-compile time; adding one requires its own platform layouts and acceptance
-evidence. In particular, `x86_64-unknown-linux-musl` drops the `cdylib`
-required by the Linux C compatibility product.
+The Linux rows are an exact target contract, not an `any Linux` promise.
+Other architectures, x32, and Android are unsupported and rejected at compile
+time; adding one requires its own platform layouts and acceptance evidence.
+
+The two Linux rows are both x86-64 and differ only in C library. Every record
+layout the platform crate transcribes is asserted separately under each, and
+the checks that read expected values out of C headers read the headers of the
+library the *target* links. musl needs one build setting the glibc target does
+not: `crt-static` is on by default there, and rustc emits no `cdylib` at all
+while it is, so the C compatibility product is built with
+`RUSTFLAGS='-C target-feature=-crt-static'`. See
+[`plan/decisions/linux-musl-target.md`](plan/decisions/linux-musl-target.md).
 
 The exported Readline functions are **libedit's Readline compatibility
 surface**, not a complete implementation of GNU Readline. In particular,
@@ -77,10 +85,13 @@ Build the shared and static ABI artifacts with:
 cargo +nightly build -p nshedit-abi --release
 ```
 
-On `x86_64-unknown-linux-gnu` this produces
+On either supported Linux target this produces
 `target/release/libnshedit.so`; on macOS it produces
-`target/release/libnshedit.dylib`. Both supported POSIX targets also produce
-`target/release/libnshedit.a`. The committed, generated headers are:
+`target/release/libnshedit.dylib`. Every supported POSIX target also produces
+`target/release/libnshedit.a`. On musl, add
+`RUSTFLAGS='-C target-feature=-crt-static'`: without it rustc drops the
+`cdylib` crate type and the build succeeds having produced only the static
+library. The committed, generated headers are:
 
 - [`crates/nshedit-abi/include/histedit.h`](crates/nshedit-abi/include/histedit.h)
 - [`crates/nshedit-abi/include/editline/readline.h`](crates/nshedit-abi/include/editline/readline.h)
@@ -153,11 +164,11 @@ The `nshedit-abi` library target is intentionally omitted from rustdoc. It is
 a C-only adapter whose public documentation is the generated headers and
 export manifest above; the native `nshedit` crate owns the Rust API docs.
 
-The `x86_64-unknown-linux-gnu` ABI tests run by default. They compare the
-built symbol table with the committed export contract, compile direct C
-consumers against the generated headers, exercise defined handling of
-historically unsafe inputs, and verify the staged installer and loader
-layout.
+The ELF ABI tests run by default on a Linux host that builds a shared object.
+They compare the built symbol table with the committed export contract,
+compile direct C consumers against the generated headers, exercise defined
+handling of historically unsafe inputs, and verify the staged installer and
+loader layout.
 
 For the same checks with a stage-by-stage report:
 
@@ -165,12 +176,30 @@ For the same checks with a stage-by-stage report:
 rustup run nightly ./conformance/run.sh
 ```
 
-The full conformance harness requires an `x86_64-unknown-linux-gnu` host. It
-expects a C compiler, `pkg-config`, standard ELF/binutils tools, and installed
-terminfo entries. It does not require Autotools or a system libedit. The
-`rustup run` wrapper selects nightly for the unqualified workspace Cargo
-command inside the script; it is unnecessary when the default compiler is
-Rust 1.99 or newer.
+The full conformance harness requires a supported Linux host. It expects a C
+compiler, `pkg-config`, standard ELF/binutils tools, and installed terminfo
+entries. It does not require Autotools or a system libedit. The `rustup run`
+wrapper selects nightly for the unqualified workspace Cargo command inside the
+script; it is unnecessary when the default compiler is Rust 1.99 or newer.
+Set `NSHEDIT_TARGET` to a triple to point every stage — the installer
+included — at a cross build in `target/<triple>/debug` instead.
+
+From a glibc development host, compile every crate and test target for musl
+and run the suite, which `crt-static` makes static binaries that any Linux
+host executes:
+
+```sh
+rustup run nightly ./ci/musl-cross-check.sh
+```
+
+The C compatibility product needs a musl host, because the object is
+dynamically linked against that system's own musl. On one — an Alpine
+container is enough — this builds it with `crt-static` off, checks that it
+depends on musl and on no glibc name, and runs the same conformance stages:
+
+```sh
+./ci/musl-acceptance.sh
+```
 
 From a Linux development host, compile every workspace crate and test target
 for both supported Darwin architectures with:

@@ -22,6 +22,11 @@ publish = false
 #
 # No `rlib`: the core crate already produces libnshedit.rlib, and two targets
 # cannot write the same filename.
+#
+# On x86_64-unknown-linux-musl the cdylib needs `-C target-feature=-crt-static`:
+# rustc emits no cdylib at all while crt-static is on, which is that target's
+# default, and it drops the crate type with a warning rather than failing. See
+# plan/decisions/linux-musl-target.md and ci/musl-acceptance.sh.
 name = "nshedit"
 crate-type = ["cdylib", "staticlib"]
 # This crate is the C-only adapter. Its public contract is the generated

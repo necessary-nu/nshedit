@@ -102,7 +102,10 @@ fi
 
 if "$ROOT/packaging/install.sh" --prefix "$BARE" --profile debug --no-compat \
         > "$REPORT/install-bare.log" 2>&1; then
-    stray=$(find "$BARE" -name 'libedit*' -printf '%P\n' | sort)
+    # Not `find -printf`: that is a GNU extension, and the BusyBox find on a
+    # musl distribution rejects it — which would leave `stray` empty and turn
+    # this check into an unconditional pass.
+    stray=$(cd -- "$BARE" && find . -name 'libedit*' | sed 's|^\./||' | LC_ALL=C sort)
     if [ -z "$stray" ]; then
         pass "--no-compat installs no libedit names"
     else
